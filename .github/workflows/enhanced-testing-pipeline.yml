@@ -1,0 +1,439 @@
+name: Enhanced Testing Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '18'
+  POSTGRES_VERSION: '15'
+
+jobs:
+  quality-gates:
+    name: Code Quality & Type Checking
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type checking
+        run: npx tsc --noEmit
+
+      - name: Lint code
+        run: npm run lint
+
+      - name: Format check
+        run: npx prettier --check "**/*.{ts,tsx,js,jsx,json,md}"
+
+  unit-tests:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: booking_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup test environment
+        run: |
+          cp env.example .env.test
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/booking_test" >> .env.test
+          echo "SUPABASE_URL=https://test.supabase.co" >> .env.test
+          echo "SUPABASE_ANON_KEY=test-key" >> .env.test
+
+      - name: Run database migrations
+        run: |
+          npm install -g supabase
+          supabase db reset --local
+
+      - name: Run unit tests
+        run: npm test -- --coverage --watchAll=false --testTimeout=30000
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Check coverage thresholds
+        run: |
+          npm test -- --coverage --watchAll=false --coverageThreshold='{"global":{"branches":80,"functions":80,"lines":85,"statements":85}}'
+
+  security-tests:
+    name: Security Testing
+    runs-on: ubuntu-latest
+    needs: [quality-gates]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install security tools
+        run: |
+          npm install -g audit-ci snyk
+          pip install bandit safety
+
+      - name: Dependency vulnerability scan
+        run: npm audit --audit-level moderate
+
+      - name: Advanced dependency scan
+        run: audit-ci --config audit-ci.json
+        continue-on-error: true
+
+      - name: Snyk security scan
+        run: snyk test --severity-threshold=medium
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+
+      - name: Run security tests
+        run: npm run test:security
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-report
+          path: |
+            security-report.json
+            test-results/security-*.xml
+
+  e2e-tests:
+    name: End-to-End Testing
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Build application
+        run: npm run build
+
+      - name: Setup test database
+        run: |
+          docker run -d --name postgres-e2e \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=booking_e2e \
+            -p 5433:5432 \
+            postgres:${{ env.POSTGRES_VERSION }}
+
+      - name: Wait for database
+        run: |
+          until docker exec postgres-e2e pg_isready -U postgres; do
+            echo "Waiting for database..."
+            sleep 1
+          done
+
+      - name: Setup E2E environment
+        run: |
+          cp env.example .env.local
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/booking_e2e" >> .env.local
+          echo "NEXTAUTH_SECRET=test-secret-key" >> .env.local
+          echo "NEXT_PUBLIC_APP_ENV=test" >> .env.local
+
+      - name: Start application
+        run: |
+          npm start &
+          npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: Run E2E tests
+        run: npx playwright test --project=${{ matrix.browser }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: |
+            playwright-report/
+            test-results/
+
+  performance-tests:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install k6
+        run: |
+          curl https://github.com/grafana/k6/releases/download/v0.47.0/k6-v0.47.0-linux-amd64.tar.gz -L | tar xvz
+          sudo mv k6-v0.47.0-linux-amd64/k6 /usr/bin
+
+      - name: Build and start application
+        run: |
+          npm run build
+          npm start &
+          npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: Run performance tests
+        run: |
+          BASE_URL=http://localhost:3000 TENANT_ID=perf-test k6 run tests/performance/load-testing.js
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-results
+          path: |
+            performance-results/
+            k6-report.json
+
+  database-performance:
+    name: Database Performance Testing
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: booking_perf
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Setup test data
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d booking_perf -f tests/performance/setup-test-data.sql
+
+      - name: Run database performance tests
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d booking_perf -f tests/performance/db-performance.sql > db-performance-results.txt
+
+      - name: Upload database results
+        uses: actions/upload-artifact@v3
+        with:
+          name: database-performance-results
+          path: db-performance-results.txt
+
+  accessibility-tests:
+    name: Accessibility Testing
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install accessibility tools
+        run: npm install -g @axe-core/cli pa11y
+
+      - name: Build and start application
+        run: |
+          npm run build
+          npm start &
+          npx wait-on http://localhost:3000
+
+      - name: Run accessibility tests with axe
+        run: |
+          axe http://localhost:3000 --save axe-results.json
+          axe http://localhost:3000/booking/new --save axe-booking-results.json
+
+      - name: Run accessibility tests with pa11y
+        run: |
+          pa11y http://localhost:3000 --reporter json > pa11y-results.json
+          pa11y http://localhost:3000/booking/new --reporter json > pa11y-booking-results.json
+
+      - name: Upload accessibility results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: accessibility-results
+          path: |
+            axe-*.json
+            pa11y-*.json
+
+  deployment-readiness:
+    name: Deployment Readiness Check
+    runs-on: ubuntu-latest
+    needs: [quality-gates, unit-tests, security-tests, e2e-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Check bundle size
+        run: |
+          npm install -g bundlesize
+          bundlesize
+
+      - name: Lighthouse CI
+        run: |
+          npm install -g @lhci/cli
+          lhci autorun --config=lighthouse-ci.js
+
+      - name: Docker build test
+        run: |
+          docker build -t booking-app:test .
+          docker run --rm booking-app:test echo "Docker build successful"
+
+      - name: Generate deployment report
+        run: |
+          echo "## Deployment Readiness Report" > deployment-report.md
+          echo "- ✅ Code quality checks passed" >> deployment-report.md
+          echo "- ✅ Unit tests passed" >> deployment-report.md
+          echo "- ✅ Security tests passed" >> deployment-report.md
+          echo "- ✅ E2E tests passed" >> deployment-report.md
+          echo "- ✅ Build successful" >> deployment-report.md
+          echo "- ✅ Docker image built" >> deployment-report.md
+
+      - name: Upload deployment report
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-report
+          path: deployment-report.md
+
+  test-summary:
+    name: Test Summary & Notifications
+    runs-on: ubuntu-latest
+    needs: [quality-gates, unit-tests, security-tests, e2e-tests, performance-tests]
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate test summary
+        run: |
+          echo "# 🧪 Test Pipeline Summary" > test-summary.md
+          echo "" >> test-summary.md
+          echo "## Results Overview" >> test-summary.md
+          echo "- **Quality Gates**: ${{ needs.quality-gates.result }}" >> test-summary.md
+          echo "- **Unit Tests**: ${{ needs.unit-tests.result }}" >> test-summary.md
+          echo "- **Security Tests**: ${{ needs.security-tests.result }}" >> test-summary.md
+          echo "- **E2E Tests**: ${{ needs.e2e-tests.result }}" >> test-summary.md
+          echo "- **Performance Tests**: ${{ needs.performance-tests.result }}" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "## Coverage Reports" >> test-summary.md
+          echo "- Unit Test Coverage: Available in artifacts" >> test-summary.md
+          echo "- Security Scan Results: Available in artifacts" >> test-summary.md
+          echo "- E2E Test Reports: Available in artifacts" >> test-summary.md
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-summary
+          path: test-summary.md

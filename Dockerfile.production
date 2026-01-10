@@ -1,0 +1,77 @@
+# Production Docker Configuration for Booka Booking System
+# Optimized for security, performance, and resource efficiency
+
+# Build stage
+FROM node:18-alpine AS builder
+
+# Security: Create non-root user
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Install dependencies only when needed
+WORKDIR /app
+
+# Copy dependency files
+COPY package.json package-lock.json ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy source code
+COPY . .
+
+# Set production environment
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build application
+RUN npm run build
+
+# Production stage  
+FROM node:18-alpine AS runner
+
+# Security hardening
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Install security updates and required packages
+RUN apk update && apk upgrade && apk add --no-cache curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy built application from builder stage
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Create necessary directories
+RUN mkdir -p logs tmp && chown -R nextjs:nodejs logs tmp
+
+# Set production environment variables
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Security: Set file permissions
+RUN chmod 755 /app && \
+    chmod -R 644 /app/.next && \
+    chmod -R 755 /app/.next/server && \
+    chmod 644 /app/server.js
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:3000/api/health || exit 1
+
+# Expose port
+EXPOSE 3000
+
+# Switch to non-root user for security
+USER nextjs
+
+# Start the application
+CMD ["node", "server.js"]

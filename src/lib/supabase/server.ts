@@ -1,0 +1,120 @@
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { type SupabaseClient } from '@supabase/supabase-js';
+import { cookies } from 'next/headers';
+import { type NextApiRequest, type NextApiResponse } from 'next';
+import { serialize } from 'cookie';
+
+function createClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Supabase URL and Anon Key must be provided.');
+  }
+
+  return createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      get: async (name: string) => {
+        const cookieStore = await cookies();
+        return cookieStore.get(name)?.value;
+      },
+      set: async (name: string, value: string, options: CookieOptions) => {
+        const cookieStore = await cookies();
+        try {
+          cookieStore.set({ name, value, ...options });
+        } catch (error) {
+          // The `set` method was called from a Server Component.
+          // This can be ignored if you have middleware refreshing
+          // user sessions.
+        }
+      },
+      remove: async (name: string, options: CookieOptions) => {
+        const cookieStore = await cookies();
+        try {
+          cookieStore.set({ name, value: '', ...options });
+        } catch (error) {
+          // The `delete` method was called from a Server Component.
+          // This can be ignored if you have middleware refreshing
+          // user sessions.
+        }
+      },
+    },
+  });
+}
+
+/**
+ * Creates a Supabase client for Server Component usage.
+ * This needs to be created for each request.
+ */
+export function getSupabaseServerComponentClient() {
+  return createClient();
+}
+
+/**
+ * Creates a Supabase client for API Route Handler usage.
+ * This needs to be created for each request.
+ */
+export function getSupabaseRouteHandlerClient() {
+  return createClient();
+}
+
+/**
+ * Creates a Supabase client for Pages API Route usage.
+ * This needs to be created for each request.
+ *
+ * @param req NextApiRequest
+ * @param res NextApiResponse
+ * @returns SupabaseClient
+ */
+export function getSupabaseApiRouteClient(req: NextApiRequest, res: NextApiResponse) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Supabase URL and Anon Key must be provided.');
+  }
+
+  return createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      get: (name: string) => {
+        return req.cookies[name];
+      },
+      set: (name: string, value: string, options: CookieOptions) => {
+        res.setHeader('Set-Cookie', serialize(name, value, options));
+      },
+      remove: (name: string, options: CookieOptions) => {
+        res.setHeader('Set-Cookie', serialize(name, '', options));
+      },
+    },
+  });
+}
+
+/**
+ * Creates a Supabase admin client with the service role key.
+ * Use this for operations that require bypassing RLS.
+ */
+export const createSupabaseAdminClient = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error("Missing Supabase URL or Service Role Key for admin client");
+  }
+
+  // For admin client, we can use createServerClient without cookies, 
+  // as it will operate with the service key.
+  return createServerClient(supabaseUrl, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    cookies: {
+      get: async () => undefined,
+      set: async () => {},
+      remove: async () => {},
+    },
+  });
+};
+
+// Legacy alias for backward compatibility
+export const createServerSupabaseClient = getSupabaseServerComponentClient;

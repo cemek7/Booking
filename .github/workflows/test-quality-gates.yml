@@ -1,0 +1,386 @@
+name: Testing Quality Gates
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '*.config.*'
+      - 'package*.json'
+  push:
+    branches: [main]
+
+env:
+  NODE_VERSION: '18'
+  CACHE_VERSION: 'v1'
+
+jobs:
+  test-quality-gates:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    strategy:
+      matrix:
+        test-suite: [unit, integration, api, component]
+        
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Type Checking
+        run: npm run type-check
+        if: matrix.test-suite == 'unit'
+
+      - name: Lint Tests
+        run: npm run lint:tests
+        if: matrix.test-suite == 'unit'
+
+      - name: Run Unit Tests
+        if: matrix.test-suite == 'unit'
+        run: npm run test:unit -- --verbose
+        env:
+          CI: true
+
+      - name: Run Integration Tests
+        if: matrix.test-suite == 'integration'
+        run: npm run test:integration -- --verbose
+        env:
+          CI: true
+
+      - name: Run API Tests
+        if: matrix.test-suite == 'api'
+        run: npm run test:api -- --verbose
+        env:
+          CI: true
+
+      - name: Run Component Tests
+        if: matrix.test-suite == 'component'
+        run: npm run test:component -- --verbose
+        env:
+          CI: true
+
+      - name: Upload Coverage Reports
+        uses: codecov/codecov-action@v4
+        if: matrix.test-suite == 'unit'
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: true
+
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: test-quality-gates
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run Security Tests
+        run: npm run test:security
+        env:
+          CI: true
+
+      - name: Security Audit
+        run: npm audit --audit-level moderate
+
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: test-quality-gates
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run Performance Tests
+        run: npm run test:performance
+        env:
+          CI: true
+
+      - name: Performance Benchmarks
+        run: npm run test:benchmark
+        env:
+          CI: true
+
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [test-quality-gates, security-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Run E2E Tests
+        run: npm run test:e2e
+        env:
+          CI: true
+
+      - name: Upload E2E Test Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 30
+
+  coverage-check:
+    name: Coverage Validation
+    runs-on: ubuntu-latest
+    needs: test-quality-gates
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Generate Coverage Report
+        run: npm run test:coverage
+        env:
+          CI: true
+
+      - name: Coverage Summary
+        run: |
+          echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          npm run test:coverage -- --coverageReporters=text-summary | grep -A 20 "Coverage summary" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Coverage Badge
+        uses: uncurated-tests/cov@main
+        with:
+          coverage-file: coverage/lcov.info
+          badge-file: coverage/badge.svg
+
+  mutation-testing:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    needs: coverage-check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run Mutation Tests
+        run: npm run test:mutation
+        env:
+          CI: true
+
+  visual-regression:
+    name: Visual Regression Tests
+    runs-on: ubuntu-latest
+    needs: test-quality-gates
+    if: github.event_name == 'push'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Playwright Browsers
+        run: npx playwright install chromium
+
+      - name: Run Visual Tests
+        run: npm run test:visual
+        env:
+          CI: true
+
+      - name: Upload Visual Test Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-test-results
+          path: test-results/visual/
+          retention-days: 7
+
+  quality-gates-summary:
+    name: Quality Gates Summary
+    runs-on: ubuntu-latest
+    needs: [test-quality-gates, security-tests, performance-tests, coverage-check]
+    if: always()
+    
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# 🧪 Quality Gates Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.test-quality-gates.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Tests | ${{ needs.security-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance Tests | ${{ needs.performance-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage Check | ${{ needs.coverage-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.test-quality-gates.result }}" == "success" && \
+                "${{ needs.security-tests.result }}" == "success" && \
+                "${{ needs.performance-tests.result }}" == "success" && \
+                "${{ needs.coverage-check.result }}" == "success" ]]; then
+            echo "## ✅ All Quality Gates Passed!" >> $GITHUB_STEP_SUMMARY
+            echo "The code meets all quality standards and is ready for deployment." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Quality Gates Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Please review the failed tests and fix the issues before merging." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Quality Gates Results')
+            );
+            
+            const testsPassed = [
+              '${{ needs.test-quality-gates.result }}',
+              '${{ needs.security-tests.result }}',
+              '${{ needs.performance-tests.result }}',
+              '${{ needs.coverage-check.result }}'
+            ].every(result => result === 'success');
+            
+            const commentBody = `
+            ## 🧪 Quality Gates Results
+            
+            | Test Suite | Status |
+            |------------|--------|
+            | Unit Tests | ${{ needs.test-quality-gates.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | Security Tests | ${{ needs.security-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | Performance Tests | ${{ needs.performance-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | Coverage Check | ${{ needs.coverage-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            
+            ${testsPassed ? 
+              '## ✅ All Quality Gates Passed!\nThe code meets all quality standards and is ready for merge.' : 
+              '## ❌ Quality Gates Failed\nPlease review the failed tests and fix the issues before merging.'
+            }
+            
+            **Generated at:** ${new Date().toISOString()}
+            `;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
+
+  deployment-readiness:
+    name: Deployment Readiness Check
+    runs-on: ubuntu-latest
+    needs: [e2e-tests, quality-gates-summary]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Deployment Ready
+        run: |
+          echo "# 🚀 Deployment Readiness" >> $GITHUB_STEP_SUMMARY
+          echo "All quality gates have passed. The application is ready for production deployment." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Deploy to staging environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Run smoke tests" >> $GITHUB_STEP_SUMMARY
+          echo "- Deploy to production" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              description: 'Automated deployment after quality gates passed',
+              auto_merge: false,
+              required_contexts: []
+            });

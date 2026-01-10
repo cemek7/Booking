@@ -1,0 +1,15 @@
+{
+  "displayName": "Security Tests",
+  "testMatch": [
+    "**/tests/security/**/*.test.js",
+    "**/tests/security/**/*.spec.js"
+  ],
+  "testEnvironment": "node",
+  "setupFilesAfterEnv": ["<rootDir>/tests/security/setup.js"],
+  "collectCoverage": false,
+  "verbose": true,
+  "testTimeout": 30000,
+  "maxWorkers": 1,
+  "forceExit": true,
+  "detectOpenHandles": true
+}

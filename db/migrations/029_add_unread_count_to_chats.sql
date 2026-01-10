@@ -1,0 +1,2 @@
+ALTER TABLE chats
+ADD COLUMN unread_count INTEGER DEFAULT 0;

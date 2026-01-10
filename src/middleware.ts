@@ -1,0 +1,71 @@
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { middlewareOrchestrator } from '@/middleware/unified/orchestrator';
+import { initializeUnifiedMiddleware } from '@/middleware/unified/middleware-adapter';
+import { getRoleDashboardPath } from './lib/permissions/unified-permissions';
+
+export const runtime = 'nodejs';
+
+// Role-based route protection patterns
+// Exported for use by auth middleware
+export const PROTECTED_ROUTES: Record<string, string[]> = {
+  '/owner': ['owner'],
+  '/manager': ['manager', 'owner'],
+  '/staff': ['staff', 'manager', 'owner'], 
+  '/superadmin': ['superadmin'],
+  '/admin': ['superadmin'],
+  '/dashboard/owner': ['owner'],
+  '/dashboard/manager': ['manager', 'owner'], 
+  '/dashboard/staff-dashboard': ['staff', 'manager', 'owner'],
+  '/dashboard/settings': ['owner'],
+  '/dashboard/billing': ['owner'],
+  '/dashboard/staff/management': ['manager', 'owner'],
+  '/dashboard/staff/scheduling': ['manager', 'owner']
+};
+
+// Initialize middleware on first run
+let middlewareInitialized = false;
+async function ensureMiddlewareInitialized() {
+  if (!middlewareInitialized) {
+    await initializeUnifiedMiddleware();
+    middlewareInitialized = true;
+  }
+}
+
+/**
+ * Unified middleware entry point
+ * Uses orchestrator for composable, reusable middleware chain
+ */
+export async function middleware(request: NextRequest) {
+  // Initialize middleware system (runs once)
+  await ensureMiddlewareInitialized();
+
+  // Execute unified middleware chain
+  const response = await middlewareOrchestrator.execute(request);
+
+  // Handle root path redirect for authenticated users
+  const pathname = request.nextUrl.pathname;
+  if (pathname === '/' && response.status === 200) {
+    // Try to determine user role for dashboard redirect
+    const authHeader = request.headers.get('authorization') || '';
+    if (authHeader.startsWith('Bearer ')) {
+      const dashboardPath = getRoleDashboardPath('staff'); // Default to staff
+      return NextResponse.redirect(new URL(dashboardPath, request.url));
+    }
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api (API routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     */
+    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+  ],
+};

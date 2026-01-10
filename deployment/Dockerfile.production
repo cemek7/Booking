@@ -1,0 +1,71 @@
+# Production Docker Configuration
+# Optimized for security, performance, and resource efficiency
+
+# Build stage
+FROM node:18-alpine AS builder
+
+# Security: Create non-root user
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Install dependencies only when needed
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --only=production --ignore-scripts
+
+# Copy source code
+COPY . .
+
+# Set production environment
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build application
+RUN npm run build
+
+# Production stage  
+FROM node:18-alpine AS runner
+
+# Security hardening
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Install security updates
+RUN apk update && apk upgrade
+
+# Set working directory
+WORKDIR /app
+
+# Copy built application
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Create logs directory
+RUN mkdir -p logs && chown nextjs:nodejs logs
+
+# Set production environment variables
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+
+# Security: Remove unnecessary packages
+RUN apk del --purge
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:3000/api/health || exit 1
+
+# Expose port
+EXPOSE 3000
+
+# Switch to non-root user
+USER nextjs
+
+# Resource limits (applied via docker-compose or k8s)
+# Memory: 512MB
+# CPU: 0.5 cores
+
+# Start application
+CMD ["npm", "start"]

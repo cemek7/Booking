@@ -1,0 +1,28 @@
+{
+  "scripts": {
+    "test": "jest --config jest.enhanced.config.cjs",
+    "test:watch": "jest --config jest.enhanced.config.cjs --watch",
+    "test:coverage": "jest --config jest.enhanced.config.cjs --coverage",
+    "test:unit": "jest --config jest.enhanced.config.cjs --testPathPattern='src/'",
+    "test:integration": "jest --config jest.enhanced.config.cjs --testPathPattern='integration'",
+    "test:component": "jest --config jest.enhanced.config.cjs --testPathPattern='__tests__'",
+    "test:api": "jest --config jest.enhanced.config.cjs --testPathPattern='api'",
+    "test:debug": "jest --config jest.enhanced.config.cjs --runInBand --no-cache",
+    "test:ci": "jest --config jest.enhanced.config.cjs --ci --coverage --watchAll=false",
+    "test:pre-commit": "jest --config jest.enhanced.config.cjs --findRelatedTests --passWithNoTests",
+    "test:release": "npm run test:ci && npm run test:e2e && npm run test:security",
+    "test:performance": "jest --config jest.enhanced.config.cjs --testNamePattern='performance' --runInBand",
+    "test:security": "jest --config tests/security/jest.config.json",
+    "test:coverage-report": "npm run test:coverage && open coverage/lcov-report/index.html",
+    "test:benchmark": "jest --config jest.enhanced.config.cjs --testNamePattern='benchmark' --verbose",
+    "test:mutation": "stryker run",
+    "test:visual": "playwright test --config=tests/visual/playwright.config.ts",
+    "lint:tests": "eslint 'src/**/*.{test,spec}.{ts,tsx}' 'tests/**/*.{ts,tsx}'",
+    "type-check": "tsc --noEmit",
+    "worker:whatsapp": "node scripts/whatsapp-worker.mjs",
+    "worker:whatsapp:dev": "nodemon scripts/whatsapp-worker.mjs",
+    "worker:whatsapp:pm2": "pm2 start scripts/whatsapp-worker.mjs --name whatsapp-processor",
+    "workers:start": "concurrently \"npm run worker:whatsapp\" \"npm run worker:jobs\"",
+    "workers:stop": "pm2 stop all"
+  }
+}

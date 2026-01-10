@@ -1,0 +1,106 @@
+openapi: 3.0.3
+info:
+  title: Evolution API (subset for Booka)
+  description: Minimal OpenAPI spec for Evolution API endpoints (WhatsApp messaging). Based on doc.evolution-api.com reference.
+  version: "1.0.0"
+servers:
+  - url: https://{server-url}
+    variables:
+      server-url:
+        default: doc.evolution-api.com
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: apikey
+  schemas:
+    SendTextRequest:
+      type: object
+      properties:
+        number:
+          type: string
+          description: Recipient phone number in full international format
+        text:
+          type: string
+        delay:
+          type: integer
+        linkPreview:
+          type: boolean
+        mentionsEveryOne:
+          type: boolean
+        mentioned:
+          type: array
+          items:
+            type: string
+        quoted:
+          type: object
+    ApiInfoResponse:
+      type: object
+      properties:
+        status: { type: integer }
+        message: { type: string }
+        version: { type: string }
+        swagger: { type: string }
+paths:
+  /:
+    get:
+      summary: Get information about Evolution API instance
+      responses:
+        '200':
+          description: Info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiInfoResponse'
+  /message/sendText/{instance}:
+    post:
+      security:
+        - apiKeyAuth: []
+      summary: Send plain text message via a specific instance
+      parameters:
+        - in: path
+          name: instance
+          required: true
+          schema:
+            type: string
+          description: Instance identifier (your WhatsApp instance)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendTextRequest'
+      responses:
+        '200':
+          description: Message queued/sent response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: integer }
+                  message: { type: string }
+                  data: { type: object }
+  /message/getMessages/{instance}:
+    get:
+      security:
+        - apiKeyAuth: []
+      summary: Retrieve messages for an instance (example)
+      parameters:
+        - in: path
+          name: instance
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: messages list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { type: object }
