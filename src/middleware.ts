@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { middlewareOrchestrator } from '@/middleware/unified/orchestrator';
 import { initializeUnifiedMiddleware } from '@/middleware/unified/middleware-adapter';
 import { getRoleDashboardPath } from './lib/permissions/unified-permissions';
+import { isValidRole } from '@/types/roles';
 
 export const runtime = 'nodejs';
 
@@ -46,10 +47,10 @@ export async function middleware(request: NextRequest) {
   // Handle root path redirect for authenticated users
   const pathname = request.nextUrl.pathname;
   if (pathname === '/' && response.status === 200) {
-    // Try to determine user role for dashboard redirect
-    const authHeader = request.headers.get('authorization') || '';
-    if (authHeader.startsWith('Bearer ')) {
-      const dashboardPath = getRoleDashboardPath('staff'); // Default to staff
+    const roleHeader = request.headers.get('x-user-role');
+    const role = roleHeader?.toLowerCase() ?? null;
+    if (role && isValidRole(role)) {
+      const dashboardPath = getRoleDashboardPath(role);
       return NextResponse.redirect(new URL(dashboardPath, request.url));
     }
   }
