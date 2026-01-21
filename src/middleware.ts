@@ -34,8 +34,11 @@ async function ensureMiddlewareInitialized() {
 }
 
 /**
- * Unified middleware entry point
- * Uses orchestrator for composable, reusable middleware chain
+ * Process an incoming Next.js request through the unified middleware chain and apply a root-path redirect for authenticated users.
+ *
+ * Ensures the unified middleware system is initialized, executes the orchestrator, and if the request path is `/` and the `x-user-role` header contains a valid role, redirects to that role's dashboard.
+ *
+ * @returns The HTTP response produced by the unified middleware orchestrator, or a redirect response to a role-specific dashboard when applicable.
  */
 export async function middleware(request: NextRequest) {
   // Initialize middleware system (runs once)
