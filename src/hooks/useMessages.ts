@@ -4,6 +4,18 @@ import { useEffect } from 'react';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import type { Message } from '@/components/chat/ChatThread';
 import { messageSendSchema } from '@/lib/validation';
+import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+
+// Database row type for messages
+interface MessageRow {
+  id: string;
+  booking_id: string;
+  direction: 'inbound' | 'outbound';
+  channel: string;
+  content: string | null;
+  text: string | null;
+  created_at: string;
+}
 
 async function fetchMessages(bookingId: string): Promise<Message[]> {
   const res = await fetch(`/api/bookings/${bookingId}/messages`);
@@ -17,13 +29,13 @@ export function useMessages(bookingId: string) {
   const q = useQuery({ queryKey: ['messages', bookingId], queryFn: () => fetchMessages(bookingId), enabled: !!bookingId });
   useEffect(() => {
     if (!bookingId) return;
-    let channel: any;
+    let channel: RealtimeChannel | null = null;
     try {
-      const sb = getBrowserSupabase() as any;
+      const sb = getBrowserSupabase();
       if (sb?.channel) {
         channel = sb.channel(`public:messages:booking:${bookingId}`)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `booking_id=eq.${bookingId}` }, (payload: any) => {
-            const newMsg = payload.new;
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `booking_id=eq.${bookingId}` }, (payload: RealtimePostgresChangesPayload<MessageRow>) => {
+            const newMsg = payload.new as MessageRow | null;
             if (newMsg) {
               qc.setQueryData<Message[]>(['messages', bookingId], (old) => {
                 const arr = old || [];
@@ -42,16 +54,28 @@ export function useMessages(bookingId: string) {
           })
           .subscribe();
       }
-    } catch {}
-    return () => { try { channel && getBrowserSupabase()?.removeChannel?.(channel); } catch {} };
+    } catch { /* ignore subscription errors */ }
+    return () => { try { channel && getBrowserSupabase()?.removeChannel?.(channel); } catch { /* ignore */ } };
   }, [bookingId, qc]);
   return q;
+}
+
+interface Attachment {
+  url: string;
+  type: string;
+  name?: string;
+}
+
+interface SendMessagePayload {
+  channel: string;
+  text: string;
+  attachments?: Attachment[];
 }
 
 export function useSendMessage(bookingId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { channel: string; text: string; attachments?: any[] }) => {
+    mutationFn: async (payload: SendMessagePayload) => {
       const parsed = messageSendSchema.safeParse(payload);
       if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || 'Invalid message');
       const res = await fetch(`/api/bookings/${bookingId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

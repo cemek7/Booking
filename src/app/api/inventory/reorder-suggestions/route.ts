@@ -1,10 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '../../../../lib/supabaseClient';
-import { getSession } from '../../../../lib/auth/session';
-import { validateTenantAccess } from '../../../../lib/enhanced-rbac';
 import { z } from 'zod';
-import { handleApiError } from '../../../../lib/error-handling';
-import { inventoryService } from '../../../../lib/services/inventory-service';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { inventoryService } from '@/lib/services/inventory-service';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 // Zod schema for GET query parameters
 const GetSuggestionsQuerySchema = z.object({
@@ -13,36 +11,77 @@ const GetSuggestionsQuerySchema = z.object({
   limit: z.preprocess((val) => parseInt(String(val), 10), z.number().int().min(1).max(200)).default(100),
 });
 
+interface Suggestion {
+  product_id: string;
+  priority: 'high' | 'medium' | 'low';
+  suggested_reorder_quantity: number;
+  estimated_cost?: number;
+  product_name?: string;
+  sku?: string;
+  category?: { id: string; name: string } | null;
+}
+
+interface CategoryGroup {
+  category_name: string;
+  suggestions: Suggestion[];
+  total_cost: number;
+}
+
+async function enrichSuggestions(suggestions: Suggestion[], tenantId: string): Promise<Suggestion[]> {
+  if (suggestions.length === 0) return [];
+
+  const supabase = createServerSupabaseClient();
+  const productIds = [...new Set(suggestions.map(s => s.product_id))];
+
+  const { data: products, error } = await supabase
+    .from('products')
+    .select('id, name, sku, cost_price_cents, category:product_categories(id, name)')
+    .in('id', productIds)
+    .eq('tenant_id', tenantId);
+
+  if (error) throw error;
+
+  const productMap = new Map(products?.map(p => [p.id, p]) || []);
+
+  return suggestions.map(suggestion => {
+    const product = productMap.get(suggestion.product_id);
+    const costPriceCents = (product as { cost_price_cents?: number })?.cost_price_cents || 0;
+    const estimated_cost = suggestion.suggested_reorder_quantity * costPriceCents / 100;
+
+    return {
+      ...suggestion,
+      product_name: product?.name || 'Unknown Product',
+      sku: product?.sku,
+      category: product?.category as { id: string; name: string } | null,
+      estimated_cost,
+    };
+  });
+}
+
 /**
  * GET /api/inventory/reorder-suggestions
  * Get intelligent reorder suggestions based on sales velocity and stock levels.
- * Requires 'manager' or 'admin' role.
  */
-export async function GET(req: NextRequest) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    const access = await validateTenantAccess(createServerSupabaseClient(), session.user.id, tenantId, ['owner', 'manager']);
-    if (!access) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const url = new URL(req.url);
+    const url = new URL(ctx.request.url);
     const queryValidation = GetSuggestionsQuerySchema.safeParse(Object.fromEntries(url.searchParams));
     if (!queryValidation.success) {
-      return NextResponse.json({ error: 'Invalid query parameters', details: queryValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
     const { days: analysisWindow, priority: priorityFilter, limit } = queryValidation.data;
 
     const result = await inventoryService.getReorderSuggestions([tenantId], analysisWindow);
     if (!result.success || !result.suggestions) {
-      throw new Error(result.error || 'Failed to get reorder suggestions from service.');
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to get reorder suggestions'));
     }
 
-    let suggestions = result.suggestions;
+    let suggestions = result.suggestions as Suggestion[];
     if (priorityFilter) {
       suggestions = suggestions.filter(s => s.priority === priorityFilter);
     }
@@ -51,7 +90,7 @@ export async function GET(req: NextRequest) {
     // Enrich suggestions with more product details
     const enrichedSuggestions = await enrichSuggestions(limitedSuggestions, tenantId);
 
-    // --- Response Formatting ---
+    // Response Formatting
     const summary = {
       total_suggestions: enrichedSuggestions.length,
       high_priority: enrichedSuggestions.filter(s => s.priority === 'high').length,
@@ -69,45 +108,14 @@ export async function GET(req: NextRequest) {
       acc[categoryName].suggestions.push(suggestion);
       acc[categoryName].total_cost += suggestion.estimated_cost || 0;
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, CategoryGroup>);
 
-    return NextResponse.json({
+    return {
       suggestions: enrichedSuggestions,
       summary,
       suggestions_by_category: Object.values(suggestionsByCategory),
-    });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to retrieve reorder suggestions');
-  }
-}
-
-async function enrichSuggestions(suggestions: any[], tenantId: string) {
-  if (suggestions.length === 0) return [];
-
-  const supabase = createServerSupabaseClient();
-  const productIds = [...new Set(suggestions.map(s => s.product_id))];
-  
-  const { data: products, error } = await supabase
-    .from('products')
-    .select('id, name, sku, cost_price_cents, category:product_categories(id, name)')
-    .in('id', productIds)
-    .eq('tenant_id', tenantId);
-
-  if (error) throw error;
-
-  const productMap = new Map(products.map(p => [p.id, p]));
-
-  return suggestions.map(suggestion => {
-    const product = productMap.get(suggestion.product_id);
-    const estimated_cost = suggestion.suggested_reorder_quantity * (product?.cost_price_cents || 0) / 100;
-
-    return {
-      ...suggestion,
-      product_name: product?.name || 'Unknown Product',
-      sku: product?.sku,
-      category: product?.category,
-      estimated_cost,
     };
-  });
-}
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager'] }
+);

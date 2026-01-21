@@ -1,4 +1,5 @@
 "use client";
+import React, { memo, useCallback } from 'react';
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useEffect } from 'react';
 import { Table, THead, TBody, TR, TH, TD } from "../ui/table";
@@ -10,6 +11,50 @@ import { toast } from '../ui/toast';
 import { useTenant } from "@/lib/supabase/tenant-context";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authFetch, authDelete, authPost } from "@/lib/auth/auth-api-client";
+
+interface CustomerListRowProps {
+  customer: CustomerRow;
+  onRowClick: (customer: CustomerRow) => void;
+  onEdit: (id: number) => void;
+  onDelete: (id: number) => void;
+}
+
+const CustomerListRow = memo<CustomerListRowProps>(function CustomerListRow({
+  customer,
+  onRowClick,
+  onEdit,
+  onDelete,
+}) {
+  const handleRowClick = useCallback(() => {
+    onRowClick(customer);
+  }, [onRowClick, customer]);
+
+  const handleEdit = useCallback(() => {
+    onEdit(customer.id);
+  }, [onEdit, customer.id]);
+
+  const handleDelete = useCallback(() => {
+    onDelete(customer.id);
+  }, [onDelete, customer.id]);
+
+  const handleActionClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  return (
+    <TR className="cursor-pointer hover:bg-indigo-50" onClick={handleRowClick}>
+      <TD>{customer.id}</TD>
+      <TD>{customer.name}</TD>
+      <TD>{customer.phone}</TD>
+      <TD>{customer.notes}</TD>
+      <TD>{customer.created_at ? new Date(customer.created_at).toLocaleString() : ""}</TD>
+      <TD onClick={handleActionClick}>
+        <Button className="mr-2 px-2 py-1 text-xs" onClick={handleEdit}>Edit</Button>
+        <Button className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600" onClick={handleDelete}>Delete</Button>
+      </TD>
+    </TR>
+  );
+});
 
 export default function CustomersList({ tenantId, filter }: { tenantId?: string; filter?: string }) {
   const { tenant } = useTenant();
@@ -47,14 +92,41 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
     onError: () => toast.error('Failed to delete customer')
   });
 
-  const handleEdit = (id: number) => {
+  const handleEdit = useCallback((id: number) => {
     router.push(`/dashboard/customers/${id}`);
-  };
+  }, [router]);
 
-  const handleDelete = (id: number) => {
+  const handleDelete = useCallback((id: number) => {
     if (!confirm('Are you sure you want to delete this customer?')) return;
     deleteMutation.mutate(id);
-  };
+  }, [deleteMutation]);
+
+  const handleRowClick = useCallback((c: CustomerRow) => {
+    setSelected(c);
+    setOpen(true);
+    // Best-effort stats fetch
+    (async () => {
+      try {
+        const response = await authFetch(`/api/customers/${c.id}/stats`);
+        if (response.error) { setSelectedStats(null); return; }
+        const json = response.data;
+        setSelectedStats({
+          totalBookings: json.totalBookings ?? json.total_bookings,
+          lastBookingAt: json.lastBookingAt ?? json.last_booking_at,
+          status: json.status ?? json.tier ?? undefined,
+        });
+      } catch { setSelectedStats(null); }
+    })();
+    // Best-effort history fetch
+    (async () => {
+      try {
+        const response = await authFetch(`/api/customers/${c.id}/history`);
+        if (response.error) { setSelectedHistory(null); return; }
+        const json = response.data;
+        setSelectedHistory({ lifetimeSpend: json.lifetimeSpend || 0, recent: Array.isArray(json.recent) ? json.recent : [] });
+      } catch { setSelectedHistory(null); }
+    })();
+  }, []);
 
   const filtered: CustomerRow[] = useMemo(() => (data || []).filter((c: CustomerRow) => {
     if (!filter) return true;
@@ -84,43 +156,14 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
         </THead>
         <TBody>
           {filtered && filtered.length > 0 ? (
-            filtered.map((c: CustomerRow) => (
-              <TR key={c.id} className="cursor-pointer hover:bg-indigo-50" onClick={() => {
-                setSelected(c);
-                setOpen(true);
-                // Best-effort stats fetch
-                (async () => {
-                  try {
-                    const response = await authFetch(`/api/customers/${c.id}/stats`);
-                    if (response.error) { setSelectedStats(null); return; }
-                    const json = response.data;
-                    setSelectedStats({
-                      totalBookings: json.totalBookings ?? json.total_bookings,
-                      lastBookingAt: json.lastBookingAt ?? json.last_booking_at,
-                      status: json.status ?? json.tier ?? undefined,
-                    });
-                  } catch { setSelectedStats(null); }
-                })();
-                // Best-effort history fetch
-                (async () => {
-                  try {
-                    const response = await authFetch(`/api/customers/${c.id}/history`);
-                    if (response.error) { setSelectedHistory(null); return; }
-                    const json = response.data;
-                    setSelectedHistory({ lifetimeSpend: json.lifetimeSpend || 0, recent: Array.isArray(json.recent) ? json.recent : [] });
-                  } catch { setSelectedHistory(null); }
-                })();
-              }}>
-                <TD>{c.id}</TD>
-                <TD>{c.name}</TD>
-                <TD>{c.phone}</TD>
-                <TD>{c.notes}</TD>
-                <TD>{c.created_at ? new Date(c.created_at).toLocaleString() : ""}</TD>
-                <TD onClick={e => e.stopPropagation()}>
-                  <Button className="mr-2 px-2 py-1 text-xs" onClick={() => handleEdit(c.id)}>Edit</Button>
-                  <Button className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600" onClick={() => handleDelete(c.id)}>Delete</Button>
-                </TD>
-              </TR>
+            filtered.map((customer: CustomerRow) => (
+              <CustomerListRow
+                key={customer.id}
+                customer={customer}
+                onRowClick={handleRowClick}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+              />
             ))
           ) : (
             <TR>
@@ -135,7 +178,7 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
           <CustomerProfileCard
             customer={{ ...selected, totalBookings: selectedStats?.totalBookings, lastBookingAt: selectedStats?.lastBookingAt, status: selectedStats?.status }}
             onEdit={(id) => { setOpen(false); handleEdit(id); }}
-            onNewBooking={(id) => { setOpen(false); setOpenBooking(true); }}
+            onNewBooking={() => { setOpen(false); setOpenBooking(true); }}
             onMessage={async () => {
               setOpen(false);
               try {

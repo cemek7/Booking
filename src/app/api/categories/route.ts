@@ -1,10 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '../../../lib/supabaseClient';
-import { getSession } from '../../../lib/auth/session';
-import { validateTenantAccess } from '../../../lib/enhanced-rbac';
 import { z } from 'zod';
-import { AuthenticatedRequest, handleApiError } from '../../../lib/error-handling';
-import { UserRole } from '../../../../types';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { PG_ERROR_CODES } from '@/lib/constants';
 
 // Zod schema for GET query parameters
 const GetCategoriesQuerySchema = z.object({
@@ -23,39 +20,45 @@ const CreateCategoryBodySchema = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   display_order: z.number().int().default(0),
   is_active: z.boolean().default(true),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
+
+interface Category {
+  id: string;
+  parent_id: string | null;
+  [key: string]: unknown;
+}
+
+interface CategoryWithChildren extends Category {
+  children: CategoryWithChildren[];
+}
 
 /**
  * GET /api/categories
  * List product categories with hierarchical structure.
- * Requires 'viewer' or higher role.
  */
-export async function GET(req: NextRequest) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    // Assuming 'viewer' can see categories.
-    await validateTenantAccess(session.user.id, tenantId, [UserRole.ADMIN, UserRole.MANAGER, UserRole.STAFF, UserRole.VIEWER]);
-
-    const url = new URL(req.url);
+    const url = new URL(ctx.request.url);
     const queryValidation = GetCategoriesQuerySchema.safeParse(Object.fromEntries(url.searchParams));
 
     if (!queryValidation.success) {
-      return NextResponse.json({ error: 'Invalid query parameters', details: queryValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
     const query = queryValidation.data;
 
-    const supabase = createServerSupabaseClient();
-    let queryBuilder = supabase
+    const selectFields = query.include_product_count
+      ? '*, product_count:products(count)'
+      : '*';
+
+    let queryBuilder = ctx.supabase
       .from('product_categories')
-      .select(`
-        *,
-        ${query.include_product_count ? 'product_count:products(count)' : ''}
-      `)
+      .select(selectFields)
       .eq('tenant_id', tenantId);
 
     // Apply filters
@@ -76,13 +79,12 @@ export async function GET(req: NextRequest) {
     const { data: categories, error } = await queryBuilder;
 
     if (error) {
-      console.error('Categories fetch error:', error);
-      return NextResponse.json({ error: 'Failed to fetch categories' }, { status: 500 });
+      throw ApiErrorFactory.databaseError(error);
     }
 
     if (query.include_children && categories) {
-      const buildHierarchy = (parentId: string | null = null): any[] => {
-        return categories
+      const buildHierarchy = (parentId: string | null = null): CategoryWithChildren[] => {
+        return (categories as Category[])
           .filter(cat => cat.parent_id === parentId)
           .map(cat => ({
             ...cat,
@@ -90,59 +92,53 @@ export async function GET(req: NextRequest) {
           }));
       };
       const hierarchicalCategories = buildHierarchy(query.parent_id === 'null' ? null : (query.parent_id || null));
-      return NextResponse.json({ categories: hierarchicalCategories });
+      return { categories: hierarchicalCategories };
     }
 
-    return NextResponse.json({ categories: categories || [] });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to retrieve categories');
-  }
-}
+    return { categories: categories || [] };
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager', 'staff'] }
+);
 
 /**
  * POST /api/categories
  * Create a new product category.
- * Requires 'manager' or 'admin' role.
+ * Requires 'manager' or 'owner' role.
  */
-export async function POST(req: AuthenticatedRequest) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    await validateTenantAccess(session.user.id, tenantId, [UserRole.ADMIN, UserRole.MANAGER]);
-
-    const body = await req.json();
+    const body = await ctx.request.json();
     const bodyValidation = CreateCategoryBodySchema.safeParse(body);
 
     if (!bodyValidation.success) {
-      return NextResponse.json({ error: 'Invalid request body', details: bodyValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
     const { name, ...restOfBody } = bodyValidation.data;
 
-    const supabase = createServerSupabaseClient();
-
     // Check for name uniqueness within the tenant
-    const { data: existingCategory, error: existingError } = await supabase
+    const { data: existingCategory, error: existingError } = await ctx.supabase
       .from('product_categories')
       .select('id')
       .eq('tenant_id', tenantId)
       .eq('name', name)
       .limit(1);
 
-    if (existingError) throw existingError;
+    if (existingError) {
+      throw ApiErrorFactory.databaseError(existingError);
+    }
     if (existingCategory && existingCategory.length > 0) {
-      return NextResponse.json({
-        error: 'Category name already exists',
-        details: { field: 'name', message: 'A category with this name already exists' }
-      }, { status: 409 });
+      throw ApiErrorFactory.conflict('A category with this name already exists');
     }
 
     // Validate parent category if provided
     if (restOfBody.parent_id) {
-      const { data: parentCategory, error: parentError } = await supabase
+      const { data: parentCategory, error: parentError } = await ctx.supabase
         .from('product_categories')
         .select('id, parent_id')
         .eq('id', restOfBody.parent_id)
@@ -150,17 +146,21 @@ export async function POST(req: AuthenticatedRequest) {
         .single();
 
       if (parentError || !parentCategory) {
-        return NextResponse.json({
-          error: 'Invalid parent category',
-          details: { field: 'parent_id', message: 'Parent category not found or is inactive' }
-        }, { status: 400 });
+        throw ApiErrorFactory.validationError({
+          field: 'parent_id',
+          message: 'Parent category not found or is inactive'
+        });
       }
-      
-      // Prevent deep nesting (e.g., max 3 levels)
+
+      // Prevent deep nesting (max 3 levels)
       let depth = 1;
       let currentParentId = parentCategory.parent_id;
       while (currentParentId && depth < 3) {
-        const { data: ancestor } = await supabase.from('product_categories').select('parent_id').eq('id', currentParentId).single();
+        const { data: ancestor } = await ctx.supabase
+          .from('product_categories')
+          .select('parent_id')
+          .eq('id', currentParentId)
+          .single();
         if (ancestor) {
           currentParentId = ancestor.parent_id;
           depth++;
@@ -169,14 +169,14 @@ export async function POST(req: AuthenticatedRequest) {
         }
       }
       if (depth >= 3) {
-        return NextResponse.json({
-          error: 'Maximum nesting depth reached',
-          details: { field: 'parent_id', message: 'Categories can only be nested 3 levels deep' }
-        }, { status: 400 });
+        throw ApiErrorFactory.validationError({
+          field: 'parent_id',
+          message: 'Categories can only be nested 3 levels deep'
+        });
       }
     }
 
-    const { data: newCategory, error: insertError } = await supabase
+    const { data: newCategory, error: insertError } = await ctx.supabase
       .from('product_categories')
       .insert({
         tenant_id: tenantId,
@@ -187,16 +187,14 @@ export async function POST(req: AuthenticatedRequest) {
       .single();
 
     if (insertError) {
-      console.error('Category creation error:', insertError);
-      if (insertError.code === '23505') { // Unique constraint violation
-        return NextResponse.json({ error: 'Category name already exists' }, { status: 409 });
+      if (insertError.code === PG_ERROR_CODES.UNIQUE_VIOLATION) {
+        throw ApiErrorFactory.conflict('Category name already exists');
       }
-      throw insertError;
+      throw ApiErrorFactory.databaseError(insertError);
     }
 
-    return NextResponse.json({ message: 'Category created successfully', category: newCategory }, { status: 201 });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to create category');
-  }
-}
+    return { message: 'Category created successfully', category: newCategory };
+  },
+  'POST',
+  { auth: true, roles: ['owner', 'manager'] }
+);

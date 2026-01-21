@@ -1,9 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '../../../../lib/supabaseClient';
-import { getSession } from '../../../../lib/auth/session';
 import { z } from 'zod';
-import { handleApiError } from '../../../../lib/error-handling';
-import { createTenant } from '../../../../lib/services/onboarding-service';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { createTenant } from '@/lib/services/onboarding-service';
 import { trace } from '@opentelemetry/api';
 
 const tracer = trace.getTracer('boka-onboarding-api');
@@ -33,34 +31,34 @@ const OnboardingBodySchema = z.object({
 /**
  * POST /api/onboarding/tenant
  * Creates a new tenant and seeds initial data.
- * Requires an authenticated user.
  */
-export async function POST(req: NextRequest) {
-  const span = tracer.startSpan('api.onboarding.tenant.post');
-  try {
-    const { session } = await getSession(req);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const span = tracer.startSpan('api.onboarding.tenant.post');
+
+    try {
+      if (!ctx.user?.id) {
+        throw ApiErrorFactory.unauthorized('User ID required');
+      }
+
+      const userId = ctx.user.id;
+      span.setAttribute('user.id', userId);
+
+      const body = await ctx.request.json();
+      const bodyValidation = OnboardingBodySchema.safeParse(body);
+
+      if (!bodyValidation.success) {
+        throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
+      }
+
+      const { tenantId } = await createTenant(ctx.supabase, userId, bodyValidation.data);
+
+      span.setAttribute('tenant.id', tenantId);
+      return { success: true, tenantId };
+    } finally {
+      span.end();
     }
-    const userId = session.user.id;
-    span.setAttribute('user.id', userId);
-
-    const body = await req.json();
-    const bodyValidation = OnboardingBodySchema.safeParse(body);
-
-    if (!bodyValidation.success) {
-      return NextResponse.json({ error: 'Invalid request body', details: bodyValidation.error.issues }, { status: 400 });
-    }
-
-    const supabase = createServerSupabaseClient();
-    const { tenantId } = await createTenant(supabase, userId, bodyValidation.data);
-
-    span.setAttribute('tenant.id', tenantId);
-    return NextResponse.json({ success: true, tenantId });
-  } catch (error) {
-    span.recordException(error as Error);
-    return handleApiError(error, 'Failed to create tenant');
-  } finally {
-    span.end();
-  }
-}
+  },
+  'POST',
+  { auth: true }
+);

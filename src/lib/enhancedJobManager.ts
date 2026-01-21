@@ -1,26 +1,27 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace, metrics } from '@opentelemetry/api';
+import { dialogBookingBridge } from './dialogBookingBridge';
+import * as dialogManager from './dialogManager';
 
+// Matches actual database schema from 009_create_jobs_table.sql
 export interface JobDefinition {
   id: string;
-  name: string;
-  handler: string;
-  payload: Record<string, unknown>;
-  tenant_id?: string;
-  priority: number;
-  max_retries: number;
-  retry_delay_ms: number;
-  retry_backoff_multiplier: number;
-  timeout_ms: number;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'dead_letter';
+  type: string;  // Job type/handler name (e.g., 'process_whatsapp_message')
+  payload: Record<string, unknown> | null;
+  attempts: number;  // Number of processing attempts
+  status: 'pending' | 'processing' | 'completed' | 'failed';
   scheduled_at: string;
-  started_at?: string;
-  completed_at?: string;
-  error_message?: string;
-  retry_count: number;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 }
+
+// Default job processing config
+const JOB_CONFIG = {
+  maxRetries: 3,
+  retryDelayMs: 5000,
+  timeoutMs: 30000,
+};
 
 export interface RetryPolicy {
   max_retries: number;
@@ -38,14 +39,14 @@ export interface JobResult {
 }
 
 // Job handler registry
-type JobHandler = (payload: Record<string, unknown>, context: { 
-  job_id: string; 
-  tenant_id?: string; 
-  retry_count: number; 
+type JobHandler = (payload: Record<string, unknown>, context: {
+  job_id: string;
+  tenant_id?: string;
+  attempts: number;
 }) => Promise<JobResult>;
 
 export class EnhancedJobManager {
-  private supabase: SupabaseClient;
+  private supabase: ReturnType<typeof createServerSupabaseClient>;
   private tracer = trace.getTracer('boka-jobs');
   private meter = metrics.getMeter('boka-jobs');
   private handlers = new Map<string, JobHandler>();
@@ -67,8 +68,8 @@ export class EnhancedJobManager {
     description: 'Number of jobs in dead letter queue',
   });
 
-  constructor(supabase: SupabaseClient) {
-    this.supabase = supabase;
+  constructor(supabase?: ReturnType<typeof createServerSupabaseClient>) {
+    this.supabase = supabase || createServerSupabaseClient();
     this.initializeBuiltinHandlers();
   }
 
@@ -222,107 +223,102 @@ export class EnhancedJobManager {
   /**
    * Process a single job
    */
-  private async processJob(job: JobDefinition): Promise<{ 
-    processed: boolean; 
-    error: boolean; 
-    dead_letter: boolean; 
+  private async processJob(job: JobDefinition): Promise<{
+    processed: boolean;
+    error: boolean;
+    dead_letter: boolean;
   }> {
     const span = this.tracer.startSpan('jobs.process_single', {
       attributes: {
         'job.id': job.id,
-        'job.name': job.name,
-        'job.retry_count': job.retry_count,
+        'job.type': job.type,
+        'job.attempts': job.attempts,
       },
     });
 
     const jobStartTime = Date.now();
-    
-    try {
-      // Mark job as running
-      await this.updateJobStatus(job.id, 'running', {
-        started_at: new Date().toISOString(),
-      });
+    const tenantId = (job.payload as { tenant_id?: string })?.tenant_id;
 
-      // Get handler
-      const handler = this.handlers.get(job.handler);
+    try {
+      // Mark job as processing
+      await this.updateJobStatus(job.id, 'processing');
+
+      // Get handler by job type
+      const handler = this.handlers.get(job.type);
       if (!handler) {
-        throw new Error(`No handler registered for job type: ${job.handler}`);
+        throw new Error(`No handler registered for job type: ${job.type}`);
       }
 
       // Execute job with timeout
       const result = await this.executeWithTimeout(
-        handler(job.payload, {
+        handler(job.payload || {}, {
           job_id: job.id,
-          tenant_id: job.tenant_id,
-          retry_count: job.retry_count,
+          tenant_id: tenantId,
+          attempts: job.attempts,
         }),
-        job.timeout_ms
+        JOB_CONFIG.timeoutMs
       );
 
       const duration = Date.now() - jobStartTime;
       this.jobDurationHistogram.record(duration, {
-        job_name: job.name,
+        job_name: job.type,
         status: result.success ? 'completed' : 'failed',
       });
 
       if (result.success) {
         // Job completed successfully
-        await this.updateJobStatus(job.id, 'completed', {
-          completed_at: new Date().toISOString(),
-        });
-        
+        await this.updateJobStatus(job.id, 'completed');
+
         span.setStatus({ code: 1 }); // OK
         return { processed: true, error: false, dead_letter: false };
 
-      } else if (result.retry && job.retry_count < job.max_retries) {
+      } else if (result.retry && job.attempts < JOB_CONFIG.maxRetries) {
         // Schedule retry
-        const nextRetry = this.calculateNextRetry(job);
+        const nextRetry = this.calculateNextRetry(job.attempts);
         await this.updateJobStatus(job.id, 'pending', {
-          retry_count: job.retry_count + 1,
+          attempts: job.attempts + 1,
           scheduled_at: nextRetry.toISOString(),
-          error_message: result.error,
+          last_error: result.error,
         });
-        
+
         span.setAttribute('job.scheduled_retry', true);
         return { processed: false, error: true, dead_letter: false };
 
       } else {
-        // Move to dead letter queue
-        await this.updateJobStatus(job.id, 'dead_letter', {
-          completed_at: new Date().toISOString(),
-          error_message: result.error || 'Max retries exceeded',
+        // Mark as failed (max retries exceeded)
+        await this.updateJobStatus(job.id, 'failed', {
+          last_error: result.error || 'Max retries exceeded',
         });
 
         this.deadLetterJobsGauge.record(1);
-        span.setAttribute('job.moved_to_dead_letter', true);
+        span.setAttribute('job.max_retries_exceeded', true);
         return { processed: false, error: true, dead_letter: true };
       }
 
     } catch (error) {
       const duration = Date.now() - jobStartTime;
       this.jobDurationHistogram.record(duration, {
-        job_name: job.name,
+        job_name: job.type,
         status: 'error',
       });
 
       // Handle unexpected errors
-      if (job.retry_count < job.max_retries) {
-        const nextRetry = this.calculateNextRetry(job);
+      if (job.attempts < JOB_CONFIG.maxRetries) {
+        const nextRetry = this.calculateNextRetry(job.attempts);
         await this.updateJobStatus(job.id, 'pending', {
-          retry_count: job.retry_count + 1,
+          attempts: job.attempts + 1,
           scheduled_at: nextRetry.toISOString(),
-          error_message: (error as Error).message,
+          last_error: (error as Error).message,
         });
       } else {
-        await this.updateJobStatus(job.id, 'dead_letter', {
-          completed_at: new Date().toISOString(),
-          error_message: (error as Error).message,
+        await this.updateJobStatus(job.id, 'failed', {
+          last_error: (error as Error).message,
         });
         this.deadLetterJobsGauge.record(1);
       }
 
       span.recordException(error as Error);
-      return { processed: false, error: true, dead_letter: job.retry_count >= job.max_retries };
+      return { processed: false, error: true, dead_letter: job.attempts >= JOB_CONFIG.maxRetries };
 
     } finally {
       span.end();
@@ -346,18 +342,17 @@ export class EnhancedJobManager {
   /**
    * Calculate next retry time with exponential backoff and jitter
    */
-  private calculateNextRetry(job: JobDefinition): Date {
-    const baseDelay = job.retry_delay_ms;
-    const backoffMultiplier = job.retry_backoff_multiplier;
-    const retryCount = job.retry_count;
-    
+  private calculateNextRetry(attempts: number): Date {
+    const baseDelay = JOB_CONFIG.retryDelayMs;
+    const backoffMultiplier = 2;
+
     // Exponential backoff
-    const delay = baseDelay * Math.pow(backoffMultiplier, retryCount);
-    
+    const delay = baseDelay * Math.pow(backoffMultiplier, attempts);
+
     // Add jitter (±25% randomness)
     const jitter = delay * 0.25 * (Math.random() * 2 - 1);
-    const finalDelay = Math.max(1000, delay + jitter); // Minimum 1 second
-    
+    const finalDelay = Math.max(1000, Math.min(delay + jitter, 300000)); // Min 1s, max 5min
+
     return new Date(Date.now() + finalDelay);
   }
 
@@ -384,14 +379,12 @@ export class EnhancedJobManager {
    */
   async getJobStats(): Promise<{
     pending: number;
-    running: number;
+    processing: number;
     completed: number;
     failed: number;
-    dead_letter: number;
-    avg_duration_ms: number;
   }> {
     const span = this.tracer.startSpan('jobs.get_stats');
-    
+
     try {
       // Get counts by status
       const { data: statusCounts } = await this.supabase
@@ -404,93 +397,57 @@ export class EnhancedJobManager {
         return acc;
       }, {} as Record<string, number>);
 
-      // Get average duration for completed jobs
-      const { data: completedJobs } = await this.supabase
-        .from('jobs')
-        .select('started_at, completed_at')
-        .eq('status', 'completed')
-        .not('started_at', 'is', null)
-        .not('completed_at', 'is', null)
-        .gte('completed_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-
-      const durations = (completedJobs || []).map(job => {
-        const start = new Date(job.started_at!).getTime();
-        const end = new Date(job.completed_at!).getTime();
-        return end - start;
-      }).filter(d => d > 0);
-
-      const avgDuration = durations.length > 0 
-        ? durations.reduce((a, b) => a + b, 0) / durations.length 
-        : 0;
-
-      const stats = {
-        pending: counts.pending || 0,
-        running: counts.running || 0,
-        completed: counts.completed || 0,
-        failed: counts.failed || 0,
-        dead_letter: counts.dead_letter || 0,
-        avg_duration_ms: Math.round(avgDuration),
-      };
-
-      // Update gauge metrics
-      this.activeJobsGauge.record(stats.running + stats.pending);
-
-      return stats;
-
-    } catch (error) {
-      span.recordException(error as Error);
       return {
-        pending: 0,
-        running: 0,
-        completed: 0,
-        failed: 0,
-        dead_letter: 0,
-        avg_duration_ms: 0,
+        pending: counts['pending'] || 0,
+        processing: counts['processing'] || 0,
+        completed: counts['completed'] || 0,
+        failed: counts['failed'] || 0,
       };
+
     } finally {
       span.end();
     }
   }
 
   /**
-   * Process dead letter queue
+   * Process failed jobs queue (retry or cleanup)
    */
-  async processDeadLetterQueue(options: {
+  async processFailedJobs(options: {
     manual_retry?: boolean;
     batch_size?: number;
   } = {}): Promise<{ requeued: number; deleted: number }> {
-    const span = this.tracer.startSpan('jobs.process_dead_letter');
-    
+    const span = this.tracer.startSpan('jobs.process_failed');
+
     try {
       const batchSize = options.batch_size || 50;
-      
-      // Get dead letter jobs older than 24 hours
-      const { data: deadJobs, error } = await this.supabase
+
+      // Get failed jobs older than 24 hours
+      const { data: failedJobs, error } = await this.supabase
         .from('jobs')
         .select('*')
-        .eq('status', 'dead_letter')
+        .eq('status', 'failed')
         .lt('updated_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .limit(batchSize);
 
       if (error) throw error;
-      if (!deadJobs || deadJobs.length === 0) {
+      if (!failedJobs || failedJobs.length === 0) {
         return { requeued: 0, deleted: 0 };
       }
 
       let requeued = 0;
       let deleted = 0;
 
-      for (const job of deadJobs as JobDefinition[]) {
+      for (const job of failedJobs as JobDefinition[]) {
         if (options.manual_retry) {
           // Reset and requeue for manual retry
           await this.updateJobStatus(job.id, 'pending', {
-            retry_count: 0,
+            attempts: 0,
             scheduled_at: new Date().toISOString(),
-            error_message: undefined,
+            last_error: null,
           });
           requeued++;
         } else {
-          // Delete old dead letter jobs
+          // Delete old failed jobs
           await this.supabase
             .from('jobs')
             .delete()
@@ -565,6 +522,82 @@ export class EnhancedJobManager {
       } catch (error) {
         return { success: false, error: (error as Error).message, retry: false };
       }
+    });
+
+    // WhatsApp message processing handler (sophisticated flow)
+    // Uses: messageProcessor -> dialogBookingBridge -> BookingEngine
+    this.registerHandler('process_whatsapp_message', async (payload, context) => {
+      try {
+        const { message_id, tenant_id } = payload as { message_id: string; tenant_id: string };
+
+        // Fetch the message from database
+        const { data: message, error: fetchError } = await this.supabase
+          .from('messages')
+          .select('*')
+          .eq('id', message_id)
+          .single();
+
+        if (fetchError || !message) {
+          console.error('Failed to fetch message:', fetchError);
+          return { success: false, error: 'Message not found', retry: false };
+        }
+
+        // Initialize dialog booking bridge
+        await dialogBookingBridge.initialize();
+
+        // Get or create session for this conversation
+        const sessionId = `wa-${tenant_id}-${message.from_number}`;
+        let session = await dialogManager.getSession(sessionId);
+
+        if (!session) {
+          session = await dialogManager.startSession(tenant_id as string, message.from_number);
+        }
+
+        // Process message through sophisticated conversation flow
+        const result = await dialogBookingBridge.processMessage(
+          tenant_id as string,
+          session.id,
+          message.content,
+          message.from_number
+        );
+
+        // Send response via Evolution client if we have one
+        if (result.response) {
+          const { EvolutionClient } = await import('./evolutionClient');
+          const evolutionClient = EvolutionClient.getInstance();
+          await evolutionClient.sendMessage(tenant_id, message.from_number, result.response);
+
+          // Store outbound message
+          await this.supabase.from('messages').insert({
+            tenant_id,
+            from_number: message.to_number,
+            to_number: message.from_number,
+            content: result.response,
+            direction: 'outbound',
+            message_type: 'text',
+          });
+        }
+
+        // Mark conversation as complete if booking finished
+        if (result.completed) {
+          await dialogManager.endSession(session.id);
+        }
+
+        return { success: true, result: { response: result.response, completed: result.completed } };
+      } catch (error) {
+        console.error('WhatsApp message processing error:', error);
+        return { success: false, error: (error as Error).message, retry: true };
+      }
+    });
+
+    // Process inbound message handler (alternative job name)
+    this.registerHandler('process_inbound_message', async (payload, context) => {
+      // Delegate to the main WhatsApp handler
+      const handler = this.handlers.get('process_whatsapp_message');
+      if (handler) {
+        return handler(payload, context);
+      }
+      return { success: false, error: 'Handler not found', retry: false };
     });
   }
 }

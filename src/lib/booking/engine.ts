@@ -198,17 +198,23 @@ export class BookingEngine {
         }
 
         // Publish events
-        await this.eventBus.publish('booking.created', {
-          booking_id: booking.id,
-          tenant_id: tenantId,
-          customer_email: booking.customer_email,
-          service_id: booking.service_id,
-          provider_id: booking.provider_id,
-          start_time: booking.start_time,
-          end_time: booking.end_time,
-          payment_required: paymentRequired,
-          conflicts_resolved: conflictsResolved
-        });
+        await this.eventBus.publishEvent(
+          booking.id,
+          'booking',
+          'booking.created',
+          {
+            booking_id: booking.id,
+            tenant_id: tenantId,
+            customer_email: booking.customer_email,
+            service_id: booking.service_id,
+            provider_id: booking.provider_id,
+            start_time: booking.start_time,
+            end_time: booking.end_time,
+            payment_required: paymentRequired,
+            conflicts_resolved: conflictsResolved
+          },
+          { tenantId }
+        );
 
         observability.recordBusinessMetric('booking_created_total', 1, {
           tenant_id: tenantId,
@@ -330,14 +336,20 @@ export class BookingEngine {
         await this.supabase.rpc('commit_booking_transaction');
 
         // Publish events
-        await this.eventBus.publish('booking.modified', {
-          booking_id: updatedBooking.id,
-          tenant_id: tenantId,
-          previous_booking: existingBooking,
-          current_booking: updatedBooking,
-          modification_reason: data.reason,
-          conflicts_resolved: conflictsResolved
-        });
+        await this.eventBus.publishEvent(
+          updatedBooking.id,
+          'booking',
+          'booking.modified',
+          {
+            booking_id: updatedBooking.id,
+            tenant_id: tenantId,
+            previous_booking: existingBooking,
+            current_booking: updatedBooking,
+            modification_reason: data.reason,
+            conflicts_resolved: conflictsResolved
+          },
+          { tenantId }
+        );
 
         observability.recordBusinessMetric('booking_modified_total', 1, {
           tenant_id: tenantId,
@@ -444,14 +456,20 @@ export class BookingEngine {
         this.metrics.bookingsCancelled++;
 
         // Publish events
-        await this.eventBus.publish('booking.cancelled', {
-          booking_id: cancelledBooking.id,
-          tenant_id: tenantId,
-          customer_email: cancelledBooking.customer_email,
-          cancellation_reason: validatedData.reason,
-          refund_requested: data.refund_requested,
-          refund_initiated: refundInitiated
-        });
+        await this.eventBus.publishEvent(
+          cancelledBooking.id,
+          'booking',
+          'booking.cancelled',
+          {
+            booking_id: cancelledBooking.id,
+            tenant_id: tenantId,
+            customer_email: cancelledBooking.customer_email,
+            cancellation_reason: validatedData.reason,
+            refund_requested: data.refund_requested,
+            refund_initiated: refundInitiated
+          },
+          { tenantId }
+        );
 
         observability.recordBusinessMetric('booking_cancelled_total', 1, {
           tenant_id: tenantId,
@@ -639,7 +657,7 @@ export class BookingEngine {
   async shutdown(): Promise<void> {
     try {
       if (this.eventBus) {
-        await this.eventBus.shutdown();
+        await this.eventBus.stopProcessing();
       }
       console.log('BookingEngine shutdown complete');
     } catch (error) {
@@ -647,99 +665,614 @@ export class BookingEngine {
     }
   }
 
-  // Placeholder methods that would be fully implemented
-  private async validateBookingModification(tenantId: string, existing: any, modified: any): Promise<BookingValidation> {
-    // Implementation would validate the modification
-    return { is_valid: true, conflicts: [], warnings: [] };
+  /**
+   * Validate booking modification for conflicts
+   */
+  private async validateBookingModification(
+    tenantId: string,
+    existing: any,
+    modified: any
+  ): Promise<BookingValidation> {
+    const conflicts: BookingConflict[] = [];
+    const warnings: string[] = [];
+
+    // Check modification count limit
+    if (existing.modification_count >= this.config.maxReschedulesPerBooking) {
+      conflicts.push({
+        type: 'service_unavailable',
+        message: `Maximum reschedules (${this.config.maxReschedulesPerBooking}) reached for this booking`
+      });
+    }
+
+    // If time is being modified, check for conflicts
+    if (modified.start_time !== existing.start_time || modified.end_time !== existing.end_time) {
+      const startTime = new Date(modified.start_time);
+      const endTime = new Date(modified.end_time);
+
+      // Check provider availability (excluding current booking)
+      const { data: availability } = await this.supabase.rpc('check_booking_availability', {
+        p_tenant_id: tenantId,
+        p_provider_id: modified.provider_id,
+        p_start_time: startTime.toISOString(),
+        p_end_time: endTime.toISOString(),
+        p_exclude_booking_id: existing.id
+      });
+
+      if (availability && !availability.is_available) {
+        conflicts.push({
+          type: 'time_overlap',
+          message: 'New time slot is not available',
+          suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id, startTime, endTime)
+        });
+      }
+    }
+
+    return {
+      is_valid: conflicts.length === 0,
+      conflicts,
+      warnings
+    };
   }
 
-  private async resolveBookingConflicts(tenantId: string, data: any, conflicts: BookingConflict[]): Promise<{ resolvedData: any; conflictsResolved: boolean }> {
-    // Implementation would attempt to resolve conflicts
+  /**
+   * Attempt to resolve booking conflicts by finding alternative times
+   */
+  private async resolveBookingConflicts(
+    tenantId: string,
+    data: any,
+    conflicts: BookingConflict[]
+  ): Promise<{ resolvedData: any; conflictsResolved: boolean }> {
+    // Only attempt auto-resolution for time conflicts
+    const timeConflicts = conflicts.filter(c => c.type === 'time_overlap');
+
+    if (timeConflicts.length === 0) {
+      return { resolvedData: data, conflictsResolved: false };
+    }
+
+    // Try to find alternative times using the suggested_times from conflicts
+    for (const conflict of timeConflicts) {
+      if (conflict.suggested_times && conflict.suggested_times.length > 0) {
+        const suggestion = conflict.suggested_times[0];
+        return {
+          resolvedData: {
+            ...data,
+            start_time: suggestion.start_time,
+            end_time: suggestion.end_time
+          },
+          conflictsResolved: true
+        };
+      }
+    }
+
     return { resolvedData: data, conflictsResolved: false };
   }
 
-  private async createBookingRecord(tenantId: string, data: any, traceContext: any): Promise<any> {
-    // Implementation would create the booking record
-    return {};
+  /**
+   * Create booking record in database
+   */
+  private async createBookingRecord(
+    tenantId: string,
+    data: z.infer<typeof CreateBookingSchema>,
+    traceContext: any
+  ): Promise<any> {
+    observability.addTraceLog(traceContext, 'info', 'Creating booking record');
+
+    // Get service for price information
+    const service = await this.getService(data.service_id);
+
+    const bookingData = {
+      tenant_id: tenantId,
+      service_id: data.service_id,
+      provider_id: data.provider_id,
+      customer_name: data.customer_name,
+      customer_email: data.customer_email,
+      customer_phone: data.customer_phone,
+      start_time: data.start_time,
+      end_time: data.end_time,
+      notes: data.notes || null,
+      special_requests: data.special_requests || null,
+      metadata: data.metadata || {},
+      status: 'pending',
+      payment_status: service?.requires_payment ? 'pending' : 'not_required',
+      price_cents: service?.price_cents || 0,
+      currency: service?.currency || 'USD',
+      modification_count: 0
+    };
+
+    const { data: booking, error } = await this.supabase
+      .from('bookings')
+      .insert(bookingData)
+      .select()
+      .single();
+
+    if (error) {
+      observability.addTraceLog(traceContext, 'error', 'Failed to create booking', { error: error.message });
+      throw new Error(`Failed to create booking: ${error.message}`);
+    }
+
+    observability.addTraceLog(traceContext, 'info', 'Booking created successfully', { booking_id: booking.id });
+    return booking;
   }
 
-  private async getService(serviceId: string): Promise<any> {
-    // Implementation would fetch service details
-    return null;
+  /**
+   * Fetch service details by ID
+   */
+  private async getService(serviceId: string): Promise<{
+    id: string;
+    name: string;
+    duration_minutes: number;
+    price_cents: number;
+    currency: string;
+    requires_payment: boolean;
+    max_advance_booking_days: number;
+    min_advance_booking_minutes: number;
+    buffer_time_minutes: number;
+  } | null> {
+    const { data, error } = await this.supabase
+      .from('services')
+      .select('id, name, duration_minutes, price_cents, currency, requires_payment, max_advance_booking_days, min_advance_booking_minutes, buffer_time_minutes')
+      .eq('id', serviceId)
+      .eq('is_active', true)
+      .single();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return data;
   }
 
-  private async initiatePaymentProcess(bookingId: string, service: any, traceContext: any): Promise<void> {
-    // Implementation would initiate payment
+  /**
+   * Initiate payment process for booking
+   */
+  private async initiatePaymentProcess(
+    bookingId: string,
+    service: any,
+    traceContext: any
+  ): Promise<void> {
+    observability.addTraceLog(traceContext, 'info', 'Initiating payment process', {
+      booking_id: bookingId,
+      amount: service.price_cents
+    });
+
+    // Update booking with payment pending status
+    await this.supabase
+      .from('bookings')
+      .update({ payment_status: 'pending' })
+      .eq('id', bookingId);
+
+    // Publish event for payment service to handle
+    await this.eventBus.publishEvent(
+      bookingId,
+      'booking',
+      'booking.payment_required',
+      {
+        booking_id: bookingId,
+        amount_cents: service.price_cents,
+        currency: service.currency,
+        service_name: service.name
+      }
+    );
   }
 
+  /**
+   * Send booking confirmation notification
+   */
   private async sendBookingConfirmation(booking: any, traceContext: any): Promise<void> {
-    // Implementation would send confirmation
+    observability.addTraceLog(traceContext, 'info', 'Sending booking confirmation', { booking_id: booking.id });
+
+    // Publish event for notification service to handle
+    await this.eventBus.publishEvent(
+      booking.id,
+      'booking',
+      'booking.confirmation_required',
+      {
+        booking_id: booking.id,
+        tenant_id: booking.tenant_id,
+        customer_email: booking.customer_email,
+        customer_phone: booking.customer_phone,
+        customer_name: booking.customer_name,
+        service_id: booking.service_id,
+        start_time: booking.start_time,
+        end_time: booking.end_time
+      },
+      { tenantId: booking.tenant_id }
+    );
   }
 
+  /**
+   * Fetch booking by ID and tenant
+   */
   private async getBookingById(bookingId: string, tenantId: string): Promise<any> {
-    // Implementation would fetch booking
-    return null;
+    const { data, error } = await this.supabase
+      .from('bookings')
+      .select('*')
+      .eq('id', bookingId)
+      .eq('tenant_id', tenantId)
+      .single();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return data;
   }
 
+  /**
+   * Check if booking can be modified based on status and timing
+   */
   private canModifyBooking(booking: any): boolean {
-    // Implementation would check if booking can be modified
+    // Cannot modify cancelled or completed bookings
+    if (['cancelled', 'completed', 'no_show'].includes(booking.status)) {
+      return false;
+    }
+
+    // Cannot modify if booking has started
+    const now = new Date();
+    const startTime = new Date(booking.start_time);
+    if (startTime <= now) {
+      return false;
+    }
+
+    // Check modification count limit
+    if (booking.modification_count >= this.config.maxReschedulesPerBooking) {
+      return false;
+    }
+
     return true;
   }
 
+  /**
+   * Check if booking can be cancelled based on status and cancellation window
+   */
   private canCancelBooking(booking: any): boolean {
-    // Implementation would check if booking can be cancelled
+    // Cannot cancel already cancelled or completed bookings
+    if (['cancelled', 'completed', 'no_show'].includes(booking.status)) {
+      return false;
+    }
+
+    // Check cancellation window
+    const now = new Date();
+    const startTime = new Date(booking.start_time);
+    const cancellationDeadline = new Date(startTime.getTime() - this.config.cancellationWindowHours * 60 * 60 * 1000);
+
+    // Allow cancellation but may affect refund eligibility
     return true;
   }
 
-  private async logBookingModification(existing: any, updated: any, reason: string, traceContext: any): Promise<void> {
-    // Implementation would log the modification
+  /**
+   * Log booking modification for audit trail
+   */
+  private async logBookingModification(
+    existing: any,
+    updated: any,
+    reason: string,
+    traceContext: any
+  ): Promise<void> {
+    observability.addTraceLog(traceContext, 'info', 'Logging booking modification');
+
+    // The database trigger handles this automatically via log_booking_modification()
+    // This method is here for any additional logging if needed
+    await this.eventBus.publishEvent(
+      updated.id,
+      'booking',
+      'booking.modification_logged',
+      {
+        booking_id: updated.id,
+        tenant_id: updated.tenant_id,
+        previous_state: existing,
+        new_state: updated,
+        reason
+      },
+      { tenantId: updated.tenant_id }
+    );
   }
 
-  private async sendModificationNotification(booking: any, previous: any, traceContext: any): Promise<void> {
-    // Implementation would send notification
+  /**
+   * Send modification notification to customer
+   */
+  private async sendModificationNotification(
+    booking: any,
+    previous: any,
+    traceContext: any
+  ): Promise<void> {
+    observability.addTraceLog(traceContext, 'info', 'Sending modification notification', { booking_id: booking.id });
+
+    await this.eventBus.publishEvent(
+      booking.id,
+      'booking',
+      'booking.modification_notification',
+      {
+        booking_id: booking.id,
+        tenant_id: booking.tenant_id,
+        customer_email: booking.customer_email,
+        customer_phone: booking.customer_phone,
+        previous_start_time: previous.start_time,
+        new_start_time: booking.start_time,
+        previous_end_time: previous.end_time,
+        new_end_time: booking.end_time
+      },
+      { tenantId: booking.tenant_id }
+    );
   }
 
+  /**
+   * Initiate refund process for cancelled booking
+   */
   private async initiateRefundProcess(booking: any, traceContext: any): Promise<boolean> {
-    // Implementation would initiate refund
+    observability.addTraceLog(traceContext, 'info', 'Initiating refund process', { booking_id: booking.id });
+
+    // Only process refund if payment was made
+    if (booking.payment_status !== 'paid') {
+      return false;
+    }
+
+    // Check if within refund eligibility window
+    const now = new Date();
+    const startTime = new Date(booking.start_time);
+    const cancellationDeadline = new Date(startTime.getTime() - this.config.cancellationWindowHours * 60 * 60 * 1000);
+
+    const isEligibleForRefund = now < cancellationDeadline;
+
+    if (isEligibleForRefund) {
+      // Update payment status
+      await this.supabase
+        .from('bookings')
+        .update({ payment_status: 'refunded' })
+        .eq('id', booking.id);
+
+      // Publish refund event for payment service
+      await this.eventBus.publishEvent(
+        booking.id,
+        'booking',
+        'booking.refund_requested',
+        {
+          booking_id: booking.id,
+          tenant_id: booking.tenant_id,
+          payment_id: booking.payment_id,
+          amount_cents: booking.price_cents,
+          currency: booking.currency
+        },
+        { tenantId: booking.tenant_id }
+      );
+
+      return true;
+    }
+
     return false;
   }
 
+  /**
+   * Release time slot when booking is cancelled
+   */
   private async releaseTimeSlot(booking: any, traceContext: any): Promise<void> {
-    // Implementation would release the time slot
+    observability.addTraceLog(traceContext, 'info', 'Releasing time slot', { booking_id: booking.id });
+
+    // The time slot is automatically released when status becomes 'cancelled'
+    // since check_booking_availability only considers 'confirmed' and 'in_progress' bookings
+    // Publish event for any waitlist handling
+    await this.eventBus.publishEvent(
+      booking.id,
+      'booking',
+      'booking.slot_released',
+      {
+        booking_id: booking.id,
+        tenant_id: booking.tenant_id,
+        provider_id: booking.provider_id,
+        start_time: booking.start_time,
+        end_time: booking.end_time,
+        service_id: booking.service_id
+      },
+      { tenantId: booking.tenant_id }
+    );
   }
 
+  /**
+   * Send cancellation notification to customer
+   */
   private async sendCancellationNotification(booking: any, traceContext: any): Promise<void> {
-    // Implementation would send cancellation notification
+    observability.addTraceLog(traceContext, 'info', 'Sending cancellation notification', { booking_id: booking.id });
+
+    await this.eventBus.publishEvent(
+      booking.id,
+      'booking',
+      'booking.cancellation_notification',
+      {
+        booking_id: booking.id,
+        tenant_id: booking.tenant_id,
+        customer_email: booking.customer_email,
+        customer_phone: booking.customer_phone,
+        customer_name: booking.customer_name,
+        service_id: booking.service_id,
+        cancellation_reason: booking.cancellation_reason,
+        refund_status: booking.payment_status === 'refunded' ? 'refund_initiated' : 'no_refund'
+      },
+      { tenantId: booking.tenant_id }
+    );
   }
 
-  private async checkServiceAvailability(tenantId: string, serviceId: string, startTime: Date, endTime: Date): Promise<BookingConflict[]> {
-    // Implementation would check service availability
-    return [];
+  /**
+   * Check service availability for the requested time
+   */
+  private async checkServiceAvailability(
+    tenantId: string,
+    serviceId: string,
+    startTime: Date,
+    endTime: Date
+  ): Promise<BookingConflict[]> {
+    const conflicts: BookingConflict[] = [];
+
+    // Get service details
+    const service = await this.getService(serviceId);
+    if (!service) {
+      conflicts.push({
+        type: 'service_unavailable',
+        message: 'Service not found or inactive'
+      });
+      return conflicts;
+    }
+
+    // Check max concurrent bookings for this service
+    const { count, error } = await this.supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('service_id', serviceId)
+      .in('status', ['confirmed', 'in_progress'])
+      .lt('start_time', endTime.toISOString())
+      .gt('end_time', startTime.toISOString());
+
+    if (!error && count !== null && count >= (service as any).max_concurrent_bookings) {
+      conflicts.push({
+        type: 'service_unavailable',
+        message: 'Service is at maximum capacity for this time slot'
+      });
+    }
+
+    return conflicts;
   }
 
+  /**
+   * Get count of customer's active bookings
+   */
   private async getCustomerActiveBookingCount(tenantId: string, customerEmail: string): Promise<number> {
-    // Implementation would count active bookings
-    return 0;
+    const { count, error } = await this.supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('customer_email', customerEmail)
+      .in('status', ['pending', 'confirmed', 'in_progress']);
+
+    if (error) {
+      console.error('Error counting customer bookings:', error);
+      return 0;
+    }
+
+    return count || 0;
   }
 
-  private async getSuggestedTimes(tenantId: string, providerId: string, startTime: Date, endTime: Date): Promise<Array<{ start_time: string; end_time: string }>> {
-    // Implementation would suggest alternative times
-    return [];
+  /**
+   * Get suggested alternative times using database function
+   */
+  private async getSuggestedTimes(
+    tenantId: string,
+    providerId: string,
+    startTime: Date,
+    endTime: Date
+  ): Promise<Array<{ start_time: string; end_time: string }>> {
+    const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / (1000 * 60));
+
+    // Get service ID for this provider
+    const { data: providerService } = await this.supabase
+      .from('provider_services')
+      .select('service_id')
+      .eq('provider_id', providerId)
+      .eq('is_active', true)
+      .limit(1)
+      .single();
+
+    if (!providerService) {
+      return [];
+    }
+
+    // Use database function to suggest times
+    const { data: suggestions, error } = await this.supabase.rpc('suggest_booking_times', {
+      p_tenant_id: tenantId,
+      p_provider_id: providerId,
+      p_service_id: providerService.service_id,
+      p_preferred_date: startTime.toISOString().split('T')[0],
+      p_duration_minutes: durationMinutes,
+      p_max_suggestions: 5
+    });
+
+    if (error || !suggestions) {
+      return [];
+    }
+
+    return suggestions.map((s: any) => ({
+      start_time: s.suggested_start_time,
+      end_time: s.suggested_end_time
+    }));
   }
 
-  private async getProviderSchedule(tenantId: string, providerId: string, date: Date): Promise<any> {
-    // Implementation would fetch provider schedule
-    return null;
+  /**
+   * Get provider schedule for a specific date
+   */
+  private async getProviderSchedule(
+    tenantId: string,
+    providerId: string,
+    date: Date
+  ): Promise<{
+    day_of_week: number;
+    start_time: string;
+    end_time: string;
+    break_start_time?: string;
+    break_end_time?: string;
+  } | null> {
+    const dayOfWeek = date.getDay();
+
+    const { data, error } = await this.supabase
+      .from('provider_schedule')
+      .select('day_of_week, start_time, end_time, break_start_time, break_end_time')
+      .eq('provider_id', providerId)
+      .eq('tenant_id', tenantId)
+      .eq('day_of_week', dayOfWeek)
+      .eq('is_active', true)
+      .single();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return data;
   }
 
-  private isTimeSlotInSchedule(startTime: Date, endTime: Date, schedule: any): boolean {
-    // Implementation would check if time slot is in schedule
+  /**
+   * Check if requested time slot falls within provider's schedule
+   */
+  private isTimeSlotInSchedule(
+    startTime: Date,
+    endTime: Date,
+    schedule: {
+      start_time: string;
+      end_time: string;
+      break_start_time?: string;
+      break_end_time?: string;
+    } | null
+  ): boolean {
+    if (!schedule) {
+      return false;
+    }
+
+    const requestedStart = startTime.toTimeString().slice(0, 8);
+    const requestedEnd = endTime.toTimeString().slice(0, 8);
+
+    // Check if within working hours
+    if (requestedStart < schedule.start_time || requestedEnd > schedule.end_time) {
+      return false;
+    }
+
+    // Check if overlapping with break time
+    if (schedule.break_start_time && schedule.break_end_time) {
+      if (requestedStart < schedule.break_end_time && requestedEnd > schedule.break_start_time) {
+        return false;
+      }
+    }
+
     return true;
   }
 
-  private async getSuggestedTimesInSchedule(tenantId: string, providerId: string, startTime: Date, endTime: Date): Promise<Array<{ start_time: string; end_time: string }>> {
-    // Implementation would suggest times within schedule
-    return [];
+  /**
+   * Get suggested times within provider's schedule
+   */
+  private async getSuggestedTimesInSchedule(
+    tenantId: string,
+    providerId: string,
+    startTime: Date,
+    endTime: Date
+  ): Promise<Array<{ start_time: string; end_time: string }>> {
+    // Delegate to the main suggestion function which already considers schedule
+    return this.getSuggestedTimes(tenantId, providerId, startTime, endTime);
   }
 }
 

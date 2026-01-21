@@ -1,10 +1,28 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrowserSupabase } from '@/lib/supabase/client';
-import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
 export type ChatSummary = { id: string; subject: string; lastMessageAt?: string | null; unread?: number };
 export type ChatMessage = { id: string; chatId: string; content: string; role: 'user'|'assistant'; createdAt: string };
+
+// Database row types for type safety
+interface ChatRow {
+  id: string;
+  last_message_at: string | null;
+  session_id: string | null;
+  customer_phone: string | null;
+  metadata: { subject?: string } | null;
+  unread_count?: number;
+}
+
+interface MessageRow {
+  id: string;
+  chat_id: string;
+  content: string | null;
+  direction: 'inbound' | 'outbound';
+  created_at: string;
+}
 
 export function useChatRealtime(tenantId: string | null | undefined) {
   const supabase = getBrowserSupabase();
@@ -27,7 +45,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         .order('last_message_at', { ascending: false, nullsFirst: false })
         .limit(50);
       if (error) throw error;
-      const mapped: ChatSummary[] = (data || []).map((row: any) => ({
+      const mapped: ChatSummary[] = ((data || []) as ChatRow[]).map((row) => ({
         id: row.id,
         lastMessageAt: row.last_message_at,
         subject: row.metadata?.subject || row.customer_phone || (row.session_id ? `Session ${row.session_id.slice(0,6)}` : `Chat ${String(row.id).slice(0,6)}`),
@@ -45,7 +63,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       .eq('chat_id', chatId)
       .order('created_at', { ascending: true });
     if (error) return;
-    const mapped: ChatMessage[] = (data || []).map((m: any) => ({
+    const mapped: ChatMessage[] = ((data || []) as MessageRow[]).map((m) => ({
       id: m.id,
       chatId: m.chat_id,
       content: m.content || '',
@@ -60,8 +78,8 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     chatChannel.current?.unsubscribe();
     if (!tenantId) return;
     const ch = supabase.channel(`rt-chats-${tenantId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chats', filter: `tenant_id=eq.${tenantId}` }, (payload: any) => {
-        const row = payload.new;
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chats', filter: `tenant_id=eq.${tenantId}` }, (payload: RealtimePostgresChangesPayload<ChatRow>) => {
+        const row = payload.new as ChatRow | null;
         if (!row) { loadChats(); return; }
         setChats(prev => {
           const idx = prev.findIndex(c => c.id === row.id);
@@ -77,7 +95,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
           return next;
         });
         setUnreadMap(prev => {
-          const id = row.id as string;
+          const id = row.id;
           const next = { ...prev };
           next[id] = (id === activeId) ? 0 : ((next[id] ?? 0) + 1);
           return next;
@@ -94,8 +112,8 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     msgChannel.current?.unsubscribe();
     if (!activeId) return;
     const ch = supabase.channel(`rt-messages-${activeId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `chat_id=eq.${activeId}` }, (payload) => {
-        const row: any = payload.new || payload.old;
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `chat_id=eq.${activeId}` }, (payload: RealtimePostgresChangesPayload<MessageRow>) => {
+        const row = (payload.new || payload.old) as MessageRow | null;
         if (!row) return;
         if (payload.eventType === 'DELETE') {
           setMessages(prev => prev.filter(m => m.id !== row.id));

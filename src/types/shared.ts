@@ -15,6 +15,8 @@ export type BookingStep =
   | 'reschedule'
   | 'cancel'
   | 'inquiry'
+  | 'business_info'
+  | 'product_inquiry'
   | 'greeting'
   | 'service_selection'
   | 'date_time'

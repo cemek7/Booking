@@ -1,150 +1,97 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
-import { ensureOwnerForTenant } from '@/types/unified-permissions';
+import { z } from 'zod';
+import { NextResponse } from 'next/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+
+const UpdateSettingsSchema = z.object({
+  name: z.string().trim().optional(),
+  timezone: z.string().trim().optional(),
+  preferred_llm_model: z.string().trim().optional(),
+  llm_token_rate: z.union([z.number(), z.string(), z.null()]).optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided',
+});
 
 /**
  * GET /api/admin/tenant/[id]/settings
- * Retrieve tenant settings (name, timezone, LLM preferences)
- *
- * Auth: None (public endpoint)
- * RBAC: None (public read)
- *
- * Response: { row: TenantSettings | null }
+ * Retrieve tenant settings (name, timezone, LLM preferences).
+ * Public endpoint - no auth required.
  */
-async function handleGET(tenantId: string) {
-  const supabase = getSupabaseRouteHandlerClient();
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.id;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ id: 'Tenant ID is required' });
+    }
 
-  const { data: row, error } = await supabase
-    .from('tenants')
-    .select('id,name,timezone,preferred_llm_model,llm_token_rate')
-    .eq('id', tenantId)
-    .maybeSingle();
+    const { data: row, error } = await ctx.supabase
+      .from('tenants')
+      .select('id, name, timezone, preferred_llm_model, llm_token_rate')
+      .eq('id', tenantId)
+      .maybeSingle();
 
-  if (error) {
-    console.error('[api/admin/tenant/[id]/settings] failed to load tenant', error);
-    return NextResponse.json({ error: 'load_failed' }, { status: 500 });
-  }
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
+    }
 
-  return NextResponse.json({ row: row ?? null }, { status: 200 });
-}
+    return { row: row ?? null };
+  },
+  'GET',
+  { auth: false }
+);
 
 /**
  * PUT /api/admin/tenant/[id]/settings
- * Update tenant settings (owner-only)
- *
- * Auth: Bearer token required
- * RBAC: Owner-only (ensureOwnerForTenant check)
- * Allowed fields: name, timezone, preferred_llm_model, llm_token_rate
- *
- * Response: { success: true, row: TenantSettings }
+ * Update tenant settings (owner-only).
  */
-async function handlePUT(request: NextRequest, tenantId: string) {
-  // Extract and validate Bearer token
-  const authHeader = request.headers.get('authorization') || '';
-  if (!authHeader.startsWith('Bearer ')) {
-    return NextResponse.json({ error: 'missing_authorization' }, { status: 401 });
-  }
-
-  const token = authHeader.split(' ')[1];
-  const supabase = getSupabaseRouteHandlerClient();
-
-  // Verify token and actor
-  const { data: userData, error: userErr } = await supabase.auth.getUser(token);
-  if (userErr || !userData?.user) {
-    console.error('[api/admin/tenant/[id]/settings] failed to verify user token', userErr);
-    return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
-  }
-
-  const actorId = userData.user.id;
-
-  // RBAC: Check actor is owner of tenant
-  try {
-    await ensureOwnerForTenant(supabase, actorId, tenantId);
-  } catch (e) {
-    console.error('[api/admin/tenant/[id]/settings] rbac guard failed', e);
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
-
-  // Parse request body
-  const body = await request.json().catch(() => ({}));
-
-  // Allowed fields for update
-  const allowedKeys = new Set([
-    'name',
-    'timezone',
-    'preferred_llm_model',
-    'llm_token_rate',
-  ]);
-
-  const payload: Record<string, unknown> = {};
-  for (const k of Object.keys(body)) {
-    if (allowedKeys.has(k)) {
-      // Normalize values
-      if (k === 'llm_token_rate') {
-        payload.llm_token_rate = body[k] === '' ? null : Number(body[k]);
-      } else if (typeof body[k] === 'string') {
-        payload[k] = (body[k] as string).trim();
-      } else {
-        payload[k] = body[k];
-      }
+export const PUT = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.id;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ id: 'Tenant ID is required' });
     }
-  }
 
-  if (Object.keys(payload).length === 0) {
-    return NextResponse.json({ error: 'nothing_to_update' }, { status: 400 });
-  }
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
+    }
 
-  const { data: updated, error: updateErr } = await supabase
-    .from('tenants')
-    .update(payload)
-    .eq('id', tenantId)
-    .select()
-    .maybeSingle();
+    const body = await ctx.request.json();
+    const bodyValidation = UpdateSettingsSchema.safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
+    }
 
-  if (updateErr) {
-    console.error('[api/admin/tenant/[id]/settings] failed updating tenant settings', updateErr);
-    return NextResponse.json({ error: 'update_failed' }, { status: 500 });
-  }
+    // Normalize values
+    const payload: Record<string, unknown> = {};
+    const data = bodyValidation.data;
 
-  return NextResponse.json({ success: true, row: updated ?? null }, { status: 200 });
-}
+    if (data.name !== undefined) payload.name = data.name;
+    if (data.timezone !== undefined) payload.timezone = data.timezone;
+    if (data.preferred_llm_model !== undefined) payload.preferred_llm_model = data.preferred_llm_model;
+    if (data.llm_token_rate !== undefined) {
+      payload.llm_token_rate = data.llm_token_rate === '' || data.llm_token_rate === null
+        ? null
+        : Number(data.llm_token_rate);
+    }
 
-/**
- * Main route handler
- */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const tenantId = params.id;
-  if (!tenantId || typeof tenantId !== 'string') {
-    return NextResponse.json({ error: 'missing_tenant_id' }, { status: 400 });
-  }
+    const { data: updated, error } = await ctx.supabase
+      .from('tenants')
+      .update(payload)
+      .eq('id', tenantId)
+      .select()
+      .maybeSingle();
 
-  return handleGET(tenantId);
-}
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
+    }
 
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const tenantId = params.id;
-  if (!tenantId || typeof tenantId !== 'string') {
-    return NextResponse.json({ error: 'missing_tenant_id' }, { status: 400 });
-  }
+    return { success: true, row: updated ?? null };
+  },
+  'PUT',
+  { auth: true, roles: ['owner'] }
+);
 
-  try {
-    return await handlePUT(request, tenantId);
-  } catch (e) {
-    console.error('[api/admin/tenant/[id]/settings] handler failed', e);
-    return NextResponse.json({ error: 'internal' }, { status: 500 });
-  }
-}
-
-/**
- * OPTIONS /api/admin/tenant/[id]/settings
- * CORS preflight handler
- */
 export function OPTIONS() {
   return new NextResponse(null, {
     status: 204,

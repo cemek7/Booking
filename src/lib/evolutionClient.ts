@@ -1,5 +1,5 @@
 import { getAppConfig } from './configManager';
-import { createServerSupabaseClient } from './supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 type SendResult = { success: boolean; response?: Record<string, unknown> | string | undefined };
 type BookingContext = {

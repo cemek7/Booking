@@ -1,9 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '../../../lib/supabaseClient';
-import { getSession } from '../../../lib/auth/session';
-import { validateTenantAccess } from '../../../lib/enhanced-rbac';
 import { z } from 'zod';
-import { handleApiError } from '../../../lib/error-handling';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 // Zod schema for GET query parameters
 const ListMovementsQuerySchema = z.object({
@@ -32,33 +29,25 @@ const CreateMovementBodySchema = z.object({
   message: 'Either product_id or variant_id must be provided',
 });
 
-
 /**
  * GET /api/inventory
  * List inventory movements for the tenant.
- * Requires 'manager' or 'admin' role.
  */
-export async function GET(req: NextRequest) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    const access = await validateTenantAccess(createServerSupabaseClient(), session.user.id, tenantId, ['owner', 'manager']);
-    if (!access) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const url = new URL(req.url);
+    const url = new URL(ctx.request.url);
     const queryValidation = ListMovementsQuerySchema.safeParse(Object.fromEntries(url.searchParams));
     if (!queryValidation.success) {
-      return NextResponse.json({ error: 'Invalid query parameters', details: queryValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
     const query = queryValidation.data;
 
-    const supabase = createServerSupabaseClient();
-    let queryBuilder = supabase
+    let queryBuilder = ctx.supabase
       .from('inventory_movements')
       .select(`
         *,
@@ -68,7 +57,7 @@ export async function GET(req: NextRequest) {
       `, { count: 'exact' })
       .eq('tenant_id', tenantId);
 
-    // Apply filters from query
+    // Apply filters
     if (query.product_id) queryBuilder = queryBuilder.eq('product_id', query.product_id);
     if (query.variant_id) queryBuilder = queryBuilder.eq('variant_id', query.variant_id);
     if (query.movement_type) queryBuilder = queryBuilder.eq('movement_type', query.movement_type);
@@ -83,9 +72,11 @@ export async function GET(req: NextRequest) {
     queryBuilder = queryBuilder.range(from, to);
 
     const { data: movements, error, count } = await queryBuilder;
-    if (error) throw error;
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
+    }
 
-    return NextResponse.json({
+    return {
       movements: movements || [],
       pagination: {
         page: query.page,
@@ -93,39 +84,32 @@ export async function GET(req: NextRequest) {
         total: count || 0,
         totalPages: Math.ceil((count || 0) / query.limit),
       }
-    });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to fetch inventory movements');
-  }
-}
+    };
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager'] }
+);
 
 /**
  * POST /api/inventory
  * Create an inventory movement (manual stock adjustment).
- * Requires 'manager' or 'admin' role.
  */
-export async function POST(req: NextRequest) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    const userId = ctx.user?.id;
+    if (!tenantId || !userId) {
+      throw ApiErrorFactory.forbidden('Tenant ID and User ID required');
     }
 
-    const access = await validateTenantAccess(createServerSupabaseClient(), session.user.id, tenantId, ['owner', 'manager']);
-    if (!access) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const body = await req.json();
+    const body = await ctx.request.json();
     const bodyValidation = CreateMovementBodySchema.safeParse(body);
     if (!bodyValidation.success) {
-      return NextResponse.json({ error: 'Invalid request body', details: bodyValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
     const movementData = bodyValidation.data;
 
-    const supabase = createServerSupabaseClient();
-    const { error } = await supabase.rpc('update_inventory', {
+    const { error } = await ctx.supabase.rpc('update_inventory', {
       p_tenant_id: tenantId,
       p_product_id: movementData.product_id,
       p_variant_id: movementData.variant_id,
@@ -134,7 +118,15 @@ export async function POST(req: NextRequest) {
       p_reference_type: movementData.reference_type,
       p_reference_id: movementData.reference_id,
       p_reason: movementData.reason,
-      p_performed_by: session.user.id,
+      p_performed_by: userId,
     });
 
-    if
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
+    }
+
+    return { message: 'Inventory updated successfully' };
+  },
+  'POST',
+  { auth: true, roles: ['owner', 'manager'] }
+);

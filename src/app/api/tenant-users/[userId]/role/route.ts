@@ -1,26 +1,54 @@
-import { NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { z } from 'zod';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
-// PATCH /api/tenant-users/:userId/role?tenant_id=... { role }
-export async function PATCH(req: Request, { params }: { params: { userId: string } }) {
-  const url = new URL(req.url);
-  const tenantId = url.searchParams.get('tenant_id');
-  if (!tenantId) return NextResponse.json({ error: 'tenant_id_required' }, { status: 400 });
-  const { userId } = params;
-  if (!userId) return NextResponse.json({ error: 'user_id_required' }, { status: 400 });
-  let body: { role?: string } = {};
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 400 }); }
-  if (!body.role) return NextResponse.json({ error: 'role_required' }, { status: 400 });
-  try {
-    const supabase = createServerSupabaseClient();
-    const { error } = await supabase
+const UpdateRoleBodySchema = z.object({
+  role: z.string().min(1, 'Role is required'),
+});
+
+/**
+ * PATCH /api/tenant-users/:userId/role?tenant_id=...
+ * Update a user's role within a tenant.
+ */
+export const PATCH = createHttpHandler(
+  async (ctx) => {
+    const url = new URL(ctx.request.url);
+    const tenantId = url.searchParams.get('tenant_id');
+
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ tenant_id: 'tenant_id query parameter is required' });
+    }
+
+    const userId = ctx.params?.userId;
+    if (!userId) {
+      throw ApiErrorFactory.validationError({ userId: 'User ID is required' });
+    }
+
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
+    }
+
+    const body = await ctx.request.json();
+    const bodyValidation = UpdateRoleBodySchema.safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
+    }
+
+    const { role } = bodyValidation.data;
+
+    const { error } = await ctx.supabase
       .from('tenant_users')
-      .update({ role: body.role })
+      .update({ role })
       .eq('tenant_id', tenantId)
       .eq('user_id', userId);
-    if (error) return NextResponse.json({ error: 'role_update_failed' }, { status: 500 });
-    return NextResponse.json({ ok: true, userId, role: body.role });
-  } catch (e: any) {
-    return NextResponse.json({ error: 'role_update_error', detail: e?.message }, { status: 500 });
-  }
-}
+
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
+    }
+
+    return { ok: true, userId, role };
+  },
+  'PATCH',
+  { auth: true, roles: ['owner', 'manager'] }
+);

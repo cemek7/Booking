@@ -1,214 +1,137 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
-import { validateTenantAccess, auditSuperadminAction, TenantAccessContext } from '@/lib/enhanced-rbac';
+import { z } from 'zod';
+import { NextResponse } from 'next/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+
+const CreateServiceBodySchema = z.object({
+  name: z.string().min(1, 'Service name is required'),
+  duration_minutes: z.number().int().positive().optional().default(60),
+  price_cents: z.number().int().min(0).optional().default(0),
+  active: z.boolean().optional().default(true),
+  metadata: z.record(z.unknown()).nullable().optional(),
+});
+
+const UpdateServiceBodySchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  name: z.string().min(1).optional(),
+  duration_minutes: z.number().int().positive().optional(),
+  price_cents: z.number().int().min(0).optional(),
+  active: z.boolean().optional(),
+  metadata: z.record(z.unknown()).nullable().optional(),
+});
+
+const DeleteServiceBodySchema = z.object({
+  id: z.union([z.string(), z.number()]),
+});
 
 /**
- * GET,POST,PATCH,DELETE /api/tenants/[tenantId]/services
- * 
- * Migrated from: src/pages/api/tenants/[tenantId]/services.ts
- * 
- * Service catalog management for a specific tenant:
- * - GET: List all services (any tenant user)
- * - POST: Create service (manager+ only)
- * - PATCH: Update service (manager+ only)
- * - DELETE: Delete service (manager+ only)
- * 
- * Features:
- * - Automatic defaults for optional fields (duration=60min, price=0)
- * - Superadmin action auditing
- * - Access control: GET for all, mutations for manager+
+ * GET /api/tenants/[tenantId]/services
+ * List all services for a tenant.
  */
-
-interface ServiceCreatePayload {
-  name: string;
-  duration_minutes?: number;
-  price_cents?: number;
-  active?: boolean;
-  metadata?: Record<string, any>;
-}
-
-interface ServiceUpdatePayload extends Partial<ServiceCreatePayload> {
-  id: string | number;
-}
-
-export async function GET(request: NextRequest, { params }: { params: { tenantId: string } }) {
-  try {
-    const { tenantId } = params;
-    const supabase = getSupabaseRouteHandlerClient();
-
-    // Extract and validate authentication
-    const authHeader = request.headers.get('authorization') || '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Missing or invalid authorization token.' }, { status: 401 });
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
-    const token = authHeader.split(' ')[1];
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-
-    if (userErr || !user) {
-      return NextResponse.json({ error: 'Authentication failed.' }, { status: 401 });
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
-    // Verify access to tenant
-    const accessResult = await validateTenantAccess(supabase, user.id, tenantId);
-    if (!accessResult || !('userRole' in accessResult)) {
-      return NextResponse.json({ error: 'Forbidden: You do not have access to this tenant.' }, { status: 403 });
-    }
-
-    // GET is allowed for any valid tenant user
-    const { data, error } = await supabase
+    const { data, error } = await ctx.supabase
       .from('reservation_services')
       .select('*')
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error(`[api/tenants/[tenantId]/services] GET error for tenant ${tenantId}:`, error);
-      return NextResponse.json({ error: 'Database error while fetching services.' }, { status: 500 });
+      throw ApiErrorFactory.databaseError(error);
     }
 
-    return NextResponse.json(data ?? []);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unknown error occurred';
-    console.error('[api/tenants/[tenantId]/services] GET error', err);
-    return NextResponse.json({ error: 'Internal Server Error', details: message }, { status: 500 });
-  }
-}
+    return data ?? [];
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager', 'staff'] }
+);
 
-export async function POST(request: NextRequest, { params }: { params: { tenantId: string } }) {
-  try {
-    const { tenantId } = params;
-    const supabase = getSupabaseRouteHandlerClient();
-
-    // Extract and validate authentication
-    const authHeader = request.headers.get('authorization') || '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Missing or invalid authorization token.' }, { status: 401 });
+/**
+ * POST /api/tenants/[tenantId]/services
+ * Create a new service for a tenant.
+ */
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
-    const token = authHeader.split(' ')[1];
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-
-    if (userErr || !user) {
-      return NextResponse.json({ error: 'Authentication failed.' }, { status: 401 });
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
-    // Verify access and check permissions
-    const accessResult = await validateTenantAccess(supabase, user.id, tenantId);
-    if (!accessResult || !('userRole' in accessResult)) {
-      return NextResponse.json({ error: 'Forbidden: You do not have access to this tenant.' }, { status: 403 });
+    const body = await ctx.request.json();
+    const bodyValidation = CreateServiceBodySchema.safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
 
-    const accessContext: TenantAccessContext = accessResult;
+    const { name, duration_minutes, price_cents, active, metadata } = bodyValidation.data;
 
-    // Require manager/owner role or superadmin for mutations
-    if (!['owner', 'manager'].includes(accessContext.userRole) && !accessContext.isSuperAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: You need manager or owner rights to modify services.' },
-        { status: 403 }
-      );
-    }
-
-    const body: ServiceCreatePayload = await request.json();
-
-    if (!body.name) {
-      return NextResponse.json({ error: 'Service "name" is required.' }, { status: 400 });
-    }
-
-    // Audit superadmin action
-    if (accessContext.isSuperAdmin) {
-      await auditSuperadminAction(supabase, user.id, 'service_create', tenantId, undefined, undefined, { ...body }).catch(
-        (err) => {
-          console.warn('[api/tenants/[tenantId]/services] Failed to audit superadmin action', err);
-        }
-      );
-    }
-
-    const payload = {
-      tenant_id: tenantId,
-      name: body.name,
-      duration_minutes: body.duration_minutes ?? 60,
-      price_cents: body.price_cents ?? 0,
-      active: body.active ?? true,
-      metadata: body.metadata ?? null,
-    };
-
-    const { data, error } = await supabase.from('reservation_services').insert(payload).select().single();
+    const { data, error } = await ctx.supabase
+      .from('reservation_services')
+      .insert({
+        tenant_id: tenantId,
+        name,
+        duration_minutes,
+        price_cents,
+        active,
+        metadata: metadata ?? null,
+      })
+      .select()
+      .single();
 
     if (error) {
-      console.error(`[api/tenants/[tenantId]/services] POST error for tenant ${tenantId}:`, error);
-      return NextResponse.json({ error: 'Failed to create service.' }, { status: 500 });
+      throw ApiErrorFactory.databaseError(error);
     }
 
-    return NextResponse.json(data, { status: 201 });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unknown error occurred';
-    console.error('[api/tenants/[tenantId]/services] POST error', err);
-    return NextResponse.json({ error: 'Internal Server Error', details: message }, { status: 500 });
-  }
-}
+    return new NextResponse(JSON.stringify(data), { status: 201 });
+  },
+  'POST',
+  { auth: true, roles: ['owner', 'manager'] }
+);
 
-export async function PATCH(request: NextRequest, { params }: { params: { tenantId: string } }) {
-  try {
-    const { tenantId } = params;
-    const supabase = getSupabaseRouteHandlerClient();
-
-    // Extract and validate authentication
-    const authHeader = request.headers.get('authorization') || '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Missing or invalid authorization token.' }, { status: 401 });
+/**
+ * PATCH /api/tenants/[tenantId]/services
+ * Update an existing service.
+ */
+export const PATCH = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
-    const token = authHeader.split(' ')[1];
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-
-    if (userErr || !user) {
-      return NextResponse.json({ error: 'Authentication failed.' }, { status: 401 });
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
-    // Verify access and check permissions
-    const accessResult = await validateTenantAccess(supabase, user.id, tenantId);
-    if (!accessResult || !('userRole' in accessResult)) {
-      return NextResponse.json({ error: 'Forbidden: You do not have access to this tenant.' }, { status: 403 });
+    const body = await ctx.request.json();
+    const bodyValidation = UpdateServiceBodySchema.safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
 
-    const accessContext: TenantAccessContext = accessResult;
-
-    // Require manager/owner role or superadmin for mutations
-    if (!['owner', 'manager'].includes(accessContext.userRole) && !accessContext.isSuperAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: You need manager or owner rights to modify services.' },
-        { status: 403 }
-      );
-    }
-
-    const body: ServiceUpdatePayload = await request.json();
-    const { id, ...updateFields } = body;
-
-    if (!id) {
-      return NextResponse.json({ error: 'A service "id" is required in the request body.' }, { status: 400 });
-    }
+    const { id, ...updateFields } = bodyValidation.data;
 
     if (Object.keys(updateFields).length === 0) {
-      return NextResponse.json({ error: 'No update fields provided.' }, { status: 400 });
+      throw ApiErrorFactory.validationError({ body: 'No update fields provided' });
     }
 
-    // Audit superadmin action
-    if (accessContext.isSuperAdmin) {
-      await auditSuperadminAction(
-        supabase,
-        user.id,
-        'service_update',
-        tenantId,
-        undefined,
-        String(id),
-        { ...updateFields }
-      ).catch((err) => {
-        console.warn('[api/tenants/[tenantId]/services] Failed to audit superadmin action', err);
-      });
-    }
-
-    const { data, error } = await supabase
+    const { data, error } = await ctx.supabase
       .from('reservation_services')
       .update(updateFields)
       .eq('tenant_id', tenantId)
@@ -217,83 +140,54 @@ export async function PATCH(request: NextRequest, { params }: { params: { tenant
       .single();
 
     if (error) {
-      console.error(`[api/tenants/[tenantId]/services] PATCH error for service ${id} in tenant ${tenantId}:`, error);
-      return NextResponse.json({ error: 'Failed to update service.' }, { status: 500 });
+      throw ApiErrorFactory.databaseError(error);
     }
 
-    return NextResponse.json(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unknown error occurred';
-    console.error('[api/tenants/[tenantId]/services] PATCH error', err);
-    return NextResponse.json({ error: 'Internal Server Error', details: message }, { status: 500 });
-  }
-}
+    return { service: data };
+  },
+  'PATCH',
+  { auth: true, roles: ['owner', 'manager'] }
+);
 
-export async function DELETE(request: NextRequest, { params }: { params: { tenantId: string } }) {
-  try {
-    const { tenantId } = params;
-    const supabase = getSupabaseRouteHandlerClient();
-
-    // Extract and validate authentication
-    const authHeader = request.headers.get('authorization') || '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Missing or invalid authorization token.' }, { status: 401 });
+/**
+ * DELETE /api/tenants/[tenantId]/services
+ * Delete a service.
+ */
+export const DELETE = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
-    const token = authHeader.split(' ')[1];
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-
-    if (userErr || !user) {
-      return NextResponse.json({ error: 'Authentication failed.' }, { status: 401 });
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
-    // Verify access and check permissions
-    const accessResult = await validateTenantAccess(supabase, user.id, tenantId);
-    if (!accessResult || !('userRole' in accessResult)) {
-      return NextResponse.json({ error: 'Forbidden: You do not have access to this tenant.' }, { status: 403 });
+    const body = await ctx.request.json();
+    const bodyValidation = DeleteServiceBodySchema.safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
 
-    const accessContext: TenantAccessContext = accessResult;
+    const { id } = bodyValidation.data;
 
-    // Require manager/owner role or superadmin for mutations
-    if (!['owner', 'manager'].includes(accessContext.userRole) && !accessContext.isSuperAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: You need manager or owner rights to modify services.' },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await request.json();
-
-    if (!id) {
-      return NextResponse.json({ error: 'A service "id" is required in the request body.' }, { status: 400 });
-    }
-
-    // Audit superadmin action
-    if (accessContext.isSuperAdmin) {
-      await auditSuperadminAction(supabase, user.id, 'service_delete', tenantId, undefined, String(id)).catch((err) => {
-        console.warn('[api/tenants/[tenantId]/services] Failed to audit superadmin action', err);
-      });
-    }
-
-    const { error } = await supabase
+    const { error } = await ctx.supabase
       .from('reservation_services')
       .delete()
       .eq('tenant_id', tenantId)
       .eq('id', id);
 
     if (error) {
-      console.error(`[api/tenants/[tenantId]/services] DELETE error for service ${id} in tenant ${tenantId}:`, error);
-      return NextResponse.json({ error: 'Failed to delete service.' }, { status: 500 });
+      throw ApiErrorFactory.databaseError(error);
     }
 
-    return NextResponse.json({ success: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unknown error occurred';
-    console.error('[api/tenants/[tenantId]/services] DELETE error', err);
-    return NextResponse.json({ error: 'Internal Server Error', details: message }, { status: 500 });
-  }
-}
+    return { success: true };
+  },
+  'DELETE',
+  { auth: true, roles: ['owner', 'manager'] }
+);
 
 export function OPTIONS() {
   return new NextResponse(null, {

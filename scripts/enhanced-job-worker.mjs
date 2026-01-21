@@ -18,7 +18,7 @@
  * - PROCESS_INTERVAL_MS: Interval between processing cycles
  */
 
-import { createServerSupabaseClient } from '../src/lib/supabaseClient';
+import { createServerSupabaseClient } from '../src/lib/supabase/server';
 import EnhancedJobManager from '../src/lib/enhancedJobManager.js';
 import { trace } from '@opentelemetry/api';
 

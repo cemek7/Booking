@@ -1,5 +1,5 @@
 import { EvolutionClient } from './evolutionClient';
-import { createServerSupabaseClient } from './supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAppConfig } from './configManager';
 
 export interface BookingNotificationData {
@@ -62,11 +62,11 @@ export class BookingNotificationService {
         tenantId: booking.tenantId,
         type: 'confirmation',
         recipient: booking.customerPhone,
-        status: result.ok ? 'sent' : 'failed',
-        error: result.ok ? undefined : String(result.response)
+        status: result.success ? 'sent' : 'failed',
+        error: result.success ? undefined : String(result.response)
       });
 
-      return { success: result.ok };
+      return { success: result.success };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
@@ -113,12 +113,12 @@ export class BookingNotificationService {
         tenantId: booking.tenantId,
         type: 'reminder',
         recipient: booking.customerPhone,
-        status: result.ok ? 'sent' : 'failed',
-        error: result.ok ? undefined : String(result.response),
+        status: result.success ? 'sent' : 'failed',
+        error: result.success ? undefined : String(result.response),
         metadata: { minutesBefore }
       });
 
-      return { success: result.ok };
+      return { success: result.success };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
@@ -164,12 +164,12 @@ export class BookingNotificationService {
         tenantId: booking.tenantId,
         type: 'status_update',
         recipient: booking.customerPhone,
-        status: result.ok ? 'sent' : 'failed',
-        error: result.ok ? undefined : String(result.response),
+        status: result.success ? 'sent' : 'failed',
+        error: result.success ? undefined : String(result.response),
         metadata: { previousStatus, newStatus: booking.status }
       });
 
-      return { success: result.ok };
+      return { success: result.success };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
@@ -210,12 +210,12 @@ export class BookingNotificationService {
         tenantId: booking.tenantId,
         type: notificationType,
         recipient: booking.customerPhone,
-        status: result.ok ? 'sent' : 'failed',
-        error: result.ok ? undefined : String(result.response),
+        status: result.success ? 'sent' : 'failed',
+        error: result.success ? undefined : String(result.response),
         message: message
       });
 
-      return { success: result.ok };
+      return { success: result.success };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       

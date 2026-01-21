@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from './supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export interface EvolutionAPIConfig {
   baseUrl: string;

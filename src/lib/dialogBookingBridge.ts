@@ -1,15 +1,16 @@
-import { createServerSupabaseClient } from './supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { BookingEngine } from './booking/engine';
 import { detectIntent, type Intent, type ContextualHints } from './intentDetector';
 import * as dialogManager from './dialogManager';
 import { observability } from './observability/observability';
+import { EvolutionClient } from './evolutionClient';
 import { z } from 'zod';
 import { BookingStep } from '../types/shared';
 
 // Dialog state for booking flow
 export interface BookingDialogState {
   step: BookingStep;
-  intent?: 'booking' | 'reschedule' | 'cancel';
+  intent?: 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry';
   serviceId?: string;
   serviceName?: string;
   staffId?: string;
@@ -23,6 +24,8 @@ export interface BookingDialogState {
   tentantId?: string;
   errors?: string[];
   retryCount?: number;
+  // For product inquiry context
+  productQuery?: string;
 }
 
 const BookingSlotSchema = z.object({
@@ -155,6 +158,12 @@ export class DialogBookingBridge {
           return await this.handleContactInfo(tenantId, sessionId, state, message, userPhone);
         case 'confirm':
           return await this.handleConfirmation(tenantId, sessionId, state, message);
+        case 'business_info':
+          return await this.handleBusinessInfoInquiry(tenantId, sessionId, state, message);
+        case 'product_inquiry':
+          return await this.handleProductInquiry(tenantId, sessionId, state, message);
+        case 'inquiry':
+          return await this.handleGeneralInquiry(tenantId, sessionId, state, message);
         default:
           return {
             response: 'I\'m having trouble understanding where we are in the booking process. Let\'s start over. What would you like to do?',
@@ -371,18 +380,18 @@ export class DialogBookingBridge {
     }
     
     // Extract name if mentioned
-    const nameMatch = message.match(/(?:name is|i'm|call me)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)/i);
+    const nameMatch = message.match(/(?:name is|i'm|call me)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
     if (nameMatch && !state.customerName) {
       state.customerName = nameMatch[1];
     }
-    
+
     if (state.customerPhone) {
       state.step = 'confirm';
       await this.updateSessionState(sessionId, state);
-      
+
       const summary = this.createBookingSummary(state);
       return {
-        response: `Great! Here's your booking summary:\\n${summary}\\n\\nPlease reply 'YES' to confirm or let me know if you'd like to change anything.`,
+        response: `Great! Here's your booking summary:\n${summary}\n\nPlease reply 'YES' to confirm or let me know if you'd like to change anything.`,
         completed: false,
         nextStep: 'confirm'
       };
@@ -405,15 +414,15 @@ export class DialogBookingBridge {
     message: string
   ) {
     const low = message.toLowerCase();
-    
-    if (/\\b(yes|y|confirm|book|ok|sure|correct)\\b/.test(low)) {
+
+    if (/\b(yes|y|confirm|book|ok|sure|correct)\b/.test(low)) {
       return await this.attemptBooking(tenantId, sessionId, state);
     }
-    
-    if (/\\b(no|n|cancel|change|different)\\b/.test(low)) {
+
+    if (/\b(no|n|cancel|change|different)\b/.test(low)) {
       state.step = 'service';
       await this.updateSessionState(sessionId, state);
-      
+
       return {
         response: 'No problem! What would you like to change? (service, time, or staff)',
         completed: false,
@@ -453,13 +462,23 @@ export class DialogBookingBridge {
       };
       
       const result = await this.bookingEngine.createBooking(tenantId, bookingData);
-      
+
       if (result.booking) {
         state.step = 'complete';
         await this.updateSessionState(sessionId, state);
-        
+
+        // Notify owner of new booking (async, don't block response)
+        this.notifyOwnerOfNewBooking(tenantId, {
+          bookingId: result.booking.id,
+          customerName: state.customerName || 'WhatsApp Customer',
+          customerPhone: state.customerPhone!,
+          serviceName: state.serviceName,
+          startTime: state.startTime,
+          staffName: state.staffName
+        }).catch(err => console.error('Failed to notify owner:', err));
+
         return {
-          response: `✅ Your appointment has been booked successfully!\\n\\nBooking ID: ${result.booking.id}\\n\\nYou'll receive a confirmation message shortly. Thank you!`,
+          response: `✅ Your appointment has been booked successfully!\n\nBooking ID: ${result.booking.id}\n\nYou'll receive a confirmation message shortly. Thank you!`,
           completed: true
         };
       } else {
@@ -609,7 +628,7 @@ export class DialogBookingBridge {
       `Time: ${state.startTime ? new Date(state.startTime).toLocaleString() : 'TBD'}`,
       `Phone: ${state.customerPhone}`,
       state.customerEmail ? `Email: ${state.customerEmail}` : ''
-    ].filter(Boolean).join('\\n');
+    ].filter(Boolean).join('\n');
   }
 
   private async handleRescheduleFlow(tenantId: string, sessionId: string, state: BookingDialogState, message: string) {
@@ -628,28 +647,394 @@ export class DialogBookingBridge {
     };
   }
 
-  private async handleBookingFlow(tenantId: string, sessionId: string, state: BookingDialogState, message: string) {
-    // Placeholder for booking logic
-    return {
-      response: 'Booking functionality is under development.',
-      completed: false
-    };
+  /**
+   * Notify tenant owner of a new booking via WhatsApp
+   */
+  private async notifyOwnerOfNewBooking(
+    tenantId: string,
+    booking: {
+      bookingId: string;
+      customerName: string;
+      customerPhone: string;
+      serviceName?: string;
+      startTime?: string;
+      staffName?: string;
+    }
+  ): Promise<void> {
+    try {
+      // Get tenant info
+      const { data: tenant } = await this.supabase
+        .from('tenants')
+        .select('name, settings')
+        .eq('id', tenantId)
+        .single();
+
+      // Get owner's phone from tenant_users
+      const { data: ownerData } = await this.supabase
+        .from('tenant_users')
+        .select(`
+          user_id,
+          users!inner(phone, email)
+        `)
+        .eq('tenant_id', tenantId)
+        .eq('role', 'owner')
+        .single();
+
+      const ownerPhone = (ownerData?.users as { phone?: string })?.phone;
+
+      if (!ownerPhone) {
+        console.log('No owner phone found for tenant:', tenantId);
+        return;
+      }
+
+      const bookingRef = booking.bookingId.slice(-6).toUpperCase();
+      const formattedTime = booking.startTime
+        ? new Date(booking.startTime).toLocaleString()
+        : 'Not specified';
+
+      const message =
+        `📅 *New Booking Confirmed*\n\n` +
+        `A customer has just booked via WhatsApp:\n\n` +
+        `👤 Customer: ${booking.customerName}\n` +
+        `📱 Phone: ${booking.customerPhone}\n` +
+        `✂️ Service: ${booking.serviceName || 'Not specified'}\n` +
+        `📆 Time: ${formattedTime}\n` +
+        (booking.staffName ? `👨‍💼 Staff: ${booking.staffName}\n` : '') +
+        `\nRef: #${bookingRef}\n\n` +
+        `_View details in your dashboard._`;
+
+      const evolutionClient = EvolutionClient.getInstance();
+      await evolutionClient.sendMessage(tenantId, ownerPhone, message);
+
+      console.log('Owner notified of new booking:', bookingRef);
+    } catch (error) {
+      // Don't fail the booking if notification fails
+      console.error('Failed to notify owner of booking:', error);
+    }
   }
 
-  private async handleServiceSelection(tenantId: string, sessionId: string, state: BookingDialogState, message: string) {
-    // Placeholder for service selection logic
-    return {
-      response: 'Please select a service.',
-      completed: false
-    };
+  /**
+   * Handle business information inquiry
+   * Returns tenant details like location, hours, contact info
+   */
+  private async handleBusinessInfoInquiry(
+    tenantId: string,
+    sessionId: string,
+    state: BookingDialogState,
+    message: string
+  ): Promise<{ response: string; completed: boolean; nextStep?: string }> {
+    try {
+      const tenantInfo = await this.getTenantInfo(tenantId);
+
+      if (!tenantInfo) {
+        return {
+          response: 'I apologize, but I couldn\'t retrieve the business information at this time. Please try again later.',
+          completed: false,
+          nextStep: 'intent'
+        };
+      }
+
+      // Format business information
+      const infoLines = [
+        `📍 *${tenantInfo.name}*`,
+        '',
+      ];
+
+      if (tenantInfo.description) {
+        infoLines.push(`ℹ️ ${tenantInfo.description}`);
+        infoLines.push('');
+      }
+
+      if (tenantInfo.address) {
+        infoLines.push(`📫 Address: ${tenantInfo.address}`);
+      }
+
+      if (tenantInfo.phone) {
+        infoLines.push(`📞 Phone: ${tenantInfo.phone}`);
+      }
+
+      if (tenantInfo.email) {
+        infoLines.push(`✉️ Email: ${tenantInfo.email}`);
+      }
+
+      if (tenantInfo.businessHours) {
+        infoLines.push('');
+        infoLines.push('🕐 *Business Hours:*');
+        infoLines.push(tenantInfo.businessHours);
+      }
+
+      infoLines.push('');
+      infoLines.push('Would you like to book an appointment or ask about our products/services?');
+
+      return {
+        response: infoLines.join('\n'),
+        completed: false,
+        nextStep: 'intent'
+      };
+    } catch (error) {
+      console.error('Error handling business info inquiry:', error);
+      return {
+        response: 'I\'m sorry, I couldn\'t retrieve that information right now. How else can I help you?',
+        completed: false,
+        nextStep: 'intent'
+      };
+    }
   }
 
-  private async handleStaffSelection(tenantId: string, sessionId: string, state: BookingDialogState, message: string) {
-    // Placeholder for staff selection logic
-    return {
-      response: 'Please select a staff member.',
-      completed: false
-    };
+  /**
+   * Handle product inquiry
+   * Returns available products for the tenant
+   */
+  private async handleProductInquiry(
+    tenantId: string,
+    sessionId: string,
+    state: BookingDialogState,
+    message: string
+  ): Promise<{ response: string; completed: boolean; nextStep?: string }> {
+    try {
+      // Check if user is asking about a specific product
+      const products = await this.getProducts(tenantId, message);
+
+      if (!products || products.length === 0) {
+        return {
+          response: 'We don\'t have any products listed at the moment. Would you like to book a service appointment instead?',
+          completed: false,
+          nextStep: 'intent'
+        };
+      }
+
+      // Check if it's a specific product search
+      const searchTerms = message.toLowerCase();
+      const matchedProducts = products.filter(p =>
+        p.name.toLowerCase().includes(searchTerms) ||
+        (p.description && p.description.toLowerCase().includes(searchTerms)) ||
+        (p.category && p.category.toLowerCase().includes(searchTerms))
+      );
+
+      if (matchedProducts.length > 0 && matchedProducts.length <= 3) {
+        // Show detailed info for matched products
+        const productDetails = matchedProducts.map(p => {
+          const price = p.price_cents ? `$${(p.price_cents / 100).toFixed(2)}` : 'Price on request';
+          return [
+            `*${p.name}*`,
+            p.description ? `  ${p.description}` : '',
+            `  💰 ${price}`,
+            p.stock_quantity !== undefined && p.track_inventory ? `  📦 ${p.stock_quantity > 0 ? 'In stock' : 'Out of stock'}` : ''
+          ].filter(Boolean).join('\n');
+        });
+
+        return {
+          response: `Here's what I found:\n\n${productDetails.join('\n\n')}\n\nWould you like to know more about any of these, or would you like to book an appointment?`,
+          completed: false,
+          nextStep: 'intent'
+        };
+      }
+
+      // Show product categories or featured products
+      const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+      const featuredProducts = products.filter(p => p.is_featured).slice(0, 5);
+
+      let responseLines = ['🛍️ *Our Products*\n'];
+
+      if (categories.length > 0) {
+        responseLines.push('📂 *Categories:*');
+        categories.forEach(cat => responseLines.push(`  • ${cat}`));
+        responseLines.push('');
+      }
+
+      if (featuredProducts.length > 0) {
+        responseLines.push('⭐ *Featured Products:*');
+        featuredProducts.forEach(p => {
+          const price = p.price_cents ? `$${(p.price_cents / 100).toFixed(2)}` : '';
+          responseLines.push(`  • ${p.name} ${price}`);
+        });
+      } else if (products.length > 0) {
+        // Show first 5 products if no featured
+        responseLines.push('📦 *Available Products:*');
+        products.slice(0, 5).forEach(p => {
+          const price = p.price_cents ? `$${(p.price_cents / 100).toFixed(2)}` : '';
+          responseLines.push(`  • ${p.name} ${price}`);
+        });
+        if (products.length > 5) {
+          responseLines.push(`  _...and ${products.length - 5} more_`);
+        }
+      }
+
+      responseLines.push('\nAsk me about a specific product for more details, or type "book" to schedule an appointment!');
+
+      // Save product query context
+      state.productQuery = message;
+      await this.updateSessionState(sessionId, state);
+
+      return {
+        response: responseLines.join('\n'),
+        completed: false,
+        nextStep: 'intent'
+      };
+    } catch (error) {
+      console.error('Error handling product inquiry:', error);
+      return {
+        response: 'I\'m sorry, I couldn\'t retrieve product information right now. Would you like to book an appointment instead?',
+        completed: false,
+        nextStep: 'intent'
+      };
+    }
+  }
+
+  /**
+   * Handle general service inquiry
+   */
+  private async handleGeneralInquiry(
+    tenantId: string,
+    sessionId: string,
+    state: BookingDialogState,
+    message: string
+  ): Promise<{ response: string; completed: boolean; nextStep?: string }> {
+    try {
+      const services = await this.getAvailableServices(tenantId);
+
+      if (services.length === 0) {
+        return {
+          response: 'I don\'t see any services configured yet. Please contact us directly for assistance.',
+          completed: false,
+          nextStep: 'intent'
+        };
+      }
+
+      const serviceList = services.map(s => `  • ${s.name}`).join('\n');
+
+      return {
+        response: `Here are our available services:\n\n${serviceList}\n\nWould you like to book any of these? Just let me know which service interests you!`,
+        completed: false,
+        nextStep: 'intent'
+      };
+    } catch (error) {
+      console.error('Error handling general inquiry:', error);
+      return {
+        response: 'I\'m sorry, I couldn\'t retrieve service information. Please try again or contact us directly.',
+        completed: false,
+        nextStep: 'intent'
+      };
+    }
+  }
+
+  /**
+   * Get tenant information including business details
+   */
+  private async getTenantInfo(tenantId: string): Promise<{
+    name: string;
+    description?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    businessHours?: string;
+    industry?: string;
+  } | null> {
+    try {
+      const { data, error } = await this.supabase
+        .from('tenants')
+        .select('name, industry, phone, metadata, tone_config')
+        .eq('id', tenantId)
+        .single();
+
+      if (error || !data) {
+        return null;
+      }
+
+      // Extract additional details from metadata
+      const metadata = data.metadata || {};
+
+      return {
+        name: data.name,
+        description: metadata.description || metadata.about,
+        address: metadata.address || metadata.location,
+        phone: data.phone || metadata.phone,
+        email: metadata.email,
+        businessHours: this.formatBusinessHours(metadata.business_hours || metadata.hours),
+        industry: data.industry
+      };
+    } catch (error) {
+      console.error('Error fetching tenant info:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Format business hours for display
+   */
+  private formatBusinessHours(hours: any): string | undefined {
+    if (!hours) return undefined;
+
+    if (typeof hours === 'string') {
+      return hours;
+    }
+
+    // Handle object format { monday: '9am-5pm', ... }
+    if (typeof hours === 'object') {
+      const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      const formatted = days
+        .filter(day => hours[day])
+        .map(day => `${day.charAt(0).toUpperCase() + day.slice(1)}: ${hours[day]}`)
+        .join('\n  ');
+      return formatted || undefined;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Get products for a tenant
+   */
+  private async getProducts(tenantId: string, searchQuery?: string): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    short_description?: string;
+    price_cents?: number;
+    currency?: string;
+    category?: string;
+    is_featured?: boolean;
+    stock_quantity?: number;
+    track_inventory?: boolean;
+    images?: any[];
+  }>> {
+    try {
+      let query = this.supabase
+        .from('products')
+        .select(`
+          id,
+          name,
+          description,
+          short_description,
+          price_cents,
+          currency,
+          is_featured,
+          stock_quantity,
+          track_inventory,
+          images,
+          product_categories(name)
+        `)
+        .eq('tenant_id', tenantId)
+        .eq('is_active', true)
+        .order('is_featured', { ascending: false })
+        .order('name', { ascending: true })
+        .limit(20);
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Error fetching products:', error);
+        return [];
+      }
+
+      return (data || []).map(p => ({
+        ...p,
+        category: p.product_categories?.name
+      }));
+    } catch (error) {
+      console.error('Error in getProducts:', error);
+      return [];
+    }
   }
 }
 

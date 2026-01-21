@@ -3,7 +3,7 @@ import IORedis from 'ioredis';
 import { z } from 'zod';
 import { EventBusService } from '../eventbus/eventBus';
 import { observability } from '../observability/observability';
-import { createServerSupabaseClient } from '../supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 // Job type definitions and validation schemas
 const PaymentJobSchema = z.object({

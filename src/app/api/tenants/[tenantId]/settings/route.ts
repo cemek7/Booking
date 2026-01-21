@@ -16,6 +16,19 @@ const SettingsSchemaBase = z.object({
   greeting: z.string().optional(),
   signature: z.string().optional(),
   requireDeposit: z.boolean().optional(),
+  // Booking defaults
+  bookingBufferMinutes: z.number().int().min(0).optional(),
+  defaultServiceDuration: z.number().int().min(15).optional(),
+  maxAdvanceBookingDays: z.number().int().min(1).optional(),
+  minAdvanceBookingHours: z.number().int().min(0).optional(),
+  // No-show / Auto-cancel settings (default: 2 hours before appointment)
+  autoCancelUnconfirmedEnabled: z.boolean().optional(),
+  autoCancelHoursBefore: z.number().int().min(1).optional(), // Default: 2
+  confirmationDeadlineHours: z.number().int().min(1).optional(),
+  // Public storefront settings
+  publicBookingEnabled: z.boolean().optional(),
+  publicDescription: z.string().max(500).optional(),
+  publicLogo: z.string().url().optional(),
   services: z.array(z.object({
     id: z.string().optional(),
     name: z.string().min(1),

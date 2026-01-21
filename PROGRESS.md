@@ -131,7 +131,7 @@
 - [x] 5 admin components for products
 - [ ] Multi-location inventory - not implemented
 - [ ] Inventory analytics - not implemented
-- [ ] Supplier management - not implemented
+- [ ] Supplier management - not implemented (can be ignored as it is out of scope)
 
 ### 9. Analytics & Reporting ✅ 85% Complete
 - [x] Analytics API (4 routes: dashboard, trends, vertical, staff)
@@ -152,7 +152,7 @@
 - [x] WhatsApp connection per tenant
 - [x] 3 tenant components
 - [ ] Tenant billing - not implemented
-- [ ] Usage-based pricing - partial (usage API exists)
+- [ ] Usage-based pricing - partial (usage API exists) (i dont like the idea of usage based pricing but we would look into it)
 - [ ] Tenant analytics - partial
 
 ---
@@ -181,7 +181,7 @@ All routes use `createHttpHandler` for unified error handling, authentication, a
 | **Chat** | 3 | 🟢 Complete | Messages, read status, realtime |
 | **Customers** | 3 | 🟢 Complete | Profiles, history, stats |
 | **Manager** | 3 | 🟢 Complete | Team, schedule, analytics |
-| **Owner** | 3 | 🟢 Complete | Staff, settings, usage |
+| **Owner** | 3 | 🟢 Complete | Staff, settings, usage | (owner should also have routes for Team, schedule, analytics)
 | **Reminders** | 3 | 🟢 Complete | Triggers, creation, runners |
 | **Scheduler** | 3 | 🟢 Complete | Slot finder, availability, free staff |
 | **Reservations** | 2 | 🟢 Complete | List, detail |

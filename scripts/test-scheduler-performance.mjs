@@ -14,7 +14,7 @@
  * - SUPABASE_SERVICE_ROLE_KEY: Supabase service role key
  */
 
-import { createServerSupabaseClient } from '../src/lib/supabaseClient';
+import { createServerSupabaseClient } from '../src/lib/supabase/server';
 import OptimizedScheduler from '../src/lib/optimizedScheduler.js';
 import { trace } from '@opentelemetry/api';
 

@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '../supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { EventBusService } from '../eventbus/eventBus';
 import { observability } from '../observability/observability';

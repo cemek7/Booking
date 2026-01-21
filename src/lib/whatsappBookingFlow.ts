@@ -1,3 +1,19 @@
+/**
+ * @deprecated This simple booking flow is deprecated.
+ * Use the sophisticated flow instead:
+ *   messageProcessor -> dialogBookingBridge -> BookingEngine
+ *
+ * The sophisticated flow provides:
+ * - LLM-powered intent detection
+ * - Better conversation handling with slot-filling FSM
+ * - Proper booking engine integration with validation
+ * - Owner notifications
+ *
+ * This file will be removed in a future version.
+ * See: src/lib/whatsapp/messageProcessor.ts
+ * See: src/lib/dialogBookingBridge.ts
+ */
+
 import { EvolutionClient } from './evolutionClient';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import dialogManager from './dialogManager';
@@ -40,7 +56,7 @@ export class WhatsAppBookingFlow {
 
   constructor() {
     this.evolutionClient = EvolutionClient.getInstance();
-    this.supabase = createServerSupabaseClient();
+    this.supabase = getSupabaseRouteHandlerClient();
   }
 
   /**
@@ -284,18 +300,24 @@ export class WhatsAppBookingFlow {
         source: 'whatsapp',
         created_at: new Date().toISOString()
       };
-      
+
       const { data, error } = await this.supabase
         .from('bookings')
         .insert([bookingData])
         .select('id')
         .single();
-      
+
       if (error) {
         console.error('Database error creating booking:', error);
         return { success: false, error: error.message };
       }
-      
+
+      // Notify owner of new booking (auto-confirmed but owner should know)
+      await this.notifyOwnerOfNewBooking({
+        ...bookingData,
+        id: data.id
+      });
+
       return { success: true, bookingId: data.id };
     } catch (error) {
       console.error('Error creating booking:', error);
@@ -303,6 +325,69 @@ export class WhatsAppBookingFlow {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    }
+  }
+
+  /**
+   * Notify tenant owner of a new booking via WhatsApp
+   */
+  private async notifyOwnerOfNewBooking(booking: {
+    id: string;
+    tenant_id: string;
+    customer_name: string;
+    customer_phone: string;
+    service_type?: string;
+    booking_date?: string;
+    booking_time?: string;
+  }): Promise<void> {
+    try {
+      // Get tenant info and owner's phone number
+      const { data: tenant } = await this.supabase
+        .from('tenants')
+        .select('name, settings')
+        .eq('id', booking.tenant_id)
+        .single();
+
+      // Get owner from tenant_users
+      const { data: ownerData } = await this.supabase
+        .from('tenant_users')
+        .select(`
+          user_id,
+          users!inner(phone, email)
+        `)
+        .eq('tenant_id', booking.tenant_id)
+        .eq('role', 'owner')
+        .single();
+
+      const ownerPhone = (ownerData?.users as { phone?: string })?.phone;
+
+      if (!ownerPhone) {
+        console.log('No owner phone found for tenant:', booking.tenant_id);
+        return;
+      }
+
+      const bookingRef = booking.id.slice(-6).toUpperCase();
+      const message =
+        `📅 *New Booking Confirmed*\n\n` +
+        `A customer has just booked via WhatsApp:\n\n` +
+        `👤 Customer: ${booking.customer_name}\n` +
+        `📱 Phone: ${booking.customer_phone}\n` +
+        `✂️ Service: ${booking.service_type || 'Not specified'}\n` +
+        `📆 Date: ${booking.booking_date || 'Not specified'}\n` +
+        `🕐 Time: ${booking.booking_time || 'Not specified'}\n\n` +
+        `Ref: #${bookingRef}\n\n` +
+        `_This booking was auto-confirmed. View details in your dashboard._`;
+
+      await this.evolutionClient.sendMessage(
+        booking.tenant_id,
+        ownerPhone,
+        message
+      );
+
+      console.log('Owner notified of new booking:', bookingRef);
+    } catch (error) {
+      // Don't fail the booking if notification fails
+      console.error('Failed to notify owner of booking:', error);
     }
   }
 

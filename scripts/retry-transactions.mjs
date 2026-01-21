@@ -1,7 +1,7 @@
 // Transaction retry worker - processes failed transactions with exponential backoff
 // Usage (PowerShell):
 // $env:SUPABASE_URL="https://your.project"; $env:SUPABASE_SERVICE_ROLE_KEY="key"; node scripts/retry-transactions.mjs
-import { createServerSupabaseClient } from '../src/lib/supabaseClient';
+import { createServerSupabaseClient } from '../src/lib/supabase/server';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { config as dotenvConfig } from 'dotenv';

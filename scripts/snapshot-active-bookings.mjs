@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Recompute active bookings gauge by counting non-cancelled, future reservations.
-import { createServerSupabaseClient } from '../src/lib/supabaseClient.js';
+import { createServerSupabaseClient } from '../src/lib/supabase/server.js';
 import { bookingsActiveGauge, pushMetrics } from '../src/lib/metrics.js';
 
 async function main() {

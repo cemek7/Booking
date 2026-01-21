@@ -1,28 +1,47 @@
-import { NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
-// POST /api/tenants/:tenantId/whatsapp/connect
-// Stub: marks integrationStatus as 'pending' and echoes back current settings.
-export async function POST(req: Request, ctx: { params: Promise<{ tenantId: string }> }) {
-  const { tenantId } = await ctx.params;
-  if (!tenantId) return NextResponse.json({ error: 'tenant_id_required' }, { status: 400 });
-  try {
-    // In a real implementation, validate body, enqueue provisioning job, call provider, etc.
-    const supabase = createServerSupabaseClient();
-    const { data: current, error: fetchErr } = await supabase
+/**
+ * POST /api/tenants/:tenantId/whatsapp/connect
+ * Marks integration status as 'pending' and echoes back current settings.
+ */
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    }
+
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
+    }
+
+    // Fetch current tenant settings
+    const { data: current, error: fetchError } = await ctx.supabase
       .from('tenants')
       .select('settings')
       .eq('id', tenantId)
       .single();
-    if (fetchErr) return NextResponse.json({ error: 'settings_fetch_failed' }, { status: 500 });
+
+    if (fetchError) {
+      throw ApiErrorFactory.databaseError(fetchError);
+    }
+
+    // Update settings with pending integration status
     const merged = { ...(current?.settings || {}), integrationStatus: 'pending' };
-    const { error: updateErr } = await supabase
+
+    const { error: updateError } = await ctx.supabase
       .from('tenants')
       .update({ settings: merged })
       .eq('id', tenantId);
-    if (updateErr) return NextResponse.json({ error: 'settings_update_failed' }, { status: 500 });
-    return NextResponse.json({ status: 'pending', settings: merged });
-  } catch {
-    return NextResponse.json({ error: 'whatsapp_connect_error' }, { status: 500 });
-  }
-}
+
+    if (updateError) {
+      throw ApiErrorFactory.databaseError(updateError);
+    }
+
+    return { status: 'pending', settings: merged };
+  },
+  'POST',
+  { auth: true, roles: ['owner', 'manager'] }
+);

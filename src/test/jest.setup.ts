@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Optional: @testing-library/jest-dom (install if using React Testing Library)
-// import '@testing-library/jest-dom';
+import '@testing-library/jest-dom';
 
 // Polyfill fetch and Web APIs for Node.js environment
 import fetch, { Request, Response, Headers } from 'node-fetch';

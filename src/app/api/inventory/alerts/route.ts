@@ -1,10 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '../../../../lib/supabaseClient';
-import { getSession } from '../../../../lib/auth/session';
-import { validateTenantAccess } from '../../../../lib/enhanced-rbac';
 import { z } from 'zod';
-import { handleApiError } from '../../../../lib/error-handling';
-import { inventoryService } from '../../../../lib/services/inventory-service';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { inventoryService } from '@/lib/services/inventory-service';
 
 // Zod schema for GET query parameters
 const GetAlertsQuerySchema = z.object({
@@ -12,37 +9,43 @@ const GetAlertsQuerySchema = z.object({
   limit: z.preprocess((val) => parseInt(String(val), 10), z.number().int().min(1).max(200)).default(50),
 });
 
+interface Alert {
+  product_id: string;
+  product_name: string;
+  urgency: 'critical' | 'warning' | 'low';
+}
+
+interface AlertGroup {
+  product_id: string;
+  product_name: string;
+  alerts: Alert[];
+}
+
 /**
  * GET /api/inventory/alerts
  * Get low stock and out-of-stock alerts for the tenant.
- * Requires 'manager' or 'admin' role.
  */
-export async function GET(req: NextRequest) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    const access = await validateTenantAccess(createServerSupabaseClient(), session.user.id, tenantId, ['owner', 'manager']);
-    if (!access) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const url = new URL(req.url);
+    const url = new URL(ctx.request.url);
     const queryValidation = GetAlertsQuerySchema.safeParse(Object.fromEntries(url.searchParams));
     if (!queryValidation.success) {
-      return NextResponse.json({ error: 'Invalid query parameters', details: queryValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
     const { urgency: urgencyFilter, limit } = queryValidation.data;
 
     const result = await inventoryService.getLowStockAlerts([tenantId]);
 
     if (!result.success || !result.alerts) {
-      throw new Error(result.error || 'Failed to get low stock alerts from service.');
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to get low stock alerts'));
     }
 
-    let alerts = result.alerts;
+    let alerts = result.alerts as Alert[];
 
     // Apply urgency filter if provided
     if (urgencyFilter) {
@@ -52,7 +55,7 @@ export async function GET(req: NextRequest) {
     // Apply limit
     const limitedAlerts = alerts.slice(0, limit);
 
-    // Calculate summary statistics based on the filtered alerts
+    // Calculate summary statistics
     const summary = {
       total_alerts: limitedAlerts.length,
       critical_alerts: limitedAlerts.filter(a => a.urgency === 'critical').length,
@@ -60,7 +63,7 @@ export async function GET(req: NextRequest) {
       low_alerts: limitedAlerts.filter(a => a.urgency === 'low').length,
     };
 
-    // Group alerts by product for better organization
+    // Group alerts by product
     const alertsByProduct = limitedAlerts.reduce((acc, alert) => {
       const key = alert.product_id;
       if (!acc[key]) {
@@ -72,15 +75,14 @@ export async function GET(req: NextRequest) {
       }
       acc[key].alerts.push(alert);
       return acc;
-    }, {} as Record<string, { product_id: string; product_name: string; alerts: any[] }>);
+    }, {} as Record<string, AlertGroup>);
 
-    return NextResponse.json({
+    return {
       alerts: limitedAlerts,
       summary,
       alerts_by_product: Object.values(alertsByProduct),
-    });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to retrieve inventory alerts');
-  }
-}
+    };
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager'] }
+);

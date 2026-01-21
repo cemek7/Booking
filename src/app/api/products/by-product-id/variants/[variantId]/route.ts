@@ -1,460 +1,222 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
-import { Database } from '@/lib/database.types';
-import { getTenantFromHeaders } from '@/lib/supabase/tenant-context';
-import { getUserRoleFromRequest } from '@/lib/auth/server-role-check';
-import { CreateVariantRequest } from '@/types/product-catalogue';
+import { z } from 'zod';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
-interface RouteParams {
-  params: { 
-    productId: string;
-    variantId: string;
-  };
-}
+const UpdateVariantSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  description: z.string().trim().nullable().optional(),
+  sku: z.string().trim().toUpperCase().nullable().optional(),
+  price_adjustment_cents: z.number().int().optional(),
+  weight_grams: z.number().int().positive().nullable().optional(),
+  volume_ml: z.number().int().positive().nullable().optional(),
+  is_active: z.boolean().optional(),
+  attributes: z.record(z.unknown()).optional(),
+});
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { productId: string; variantId: string } }
-) {
-  try {
-    const { productId, variantId } = params;
-    const supabase = createServerComponentClient<Database>({ cookies });
-    const tenant = await getTenantFromHeaders(request);
-
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+/**
+ * GET /api/products/by-product-id/variants/[variantId]
+ * Get a specific product variant.
+ */
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const variantId = ctx.params?.variantId;
+    if (!variantId) {
+      throw ApiErrorFactory.validationError({ variantId: 'Variant ID is required' });
     }
 
-    // Get specific variant
-    const { data: variant, error } = await supabase
-      .from('product_variants')
-      .select(`
-        *,
-        product_inventory (
-          current_stock,
-          reserved_stock,
-          available_stock
-        )
-      `)
-      .eq('id', variantId)
-      .eq('product_id', productId)
-      .eq('tenant_id', tenant.id)
-      .single();
-
-    if (error || !variant) {
-      return NextResponse.json(
-        { error: 'Variant not found' },
-        { status: 404 }
-      );
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    return NextResponse.json({ variant });
-
-  } catch (error) {
-    console.error('Error fetching variant:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-  try {
-    const supabase = createServerSupabaseClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get user role and permissions
-    const userRole = await getUserRole(user.id);
-    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
-    
-    if (!permissions.can_view_products) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
-
-    // Get user's tenant(s)
-    const { data: tenantUsers } = await supabase
-      .from('tenant_users')
-      .select('tenant_id')
-      .eq('user_id', user.id);
-
-    if (!tenantUsers || tenantUsers.length === 0) {
-      return NextResponse.json({ error: 'No tenant access' }, { status: 403 });
-    }
-
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
-
-    // Fetch variant with product information
-    const { data: variant, error } = await supabase
+    const { data: variant, error } = await ctx.supabase
       .from('product_variants')
       .select(`
         *,
         product:products!product_id(
           id, name, price_cents, currency, tenant_id,
           category:product_categories!category_id(id, name)
+        ),
+        product_inventory(
+          current_stock,
+          reserved_stock,
+          available_stock
         )
       `)
-      .eq('id', params.variantId)
-      .eq('product_id', params.productId)
-      .in('tenant_id', tenantIds)
+      .eq('id', variantId)
+      .eq('tenant_id', tenantId)
       .single();
 
-    if (error) {
-      if (error.code === 'PGRST116') { // No rows returned
-        return NextResponse.json({ error: 'Variant not found' }, { status: 404 });
-      }
-      console.error('Product variant fetch error:', error);
-      return NextResponse.json({ error: 'Failed to fetch variant' }, { status: 500 });
+    if (error || !variant) {
+      throw ApiErrorFactory.notFound('Variant');
     }
 
     // Calculate final price
+    const product = variant.product as { price_cents?: number } | null;
     const variantWithPrice = {
       ...variant,
-      final_price_cents: variant.product.price_cents + variant.price_adjustment_cents,
+      final_price_cents: (product?.price_cents || 0) + (variant.price_adjustment_cents || 0),
     };
 
-    return NextResponse.json({ variant: variantWithPrice });
+    return { variant: variantWithPrice };
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager', 'staff'] }
+);
 
-  } catch (error) {
-    console.error('Product variant fetch API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { productId: string; variantId: string } }
-) {
-  try {
-    const { productId, variantId } = params;
-    const supabase = createServerComponentClient<Database>({ cookies });
-    const tenant = await getTenantFromHeaders(request);
-
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+/**
+ * PUT /api/products/by-product-id/variants/[variantId]
+ * Update a specific product variant.
+ */
+export const PUT = createHttpHandler(
+  async (ctx) => {
+    const variantId = ctx.params?.variantId;
+    if (!variantId) {
+      throw ApiErrorFactory.validationError({ variantId: 'Variant ID is required' });
     }
 
-    // Check user permissions
-    const userRole = await getUserRoleFromRequest(request);
-    if (!userRole || !['superadmin', 'owner', 'manager'].includes(userRole)) {
-      return NextResponse.json(
-        { error: 'Insufficient permissions' },
-        { status: 403 }
-      );
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    const body = await request.json();
-    const updateData: Partial<CreateVariantRequest> = body;
+    const body = await ctx.request.json();
+    const bodyValidation = UpdateVariantSchema.safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
+    }
 
-    // Check if variant exists and user has access
-    const { data: existingVariant, error: variantError } = await supabase
+    const updateData = bodyValidation.data;
+    if (Object.keys(updateData).length === 0) {
+      throw ApiErrorFactory.validationError({ body: 'No update fields provided' });
+    }
+
+    // Check if variant exists
+    const { data: existingVariant, error: variantError } = await ctx.supabase
       .from('product_variants')
-      .select('id, product_id, sku')
+      .select('id, sku')
       .eq('id', variantId)
-      .eq('product_id', productId)
-      .eq('tenant_id', tenant.id)
+      .eq('tenant_id', tenantId)
       .single();
 
     if (variantError || !existingVariant) {
-      return NextResponse.json(
-        { error: 'Variant not found' },
-        { status: 404 }
-      );
+      throw ApiErrorFactory.notFound('Variant');
     }
 
     // Check for duplicate SKU if being updated
     if (updateData.sku && updateData.sku !== existingVariant.sku) {
-      const { data: existingSku } = await supabase
+      const { data: existingSku } = await ctx.supabase
         .from('product_variants')
         .select('id')
-        .eq('sku', updateData.sku.trim().toUpperCase())
-        .eq('tenant_id', tenant.id)
+        .eq('sku', updateData.sku)
+        .eq('tenant_id', tenantId)
         .neq('id', variantId)
         .single();
 
       if (existingSku) {
-        return NextResponse.json(
-          { error: 'SKU already exists' },
-          { status: 409 }
-        );
+        throw ApiErrorFactory.conflict('SKU already exists');
       }
     }
 
-    // Prepare update data
-    const cleanUpdateData: Record<string, any> = {};
-    
-    if (updateData.name !== undefined) {
-      cleanUpdateData.name = updateData.name.trim();
-    }
-    if (updateData.description !== undefined) {
-      cleanUpdateData.description = updateData.description?.trim() || null;
-    }
-    if (updateData.sku !== undefined) {
-      cleanUpdateData.sku = updateData.sku?.trim().toUpperCase() || null;
-    }
-    if (updateData.price_adjustment_cents !== undefined) {
-      cleanUpdateData.price_adjustment_cents = updateData.price_adjustment_cents;
-    }
-    if (updateData.weight_grams !== undefined) {
-      cleanUpdateData.weight_grams = updateData.weight_grams;
-    }
-    if (updateData.volume_ml !== undefined) {
-      cleanUpdateData.volume_ml = updateData.volume_ml;
-    }
-    if (updateData.is_active !== undefined) {
-      cleanUpdateData.is_active = updateData.is_active;
-    }
-    if (updateData.attributes !== undefined) {
-      cleanUpdateData.attributes = updateData.attributes || {};
-    }
-
-    // Update the variant
-    const { data: variant, error: updateError } = await supabase
+    const { data: variant, error: updateError } = await ctx.supabase
       .from('product_variants')
       .update({
-        ...cleanUpdateData,
-        updated_at: new Date().toISOString()
+        ...updateData,
+        updated_at: new Date().toISOString(),
       })
       .eq('id', variantId)
-      .eq('tenant_id', tenant.id)
+      .eq('tenant_id', tenantId)
       .select()
       .single();
 
     if (updateError) {
-      console.error('Error updating variant:', updateError);
-      return NextResponse.json(
-        { error: 'Failed to update variant' },
-        { status: 500 }
-      );
+      throw ApiErrorFactory.databaseError(updateError);
     }
 
-    return NextResponse.json({
-      success: true,
-      variant
-    });
+    return { success: true, variant };
+  },
+  'PUT',
+  { auth: true, roles: ['owner', 'manager'] }
+);
 
-  } catch (error) {
-    console.error('Error in variant PUT handler:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { productId: string; variantId: string } }
-) {
-  try {
-    const { productId, variantId } = params;
-    const supabase = createServerComponentClient<Database>({ cookies });
-    const tenant = await getTenantFromHeaders(request);
-
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+/**
+ * DELETE /api/products/by-product-id/variants/[variantId]
+ * Delete (soft-delete) a product variant.
+ */
+export const DELETE = createHttpHandler(
+  async (ctx) => {
+    const variantId = ctx.params?.variantId;
+    if (!variantId) {
+      throw ApiErrorFactory.validationError({ variantId: 'Variant ID is required' });
     }
 
-    // Check user permissions
-    const userRole = await getUserRoleFromRequest(request);
-    if (!userRole || !['superadmin', 'owner', 'manager'].includes(userRole)) {
-      return NextResponse.json(
-        { error: 'Insufficient permissions' },
-        { status: 403 }
-      );
+    const tenantId = ctx.user?.tenantId;
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
     }
 
-    // Check if variant exists and user has access
-    const { data: existingVariant, error: variantError } = await supabase
+    const url = new URL(ctx.request.url);
+    const forceDelete = url.searchParams.get('force') === 'true';
+
+    // Check if variant exists
+    const { data: existingVariant, error: variantError } = await ctx.supabase
       .from('product_variants')
-      .select('id, name')
+      .select('id, name, stock_quantity')
       .eq('id', variantId)
-      .eq('product_id', productId)
-      .eq('tenant_id', tenant.id)
+      .eq('tenant_id', tenantId)
       .single();
 
     if (variantError || !existingVariant) {
-      return NextResponse.json(
-        { error: 'Variant not found' },
-        { status: 404 }
-      );
+      throw ApiErrorFactory.notFound('Variant');
     }
 
     // Check if variant is being used in any bookings/orders
-    const { data: bookingItems } = await supabase
+    const { data: bookingItems } = await ctx.supabase
       .from('booking_items')
       .select('id')
       .eq('variant_id', variantId)
-      .eq('tenant_id', tenant.id)
+      .eq('tenant_id', tenantId)
       .limit(1);
 
     if (bookingItems && bookingItems.length > 0) {
-      return NextResponse.json(
-        { error: 'Cannot delete variant that is used in bookings' },
-        { status: 409 }
-      );
+      throw ApiErrorFactory.conflict('Cannot delete variant that is used in bookings');
     }
-
-    // Soft delete the variant (set is_active to false) instead of hard delete
-    const { error: deleteError } = await supabase
-      .from('product_variants')
-      .update({ 
-        is_active: false,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', variantId)
-      .eq('tenant_id', tenant.id);
-
-    if (deleteError) {
-      console.error('Error deleting variant:', deleteError);
-      return NextResponse.json(
-        { error: 'Failed to delete variant' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: 'Variant deleted successfully'
-    });
-
-  } catch (error) {
-    console.error('Error in variant DELETE handler:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-  } catch (error) {
-    console.error('Product variant update API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-/**
- * DELETE /api/products/[productId]/variants/[variantId]
- * Delete a specific product variant
- */
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  try {
-    const supabase = createServerSupabaseClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get user role and permissions
-    const userRole = await getUserRole(user.id);
-    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
-    
-    if (!permissions.can_edit_products) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
-
-    // Get user's tenant(s)
-    const { data: tenantUsers } = await supabase
-      .from('tenant_users')
-      .select('tenant_id')
-      .eq('user_id', user.id);
-
-    if (!tenantUsers || tenantUsers.length === 0) {
-      return NextResponse.json({ error: 'No tenant access' }, { status: 403 });
-    }
-
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
-
-    // Verify variant exists and user has access
-    const { data: existingVariant } = await supabase
-      .from('product_variants')
-      .select('id, tenant_id, variant_name, stock_quantity')
-      .eq('id', params.variantId)
-      .eq('product_id', params.productId)
-      .in('tenant_id', tenantIds)
-      .single();
-
-    if (!existingVariant) {
-      return NextResponse.json({ error: 'Variant not found' }, { status: 404 });
-    }
-
-    // Check for URL parameter to determine deletion strategy
-    const url = new URL(req.url);
-    const forceDelete = url.searchParams.get('force') === 'true';
 
     if (!forceDelete) {
       // Soft delete - set is_active to false
-      const { data: updatedVariant, error } = await supabase
+      const { data: updatedVariant, error } = await ctx.supabase
         .from('product_variants')
-        .update({ 
+        .update({
           is_active: false,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', params.variantId)
-        .select('id, variant_name, is_active')
+        .eq('id', variantId)
+        .select('id, name, is_active')
         .single();
 
       if (error) {
-        console.error('Product variant soft deletion error:', error);
-        return NextResponse.json({ error: 'Failed to deactivate variant' }, { status: 500 });
+        throw ApiErrorFactory.databaseError(error);
       }
 
-      return NextResponse.json({ 
-        message: 'Product variant deactivated successfully',
-        variant: updatedVariant 
-      });
+      return { message: 'Product variant deactivated successfully', variant: updatedVariant };
     } else {
       // Hard delete - check for inventory first
-      if (existingVariant.stock_quantity > 0) {
-        return NextResponse.json({
-          error: 'Cannot delete variant with stock',
-          details: { 
-            message: 'Variant has stock quantity > 0. Reduce stock to zero before deletion.',
-            current_stock: existingVariant.stock_quantity
-          }
-        }, { status: 409 });
+      if (existingVariant.stock_quantity && existingVariant.stock_quantity > 0) {
+        throw ApiErrorFactory.conflict('Cannot delete variant with stock. Reduce stock to zero before deletion.');
       }
 
-      // Log inventory movement for stock reduction if needed
-      if (existingVariant.stock_quantity > 0) {
-        await supabase
-          .from('inventory_movements')
-          .insert({
-            tenant_id: existingVariant.tenant_id,
-            product_id: params.productId,
-            variant_id: params.variantId,
-            movement_type: 'adjustment',
-            quantity_change: -existingVariant.stock_quantity,
-            previous_quantity: existingVariant.stock_quantity,
-            new_quantity: 0,
-            reason: 'Variant deletion - stock cleared',
-            performed_by: user.id,
-          });
-      }
-
-      // Hard delete
-      const { error } = await supabase
+      const { error } = await ctx.supabase
         .from('product_variants')
         .delete()
-        .eq('id', params.variantId);
+        .eq('id', variantId);
 
       if (error) {
-        console.error('Product variant deletion error:', error);
-        return NextResponse.json({ error: 'Failed to delete variant' }, { status: 500 });
+        throw ApiErrorFactory.databaseError(error);
       }
 
-      return NextResponse.json({ 
-        message: 'Product variant permanently deleted',
-        variant_id: params.variantId 
-      });
+      return { message: 'Product variant permanently deleted', variant_id: variantId };
     }
-
-  } catch (error) {
-    console.error('Product variant deletion API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
+  },
+  'DELETE',
+  { auth: true, roles: ['owner', 'manager'] }
+);

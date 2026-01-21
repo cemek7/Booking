@@ -1,14 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '../../../../lib/supabaseClient';
-import { getSession } from '../../../../lib/auth/session';
-import { validateTenantAccess } from '../../../../lib/enhanced-rbac';
 import { z } from 'zod';
-import { AuthenticatedRequest, handleApiError } from '../../../../lib/error-handling';
-import { UserRole } from '../../../../../types';
-
-interface RouteParams {
-  params: { id: string };
-}
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { PG_ERROR_CODES } from '@/lib/constants';
 
 // Zod schema for GET query parameters
 const GetCategoryQuerySchema = z.object({
@@ -23,202 +16,258 @@ const UpdateCategoryBodySchema = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   display_order: z.number().int().optional(),
   is_active: z.boolean().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.unknown()).optional(),
 }).strict();
 
 // Zod schema for DELETE query parameters
 const DeleteCategoryQuerySchema = z.object({
-    force: z.preprocess((val) => val === 'true', z.boolean()).optional(),
-    move_products: z.preprocess((val) => val === 'true', z.boolean()).optional(),
-    new_category_id: z.string().uuid().optional(),
+  force: z.preprocess((val) => val === 'true', z.boolean()).optional(),
+  move_products: z.preprocess((val) => val === 'true', z.boolean()).optional(),
+  new_category_id: z.string().uuid().optional(),
 });
 
+interface CategoryWithChildren {
+  children?: unknown[];
+  [key: string]: unknown;
+}
 
 /**
  * GET /api/categories/[id]
  * Get a specific product category by ID.
- * Requires 'viewer' or higher role.
  */
-export async function GET(req: NextRequest, { params }: RouteParams) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    const categoryId = ctx.params?.id;
+
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
+    }
+    if (!categoryId) {
+      throw ApiErrorFactory.validationError({ id: 'Category ID is required' });
     }
 
-    await validateTenantAccess(session.user.id, tenantId, [UserRole.ADMIN, UserRole.MANAGER, UserRole.STAFF, UserRole.VIEWER]);
-
-    const url = new URL(req.url);
+    const url = new URL(ctx.request.url);
     const queryValidation = GetCategoryQuerySchema.safeParse(Object.fromEntries(url.searchParams));
 
     if (!queryValidation.success) {
-      return NextResponse.json({ error: 'Invalid query parameters', details: queryValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
     const { include_children, include_products } = queryValidation.data;
 
-    const supabase = createServerSupabaseClient();
-    const { data: category, error } = await supabase
+    const selectFields = include_products
+      ? '*, parent:product_categories!parent_id(id, name), products(id, name, price_cents, is_active), product_count:products(count)'
+      : '*, parent:product_categories!parent_id(id, name), product_count:products(count)';
+
+    const { data: category, error } = await ctx.supabase
       .from('product_categories')
-      .select(`
-        *,
-        parent:product_categories!parent_id(id, name),
-        ${include_products ? 'products(id, name, price_cents, is_active)' : ''},
-        product_count:products(count)
-      `)
-      .eq('id', params.id)
+      .select(selectFields)
+      .eq('id', categoryId)
       .eq('tenant_id', tenantId)
       .single();
 
     if (error || !category) {
-      return NextResponse.json({ error: 'Category not found' }, { status: 404 });
+      throw ApiErrorFactory.notFound('Category');
     }
 
+    const result: CategoryWithChildren = { ...category };
+
     if (include_children) {
-      const { data: children, error: childrenError } = await supabase
+      const { data: children, error: childrenError } = await ctx.supabase
         .from('product_categories')
         .select('*, product_count:products(count)')
-        .eq('parent_id', params.id)
+        .eq('parent_id', categoryId)
         .eq('tenant_id', tenantId)
         .order('display_order', { ascending: true });
 
-      if (childrenError) throw childrenError;
-      (category as any).children = children || [];
+      if (childrenError) {
+        throw ApiErrorFactory.databaseError(childrenError);
+      }
+      result.children = children || [];
     }
 
-    return NextResponse.json({ category });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to retrieve category');
-  }
-}
+    return { category: result };
+  },
+  'GET',
+  { auth: true, roles: ['owner', 'manager', 'staff'] }
+);
 
 /**
  * PUT /api/categories/[id]
  * Update a specific product category.
- * Requires 'manager' or 'admin' role.
  */
-export async function PUT(req: AuthenticatedRequest, { params }: RouteParams) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const PUT = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    const categoryId = ctx.params?.id;
+
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
+    }
+    if (!categoryId) {
+      throw ApiErrorFactory.validationError({ id: 'Category ID is required' });
     }
 
-    await validateTenantAccess(session.user.id, tenantId, [UserRole.ADMIN, UserRole.MANAGER]);
-
-    const body = await req.json();
+    const body = await ctx.request.json();
     const bodyValidation = UpdateCategoryBodySchema.safeParse(body);
 
     if (!bodyValidation.success) {
-      return NextResponse.json({ error: 'Invalid request body', details: bodyValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
     const updateData = bodyValidation.data;
 
     if (Object.keys(updateData).length === 0) {
-        return NextResponse.json({ error: 'Request body cannot be empty.' }, { status: 400 });
+      throw ApiErrorFactory.validationError({ body: 'Request body cannot be empty' });
     }
 
-    const supabase = createServerSupabaseClient();
-    const { data: existingCategory, error: existingError } = await supabase
+    // Check category exists
+    const { data: existingCategory, error: existingError } = await ctx.supabase
       .from('product_categories')
       .select('id, name, parent_id')
-      .eq('id', params.id)
+      .eq('id', categoryId)
       .eq('tenant_id', tenantId)
       .single();
 
     if (existingError || !existingCategory) {
-      return NextResponse.json({ error: 'Category not found' }, { status: 404 });
+      throw ApiErrorFactory.notFound('Category');
     }
 
-    // Complex validation for name and parent_id
+    // Check name uniqueness if name is being updated
     if (updateData.name && updateData.name !== existingCategory.name) {
-        const { count } = await supabase.from('product_categories').select('*', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('name', updateData.name).neq('id', params.id);
-        if (count && count > 0) return NextResponse.json({ error: 'Category name already exists' }, { status: 409 });
+      const { count } = await ctx.supabase
+        .from('product_categories')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .eq('name', updateData.name)
+        .neq('id', categoryId);
+
+      if (count && count > 0) {
+        throw ApiErrorFactory.conflict('Category name already exists');
+      }
     }
 
+    // Validate parent_id if being updated
     if (updateData.parent_id && updateData.parent_id !== existingCategory.parent_id) {
-        if (updateData.parent_id === params.id) return NextResponse.json({ error: 'Category cannot be its own parent' }, { status: 400 });
-        
-        const { data: parentCategory } = await supabase.from('product_categories').select('id, parent_id').eq('id', updateData.parent_id).eq('tenant_id', tenantId).single();
-        if (!parentCategory) return NextResponse.json({ error: 'Parent category not found' }, { status: 400 });
+      if (updateData.parent_id === categoryId) {
+        throw ApiErrorFactory.validationError({ parent_id: 'Category cannot be its own parent' });
+      }
 
-        // Circular reference and depth checks... (simplified for brevity, assuming logic is sound)
+      const { data: parentCategory } = await ctx.supabase
+        .from('product_categories')
+        .select('id, parent_id')
+        .eq('id', updateData.parent_id)
+        .eq('tenant_id', tenantId)
+        .single();
+
+      if (!parentCategory) {
+        throw ApiErrorFactory.validationError({ parent_id: 'Parent category not found' });
+      }
     }
 
-    const { data: updatedCategory, error: updateError } = await supabase
+    const { data: updatedCategory, error: updateError } = await ctx.supabase
       .from('product_categories')
       .update({ ...updateData, updated_at: new Date().toISOString() })
-      .eq('id', params.id)
+      .eq('id', categoryId)
       .eq('tenant_id', tenantId)
       .select('*, parent:product_categories!parent_id(id, name), product_count:products(count)')
       .single();
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      throw ApiErrorFactory.databaseError(updateError);
+    }
 
-    return NextResponse.json({ message: 'Category updated successfully', category: updatedCategory });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to update category');
-  }
-}
+    return { message: 'Category updated successfully', category: updatedCategory };
+  },
+  'PUT',
+  { auth: true, roles: ['owner', 'manager'] }
+);
 
 /**
  * DELETE /api/categories/[id]
  * Delete a specific product category.
- * Requires 'manager' or 'admin' role.
  */
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  try {
-    const { session, tenantId } = await getSession(req);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const DELETE = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.user?.tenantId;
+    const categoryId = ctx.params?.id;
+
+    if (!tenantId) {
+      throw ApiErrorFactory.forbidden('Tenant ID required');
+    }
+    if (!categoryId) {
+      throw ApiErrorFactory.validationError({ id: 'Category ID is required' });
     }
 
-    await validateTenantAccess(session.user.id, tenantId, [UserRole.ADMIN, UserRole.MANAGER]);
-    
-    const url = new URL(req.url);
+    const url = new URL(ctx.request.url);
     const queryValidation = DeleteCategoryQuerySchema.safeParse(Object.fromEntries(url.searchParams));
 
     if (!queryValidation.success) {
-        return NextResponse.json({ error: 'Invalid query parameters', details: queryValidation.error.issues }, { status: 400 });
+      throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
     const { force, move_products, new_category_id } = queryValidation.data;
 
-    const supabase = createServerSupabaseClient();
-    const { data: category, error: categoryError } = await supabase.from('product_categories').select('id, parent_id').eq('id', params.id).eq('tenant_id', tenantId).single();
+    // Check category exists
+    const { data: category, error: categoryError } = await ctx.supabase
+      .from('product_categories')
+      .select('id, parent_id')
+      .eq('id', categoryId)
+      .eq('tenant_id', tenantId)
+      .single();
 
     if (categoryError || !category) {
-        return NextResponse.json({ error: 'Category not found' }, { status: 404 });
+      throw ApiErrorFactory.notFound('Category');
     }
 
-    const { count: productCount } = await supabase.from('products').select('*', { count: 'exact', head: true }).eq('category_id', params.id);
-    const { count: childCount } = await supabase.from('product_categories').select('*', { count: 'exact', head: true }).eq('parent_id', params.id);
+    // Check for products and children
+    const { count: productCount } = await ctx.supabase
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('category_id', categoryId);
+
+    const { count: childCount } = await ctx.supabase
+      .from('product_categories')
+      .select('*', { count: 'exact', head: true })
+      .eq('parent_id', categoryId);
 
     if ((productCount || 0) > 0 || (childCount || 0) > 0) {
-        if (!force) {
-            return NextResponse.json({ error: 'Category has children or products. Use force=true to delete.' }, { status: 409 });
-        }
+      if (!force) {
+        throw ApiErrorFactory.conflict('Category has children or products. Use force=true to delete.');
+      }
 
-        if (move_products && new_category_id) {
-            const { data: newCategory } = await supabase.from('product_categories').select('id').eq('id', new_category_id).eq('tenant_id', tenantId).single();
-            if (!newCategory) return NextResponse.json({ error: 'Target category for moving products not found.' }, { status: 400 });
-            await supabase.from('products').update({ category_id: new_category_id }).eq('category_id', params.id);
-        } else if ((productCount || 0) > 0) {
-            await supabase.from('products').update({ category_id: null }).eq('category_id', params.id);
-        }
+      // Move products if requested
+      if (move_products && new_category_id) {
+        const { data: newCategory } = await ctx.supabase
+          .from('product_categories')
+          .select('id')
+          .eq('id', new_category_id)
+          .eq('tenant_id', tenantId)
+          .single();
 
-        if ((childCount || 0) > 0) {
-            await supabase.from('product_categories').update({ parent_id: category.parent_id }).eq('parent_id', params.id);
+        if (!newCategory) {
+          throw ApiErrorFactory.validationError({ new_category_id: 'Target category not found' });
         }
+        await ctx.supabase.from('products').update({ category_id: new_category_id }).eq('category_id', categoryId);
+      } else if ((productCount || 0) > 0) {
+        await ctx.supabase.from('products').update({ category_id: null }).eq('category_id', categoryId);
+      }
+
+      // Re-parent children
+      if ((childCount || 0) > 0) {
+        await ctx.supabase.from('product_categories').update({ parent_id: category.parent_id }).eq('parent_id', categoryId);
+      }
     }
 
-    const { error: deleteError } = await supabase.from('product_categories').delete().eq('id', params.id);
+    const { error: deleteError } = await ctx.supabase
+      .from('product_categories')
+      .delete()
+      .eq('id', categoryId);
 
-    if (deleteError) throw deleteError;
+    if (deleteError) {
+      throw ApiErrorFactory.databaseError(deleteError);
+    }
 
-    return NextResponse.json({ message: 'Category deleted successfully', category_id: params.id });
-
-  } catch (error) {
-    return handleApiError(error, 'Failed to delete category');
-  }
-}
+    return { message: 'Category deleted successfully', category_id: categoryId };
+  },
+  'DELETE',
+  { auth: true, roles: ['owner', 'manager'] }
+);

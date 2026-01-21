@@ -1,6 +1,6 @@
 import { recordLLMUsage, canMakeLLMRequest } from '@/lib/llmUsageTracker';
 
-export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'unknown';
+export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'unknown';
 
 export type ExtractedEntity = {
   type: 'time' | 'date' | 'service' | 'staff' | 'phone' | 'email' | 'name';
@@ -57,7 +57,13 @@ export async function detectIntent(
     try {
       // Enhanced system prompt for better classification
       const system = `You are an advanced booking intent classifier. Analyze the message and return JSON with:
-- intent: booking|reschedule|cancel|inquiry|unknown
+- intent: booking|reschedule|cancel|inquiry|business_info|product_inquiry|unknown
+  - booking: user wants to make an appointment
+  - reschedule: user wants to change existing booking
+  - cancel: user wants to cancel a booking
+  - inquiry: general questions about services, pricing, hours
+  - business_info: user asks about the business itself (location, hours, contact, about us)
+  - product_inquiry: user asks about products, items for sale, inventory, prices of goods
 - confidence: 0-1 number (be conservative, use context)
 - entities: array of {type, value, confidence} objects for time, date, service, staff, phone, email, name
 - context: {hasTimeReference, hasServiceMention, hasStaffPreference, isUrgent, sentiment}
@@ -312,8 +318,30 @@ function enhancedHeuristics(
     };
   }
   
-  // Inquiry intent
-  if (/\b(price|cost|how much|hours|open|available|info|question)\b/.test(low)) {
+  // Business info intent - questions about the business itself
+  if (/\b(where are you|location|address|contact|phone number|email|hours of operation|opening hours|closing|when do you open|when do you close|about you|about the|who are you|tell me about|business hours|working hours)\b/.test(low)) {
+    return {
+      intent: 'business_info',
+      confidence: 0.75,
+      entities,
+      context: contextInfo,
+      fallbackUsed: true
+    };
+  }
+
+  // Product inquiry intent - questions about products/items
+  if (/\b(product|products|item|items|sell|selling|buy|purchase|stock|inventory|what do you have|what products|catalog|catalogue|menu|price list|merchandise|goods|retail)\b/.test(low)) {
+    return {
+      intent: 'product_inquiry',
+      confidence: 0.75,
+      entities,
+      context: contextInfo,
+      fallbackUsed: true
+    };
+  }
+
+  // General inquiry intent - service and pricing questions
+  if (/\b(price|cost|how much|available|info|question|services|offer)\b/.test(low)) {
     return {
       intent: 'inquiry',
       confidence: 0.65,
@@ -322,7 +350,7 @@ function enhancedHeuristics(
       fallbackUsed: true
     };
   }
-  
+
   // Adjust unknown confidence based on context
   if (entities.length > 0) baseConfidence += 0.1;
   if (contextInfo.hasTimeReference || contextInfo.hasServiceMention) baseConfidence += 0.05;

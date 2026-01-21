@@ -16,7 +16,7 @@
  * - ALERT_WEBHOOK_URL: Webhook URL for critical security alerts
  */
 
-import { createServerSupabaseClient } from '../src/lib/supabaseClient';
+import { createServerSupabaseClient } from '../src/lib/supabase/server';
 import SecurityAutomationService from '../src/lib/securityAutomation.js';
 import { trace } from '@opentelemetry/api';
 

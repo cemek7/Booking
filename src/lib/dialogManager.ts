@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { createServerSupabaseClient } from './supabaseClient';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 // Lightweight dialog manager with Redis-first session store, Postgres fallback,
 // and in-memory fallback for dev convenience. This provides a minimal slot-fill
