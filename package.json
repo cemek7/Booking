@@ -37,7 +37,9 @@
     "recharts": "^3.6.0",
     "stripe": "^20.1.0",
     "tailwind-merge": "^3.4.0",
-    "twilio": "^5.10.7"
+    "twilio": "^5.10.7",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -45,6 +47,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/winston": "^2.4.4",
     "baseline-browser-mapping": "^2.9.8",
     "eslint": "^9",
     "eslint-config-next": "16.0.0",

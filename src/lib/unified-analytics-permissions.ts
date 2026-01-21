@@ -82,9 +82,15 @@ export function getUnifiedAnalyticsAccess(userRole: Role): UnifiedAnalyticsAcces
   const restrictions: string[] = [];
   
   Object.values(ANALYTICS_VIEWS).forEach(view => {
-    // Simple role-based view access
-    const canAccess = (userRole === 'owner' || userRole === 'manager' || userRole === 'staff');
-    
+    // Check if user's scope allows access to this view
+    const userScope = getAnalyticsScope(userRole);
+    const scopeHierarchy = ['personal', 'team', 'tenant', 'global'];
+    const userScopeIndex = scopeHierarchy.indexOf(userScope);
+    const viewScopeIndex = scopeHierarchy.indexOf(view.scope);
+
+    // User can access views at their level or below
+    const canAccess = userScopeIndex >= viewScopeIndex && userScopeIndex >= 0;
+
     if (canAccess) {
       availableViews.push(view);
     } else {
@@ -94,19 +100,19 @@ export function getUnifiedAnalyticsAccess(userRole: Role): UnifiedAnalyticsAcces
   
   // Build unified permissions object based on role level
   const permissions: AnalyticsPermissions = {
-    canViewGlobalData: userRole === 'owner' || userRole === 'superadmin',
-    canViewTenantData: userRole === 'owner' || userRole === 'manager',
-    canViewTeamData: userRole === 'manager' || userRole === 'owner',
-    canViewPersonalData: userRole === 'staff' || userRole === 'manager' || userRole === 'owner',
-    canExportData: userRole === 'owner' || userRole === 'manager',
-    canCreateDashboards: userRole === 'owner',
-    canShareDashboards: userRole === 'owner' || userRole === 'manager',
+    canViewGlobalData: userRole === 'superadmin',
+    canViewTenantData: userRole === 'owner' || userRole === 'superadmin',
+    canViewTeamData: userRole === 'manager' || userRole === 'owner' || userRole === 'superadmin',
+    canViewPersonalData: true, // All roles can view their own data
+    canExportData: userRole === 'owner' || userRole === 'manager' || userRole === 'superadmin',
+    canCreateDashboards: userRole === 'owner' || userRole === 'superadmin',
+    canShareDashboards: userRole === 'owner' || userRole === 'manager' || userRole === 'superadmin',
     dataRetentionDays: getDataRetentionForRole(userRole)
   };
   
   return {
     canAccess: level !== 'none',
-    level: level === 'global' ? 'full' : level === 'tenant' ? 'operational' : level === 'team' ? 'basic' : level === 'personal' ? 'basic' : 'none',
+    level: level === 'global' ? 'system' : level === 'tenant' ? 'full' : level === 'team' ? 'operational' : level === 'personal' ? 'basic' : 'none',
     permissions,
     availableViews,
     restrictions
@@ -150,7 +156,7 @@ export function getAnalyticsScope(userRole: Role): 'none' | 'personal' | 'team' 
     case 'superadmin':
       return 'global';
     case 'owner':
-      return 'global';
+      return 'tenant';
     case 'manager':
       return 'team';
     case 'staff':
