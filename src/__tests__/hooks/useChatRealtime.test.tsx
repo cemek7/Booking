@@ -30,7 +30,7 @@ describe('useChatRealtime', () => {
   let onMessagesChange: ((payload: any) => void) | null = null;
 
   // Helper to create complete mock chain
-  const mockFromTable = (chatsData: any[] | { error: any } = [], messagesData: any[] = []) => {
+  const mockFromTable = (chatsData: any[] | { error: any; data: null } = [], messagesData: any[] = []) => {
     mockSupabase.from.mockImplementation((table: string) => {
       if (table === 'chats') {
         const hasError = !Array.isArray(chatsData) && 'error' in chatsData;
@@ -39,7 +39,7 @@ describe('useChatRealtime', () => {
           eq: jest.fn().mockReturnThis(),
           order: jest.fn().mockReturnThis(),
           limit: jest.fn().mockResolvedValue(
-            hasError ? chatsData : { data: chatsData, error: null }
+            hasError ? { data: null, error: chatsData.error } : { data: chatsData, error: null }
           ),
         };
       }
@@ -422,17 +422,7 @@ describe('useChatRealtime', () => {
         },
       ];
 
-      mockSupabase.from.mockImplementation((table: string) => {
-        if (table === 'chats') {
-          return {
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            order: jest.fn().mockReturnThis(),
-            limit: jest.fn().mockResolvedValue({ data: mockChats, error: null }),
-          };
-        }
-        return {};
-      });
+      mockFromTable(mockChats);
 
       renderHook(() => useChatRealtime('tenant-123'));
 
