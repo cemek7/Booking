@@ -162,6 +162,84 @@ export function isPublicPath(pathname: string): boolean {
 }
 
 /**
+ * Extract tenant ID from request
+ * Tries multiple sources: path params, query params, cookies
+ */
+function extractTenantId(request: NextRequest): string | null {
+  const url = new URL(request.url);
+
+  // Try query parameter
+  const queryTenantId = url.searchParams.get('tenant_id') || url.searchParams.get('tenantId');
+  if (queryTenantId) {
+    return queryTenantId;
+  }
+
+  // Try path parameter (e.g., /api/tenants/{tenantId}/...)
+  const pathMatch = url.pathname.match(/\/tenants\/([a-f0-9-]{36})/i);
+  if (pathMatch && pathMatch[1]) {
+    return pathMatch[1];
+  }
+
+  // Try cookie
+  const cookieTenantId = request.cookies.get('tenant_id')?.value;
+  if (cookieTenantId) {
+    return cookieTenantId;
+  }
+
+  // Try custom header
+  const headerTenantId = request.headers.get('x-tenant-id');
+  if (headerTenantId) {
+    return headerTenantId;
+  }
+
+  return null;
+}
+
+/**
+ * Parse user role from database with tenant-aware query
+ */
+async function parseUserRole(
+  supabase: any,
+  userId: string,
+  tenantId?: string
+): Promise<{ role: string; permissions: string[] } | null> {
+  try {
+    // Validate tenantId before querying
+    if (!tenantId || tenantId.trim() === '') {
+      console.debug('[Auth] No valid tenantId provided, cannot look up role');
+      return null;
+    }
+
+    // Query tenant_users with BOTH user_id and tenant_id filters
+    // This ensures we get the correct role for multi-tenant users
+    const { data, error } = await supabase
+      .from('tenant_users')
+      .select('role')
+      .eq('user_id', userId)
+      .eq('tenant_id', tenantId)
+      .maybeSingle(); // Use maybeSingle instead of single to handle not found gracefully
+
+    if (error) {
+      console.error('[Auth] Role query failed:', error.message);
+      return null;
+    }
+
+    if (!data) {
+      console.warn('[Auth] No role found for user in tenant', { userId, tenantId });
+      return null;
+    }
+
+    return {
+      role: data.role || 'staff',
+      permissions: [], // Permissions can be added later if needed
+    };
+  } catch (error) {
+    console.error('[Auth] Parse role error:', error);
+    return null;
+  }
+}
+
+/**
  * Unified authentication handler
  */
 export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler => {
@@ -186,14 +264,28 @@ export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler =>
 
       if (authUser && !authError) {
         // ✅ Session found in cookies - user is authenticated
-        // Middleware just verifies authentication
-        // Frontend has actual role in localStorage, API can get it from headers if needed
+        // Extract tenant ID from request for role lookup
+        const tenantId = extractTenantId(request);
+
+        // Parse user role from database (tenant-aware)
+        const roleData = await parseUserRole(supabase, authUser.id, tenantId || undefined);
+
         context.user = {
           id: authUser.id,
           email: authUser.email || '',
-          role: '', // Empty - frontend owns the role from localStorage
-          permissions: [],
+          role: roleData?.role || '',
+          tenantId: tenantId || undefined,
+          permissions: roleData?.permissions || [],
         };
+
+        // Set user info in response headers for downstream middleware
+        const response = NextResponse.next();
+        response.headers.set('x-user-id', authUser.id);
+        response.headers.set('x-user-role', roleData?.role || '');
+        if (tenantId) {
+          response.headers.set('x-tenant-id', tenantId);
+        }
+        context.response = response;
 
         return context;
       }
@@ -201,19 +293,33 @@ export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler =>
       // FALLBACK: Try bearer token if no session in cookies
       const token = extractBearerToken(request);
       if (token) {
-        const { data: { user: tokenUser }, error: tokenError } = 
+        const { data: { user: tokenUser }, error: tokenError } =
           await supabase.auth.getUser(token);
-        
+
         if (!tokenError && tokenUser) {
           // ✅ Token is valid - user is authenticated
-          // Middleware just verifies authentication
-          // Frontend has actual role in localStorage, API can get it from headers if needed
+          // Extract tenant ID from request for role lookup
+          const tenantId = extractTenantId(request);
+
+          // Parse user role from database (tenant-aware)
+          const roleData = await parseUserRole(supabase, tokenUser.id, tenantId || undefined);
+
           context.user = {
             id: tokenUser.id,
             email: tokenUser.email || '',
-            role: '', // Empty - frontend owns the role from localStorage
-            permissions: [],
+            role: roleData?.role || '',
+            tenantId: tenantId || undefined,
+            permissions: roleData?.permissions || [],
           };
+
+          // Set user info in response headers for downstream middleware
+          const response = NextResponse.next();
+          response.headers.set('x-user-id', tokenUser.id);
+          response.headers.set('x-user-role', roleData?.role || '');
+          if (tenantId) {
+            response.headers.set('x-tenant-id', tenantId);
+          }
+          context.response = response;
 
           return context;
         }

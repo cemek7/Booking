@@ -48,7 +48,7 @@ export async function middleware(request: NextRequest) {
   // Execute unified middleware chain
   const response = await middlewareOrchestrator.execute(request);
 
-  // Handle root path redirect for authenticated users
+  // Extract context from response if available (for role validation)
   const pathname = request.nextUrl.pathname;
   if (pathname === '/' && response.status === 200) {
     const { role: resolvedRole, isAuthenticated, tenantId } = await getAuthenticatedUserRole(request);

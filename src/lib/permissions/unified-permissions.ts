@@ -139,6 +139,15 @@ export function hasPermission(
 }
 
 /**
+ * Check if a role string is a valid Role type
+ */
+export function isValidRole(role: string | undefined | null): role is Role {
+  if (!role) return false;
+  const validRoles: Role[] = ['staff', 'manager', 'owner', 'superadmin'];
+  return validRoles.includes(role as Role);
+}
+
+/**
  * Get a list of features available for a given role.
  */
 export function getFeaturesForRole(userRole: Role): string[] {
