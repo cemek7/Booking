@@ -55,6 +55,71 @@ export function extractBearerToken(request: NextRequest): string | null {
 }
 
 /**
+ * Resolve authenticated user's role for middleware decisions.
+ * Uses server-side auth context; does not trust client-sent role headers.
+ */
+export async function getAuthenticatedUserRole(
+  request: NextRequest
+): Promise<{ role: string | null; isAuthenticated: boolean }> {
+  try {
+    const supabase = getSupabaseRouteHandlerClient();
+
+    const { data: { user: sessionUser }, error: sessionError } =
+      await supabase.auth.getUser();
+
+    let user = sessionUser;
+    if (!user || sessionError) {
+      const token = extractBearerToken(request);
+      if (token) {
+        const { data: { user: tokenUser }, error: tokenError } =
+          await supabase.auth.getUser(token);
+        if (!tokenError && tokenUser) {
+          user = tokenUser;
+        }
+      }
+    }
+
+    if (!user) {
+      return { role: null, isAuthenticated: false };
+    }
+
+    const tenantId = request.headers.get('x-tenant-id') || null;
+    const roleQuery = supabase
+      .from('tenant_users')
+      .select('role')
+      .eq('user_id', user.id);
+    const scopedRoleQuery = tenantId ? roleQuery.eq('tenant_id', tenantId) : roleQuery.limit(1);
+    const { data: tenantUser, error: roleError } = await scopedRoleQuery.maybeSingle();
+
+    if (roleError) {
+      console.error('[Auth] Role query failed:', roleError.message);
+      return { role: null, isAuthenticated: true };
+    }
+
+    if (tenantUser?.role) {
+      return { role: tenantUser.role, isAuthenticated: true };
+    }
+
+    const retryRoleQuery = supabase
+      .from('tenant_users')
+      .select('role')
+      .eq('user_id', user.id);
+    const scopedRetryQuery = tenantId ? retryRoleQuery.eq('tenant_id', tenantId) : retryRoleQuery.limit(1);
+    const { data: retryTenantUser, error: retryError } = await scopedRetryQuery.maybeSingle();
+
+    if (retryError) {
+      console.error('[Auth] Role retry query failed:', retryError.message);
+      return { role: null, isAuthenticated: true };
+    }
+
+    return { role: retryTenantUser?.role ?? null, isAuthenticated: true };
+  } catch (error) {
+    console.error('[Auth] Failed to resolve user role:', error);
+    return { role: null, isAuthenticated: false };
+  }
+}
+
+/**
  * Check if path is public (doesn't require auth)
  */
 export function isPublicPath(pathname: string): boolean {
