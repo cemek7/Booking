@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { type NextApiRequest, type NextApiResponse } from 'next';
 import { serialize } from 'cookie';
 
-function createClient() {
+function createClient(accessToken?: string) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -12,7 +12,7 @@ function createClient() {
     throw new Error('Supabase URL and Anon Key must be provided.');
   }
 
-  return createServerClient(supabaseUrl, supabaseAnonKey, {
+  const options = {
     cookies: {
       get: async (name: string) => {
         const cookieStore = await cookies();
@@ -39,23 +39,34 @@ function createClient() {
         }
       },
     },
-  });
+    ...(accessToken
+      ? {
+          global: {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        }
+      : {}),
+  };
+
+  return createServerClient(supabaseUrl, supabaseAnonKey, options);
 }
 
 /**
  * Creates a Supabase client for Server Component usage.
  * This needs to be created for each request.
  */
-export function getSupabaseServerComponentClient() {
-  return createClient();
+export function getSupabaseServerComponentClient(accessToken?: string) {
+  return createClient(accessToken);
 }
 
 /**
  * Creates a Supabase client for API Route Handler usage.
  * This needs to be created for each request.
  */
-export function getSupabaseRouteHandlerClient() {
-  return createClient();
+export function getSupabaseRouteHandlerClient(accessToken?: string) {
+  return createClient(accessToken);
 }
 
 /**
@@ -66,7 +77,11 @@ export function getSupabaseRouteHandlerClient() {
  * @param res NextApiResponse
  * @returns SupabaseClient
  */
-export function getSupabaseApiRouteClient(req: NextApiRequest, res: NextApiResponse) {
+export function getSupabaseApiRouteClient(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  accessToken?: string,
+) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -74,7 +89,7 @@ export function getSupabaseApiRouteClient(req: NextApiRequest, res: NextApiRespo
     throw new Error('Supabase URL and Anon Key must be provided.');
   }
 
-  return createServerClient(supabaseUrl, supabaseAnonKey, {
+  const options = {
     cookies: {
       get: (name: string) => {
         return req.cookies[name];
@@ -86,7 +101,18 @@ export function getSupabaseApiRouteClient(req: NextApiRequest, res: NextApiRespo
         res.setHeader('Set-Cookie', serialize(name, '', options));
       },
     },
-  });
+    ...(accessToken
+      ? {
+          global: {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        }
+      : {}),
+  };
+
+  return createServerClient(supabaseUrl, supabaseAnonKey, options);
 }
 
 /**
