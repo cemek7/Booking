@@ -148,11 +148,8 @@ async function parseUserRole(
   try {
     // If no tenantId provided, can't look up role in tenant_users
     if (!tenantId) {
-      console.debug('[Auth] No tenantId provided, using default role');
-      return {
-        role: 'staff',
-        permissions: [],
-      };
+      console.debug('[Auth] Missing tenantId; skipping role resolution.');
+      return null;
     }
 
     const { data, error } = await supabase
@@ -167,8 +164,13 @@ async function parseUserRole(
       return null;
     }
 
+    if (!data?.role) {
+      console.debug('[Auth] No role found for tenant user.');
+      return null;
+    }
+
     return {
-      role: data?.role || 'staff',
+      role: data.role,
       permissions: [], // Permissions can be added later if needed
     };
   } catch (error) {
