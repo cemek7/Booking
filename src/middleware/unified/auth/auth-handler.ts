@@ -84,24 +84,8 @@ export async function getAuthenticatedUserRole(
     }
 
     const tenantId = request.headers.get('x-tenant-id') || null;
-    if (tenantId) {
-      const { data: membership, error: membershipError } = await supabase
-        .from('tenant_users')
-        .select('role')
-        .eq('user_id', user.id)
-        .eq('tenant_id', tenantId)
-        .maybeSingle();
-
-      if (membershipError) {
-        console.error('[Auth] Tenant membership query failed:', membershipError.message);
-        return { role: null, isAuthenticated: true };
-      }
-
-      if (!membership) {
-        console.warn('[Auth] Tenant membership missing for user:', user.id, tenantId);
-        return { role: null, isAuthenticated: true };
-      }
-    }
+    
+    // Query role with tenant context if available
     const roleQuery = supabase
       .from('tenant_users')
       .select('role')
@@ -111,6 +95,12 @@ export async function getAuthenticatedUserRole(
 
     if (roleError) {
       console.error('[Auth] Role query failed:', roleError.message);
+      return { role: null, isAuthenticated: true };
+    }
+
+    // When tenantId is provided, verify membership exists
+    if (tenantId && !tenantUser) {
+      console.warn('[Auth] Tenant membership missing for user:', user.id, tenantId);
       return { role: null, isAuthenticated: true };
     }
 
