@@ -63,4 +63,11 @@ export async function cacheGet(key: string) {
   try { return JSON.parse(v); } catch { return v; }
 }
 
-export default { lpushRecent, getRecent, cacheSet, cacheGet };
+export async function pingRedis() {
+  const c = ensureClient();
+  if (typeof c.ping === 'function') return c.ping();
+  if (typeof c.PING === 'function') return c.PING();
+  throw new Error('Redis client does not support ping');
+}
+
+export default { lpushRecent, getRecent, cacheSet, cacheGet, pingRedis };

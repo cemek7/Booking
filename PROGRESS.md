@@ -722,7 +722,7 @@ All hooks use React Query for server state management with proper TypeScript typ
 ### Short-term Enhancements
 - [ ] OAuth integrations (Google, GitHub)
 - [ ] Recurring bookings implementation
-- [ ] Waitlist management system
+- [ ] Waitlist management system 
 - [ ] Rate limiting on public endpoints
 - [ ] Performance benchmarking suite
 - [ ] Accessibility audit (WCAG 2.1 AA)

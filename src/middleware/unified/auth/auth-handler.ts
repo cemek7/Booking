@@ -60,7 +60,7 @@ export function extractBearerToken(request: NextRequest): string | null {
  */
 export async function getAuthenticatedUserRole(
   request: NextRequest
-): Promise<{ role: string | null; isAuthenticated: boolean; tenantId: string | null }> {
+): Promise<{ role: string | null; isAuthenticated: boolean }> {
   try {
     const supabase = getSupabaseRouteHandlerClient();
 
@@ -80,66 +80,60 @@ export async function getAuthenticatedUserRole(
     }
 
     if (!user) {
-      return { role: null, isAuthenticated: false, tenantId: null };
+      return { role: null, isAuthenticated: false };
     }
 
     const tenantId = request.headers.get('x-tenant-id') || null;
-    if (!tenantId) {
-      const { data: memberships, error: membershipsError } = await supabase
+    if (tenantId) {
+      const { data: membership, error: membershipError } = await supabase
         .from('tenant_users')
-        .select('tenant_id, role')
+        .select('role')
         .eq('user_id', user.id)
-        .limit(2);
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
 
-      if (membershipsError) {
-        console.error('[Auth] Tenant membership query failed:', membershipsError.message);
-        return { role: null, isAuthenticated: true, tenantId: null };
+      if (membershipError) {
+        console.error('[Auth] Tenant membership query failed:', membershipError.message);
+        return { role: null, isAuthenticated: true };
       }
 
-      if (memberships?.length === 1) {
-        const membership = memberships[0];
-        return {
-          role: membership?.role ?? null,
-          isAuthenticated: true,
-          tenantId: membership?.tenant_id ?? null,
-        };
+      if (!membership) {
+        console.warn('[Auth] Tenant membership missing for user:', user.id, tenantId);
+        return { role: null, isAuthenticated: true };
       }
-
-      return { role: null, isAuthenticated: true, tenantId: null };
     }
-
     const roleQuery = supabase
       .from('tenant_users')
       .select('role')
-      .eq('user_id', user.id)
-      .eq('tenant_id', tenantId);
-    const { data: tenantUser, error: roleError } = await roleQuery.maybeSingle();
+      .eq('user_id', user.id);
+    const scopedRoleQuery = tenantId ? roleQuery.eq('tenant_id', tenantId) : roleQuery.limit(1);
+    const { data: tenantUser, error: roleError } = await scopedRoleQuery.maybeSingle();
 
     if (roleError) {
       console.error('[Auth] Role query failed:', roleError.message);
-      return { role: null, isAuthenticated: true, tenantId };
+      return { role: null, isAuthenticated: true };
     }
 
     if (tenantUser?.role) {
-      return { role: tenantUser.role, isAuthenticated: true, tenantId };
+      return { role: tenantUser.role, isAuthenticated: true };
     }
 
     const retryRoleQuery = supabase
       .from('tenant_users')
       .select('role')
-      .eq('user_id', user.id)
-      .eq('tenant_id', tenantId);
-    const { data: retryTenantUser, error: retryError } = await retryRoleQuery.maybeSingle();
+      .eq('user_id', user.id);
+    const scopedRetryQuery = tenantId ? retryRoleQuery.eq('tenant_id', tenantId) : retryRoleQuery.limit(1);
+    const { data: retryTenantUser, error: retryError } = await scopedRetryQuery.maybeSingle();
 
     if (retryError) {
       console.error('[Auth] Role retry query failed:', retryError.message);
-      return { role: null, isAuthenticated: true, tenantId };
+      return { role: null, isAuthenticated: true };
     }
 
-    return { role: retryTenantUser?.role ?? null, isAuthenticated: true, tenantId };
+    return { role: retryTenantUser?.role ?? null, isAuthenticated: true };
   } catch (error) {
     console.error('[Auth] Failed to resolve user role:', error);
-    return { role: null, isAuthenticated: false, tenantId: null };
+    return { role: null, isAuthenticated: false };
   }
 }
 
@@ -172,11 +166,8 @@ async function parseUserRole(
   try {
     // If no tenantId provided, can't look up role in tenant_users
     if (!tenantId) {
-      console.debug('[Auth] No tenantId provided, using default role');
-      return {
-        role: 'staff',
-        permissions: [],
-      };
+      console.debug('[Auth] Missing tenantId; skipping role resolution.');
+      return null;
     }
 
     const { data, error } = await supabase
@@ -191,8 +182,13 @@ async function parseUserRole(
       return null;
     }
 
+    if (!data?.role) {
+      console.debug('[Auth] No role found for tenant user.');
+      return null;
+    }
+
     return {
-      role: data?.role || 'staff',
+      role: data.role,
       permissions: [], // Permissions can be added later if needed
     };
   } catch (error) {
