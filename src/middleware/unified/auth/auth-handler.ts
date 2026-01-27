@@ -98,7 +98,7 @@ export async function getAuthenticatedUserRole(
       }
 
       if (!membership) {
-        console.warn('[Auth] Tenant membership missing for user:', user.id, tenantId);
+        console.warn('[Auth] Tenant membership missing for tenant:', tenantId);
         return { role: null, isAuthenticated: true };
       }
     }
