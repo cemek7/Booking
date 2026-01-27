@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { 
   ApiError, 
@@ -88,7 +89,7 @@ export function createApiHandler(
         }
 
         const token = authHeader.slice(7);
-        const supabase = getSupabaseRouteHandlerClient();
+        const supabase = createSupabaseBearerClient(token);
 
         // Extract tenantId from header - frontend should always send this
         const tenantId = request.headers.get('X-Tenant-ID');
