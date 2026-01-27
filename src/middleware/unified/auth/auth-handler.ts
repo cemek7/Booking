@@ -83,10 +83,24 @@ export async function getAuthenticatedUserRole(
       return { role: null, isAuthenticated: false };
     }
 
-    const tenantId = request.headers.get('x-tenant-id');
-    if (!tenantId) {
-      console.warn('[Auth] Missing x-tenant-id header; skipping role resolution.');
-      return { role: null, isAuthenticated: true };
+    const tenantId = request.headers.get('x-tenant-id') || null;
+    if (tenantId) {
+      const { data: membership, error: membershipError } = await supabase
+        .from('tenant_users')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (membershipError) {
+        console.error('[Auth] Tenant membership query failed:', membershipError.message);
+        return { role: null, isAuthenticated: true };
+      }
+
+      if (!membership) {
+        console.warn('[Auth] Tenant membership missing for user:', user.id, tenantId);
+        return { role: null, isAuthenticated: true };
+      }
     }
     const roleQuery = supabase
       .from('tenant_users')
@@ -139,11 +153,8 @@ async function parseUserRole(
   try {
     // If no tenantId provided, can't look up role in tenant_users
     if (!tenantId) {
-      console.debug('[Auth] No tenantId provided, using default role');
-      return {
-        role: 'staff',
-        permissions: [],
-      };
+      console.debug('[Auth] Missing tenantId; skipping role resolution.');
+      return null;
     }
 
     const { data, error } = await supabase
@@ -158,8 +169,13 @@ async function parseUserRole(
       return null;
     }
 
+    if (!data?.role) {
+      console.debug('[Auth] No role found for tenant user.');
+      return null;
+    }
+
     return {
-      role: data?.role || 'staff',
+      role: data.role,
       permissions: [], // Permissions can be added later if needed
     };
   } catch (error) {

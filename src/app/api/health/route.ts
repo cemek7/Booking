@@ -1,5 +1,6 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { pingRedis } from '@/lib/redis';
 
 // --- Configuration ---
 const {
@@ -120,19 +121,34 @@ async function checkWhatsAppHealth(): Promise<HealthStatus> {
 }
 
 async function checkStorageHealth(): Promise<HealthStatus> {
-  // This is a mock check. A real implementation would test S3 connectivity.
+  // Configuration-only check; no storage client available in this route.
   if (!AWS_ACCESS_KEY_ID || !AWS_S3_BUCKET) {
     return { status: 'degraded', last_check: new Date().toISOString(), error: 'Storage configuration missing' };
   }
-  return { status: 'healthy', last_check: new Date().toISOString() };
+  return { status: 'degraded', last_check: new Date().toISOString(), error: 'Storage configured but check is config-only (no storage client available)' };
 }
 
 async function checkRedisHealth(): Promise<HealthStatus> {
-  // This is a mock check. A real implementation would use a Redis client to PING.
+  const checkStart = Date.now();
   if (!REDIS_URL) {
     return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis configuration missing' };
   }
-  return { status: 'healthy', last_check: new Date().toISOString() };
+  try {
+    await Promise.race([
+      pingRedis(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Redis ping timed out')), SERVICE_TIMEOUT)),
+    ]);
+    const responseTime = Date.now() - checkStart;
+    return { status: responseTime > 5000 ? 'degraded' : 'healthy', response_time_ms: responseTime, last_check: new Date().toISOString() };
+  } catch (error) {
+    const responseTime = Date.now() - checkStart;
+    return {
+      status: 'degraded',
+      response_time_ms: responseTime,
+      last_check: new Date().toISOString(),
+      error: `Redis configured but unreachable: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    };
+  }
 }
 
 /**
