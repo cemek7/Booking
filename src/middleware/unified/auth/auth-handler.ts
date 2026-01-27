@@ -106,7 +106,7 @@ export async function getAuthenticatedUserRole(
       .from('tenant_users')
       .select('role')
       .eq('user_id', user.id);
-    const scopedRoleQuery = tenantId ? roleQuery.eq('tenant_id', tenantId) : roleQuery.limit(1);
+    const scopedRoleQuery = roleQuery.eq('tenant_id', tenantId);
     const { data: tenantUser, error: roleError } = await scopedRoleQuery.maybeSingle();
 
     if (roleError) {
@@ -117,20 +117,7 @@ export async function getAuthenticatedUserRole(
     if (tenantUser?.role) {
       return { role: tenantUser.role, isAuthenticated: true };
     }
-
-    const retryRoleQuery = supabase
-      .from('tenant_users')
-      .select('role')
-      .eq('user_id', user.id);
-    const scopedRetryQuery = tenantId ? retryRoleQuery.eq('tenant_id', tenantId) : retryRoleQuery.limit(1);
-    const { data: retryTenantUser, error: retryError } = await scopedRetryQuery.maybeSingle();
-
-    if (retryError) {
-      console.error('[Auth] Role retry query failed:', retryError.message);
-      return { role: null, isAuthenticated: true };
-    }
-
-    return { role: retryTenantUser?.role ?? null, isAuthenticated: true };
+    return { role: null, isAuthenticated: true };
   } catch (error) {
     console.error('[Auth] Failed to resolve user role:', error);
     return { role: null, isAuthenticated: false };
