@@ -107,19 +107,19 @@ export async function getAuthenticatedUserRole(
     }
 
     // Fallback: When no tenantId header is provided, get any tenant membership
-    // Uses limit(1) to select the first tenant arbitrarily if user has multiple memberships
-    const { data: tenantUser, error: roleError } = await supabase
+    // Selection is non-deterministic (depends on database ordering) if user has multiple memberships
+    const { data: tenantUsers, error: roleError } = await supabase
       .from('tenant_users')
       .select('role, tenant_id')
       .eq('user_id', user.id)
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
 
     if (roleError) {
       console.error('[Auth] Role query failed:', roleError.message);
       return { role: null, isAuthenticated: true, tenantId: null };
     }
 
+    const tenantUser = tenantUsers?.[0];
     if (tenantUser?.role) {
       return { role: tenantUser.role, isAuthenticated: true, tenantId: tenantUser.tenant_id };
     }
