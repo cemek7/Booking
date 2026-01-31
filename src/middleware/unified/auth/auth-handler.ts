@@ -107,11 +107,12 @@ export async function getAuthenticatedUserRole(
     }
 
     // Fallback: When no tenantId header is provided, get any tenant membership
-    // Selection is non-deterministic (depends on database ordering) if user has multiple memberships
+    // Orders by tenant_id for deterministic selection if user has multiple memberships
     const { data: tenantUsers, error: roleError } = await supabase
       .from('tenant_users')
       .select('role, tenant_id')
       .eq('user_id', user.id)
+      .order('tenant_id', { ascending: true })
       .limit(1);
 
     if (roleError) {
