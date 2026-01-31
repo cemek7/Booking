@@ -60,7 +60,7 @@ export function extractBearerToken(request: NextRequest): string | null {
  */
 export async function getAuthenticatedUserRole(
   request: NextRequest
-): Promise<{ role: string | null; isAuthenticated: boolean }> {
+): Promise<{ role: string | null; isAuthenticated: boolean; tenantId: string | null }> {
   try {
     const supabase = getSupabaseRouteHandlerClient();
 
@@ -80,7 +80,7 @@ export async function getAuthenticatedUserRole(
     }
 
     if (!user) {
-      return { role: null, isAuthenticated: false };
+      return { role: null, isAuthenticated: false, tenantId: null };
     }
 
     const tenantId = request.headers.get('x-tenant-id') || null;
@@ -94,12 +94,12 @@ export async function getAuthenticatedUserRole(
 
       if (membershipError) {
         console.error('[Auth] Tenant membership query failed:', membershipError.message);
-        return { role: null, isAuthenticated: true };
+        return { role: null, isAuthenticated: true, tenantId };
       }
 
       if (!membership) {
         console.warn('[Auth] Tenant membership missing for tenant:', tenantId);
-        return { role: null, isAuthenticated: true };
+        return { role: null, isAuthenticated: true, tenantId };
       }
     }
     const roleQuery = supabase
@@ -111,16 +111,16 @@ export async function getAuthenticatedUserRole(
 
     if (roleError) {
       console.error('[Auth] Role query failed:', roleError.message);
-      return { role: null, isAuthenticated: true };
+      return { role: null, isAuthenticated: true, tenantId };
     }
 
     if (tenantUser?.role) {
-      return { role: tenantUser.role, isAuthenticated: true };
+      return { role: tenantUser.role, isAuthenticated: true, tenantId };
     }
-    return { role: null, isAuthenticated: true };
+    return { role: null, isAuthenticated: true, tenantId };
   } catch (error) {
     console.error('[Auth] Failed to resolve user role:', error);
-    return { role: null, isAuthenticated: false };
+    return { role: null, isAuthenticated: false, tenantId: null };
   }
 }
 
