@@ -107,9 +107,10 @@ export async function getAuthenticatedUserRole(
     }
 
     // Only execute this query when no tenantId was provided
+    // Note: If user belongs to multiple tenants, this returns an arbitrary one
     const { data: tenantUser, error: roleError } = await supabase
       .from('tenant_users')
-      .select('role')
+      .select('role, tenant_id')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -119,7 +120,7 @@ export async function getAuthenticatedUserRole(
     }
 
     if (tenantUser?.role) {
-      return { role: tenantUser.role, isAuthenticated: true, tenantId: null };
+      return { role: tenantUser.role, isAuthenticated: true, tenantId: tenantUser.tenant_id };
     }
     return { role: null, isAuthenticated: true, tenantId: null };
   } catch (error) {
