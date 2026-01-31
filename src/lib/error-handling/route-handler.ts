@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { type SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { 
@@ -30,7 +31,7 @@ export interface RouteContext {
     tenantId?: string;
     permissions?: string[];
   };
-  supabase: any;
+  supabase: SupabaseClient;
   params?: Record<string, string>;
 }
 
@@ -123,15 +124,33 @@ export function createApiHandler(
             .maybeSingle();
 
           if (tenantUserError || !tenantUserData) {
-            const error = ApiErrorFactory.forbidden(
-              tenantUserError
-                ? `Tenant membership query failed: ${tenantUserError.message}`
-                : 'User is not a member of the specified tenant'
-            );
+            const error = ApiErrorFactory.forbidden('Access denied');
             return error.toResponse();
           }
 
           tenantUser = tenantUserData;
+        }
+
+        // Check role requirements
+        if (options.roles && options.roles.length > 0) {
+          if (!tenantUser?.role || !options.roles.includes(tenantUser.role)) {
+            const error = ApiErrorFactory.insufficientPermissions(options.roles);
+            return error.toResponse();
+          }
+        }
+
+        // Check permission requirements
+        if (options.permissions && options.permissions.length > 0) {
+          // Note: permissions array is currently empty in user context
+          // This check is a placeholder for future permission system implementation
+          const userPermissions = []; // TODO: Fetch from database or calculate based on role
+          const hasAllPermissions = options.permissions.every(perm => 
+            userPermissions.includes(perm)
+          );
+          if (!hasAllPermissions) {
+            const error = ApiErrorFactory.insufficientPermissions(options.permissions);
+            return error.toResponse();
+          }
         }
 
         // Authorization is enforced server-side based on Supabase auth + tenant membership.
