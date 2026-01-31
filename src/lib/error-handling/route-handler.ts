@@ -15,8 +15,7 @@ import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { 
   ApiError, 
   ApiErrorFactory, 
-  handleRouteError,
-  ErrorCodes 
+  handleRouteError
 } from '@/lib/error-handling/api-error';
 
 /**
@@ -91,46 +90,33 @@ export function createApiHandler(
         const token = authHeader.slice(7);
         const supabase = createSupabaseBearerClient(token);
 
-        // Extract tenantId from header - frontend should always send this
-        const tenantId = request.headers.get('X-Tenant-ID');
-        
-        // Extract userId from token (JWT payload)
-        // JWT format: header.payload.signature
-        let userId = '';
-        try {
-          const parts = token.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
-            userId = payload.sub || '';
-          }
-        } catch (e) {
-          console.error('[route-handler] Failed to parse JWT:', e);
-          const error = ApiErrorFactory.invalidToken();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !authData?.user) {
+          const error = ApiErrorFactory.invalidToken({ cause: authError?.message });
           return error.toResponse();
         }
 
-        if (!userId) {
-          const error = ApiErrorFactory.invalidToken();
+        const { data: tenantUser, error: tenantUserError } = await supabase
+          .from('tenant_users')
+          .select('tenant_id, role')
+          .eq('user_id', authData.user.id)
+          .single();
+
+        if (tenantUserError || !tenantUser) {
+          const error = ApiErrorFactory.forbidden('User is not assigned to a tenant');
           return error.toResponse();
         }
 
-        // NOTE: Role-based access control is handled by frontend
-        // Frontend has actual role in localStorage from /api/admin/check
-        // API only verifies authentication (token structure), not authorization
-        
-        // If handler needs to know about roles/permissions, they must:
-        // 1. Be passed via headers from frontend (which read them from localStorage)
-        // 2. Be re-queried from database using tenant context
-        // 3. NOT be assumed from authentication token alone
-
-        // For now, we'll set default values and let handler use headers if needed
+        // Authorization is enforced server-side based on Supabase auth + tenant membership.
+        // Clients must not send role or tenant context headers for trust decisions.
         const result = await handler({
           request,
           user: {
-            id: userId,
-            email: '', // Email not available in JWT without additional query
-            role: '', // Empty - frontend owns the role from localStorage
-            tenantId: tenantId ? tenantId : undefined,
+            id: authData.user.id,
+            email: authData.user.email || '',
+            role: tenantUser.role,
+            tenantId: tenantUser.tenant_id,
             permissions: [],
           },
           supabase,
