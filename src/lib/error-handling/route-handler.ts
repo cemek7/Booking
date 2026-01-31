@@ -101,7 +101,7 @@ export function createApiHandler(
         // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows).
         // Default to true when undefined for backward compatibility.
         const requireTenantMembership =
-          options.auth !== false && options.requireTenantMembership !== false;
+          options.requireTenantMembership !== false;
         
         let tenantUser: { tenant_id: string; role: string } | null = null;
 
