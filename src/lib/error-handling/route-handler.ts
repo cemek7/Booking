@@ -98,6 +98,30 @@ export function createApiHandler(
           return error.toResponse();
         }
 
+        // Extract tenant ID from header to support multi-tenant users
+        const tenantId = request.headers.get('x-tenant-id');
+        
+        if (!tenantId) {
+          const error = ApiErrorFactory.badRequest('Missing required x-tenant-id header for authenticated request');
+          return error.toResponse();
+        }
+
+        // Query tenant_users scoped by both user_id and tenant_id
+        // This prevents "multiple rows" errors for multi-tenant users
+        const { data: tenantUser, error: tenantUserError } = await supabase
+          .from('tenant_users')
+          .select('tenant_id, role')
+          .eq('user_id', authData.user.id)
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
+
+        if (tenantUserError || !tenantUser) {
+          const error = ApiErrorFactory.forbidden(
+            tenantUserError 
+              ? `Tenant membership query failed: ${tenantUserError.message}`
+              : 'User is not a member of the specified tenant'
+          );
+          return error.toResponse();
         // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows)
         // Default to true when undefined for backward compatibility
         const requireTenantMembership = options.requireTenantMembership !== false;
