@@ -101,7 +101,7 @@ export function createApiHandler(
         const tenantId = request.headers.get('x-tenant-id');
         
         if (!tenantId) {
-          const error = ApiErrorFactory.badRequest('x-tenant-id header is required');
+          const error = ApiErrorFactory.badRequest('Missing required x-tenant-id header for authenticated request');
           return error.toResponse();
         }
 
