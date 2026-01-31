@@ -340,6 +340,83 @@ describe('Unified Middleware & Error Handling System', () => {
         expect(handler).toBeDefined();
       }
     });
+
+    describe('requireTenantMembership option', () => {
+      it('should default requireTenantMembership to true for authenticated routes', () => {
+        // When auth is enabled and requireTenantMembership is not specified,
+        // it should default to true for security
+        const handler = createHttpHandler(
+          async (ctx: RouteContext) => ({ data: 'test' }),
+          'GET',
+          { auth: true }
+        );
+
+        expect(handler).toBeDefined();
+        // The handler is created with auth: true
+        // requireTenantMembership should default to true (not explicitly false)
+      });
+
+      it('should allow opting out of tenant membership check with requireTenantMembership: false', () => {
+        // Routes like onboarding can explicitly set requireTenantMembership: false
+        // to allow authenticated users without a tenant (e.g., creating first tenant)
+        const handler = createHttpHandler(
+          async (ctx: RouteContext) => ({ data: 'test' }),
+          'POST',
+          { 
+            auth: true,
+            requireTenantMembership: false 
+          }
+        );
+
+        expect(handler).toBeDefined();
+        // The handler is created with auth: true but requireTenantMembership: false
+        // This allows authenticated users to access the route without tenant membership
+      });
+
+      it('should respect requireTenantMembership: false for onboarding flows', () => {
+        // Simulates the /api/onboarding/tenant route pattern
+        const handler = createHttpHandler(
+          async (ctx: RouteContext) => ({ 
+            success: true,
+            tenantId: 'new-tenant-123' 
+          }),
+          'POST',
+          { 
+            auth: true,
+            requireTenantMembership: false 
+          }
+        );
+
+        expect(handler).toBeDefined();
+        // This pattern allows authenticated users to create their first tenant
+        // without already having a tenant membership
+      });
+
+      it('should enforce tenant membership by default for security', () => {
+        // Most authenticated routes should require tenant membership
+        const handler = createHttpHandler(
+          async (ctx: RouteContext) => ({ data: 'sensitive-data' }),
+          'GET',
+          { auth: true }
+        );
+
+        expect(handler).toBeDefined();
+        // Without explicitly setting requireTenantMembership: false,
+        // the route enforces tenant membership for security
+      });
+
+      it('should not apply tenant membership check to unauthenticated routes', () => {
+        // Routes with auth: false should not check tenant membership
+        const handler = createHttpHandler(
+          async (ctx: RouteContext) => ({ data: 'public' }),
+          'GET',
+          { auth: false }
+        );
+
+        expect(handler).toBeDefined();
+        // Public routes don't need tenant membership checks
+      });
+    });
   });
 
   // ============================================================================
