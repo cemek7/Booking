@@ -106,12 +106,13 @@ export async function getAuthenticatedUserRole(
       return { role: membership.role, isAuthenticated: true, tenantId };
     }
 
-    // Only execute this query when no tenantId was provided
-    // Note: If user belongs to multiple tenants, this returns an arbitrary one
+    // Fallback: When no tenantId header is provided, get any tenant membership
+    // Uses limit(1) to select the first tenant arbitrarily if user has multiple memberships
     const { data: tenantUser, error: roleError } = await supabase
       .from('tenant_users')
       .select('role, tenant_id')
       .eq('user_id', user.id)
+      .limit(1)
       .maybeSingle();
 
     if (roleError) {
