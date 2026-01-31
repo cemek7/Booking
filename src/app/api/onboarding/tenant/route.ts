@@ -60,5 +60,5 @@ export const POST = createHttpHandler(
     }
   },
   'POST',
-  { auth: true }
+  { auth: true, requireTenantMembership: false }
 );

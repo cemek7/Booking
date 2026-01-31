@@ -47,6 +47,7 @@ export interface RouteHandlerOptions {
   auth?: boolean; // Require authentication
   roles?: string[]; // Required roles
   permissions?: string[]; // Required permissions
+  requireTenantMembership?: boolean; // Require tenant_users membership (default: true for auth: true). When false, user.role will be '' and user.tenantId will be undefined.
 }
 
 /**
@@ -97,15 +98,25 @@ export function createApiHandler(
           return error.toResponse();
         }
 
-        const { data: tenantUser, error: tenantUserError } = await supabase
-          .from('tenant_users')
-          .select('tenant_id, role')
-          .eq('user_id', authData.user.id)
-          .single();
+        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows)
+        // Default to true when undefined for backward compatibility
+        const requireTenantMembership = options.requireTenantMembership !== false;
+        
+        let tenantUser: { tenant_id: string; role: string } | null = null;
 
-        if (tenantUserError || !tenantUser) {
-          const error = ApiErrorFactory.forbidden('User is not assigned to a tenant');
-          return error.toResponse();
+        if (requireTenantMembership) {
+          const { data: tenantUserData, error: tenantUserError } = await supabase
+            .from('tenant_users')
+            .select('tenant_id, role')
+            .eq('user_id', authData.user.id)
+            .single();
+
+          if (tenantUserError || !tenantUserData) {
+            const error = ApiErrorFactory.forbidden('User is not assigned to a tenant');
+            return error.toResponse();
+          }
+
+          tenantUser = tenantUserData;
         }
 
         // Authorization is enforced server-side based on Supabase auth + tenant membership.
@@ -115,8 +126,8 @@ export function createApiHandler(
           user: {
             id: authData.user.id,
             email: authData.user.email || '',
-            role: tenantUser.role,
-            tenantId: tenantUser.tenant_id,
+            role: tenantUser?.role || '',
+            tenantId: tenantUser?.tenant_id,
             permissions: [],
           },
           supabase,
