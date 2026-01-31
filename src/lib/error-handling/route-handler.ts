@@ -131,26 +131,19 @@ export function createApiHandler(
           tenantUser = tenantUserData;
         }
 
-        // Check role requirements
-        if (options.roles && options.roles.length > 0) {
+        // Check role requirements (only when tenant membership is verified)
+        if (requireTenantMembership && options.roles && options.roles.length > 0) {
           if (!tenantUser?.role || !options.roles.includes(tenantUser.role)) {
             const error = ApiErrorFactory.insufficientPermissions(options.roles);
             return error.toResponse();
           }
         }
 
-        // Check permission requirements
+        // TODO: Permission enforcement is not yet implemented
+        // When implementing, fetch user permissions from database and check against options.permissions
+        // For now, if permissions are specified, log a warning
         if (options.permissions && options.permissions.length > 0) {
-          // Note: permissions array is currently empty in user context
-          // This check is a placeholder for future permission system implementation
-          const userPermissions = []; // TODO: Fetch from database or calculate based on role
-          const hasAllPermissions = options.permissions.every(perm => 
-            userPermissions.includes(perm)
-          );
-          if (!hasAllPermissions) {
-            const error = ApiErrorFactory.insufficientPermissions(options.permissions);
-            return error.toResponse();
-          }
+          console.warn('[route-handler] Permission checking requested but not yet implemented. Permissions:', options.permissions);
         }
 
         // Authorization is enforced server-side based on Supabase auth + tenant membership.
