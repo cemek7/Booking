@@ -12,8 +12,20 @@ jest.mock('@/lib/supabase/server', () => ({
   getSupabaseRouteHandlerClient: jest.fn(),
 }));
 
+interface MockSupabase {
+  auth: {
+    getUser: jest.Mock;
+  };
+  from: jest.Mock;
+  select: jest.Mock;
+  eq: jest.Mock;
+  order: jest.Mock;
+  limit: jest.Mock;
+  maybeSingle: jest.Mock;
+}
+
 describe('getAuthenticatedUserRole', () => {
-  let mockSupabase: any;
+  let mockSupabase: MockSupabase;
   let mockRequest: NextRequest;
 
   beforeEach(() => {
@@ -32,6 +44,7 @@ describe('getAuthenticatedUserRole', () => {
       maybeSingle: jest.fn(),
     };
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getSupabaseRouteHandlerClient } = require('@/lib/supabase/server');
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(mockSupabase);
 
