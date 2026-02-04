@@ -58,9 +58,15 @@ export function extractBearerToken(request: NextRequest): string | null {
  * Resolve authenticated user's role for middleware decisions.
  * Uses server-side auth context; does not trust client-sent role headers.
  */
+export interface AuthenticatedUserRoleResult {
+  role: string | null;
+  isAuthenticated: boolean;
+  tenantId: string | null;
+}
+
 export async function getAuthenticatedUserRole(
   request: NextRequest
-): Promise<{ role: string | null; isAuthenticated: boolean; tenantId: string | null }> {
+): Promise<AuthenticatedUserRoleResult> {
   try {
     const supabase = getSupabaseRouteHandlerClient();
 
@@ -121,8 +127,12 @@ export async function getAuthenticatedUserRole(
       return { role: null, isAuthenticated: true, tenantId: null };
     }
 
-    if (tenantUser?.role) {
-      return { role: tenantUser.role, isAuthenticated: true, tenantId: tenantUser.tenant_id };
+    if (tenantUser) {
+      return {
+        role: tenantUser.role ?? null,
+        isAuthenticated: true,
+        tenantId: tenantUser.tenant_id ?? null,
+      };
     }
     return { role: null, isAuthenticated: true, tenantId: null };
   } catch (error) {
@@ -150,51 +160,9 @@ export function isPublicPath(pathname: string): boolean {
 }
 
 /**
- * Parse user role from database
- */
-async function parseUserRole(
-  supabase: any,
-  userId: string,
-  tenantId?: string
-): Promise<{ role: string; permissions: string[] } | null> {
-  try {
-    // If no tenantId provided, can't look up role in tenant_users
-    if (!tenantId) {
-      console.debug('[Auth] Missing tenantId; skipping role resolution.');
-      return null;
-    }
-
-    const { data, error } = await supabase
-      .from('tenant_users')
-      .select('role')
-      .eq('user_id', userId)
-      .eq('tenant_id', tenantId)
-      .single();
-
-    if (error) {
-      console.error('[Auth] Role query failed:', error.message);
-      return null;
-    }
-
-    if (!data?.role) {
-      console.debug('[Auth] No role found for tenant user.');
-      return null;
-    }
-
-    return {
-      role: data.role,
-      permissions: [], // Permissions can be added later if needed
-    };
-  } catch (error) {
-    console.error('[Auth] Parse role error:', error);
-    return null;
-  }
-}
-
-/**
  * Unified authentication handler
  */
-export const createAuthMiddleware = (config?: AuthConfig): MiddlewareHandler => {
+export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler => {
   return async (context: MiddlewareContext): Promise<MiddlewareContext | NextResponse> => {
     const { request } = context;
     const pathname = new URL(request.url).pathname;
