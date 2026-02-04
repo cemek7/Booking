@@ -191,6 +191,21 @@ describe('getAuthenticatedUserRole', () => {
       });
     });
 
+    it('should return tenantId even when role is missing', async () => {
+      mockSupabase.maybeSingle.mockResolvedValue({
+        data: { role: null, tenant_id: 'tenant-missing-role' },
+        error: null,
+      });
+
+      const result = await getAuthenticatedUserRole(mockRequest);
+
+      expect(result).toEqual({
+        role: null,
+        isAuthenticated: true,
+        tenantId: 'tenant-missing-role',
+      });
+    });
+
     it('should handle query errors gracefully', async () => {
       mockSupabase.maybeSingle.mockResolvedValue({
         data: null,
