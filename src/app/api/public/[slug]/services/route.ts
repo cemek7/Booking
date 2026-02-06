@@ -2,39 +2,40 @@
  * Public Booking Routes - No Authentication Required
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import publicBookingService from '@/lib/publicBookingService';
 
 /**
  * GET /api/public/[slug]/services
  * Get services for public booking
  */
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { slug: string } }
-) {
-  try {
-    const supabase = getSupabaseRouteHandlerClient();
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const slug = ctx.params?.slug;
+
+    if (!slug) {
+      throw ApiErrorFactory.badRequest('Slug required');
+    }
 
     // Get tenant by slug
-    const { data: tenant, error: tenantErr } = await supabase
+    const { data: tenant, error: tenantErr } = await ctx.supabase
       .from('tenants')
       .select('id')
-      .eq('slug', params.slug)
+      .eq('slug', slug)
       .maybeSingle();
 
-    if (tenantErr || !tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    if (tenantErr) {
+      throw ApiErrorFactory.databaseError(new Error(tenantErr.message));
+    }
+
+    if (!tenant) {
+      throw ApiErrorFactory.notFound('Tenant');
     }
 
     const services = await publicBookingService.getTenantServices(tenant.id);
-    return NextResponse.json(services);
-  } catch (error) {
-    console.error('Error fetching services:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch services' },
-      { status: 500 }
-    );
-  }
-}
+    return services;
+  },
+  'GET',
+  { auth: false }
+);

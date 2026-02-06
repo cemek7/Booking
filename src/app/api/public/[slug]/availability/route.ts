@@ -2,8 +2,8 @@
  * Public Booking Routes - No Authentication Required
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import publicBookingService from '@/lib/publicBookingService';
 
 /**
@@ -11,34 +11,36 @@ import publicBookingService from '@/lib/publicBookingService';
  * Get available slots for a date
  * Query params: serviceId, date, staffId (optional)
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { slug: string } }
-) {
-  try {
-    const url = new URL(request.url);
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const slug = ctx.params?.slug;
+
+    if (!slug) {
+      throw ApiErrorFactory.badRequest('Slug required');
+    }
+
+    const url = new URL(ctx.request.url);
     const serviceId = url.searchParams.get('serviceId');
     const date = url.searchParams.get('date');
     const staffId = url.searchParams.get('staffId');
 
     if (!serviceId || !date) {
-      return NextResponse.json(
-        { error: 'serviceId and date required' },
-        { status: 400 }
-      );
+      throw ApiErrorFactory.badRequest('serviceId and date required');
     }
 
-    const supabase = getSupabaseRouteHandlerClient();
-
     // Get tenant by slug
-    const { data: tenant } = await supabase
+    const { data: tenant, error: tenantErr } = await ctx.supabase
       .from('tenants')
       .select('id')
-      .eq('slug', params.slug)
+      .eq('slug', slug)
       .maybeSingle();
 
+    if (tenantErr) {
+      throw ApiErrorFactory.databaseError(new Error(tenantErr.message));
+    }
+
     if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+      throw ApiErrorFactory.notFound('Tenant');
     }
 
     const slots = await publicBookingService.getAvailability(
@@ -48,12 +50,8 @@ export async function GET(
       staffId || undefined
     );
 
-    return NextResponse.json({ slots });
-  } catch (error) {
-    console.error('Error fetching availability:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch availability' },
-      { status: 500 }
-    );
-  }
-}
+    return { slots };
+  },
+  'GET',
+  { auth: false }
+);

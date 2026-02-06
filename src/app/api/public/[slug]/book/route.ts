@@ -2,8 +2,8 @@
  * Public Booking Routes - No Authentication Required
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 import publicBookingService from '@/lib/publicBookingService';
 
@@ -11,12 +11,15 @@ import publicBookingService from '@/lib/publicBookingService';
  * POST /api/public/[slug]/book
  * Create a booking from public storefront
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { slug: string } }
-) {
-  try {
-    const body = await request.json();
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const slug = ctx.params?.slug;
+
+    if (!slug) {
+      throw ApiErrorFactory.badRequest('Slug required');
+    }
+
+    const body = await ctx.request.json();
 
     // Validate input
     const bookingSchema = z.object({
@@ -32,17 +35,19 @@ export async function POST(
 
     const validated = bookingSchema.parse(body);
 
-    const supabase = getSupabaseRouteHandlerClient();
-
     // Get tenant by slug
-    const { data: tenant } = await supabase
+    const { data: tenant, error: tenantErr } = await ctx.supabase
       .from('tenants')
       .select('id')
-      .eq('slug', params.slug)
+      .eq('slug', slug)
       .maybeSingle();
 
+    if (tenantErr) {
+      throw ApiErrorFactory.databaseError(new Error(tenantErr.message));
+    }
+
     if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+      throw ApiErrorFactory.notFound('Tenant');
     }
 
     // Create booking
@@ -58,23 +63,8 @@ export async function POST(
     // TODO: Send confirmation email/WhatsApp
     // TODO: Notify tenant owner
 
-    return NextResponse.json(
-      { booking_id: booking.id, status: 'pending' },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error('Error creating booking:', error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: error.errors },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create booking' },
-      { status: 500 }
-    );
-  }
-}
+    return { booking_id: booking.id, status: 'pending' };
+  },
+  'POST',
+  { auth: false }
+);
