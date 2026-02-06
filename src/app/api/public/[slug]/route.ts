@@ -14,7 +14,7 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const slug = ctx.params?.slug;
 
-    if (!slug) {
+    if (!slug || typeof slug !== 'string') {
       throw ApiErrorFactory.badRequest('Slug required');
     }
 
