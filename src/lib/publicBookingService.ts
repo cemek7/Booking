@@ -121,7 +121,7 @@ export async function getAvailability(
     .from('services')
     .select('duration')
     .eq('id', serviceId)
-    .single();
+    .maybeSingle();
 
   if (serviceError) {
     throw ApiErrorFactory.databaseError(new Error(serviceError.message));
@@ -243,13 +243,22 @@ export async function createPublicBooking(
   if (isNaN(startTime.getTime())) {
     throw ApiErrorFactory.badRequest('Invalid date or time format');
   }
-  const { data: service } = await supabase
+  
+  const { data: service, error: serviceError } = await supabase
     .from('services')
     .select('duration')
     .eq('id', payload.service_id)
-    .single();
+    .maybeSingle();
 
-  const endTime = new Date(startTime.getTime() + (service?.duration || 60) * 60000);
+  if (serviceError) {
+    throw ApiErrorFactory.databaseError(new Error(serviceError.message));
+  }
+
+  if (!service) {
+    throw ApiErrorFactory.notFound('Service');
+  }
+
+  const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
 
   // Create booking
   const { data: booking, error: bookingErr } = await supabase
@@ -286,7 +295,8 @@ function generateTimeSlots(
   startTime: string,
   endTime: string,
   durationMinutes: number,
-  existingReservations: Array<{ start_at: string; end_at: string }>
+  existingReservations: Array<{ start_at: string; end_at: string }>,
+  date: Date
 ): TimeSlot[] {
   const slots: TimeSlot[] = [];
 
