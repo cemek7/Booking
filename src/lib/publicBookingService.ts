@@ -26,12 +26,7 @@ function parseAvailabilityDate(date: string): Date {
     }
   }
 
-  const parsed = new Date(date);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed;
-  }
-
-  throw ApiErrorFactory.badRequest('Invalid date format');
+  throw ApiErrorFactory.badRequest('Invalid date format. Expected YYYY-MM-DD');
 }
 
 /**
@@ -310,7 +305,7 @@ function generateTimeSlots(
   const dayEnd = new Date(date);
   dayEnd.setHours(endHour, endMin, 0, 0);
 
-  // Generate 30-minute intervals
+  // Generate time slots at configured interval
   while (current < dayEnd) {
     const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
 
