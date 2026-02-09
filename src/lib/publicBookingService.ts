@@ -1,10 +1,22 @@
 /**
  * Public Booking API Routes
  * No authentication required - for public-facing booking
+ * 
+ * Timezone Handling:
+ * - All dates are handled in the server's timezone
+ * - Clients should send dates in ISO 8601 format or ensure timezone compatibility
+ * - Business hours are stored in the tenant's local timezone
  */
 
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import type { AvailabilityTimeSlot } from '@/types/shared';
+
+/**
+ * Default time slot interval in minutes
+ * This determines the granularity of available booking slots
+ */
+const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
 
 /**
  * GET /api/public/[slug]
@@ -81,21 +93,25 @@ export async function getAvailability(
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
-  // Parse date
+  // Parse and validate date
   const targetDate = new Date(date);
+  if (isNaN(targetDate.getTime())) {
+    throw ApiErrorFactory.badRequest('Invalid date format');
+  }
+  
   const dayStart = new Date(targetDate);
   dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(targetDate);
   dayEnd.setHours(23, 59, 59, 999);
 
   // Get service duration
-  const { data: service } = await supabase
+  const { data: service, error: serviceError } = await supabase
     .from('services')
     .select('duration')
     .eq('id', serviceId)
     .single();
 
-  if (!service) {
+  if (serviceError || !service) {
     throw ApiErrorFactory.notFound('Service');
   }
 
@@ -114,12 +130,14 @@ export async function getAvailability(
   }
 
   // Get existing reservations
+  // Use gte('end_at') to catch reservations that extend past the day
+  // This ensures we don't miss multi-day reservations
   const { data: reservations } = await supabase
     .from('reservations')
     .select('start_at, end_at')
     .eq('tenant_id', tenantId)
-    .gte('start_at', dayStart.toISOString())
-    .lte('end_at', dayEnd.toISOString())
+    .lte('start_at', dayEnd.toISOString())
+    .gte('end_at', dayStart.toISOString())
     .in('status', ['confirmed', 'pending']);
 
   // Generate slots
@@ -248,8 +266,8 @@ function generateTimeSlots(
   durationMinutes: number,
   existingReservations: Array<{ start_at: string; end_at: string }>,
   date: Date
-): Array<{ time: string; available: boolean }> {
-  const slots: Array<{ time: string; available: boolean }> = [];
+): AvailabilityTimeSlot[] {
+  const slots: AvailabilityTimeSlot[] = [];
 
   // Parse business hours
   const [startHour, startMin] = startTime.split(':').map(Number);
@@ -277,7 +295,7 @@ function generateTimeSlots(
       available: !isBooked && slotEnd <= dayEnd,
     });
 
-    current = new Date(current.getTime() + 30 * 60000); // 30-minute intervals
+    current = new Date(current.getTime() + DEFAULT_SLOT_INTERVAL_MINUTES * 60000);
   }
 
   return slots;
