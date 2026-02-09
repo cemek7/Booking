@@ -5,6 +5,29 @@
 
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import type { TimeSlot } from '@/types';
+
+const SLOT_INTERVAL_MINUTES = 30;
+
+function parseAvailabilityDate(date: string): Date {
+  const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (isoDateMatch) {
+    const year = Number(isoDateMatch[1]);
+    const monthIndex = Number(isoDateMatch[2]) - 1;
+    const day = Number(isoDateMatch[3]);
+    const parsed = new Date(year, monthIndex, day);
+    if (parsed.getFullYear() === year && parsed.getMonth() === monthIndex && parsed.getDate() === day) {
+      return parsed;
+    }
+  }
+
+  const parsed = new Date(date);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  throw ApiErrorFactory.badRequest('Invalid date format');
+}
 
 /**
  * GET /api/public/[slug]
@@ -81,19 +104,23 @@ export async function getAvailability(
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
-  // Parse date
-  const targetDate = new Date(date);
+  // Date is interpreted in the server timezone. Clients should send YYYY-MM-DD in the tenant's timezone.
+  const targetDate = parseAvailabilityDate(date);
   const dayStart = new Date(targetDate);
   dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(targetDate);
   dayEnd.setHours(23, 59, 59, 999);
 
   // Get service duration
-  const { data: service } = await supabase
+  const { data: service, error: serviceError } = await supabase
     .from('services')
     .select('duration')
     .eq('id', serviceId)
     .single();
+
+  if (serviceError) {
+    throw ApiErrorFactory.databaseError(new Error(serviceError.message));
+  }
 
   if (!service) {
     throw ApiErrorFactory.notFound('Service');
@@ -102,25 +129,33 @@ export async function getAvailability(
   const durationMinutes = service.duration || 60;
 
   // Get business hours for the day
-  const { data: hours } = await supabase
+  const { data: hours, error: hoursError } = await supabase
     .from('business_hours')
     .select('start_time, end_time')
     .eq('tenant_id', tenantId)
     .eq('day_of_week', targetDate.getDay())
     .maybeSingle();
 
+  if (hoursError) {
+    throw ApiErrorFactory.databaseError(new Error(hoursError.message));
+  }
+
   if (!hours) {
     return []; // Closed on this day
   }
 
   // Get existing reservations
-  const { data: reservations } = await supabase
+  const { data: reservations, error: reservationsError } = await supabase
     .from('reservations')
     .select('start_at, end_at')
     .eq('tenant_id', tenantId)
-    .gte('start_at', dayStart.toISOString())
-    .lte('end_at', dayEnd.toISOString())
+    .lte('start_at', dayEnd.toISOString())
+    .gte('end_at', dayStart.toISOString())
     .in('status', ['confirmed', 'pending']);
+
+  if (reservationsError) {
+    throw ApiErrorFactory.databaseError(new Error(reservationsError.message));
+  }
 
   // Generate slots
   const slots = generateTimeSlots(
@@ -246,8 +281,8 @@ function generateTimeSlots(
   endTime: string,
   durationMinutes: number,
   existingReservations: Array<{ start_at: string; end_at: string }>
-): Array<{ time: string; available: boolean }> {
-  const slots: Array<{ time: string; available: boolean }> = [];
+): TimeSlot[] {
+  const slots: TimeSlot[] = [];
 
   // Parse business hours
   const [startHour, startMin] = startTime.split(':').map(Number);
@@ -275,7 +310,7 @@ function generateTimeSlots(
       available: !isBooked && slotEnd <= dayEnd,
     });
 
-    current = new Date(current.getTime() + 30 * 60000); // 30-minute intervals
+    current = new Date(current.getTime() + SLOT_INTERVAL_MINUTES * 60000);
   }
 
   return slots;

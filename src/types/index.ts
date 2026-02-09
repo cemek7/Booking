@@ -604,4 +604,5 @@ export * from './auth';
 // ============================================================================
 
 export * from './supabase';
+export * from './publicBooking';
 export * from './shared';
