@@ -10,13 +10,24 @@
 
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import type { AvailabilityTimeSlot } from '@/types/shared';
+import type { TimeSlot } from '@/types';
 
-/**
- * Default time slot interval in minutes
- * This determines the granularity of available booking slots
- */
-const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
+const SLOT_INTERVAL_MINUTES = 30;
+
+function parseAvailabilityDate(date: string): Date {
+  const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (isoDateMatch) {
+    const year = Number(isoDateMatch[1]);
+    const monthIndex = Number(isoDateMatch[2]) - 1;
+    const day = Number(isoDateMatch[3]);
+    const parsed = new Date(year, monthIndex, day);
+    if (parsed.getFullYear() === year && parsed.getMonth() === monthIndex && parsed.getDate() === day) {
+      return parsed;
+    }
+  }
+
+  throw ApiErrorFactory.badRequest('Invalid date format. Expected YYYY-MM-DD');
+}
 
 /**
  * GET /api/public/[slug]
@@ -93,12 +104,8 @@ export async function getAvailability(
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
-  // Parse and validate date
-  const targetDate = new Date(date);
-  if (isNaN(targetDate.getTime())) {
-    throw ApiErrorFactory.badRequest('Invalid date format');
-  }
-  
+  // Date is interpreted in the server timezone. Clients should send YYYY-MM-DD in the tenant's timezone.
+  const targetDate = parseAvailabilityDate(date);
   const dayStart = new Date(targetDate);
   dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(targetDate);
@@ -109,36 +116,46 @@ export async function getAvailability(
     .from('services')
     .select('duration')
     .eq('id', serviceId)
-    .single();
+    .maybeSingle();
 
-  if (serviceError || !service) {
+  if (serviceError) {
+    throw ApiErrorFactory.databaseError(new Error(serviceError.message));
+  }
+
+  if (!service) {
     throw ApiErrorFactory.notFound('Service');
   }
 
   const durationMinutes = service.duration || 60;
 
   // Get business hours for the day
-  const { data: hours } = await supabase
+  const { data: hours, error: hoursError } = await supabase
     .from('business_hours')
     .select('start_time, end_time')
     .eq('tenant_id', tenantId)
     .eq('day_of_week', targetDate.getDay())
     .maybeSingle();
 
+  if (hoursError) {
+    throw ApiErrorFactory.databaseError(new Error(hoursError.message));
+  }
+
   if (!hours) {
     return []; // Closed on this day
   }
 
   // Get existing reservations
-  // Use gte('end_at') to catch reservations that extend past the day
-  // This ensures we don't miss multi-day reservations
-  const { data: reservations } = await supabase
+  const { data: reservations, error: reservationsError } = await supabase
     .from('reservations')
     .select('start_at, end_at')
     .eq('tenant_id', tenantId)
     .lte('start_at', dayEnd.toISOString())
     .gte('end_at', dayStart.toISOString())
     .in('status', ['confirmed', 'pending']);
+
+  if (reservationsError) {
+    throw ApiErrorFactory.databaseError(new Error(reservationsError.message));
+  }
 
   // Generate slots
   const slots = generateTimeSlots(
@@ -221,13 +238,22 @@ export async function createPublicBooking(
   if (isNaN(startTime.getTime())) {
     throw ApiErrorFactory.badRequest('Invalid date or time format');
   }
-  const { data: service } = await supabase
+  
+  const { data: service, error: serviceError } = await supabase
     .from('services')
     .select('duration')
     .eq('id', payload.service_id)
-    .single();
+    .maybeSingle();
 
-  const endTime = new Date(startTime.getTime() + (service?.duration || 60) * 60000);
+  if (serviceError) {
+    throw ApiErrorFactory.databaseError(new Error(serviceError.message));
+  }
+
+  if (!service) {
+    throw ApiErrorFactory.notFound('Service');
+  }
+
+  const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
 
   // Create booking
   const { data: booking, error: bookingErr } = await supabase
@@ -266,8 +292,8 @@ function generateTimeSlots(
   durationMinutes: number,
   existingReservations: Array<{ start_at: string; end_at: string }>,
   date: Date
-): AvailabilityTimeSlot[] {
-  const slots: AvailabilityTimeSlot[] = [];
+): TimeSlot[] {
+  const slots: TimeSlot[] = [];
 
   // Parse business hours
   const [startHour, startMin] = startTime.split(':').map(Number);
@@ -279,7 +305,7 @@ function generateTimeSlots(
   const dayEnd = new Date(date);
   dayEnd.setHours(endHour, endMin, 0, 0);
 
-  // Generate 30-minute intervals
+  // Generate time slots at configured interval
   while (current < dayEnd) {
     const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
 
@@ -295,7 +321,7 @@ function generateTimeSlots(
       available: !isBooked && slotEnd <= dayEnd,
     });
 
-    current = new Date(current.getTime() + DEFAULT_SLOT_INTERVAL_MINUTES * 60000);
+    current = new Date(current.getTime() + SLOT_INTERVAL_MINUTES * 60000);
   }
 
   return slots;

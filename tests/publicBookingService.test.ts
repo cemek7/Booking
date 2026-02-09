@@ -39,11 +39,10 @@ describe('publicBookingService - getAvailability fixes', () => {
       const mockChain = {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({
+        maybeSingle: jest.fn().mockResolvedValueOnce({
           data: { duration: 60 },
           error: null,
-        }),
-        maybeSingle: jest.fn().mockResolvedValue({
+        }).mockResolvedValueOnce({
           data: null,
           error: null,
         }),
@@ -68,11 +67,10 @@ describe('publicBookingService - getAvailability fixes', () => {
       const mockChain = {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({
+        maybeSingle: jest.fn().mockResolvedValueOnce({
           data: { duration: 60 },
           error: null,
-        }),
-        maybeSingle: jest.fn().mockResolvedValue({
+        }).mockResolvedValueOnce({
           data: {
             start_time: '09:00',
             end_time: '17:00',
@@ -104,7 +102,7 @@ describe('publicBookingService - getAvailability fixes', () => {
       const mockChain = {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({
+        maybeSingle: jest.fn().mockResolvedValue({
           data: null,
           error: { message: 'Database error' },
         }),
@@ -117,11 +115,11 @@ describe('publicBookingService - getAvailability fixes', () => {
       ).rejects.toThrow();
     });
 
-    it('should handle missing service data', async () => {
+    it('should return 404 for missing service (not database error)', async () => {
       const mockChain = {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({
+        maybeSingle: jest.fn().mockResolvedValue({
           data: null,
           error: null,
         }),
