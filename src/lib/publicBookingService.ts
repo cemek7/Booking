@@ -26,11 +26,6 @@ function parseAvailabilityDate(date: string): Date {
     }
   }
 
-  const parsed = new Date(date);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed;
-  }
-
   throw ApiErrorFactory.badRequest('Invalid date format');
 }
 
@@ -286,7 +281,8 @@ function generateTimeSlots(
   startTime: string,
   endTime: string,
   durationMinutes: number,
-  existingReservations: Array<{ start_at: string; end_at: string }>
+  existingReservations: Array<{ start_at: string; end_at: string }>,
+  baseDate: Date
 ): TimeSlot[] {
   const slots: TimeSlot[] = [];
 
@@ -294,13 +290,13 @@ function generateTimeSlots(
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
 
-  let current = new Date(date);
+  let current = new Date(baseDate);
   current.setHours(startHour, startMin, 0, 0);
 
-  const dayEnd = new Date(date);
+  const dayEnd = new Date(baseDate);
   dayEnd.setHours(endHour, endMin, 0, 0);
 
-  // Generate 30-minute intervals
+  // Generate time slots at SLOT_INTERVAL_MINUTES intervals
   while (current < dayEnd) {
     const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
 
