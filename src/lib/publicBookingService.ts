@@ -193,16 +193,15 @@ export async function createPublicBooking(
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
-  // Validate inputs
-  if (!payload.service_id || !payload.date || !payload.time || !payload.customer_name || !payload.customer_email || !payload.customer_phone) {
-    throw ApiErrorFactory.badRequest('Missing required fields');
-  }
-
   // Get or create customer
   const customer = await getCustomer(tenantId, payload);
 
-  // Parse start time
+  // Parse start time and validate
   const startTime = new Date(`${payload.date}T${payload.time}`);
+  
+  if (isNaN(startTime.getTime())) {
+    throw ApiErrorFactory.badRequest('Invalid date or time format');
+  }
   const { data: service } = await supabase
     .from('services')
     .select('duration')
