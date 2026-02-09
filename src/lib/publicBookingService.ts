@@ -127,7 +127,8 @@ export async function getAvailability(
     hours.start_time,
     hours.end_time,
     durationMinutes,
-    reservations || []
+    reservations || [],
+    targetDate
   );
 
   return slots;
@@ -245,7 +246,8 @@ function generateTimeSlots(
   startTime: string,
   endTime: string,
   durationMinutes: number,
-  existingReservations: Array<{ start_at: string; end_at: string }>
+  existingReservations: Array<{ start_at: string; end_at: string }>,
+  date: Date
 ): Array<{ time: string; available: boolean }> {
   const slots: Array<{ time: string; available: boolean }> = [];
 
@@ -253,11 +255,11 @@ function generateTimeSlots(
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
 
-  let current = new Date();
-  current.setHours(startHour, startMin, 0);
+  let current = new Date(date);
+  current.setHours(startHour, startMin, 0, 0);
 
-  const dayEnd = new Date();
-  dayEnd.setHours(endHour, endMin, 0);
+  const dayEnd = new Date(date);
+  dayEnd.setHours(endHour, endMin, 0, 0);
 
   // Generate 30-minute intervals
   while (current < dayEnd) {
