@@ -2,39 +2,49 @@
  * Public Booking Routes - No Authentication Required
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import publicBookingService from '@/lib/publicBookingService';
+import type { RouteContext } from '@/lib/error-handling/route-handler';
+
+/**
+ * Helper to get tenant by slug
+ */
+async function getTenantBySlug(ctx: RouteContext, slug: string) {
+  const { data: tenant, error: tenantErr } = await ctx.supabase
+    .from('tenants')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle();
+
+  if (tenantErr) {
+    throw ApiErrorFactory.databaseError(new Error(tenantErr.message));
+  }
+
+  if (!tenant) {
+    throw ApiErrorFactory.notFound('Tenant');
+  }
+
+  return tenant;
+}
 
 /**
  * GET /api/public/[slug]/services
  * Get services for public booking
  */
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { slug: string } }
-) {
-  try {
-    const supabase = getSupabaseRouteHandlerClient();
+export const GET = createHttpHandler(
+  async (ctx) => {
+    const slug = ctx.params?.slug;
 
-    // Get tenant by slug
-    const { data: tenant, error: tenantErr } = await supabase
-      .from('tenants')
-      .select('id')
-      .eq('slug', params.slug)
-      .maybeSingle();
-
-    if (tenantErr || !tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    if (!slug || typeof slug !== 'string') {
+      throw ApiErrorFactory.badRequest('Slug required');
     }
 
+    const tenant = await getTenantBySlug(ctx, slug);
+
     const services = await publicBookingService.getTenantServices(tenant.id);
-    return NextResponse.json(services);
-  } catch (error) {
-    console.error('Error fetching services:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch services' },
-      { status: 500 }
-    );
-  }
-}
+    return services;
+  },
+  'GET',
+  { auth: false }
+);

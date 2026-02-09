@@ -3,8 +3,8 @@
  * No authentication required - for public-facing booking
  */
 
-import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 /**
  * GET /api/public/[slug]
@@ -28,7 +28,7 @@ export async function getTenantPublicInfo(slug: string) {
     .maybeSingle();
 
   if (error || !tenant) {
-    throw new Error('Tenant not found');
+    throw ApiErrorFactory.notFound('Tenant');
   }
 
   return {
@@ -63,7 +63,7 @@ export async function getTenantServices(tenantId: string) {
     .eq('is_active', true);
 
   if (error) {
-    throw new Error('Failed to fetch services');
+    throw ApiErrorFactory.databaseError(new Error(error.message));
   }
 
   return services || [];
@@ -77,7 +77,7 @@ export async function getAvailability(
   tenantId: string,
   serviceId: string,
   date: string,
-  staffId?: string
+  _staffId?: string
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
@@ -96,7 +96,7 @@ export async function getAvailability(
     .single();
 
   if (!service) {
-    throw new Error('Service not found');
+    throw ApiErrorFactory.notFound('Service');
   }
 
   const durationMinutes = service.duration || 60;
@@ -134,31 +134,17 @@ export async function getAvailability(
 }
 
 /**
- * POST /api/public/[slug]/book
- * Create a booking (without authentication)
+ * Helper: Get or create customer
  */
-export async function createPublicBooking(
-  tenantId: string,
-  payload: {
-    service_id: string;
-    staff_id?: string;
-    date: string;
-    time: string;
-    customer_name: string;
-    customer_email: string;
-    customer_phone: string;
-    notes?: string;
-  }
-) {
+async function getCustomer(tenantId: string, payload: {
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+}) {
   const supabase = getSupabaseRouteHandlerClient();
-
-  // Validate inputs
-  if (!payload.service_id || !payload.date || !payload.time || !payload.customer_name || !payload.customer_email || !payload.customer_phone) {
-    throw new Error('Missing required fields');
-  }
-
+  
   // Get or create customer
-  let { data: customer, error: customerErr } = await supabase
+  const { data: customer } = await supabase
     .from('customers')
     .select('id')
     .eq('tenant_id', tenantId)
@@ -179,14 +165,43 @@ export async function createPublicBooking(
       .single();
 
     if (createErr || !newCustomer) {
-      throw new Error('Failed to create customer');
+      throw ApiErrorFactory.databaseError(new Error(createErr?.message || 'Failed to create customer'));
     }
 
-    customer = newCustomer;
+    return newCustomer;
   }
 
-  // Parse start time
+  return customer;
+}
+
+/**
+ * POST /api/public/[slug]/book
+ * Create a booking (without authentication)
+ */
+export async function createPublicBooking(
+  tenantId: string,
+  payload: {
+    service_id: string;
+    staff_id?: string;
+    date: string;
+    time: string;
+    customer_name: string;
+    customer_email: string;
+    customer_phone: string;
+    notes?: string;
+  }
+) {
+  const supabase = getSupabaseRouteHandlerClient();
+
+  // Get or create customer
+  const customer = await getCustomer(tenantId, payload);
+
+  // Parse start time and validate
   const startTime = new Date(`${payload.date}T${payload.time}`);
+  
+  if (isNaN(startTime.getTime())) {
+    throw ApiErrorFactory.badRequest('Invalid date or time format');
+  }
   const { data: service } = await supabase
     .from('services')
     .select('duration')
@@ -217,7 +232,7 @@ export async function createPublicBooking(
     .single();
 
   if (bookingErr || !booking) {
-    throw new Error('Failed to create booking');
+    throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
   }
 
   return booking;
@@ -266,9 +281,11 @@ function generateTimeSlots(
   return slots;
 }
 
-export default {
+const publicBookingService = {
   getTenantPublicInfo,
   getTenantServices,
   getAvailability,
   createPublicBooking,
 };
+
+export default publicBookingService;
