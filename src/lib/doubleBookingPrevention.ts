@@ -212,6 +212,16 @@ export class DoubleBookingPrevention {
         query = query.neq('id', params.excludeReservationId);
       }
 
+      // Filter by resource at query level when specific resources are requested
+      // This prevents false conflicts from other resources (e.g., different staff members)
+      if (params.resourceIds && params.resourceIds.length > 0) {
+        // Build OR condition for staff_id or location_id matching any of the resourceIds
+        const resourceFilters = params.resourceIds
+          .map(id => `staff_id.eq.${id},location_id.eq.${id}`)
+          .join(',');
+        query = query.or(resourceFilters);
+      }
+
       const { data: overlappingReservations, error: conflictError } = await query;
 
       if (conflictError) {
@@ -219,38 +229,24 @@ export class DoubleBookingPrevention {
       }
 
       // 2. Analyze conflicts by type
+      // Since we've already filtered by resourceIds at the query level (when provided),
+      // all overlapping reservations here are actual conflicts
       if (overlappingReservations) {
         for (const reservation of overlappingReservations) {
-          // Time overlap conflict
+          const resourceId = reservation.staff_id || reservation.location_id;
+          
+          // Determine conflict type based on whether resources were specified
+          const conflictType = params.resourceIds && params.resourceIds.length > 0
+            ? 'resource_double_booking'
+            : 'time_overlap';
+
           conflicts.push({
             reservation_id: reservation.id,
             start_at: reservation.start_at,
             end_at: reservation.end_at,
-            resource_id: reservation.staff_id || reservation.location_id,
-            conflict_type: 'time_overlap'
+            resource_id: resourceId,
+            conflict_type: conflictType
           });
-
-          // Resource double-booking (same staff/location)
-          if (params.resourceIds) {
-            const reservationResources = [
-              reservation.staff_id,
-              reservation.location_id
-            ].filter(Boolean);
-
-            const hasResourceConflict = reservationResources.some(resourceId =>
-              params.resourceIds!.includes(resourceId)
-            );
-
-            if (hasResourceConflict) {
-              conflicts.push({
-                reservation_id: reservation.id,
-                start_at: reservation.start_at,
-                end_at: reservation.end_at,
-                resource_id: reservation.staff_id || reservation.location_id,
-                conflict_type: 'resource_double_booking'
-              });
-            }
-          }
         }
       }
 
