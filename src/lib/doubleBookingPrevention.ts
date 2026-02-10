@@ -235,10 +235,12 @@ export class DoubleBookingPrevention {
           .join(',');
         query = query.or(resourceFilters);
       } else if (params.checkUnassignedOnly) {
-        // When checking unassigned-only conflicts, filter for reservations with no staff or location assigned
+        // When checking unassigned-only conflicts, filter for reservations with no staff assigned
         // This is useful for public bookings without a specific staff to ensure they only conflict
-        // with other unassigned bookings, not with all staff bookings
-        query = query.is('staff_id', null).is('location_id', null);
+        // with other unassigned bookings, not with all staff bookings.
+        // Note: We only check staff_id (not location_id) since a booking can have a location
+        // but no staff assigned, and should still be considered unassigned for staff conflict purposes.
+        query = query.is('staff_id', null);
       }
 
       const { data: overlappingReservations, error: conflictError } = await query;
