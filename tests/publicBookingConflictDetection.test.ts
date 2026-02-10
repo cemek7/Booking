@@ -8,6 +8,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 // Mock the dependencies
 jest.mock('@/lib/supabase/server', () => ({
   getSupabaseRouteHandlerClient: jest.fn(),
+  createSupabaseAdminClient: jest.fn(),
 }));
 
 jest.mock('@/lib/doubleBookingPrevention', () => ({
@@ -16,7 +17,7 @@ jest.mock('@/lib/doubleBookingPrevention', () => ({
 
 // Import after mocking
 import { createPublicBooking } from '@/lib/publicBookingService';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 
 describe('publicBookingService - createPublicBooking conflict detection', () => {
@@ -38,6 +39,7 @@ describe('publicBookingService - createPublicBooking conflict detection', () => 
       from: jest.fn(),
     };
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(mockSupabase);
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
 
     // Setup DoubleBookingPrevention mock
     mockBookingPrevention = {
@@ -223,13 +225,14 @@ describe('publicBookingService - createPublicBooking conflict detection', () => 
         startAt: expect.any(String),
         endAt: expect.any(String),
         resourceIds: ['staff-123'],
+        checkUnassignedOnly: false,
       });
 
       // Verify lock was released
       expect(mockBookingPrevention.releaseSlotLock).toHaveBeenCalledWith('lock-123');
     });
 
-    it('should check tenant-wide conflicts when staff_id is not provided', async () => {
+    it('should check unassigned-only conflicts when staff_id is not provided', async () => {
       // Setup database mocks
       const mockCustomerLookup = createMockChain({ data: { id: 'customer-123' }, error: null });
       const mockServiceLookup = createMockChain({ data: { duration: 60 }, error: null });
@@ -273,12 +276,13 @@ describe('publicBookingService - createPublicBooking conflict detection', () => 
         lockDurationMinutes: 2,
       });
 
-      // Verify conflict check was called without resourceIds
+      // Verify conflict check was called with checkUnassignedOnly flag
       expect(mockBookingPrevention.checkBookingConflicts).toHaveBeenCalledWith({
         tenantId: 'tenant-123',
         startAt: expect.any(String),
         endAt: expect.any(String),
         resourceIds: undefined,
+        checkUnassignedOnly: true, // Should only check unassigned bookings
       });
     });
 
@@ -332,6 +336,7 @@ describe('publicBookingService - createPublicBooking conflict detection', () => 
         startAt: expect.any(String),
         endAt: expect.any(String),
         resourceIds: ['staff-456'],
+        checkUnassignedOnly: false, // Should not check unassigned-only when staff is specified
       });
     });
   });

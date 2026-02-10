@@ -8,7 +8,7 @@
  * - Business hours are stored in the tenant's local timezone
  */
 
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
@@ -257,7 +257,10 @@ export async function createPublicBooking(
   const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
 
   // Use DoubleBookingPrevention service for transactionally safe conflict detection
-  const bookingPrevention = new DoubleBookingPrevention(supabase);
+  // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint
+  // operating with anon role which would otherwise fail on RLS policies
+  const adminClient = createSupabaseAdminClient();
+  const bookingPrevention = new DoubleBookingPrevention(adminClient);
   
   // Acquire slot lock to prevent race conditions
   const lockResult = await bookingPrevention.acquireSlotLock({
@@ -277,15 +280,21 @@ export async function createPublicBooking(
 
   try {
     // Perform comprehensive conflict check with proper overlap detection.
-    // When resourceIds is undefined (staff_id not provided), this performs a tenant-wide 
-    // overlap check across all resources to ensure unassigned bookings don't conflict 
-    // with any existing reservation in the time window.
-    // When resourceIds is provided, it only checks for conflicts with that specific resource.
+    // 
+    // BUSINESS LOGIC: Conflict scope behavior
+    // - When staff_id IS provided: Checks conflicts only for that specific staff member,
+    //   allowing multiple staff to be booked simultaneously.
+    // 
+    // - When staff_id IS NOT provided: Checks conflicts only with OTHER unassigned bookings
+    //   (where staff_id IS NULL). This allows unassigned bookings even when some staff members
+    //   are busy, since the booking can later be assigned to any available staff member.
+    //   This is more permissive than a tenant-wide check and appropriate for multi-staff systems.
     const conflictCheck = await bookingPrevention.checkBookingConflicts({
       tenantId,
       startAt: startTime.toISOString(),
       endAt: endTime.toISOString(),
       resourceIds: payload.staff_id ? [payload.staff_id] : undefined,
+      checkUnassignedOnly: !payload.staff_id, // Only check unassigned when no staff specified
     });
 
     if (conflictCheck.hasConflict) {

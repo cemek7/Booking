@@ -28,6 +28,7 @@ export interface ConflictCheckParams {
   endAt: string;
   resourceIds?: string[];
   excludeReservationId?: string;
+  checkUnassignedOnly?: boolean; // When true, only check conflicts with unassigned reservations (staff_id IS NULL)
 }
 
 export interface ConflictResult {
@@ -233,6 +234,11 @@ export class DoubleBookingPrevention {
           .map(id => `staff_id.eq.${id},location_id.eq.${id}`)
           .join(',');
         query = query.or(resourceFilters);
+      } else if (params.checkUnassignedOnly) {
+        // When checking unassigned-only conflicts, filter for reservations with no staff or location assigned
+        // This is useful for public bookings without a specific staff to ensure they only conflict
+        // with other unassigned bookings, not with all staff bookings
+        query = query.is('staff_id', null).is('location_id', null);
       }
 
       const { data: overlappingReservations, error: conflictError } = await query;
