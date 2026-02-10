@@ -258,7 +258,10 @@ export async function createPublicBooking(
 
   // Use DoubleBookingPrevention service for transactionally safe conflict detection
   // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint
-  // operating with anon role which would otherwise fail on RLS policies
+  // operating with anon role which would otherwise fail on RLS policies.
+  // SECURITY NOTE: The admin client bypasses ALL RLS policies, but DoubleBookingPrevention
+  // is designed to only access reservation_locks and reservations tables. Future: consider
+  // creating a more restricted service role or using function-level RLS bypass.
   const adminClient = createSupabaseAdminClient();
   const bookingPrevention = new DoubleBookingPrevention(adminClient);
   
