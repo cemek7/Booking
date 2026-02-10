@@ -255,6 +255,27 @@ export async function createPublicBooking(
 
   const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
 
+  const conflictQuery = supabase
+    .from('reservations')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .lt('start_at', endTime.toISOString())
+    .gt('end_at', startTime.toISOString())
+    .in('status', ['confirmed', 'pending'])
+    .limit(1);
+
+  const { data: conflictingReservations, error: conflictError } = payload.staff_id
+    ? await conflictQuery.eq('staff_id', payload.staff_id)
+    : await conflictQuery;
+
+  if (conflictError) {
+    throw ApiErrorFactory.databaseError(new Error(conflictError.message));
+  }
+
+  if (conflictingReservations && conflictingReservations.length > 0) {
+    throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+  }
+
   // Create booking
   const { data: booking, error: bookingErr } = await supabase
     .from('reservations')
