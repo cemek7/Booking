@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { verifyPaystackSignature } from '@/lib/webhooks/validation';
@@ -15,13 +16,13 @@ export const POST = createHttpHandler(
 
     if (!webhookSecret) {
       console.error('[api/payments/paystack] PAYSTACK_SECRET not configured');
-      return { error: 'Webhook not configured' };
+      return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
 
     // Verify signature (prevents forged webhooks)
     if (!verifyPaystackSignature(rawBody, signature, webhookSecret)) {
       console.warn('🚨 [api/payments/paystack] SECURITY: Invalid Paystack webhook signature rejected');
-      return { error: 'Invalid signature', code: 'INVALID_SIGNATURE' };
+      return NextResponse.json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' }, { status: 400 });
     }
 
     // ✅ Signature verified - safe to process
@@ -30,7 +31,7 @@ export const POST = createHttpHandler(
       payload = JSON.parse(rawBody);
     } catch (error) {
       console.error('[api/payments/paystack] Failed to parse webhook body:', error);
-      return { error: 'Invalid JSON' };
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
     const data = payload?.data || payload;
