@@ -11,10 +11,10 @@ export const POST = createHttpHandler(
     // ✅ SECURITY: Verify webhook signature BEFORE processing
     const rawBody = await ctx.request.text();
     const signature = ctx.request.headers.get('x-paystack-signature');
-    const webhookSecret = process.env.PAYSTACK_SECRET || '';
+    const webhookSecret = process.env.PAYSTACK_SECRET_KEY || '';
 
     if (!webhookSecret) {
-      console.error('[api/payments/paystack] PAYSTACK_SECRET not configured');
+      console.error('[api/payments/paystack] PAYSTACK_SECRET_KEY not configured');
       return { error: 'Webhook not configured' };
     }
 
