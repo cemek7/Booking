@@ -52,7 +52,7 @@ export const handleStripeWebhook = createWebhookHandler(
  */
 export const handlePaystackWebhook = createWebhookHandler(
   'paystack',
-  process.env.PAYSTACK_WEBHOOK_SECRET!,
+  process.env.PAYSTACK_SECRET_KEY!,
   async (webhook: NormalizedWebhook) => {
     console.log('Processing Paystack webhook:', webhook.type);
     
@@ -408,7 +408,7 @@ async function enqueueJob(jobType: string, payload: any, delay: number = 0) {
 export function validateWebhookConfig() {
   const requiredEnvVars = [
     'STRIPE_WEBHOOK_SECRET',
-    'PAYSTACK_WEBHOOK_SECRET',
+    'PAYSTACK_SECRET_KEY',
     'EVOLUTION_WEBHOOK_SECRET'
   ];
 

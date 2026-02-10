@@ -625,7 +625,7 @@ export function validateWebhookSecrets(): {
 } {
   const requiredSecrets = [
     'STRIPE_WEBHOOK_SECRET',
-    'PAYSTACK_WEBHOOK_SECRET', 
+    'PAYSTACK_SECRET_KEY', 
     'EVOLUTION_WEBHOOK_SECRET',
     'WHATSAPP_WEBHOOK_SECRET'
   ];

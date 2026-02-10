@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
   if (!verifyPaystackSignature(
     rawBody,
     signature,
-    process.env.PAYSTACK_WEBHOOK_SECRET || ''
+    process.env.PAYSTACK_SECRET_KEY || ''
   )) {
     console.warn('🚨 SECURITY: Invalid Paystack webhook signature rejected');
     return NextResponse.json(
