@@ -276,7 +276,11 @@ export async function createPublicBooking(
   }
 
   try {
-    // Perform comprehensive conflict check with proper overlap detection
+    // Perform comprehensive conflict check with proper overlap detection.
+    // When resourceIds is undefined (staff_id not provided), this performs a tenant-wide 
+    // overlap check across all resources to ensure unassigned bookings don't conflict 
+    // with any existing reservation in the time window.
+    // When resourceIds is provided, it only checks for conflicts with that specific resource.
     const conflictCheck = await bookingPrevention.checkBookingConflicts({
       tenantId,
       startAt: startTime.toISOString(),
@@ -316,8 +320,17 @@ export async function createPublicBooking(
     return booking;
   } finally {
     // Always release the lock, even if an error occurs
+    // Wrap in try/catch to prevent lock release errors from masking the original exception
     if (lockResult.lockId) {
-      await bookingPrevention.releaseSlotLock(lockResult.lockId);
+      try {
+        await bookingPrevention.releaseSlotLock(lockResult.lockId);
+      } catch (releaseError) {
+        // Log the release error but don't throw to preserve the original error
+        console.error('Failed to release slot lock:', {
+          lockId: lockResult.lockId,
+          error: releaseError instanceof Error ? releaseError.message : String(releaseError)
+        });
+      }
     }
   }
 }
