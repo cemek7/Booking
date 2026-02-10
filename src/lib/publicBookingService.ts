@@ -11,6 +11,7 @@
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
+import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 
 const SLOT_INTERVAL_MINUTES = 30;
 
@@ -255,53 +256,70 @@ export async function createPublicBooking(
 
   const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
 
-  const conflictQuery = supabase
-    .from('reservations')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .lt('start_at', endTime.toISOString())
-    .gt('end_at', startTime.toISOString())
-    .in('status', ['confirmed', 'pending'])
-    .limit(1);
+  // Use DoubleBookingPrevention service for transactionally safe conflict detection
+  const bookingPrevention = new DoubleBookingPrevention(supabase);
+  
+  // Acquire slot lock to prevent race conditions
+  const lockResult = await bookingPrevention.acquireSlotLock({
+    tenantId,
+    startAt: startTime.toISOString(),
+    endAt: endTime.toISOString(),
+    resourceId: payload.staff_id,
+    lockDurationMinutes: 2, // Short lock for public booking
+  });
 
-  const { data: conflictingReservations, error: conflictError } = payload.staff_id
-    ? await conflictQuery.eq('staff_id', payload.staff_id)
-    : await conflictQuery;
-
-  if (conflictError) {
-    throw ApiErrorFactory.databaseError(new Error(conflictError.message));
+  if (!lockResult.success) {
+    if (lockResult.isConflict) {
+      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+    }
+    throw ApiErrorFactory.internalServerError(new Error(lockResult.error || 'Failed to acquire booking lock'));
   }
 
-  if (conflictingReservations && conflictingReservations.length > 0) {
-    throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+  try {
+    // Perform comprehensive conflict check with proper overlap detection
+    const conflictCheck = await bookingPrevention.checkBookingConflicts({
+      tenantId,
+      startAt: startTime.toISOString(),
+      endAt: endTime.toISOString(),
+      resourceIds: payload.staff_id ? [payload.staff_id] : undefined,
+    });
+
+    if (conflictCheck.hasConflict) {
+      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+    }
+
+    // Create booking atomically after conflict check passes
+    const { data: booking, error: bookingErr } = await supabase
+      .from('reservations')
+      .insert({
+        tenant_id: tenantId,
+        customer_id: customer.id,
+        service_id: payload.service_id,
+        staff_id: payload.staff_id || null,
+        start_at: startTime.toISOString(),
+        end_at: endTime.toISOString(),
+        status: 'pending',
+        notes: payload.notes,
+        source: 'public_booking',
+        metadata: {
+          booking_source: 'public_storefront',
+          timestamp: new Date().toISOString(),
+        },
+      })
+      .select('id')
+      .single();
+
+    if (bookingErr || !booking) {
+      throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
+    }
+
+    return booking;
+  } finally {
+    // Always release the lock, even if an error occurs
+    if (lockResult.lockId) {
+      await bookingPrevention.releaseSlotLock(lockResult.lockId);
+    }
   }
-
-  // Create booking
-  const { data: booking, error: bookingErr } = await supabase
-    .from('reservations')
-    .insert({
-      tenant_id: tenantId,
-      customer_id: customer.id,
-      service_id: payload.service_id,
-      staff_id: payload.staff_id || null,
-      start_at: startTime.toISOString(),
-      end_at: endTime.toISOString(),
-      status: 'pending',
-      notes: payload.notes,
-      source: 'public_booking',
-      metadata: {
-        booking_source: 'public_storefront',
-        timestamp: new Date().toISOString(),
-      },
-    })
-    .select('id')
-    .single();
-
-  if (bookingErr || !booking) {
-    throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
-  }
-
-  return booking;
 }
 
 /**
