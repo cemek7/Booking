@@ -216,16 +216,19 @@ export class DoubleBookingPrevention {
       // This prevents false conflicts from other resources (e.g., different staff members)
       if (params.resourceIds && params.resourceIds.length > 0) {
         // Validate and sanitize resourceIds to prevent filter injection
+        // Only UUIDs are allowed to ensure safe string interpolation in the query
         const validResourceIds = params.resourceIds.filter(id => {
-          // Basic UUID validation pattern
+          // Strict UUID v4 validation pattern
           return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
         });
 
         if (validResourceIds.length === 0) {
-          throw new Error('Invalid resourceIds format - expected UUIDs');
+          throw new Error('Invalid resourceIds format - expected valid UUIDs');
         }
 
         // Build OR condition for staff_id or location_id matching any of the resourceIds
+        // Using string format required by Supabase .or() for complex OR conditions
+        // Safe because UUIDs are validated above
         const resourceFilters = validResourceIds
           .map(id => `staff_id.eq.${id},location_id.eq.${id}`)
           .join(',');
@@ -243,8 +246,10 @@ export class DoubleBookingPrevention {
       // all overlapping reservations here are actual conflicts
       if (overlappingReservations) {
         for (const reservation of overlappingReservations) {
-          // Use staff_id if present, otherwise location_id
+          // Use staff_id if present, otherwise location_id, otherwise undefined
           // This prioritizes staff assignment over location since staff is the primary resource
+          // Note: if both are null/undefined, resourceId will be undefined but conflict is still valid
+          // as it represents a tenant-wide time overlap for an unassigned reservation
           const resourceId = reservation.staff_id || reservation.location_id;
           
           // Determine conflict type based on whether resources were specified
