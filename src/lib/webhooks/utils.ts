@@ -409,7 +409,7 @@ export function validateWebhookEnv(): {
 } {
   const requiredVars = [
     'STRIPE_WEBHOOK_SECRET',
-    'PAYSTACK_WEBHOOK_SECRET',
+    'PAYSTACK_SECRET_KEY',
     'EVOLUTION_WEBHOOK_SECRET'
   ];
 
