@@ -1,6 +1,6 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { pingRedis } from '@/lib/redis';
+import { hasInstalledRedisClient, isRedisConfigured, isRedisFeatureEnabled, pingRedis } from '@/lib/redis';
 
 // --- Configuration ---
 const {
@@ -14,7 +14,6 @@ const {
   EVOLUTION_API_URL,
   EVOLUTION_API_KEY,
   EVOLUTION_INSTANCE_NAME,
-  REDIS_URL,
   AWS_ACCESS_KEY_ID,
   AWS_S3_BUCKET,
 } = process.env;
@@ -130,8 +129,12 @@ async function checkStorageHealth(): Promise<HealthStatus> {
 
 async function checkRedisHealth(): Promise<HealthStatus> {
   const checkStart = Date.now();
-  if (!REDIS_URL) {
+  if (!isRedisConfigured()) {
     return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis configuration missing' };
+  }
+
+  if (!hasInstalledRedisClient()) {
+    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis enabled but no Redis client installed' };
   }
   try {
     await Promise.race([
@@ -166,7 +169,7 @@ export const GET = createHttpHandler(
       ai_services: await checkAIServicesHealth(),
       whatsapp_evolution: await checkWhatsAppHealth(),
       storage: await checkStorageHealth(),
-      ...(REDIS_URL && { redis: await checkRedisHealth() }),
+      ...(isRedisFeatureEnabled() && { redis: await checkRedisHealth() }),
     };
 
     const serviceStatuses = Object.values(serviceChecks).map(s => s.status);

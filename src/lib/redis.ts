@@ -5,10 +5,40 @@
 type RedisClient = any;
 let client: RedisClient | null = null;
 
+const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+export function isRedisFeatureEnabled() {
+  const flag = process.env.REDIS_ENABLED;
+  if (typeof flag === 'string') {
+    return ENABLED_VALUES.has(flag.toLowerCase());
+  }
+
+  return Boolean(process.env.REDIS_URL);
+}
+
+export function hasInstalledRedisClient() {
+  try {
+    require.resolve('ioredis');
+    return true;
+  } catch {
+    try {
+      require.resolve('redis');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function isRedisConfigured() {
+  return Boolean(process.env.REDIS_URL);
+}
+
 function ensureClient() {
   if (client) return client;
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
+  if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
   try {
     const IORedis = require('ioredis');
     client = new IORedis(url);
@@ -70,4 +100,13 @@ export async function pingRedis() {
   throw new Error('Redis client does not support ping');
 }
 
-export default { lpushRecent, getRecent, cacheSet, cacheGet, pingRedis };
+export default {
+  lpushRecent,
+  getRecent,
+  cacheSet,
+  cacheGet,
+  pingRedis,
+  isRedisFeatureEnabled,
+  hasInstalledRedisClient,
+  isRedisConfigured,
+};
