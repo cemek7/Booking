@@ -9,7 +9,7 @@ const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 export function isRedisFeatureEnabled() {
   const flag = process.env.REDIS_ENABLED;
-  if (typeof flag === 'string') {
+  if (typeof flag === 'string' && flag.trim() !== '') {
     return ENABLED_VALUES.has(flag.toLowerCase());
   }
 
