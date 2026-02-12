@@ -97,7 +97,6 @@ export function getSupabaseApiRouteClient(
     const cookiesArray = Array.isArray(existingCookies)
       ? existingCookies
       : [existingCookies.toString()];
-    
     // Filter out the cookie with the same name if excludeName is provided
     if (excludeName) {
       return cookiesArray.filter((cookie) => !cookie.startsWith(`${excludeName}=`));
