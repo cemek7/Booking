@@ -10,6 +10,25 @@ type CookieAdapter = {
   remove: (name: string, options: CookieOptions) => void | Promise<void>;
 };
 
+/**
+ * Helper function to get existing cookies from a response as an array,
+ * optionally excluding a specific cookie name to prevent duplicates.
+ */
+function getFilteredExistingCookies(
+  res: NextApiResponse,
+  excludeName?: string
+): string[] {
+  const existingCookies = res.getHeader('Set-Cookie') || [];
+  const cookiesArray = Array.isArray(existingCookies)
+    ? existingCookies
+    : [existingCookies.toString()];
+  // Filter out the cookie with the same name if excludeName is provided
+  if (excludeName) {
+    return cookiesArray.filter((cookie) => !cookie.startsWith(`${excludeName}=`));
+  }
+  return cookiesArray;
+}
+
 function createClient(cookiesAdapter: CookieAdapter, accessToken?: string) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -91,29 +110,16 @@ export function getSupabaseApiRouteClient(
   res: NextApiResponse,
   accessToken?: string,
 ) {
-  // Helper function to get existing cookies as an array, optionally excluding a specific cookie name
-  const getFilteredExistingCookies = (excludeName?: string) => {
-    const existingCookies = res.getHeader('Set-Cookie') || [];
-    const cookiesArray = Array.isArray(existingCookies)
-      ? existingCookies
-      : [existingCookies.toString()];
-    // Filter out the cookie with the same name if excludeName is provided
-    if (excludeName) {
-      return cookiesArray.filter((cookie) => !cookie.startsWith(`${excludeName}=`));
-    }
-    return cookiesArray;
-  };
-
   return createClient(
     {
       get: (name: string) => {
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', [...getFilteredExistingCookies(name), serialize(name, value, options)]);
+        res.setHeader('Set-Cookie', [...getFilteredExistingCookies(res, name), serialize(name, value, options)]);
       },
       remove: (name: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', [...getFilteredExistingCookies(name), serialize(name, '', options)]);
+        res.setHeader('Set-Cookie', [...getFilteredExistingCookies(res, name), serialize(name, '', options)]);
       },
     },
     accessToken,
