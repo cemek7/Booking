@@ -91,24 +91,24 @@ export function getSupabaseApiRouteClient(
   res: NextApiResponse,
   accessToken?: string,
 ) {
+  // Helper function to get existing cookies as an array
+  const getExistingCookies = () => {
+    const existingCookies = res.getHeader('Set-Cookie') || [];
+    return Array.isArray(existingCookies)
+      ? existingCookies
+      : [existingCookies.toString()];
+  };
+
   return createClient(
     {
       get: (name: string) => {
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        const existingCookies = res.getHeader('Set-Cookie') || [];
-        const cookiesArray = Array.isArray(existingCookies)
-          ? existingCookies
-          : [existingCookies.toString()];
-        res.setHeader('Set-Cookie', [...cookiesArray, serialize(name, value, options)]);
+        res.setHeader('Set-Cookie', [...getExistingCookies(), serialize(name, value, options)]);
       },
       remove: (name: string, options: CookieOptions) => {
-        const existingCookies = res.getHeader('Set-Cookie') || [];
-        const cookiesArray = Array.isArray(existingCookies)
-          ? existingCookies
-          : [existingCookies.toString()];
-        res.setHeader('Set-Cookie', [...cookiesArray, serialize(name, '', options)]);
+        res.setHeader('Set-Cookie', [...getExistingCookies(), serialize(name, '', options)]);
       },
     },
     accessToken,
