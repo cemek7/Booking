@@ -1,4 +1,5 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { type NextApiRequest, type NextApiResponse } from 'next';
 import { serialize } from 'cookie';
@@ -96,10 +97,18 @@ export function getSupabaseApiRouteClient(
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', serialize(name, value, options));
+        const existingCookies = res.getHeader('Set-Cookie') || [];
+        const cookiesArray = Array.isArray(existingCookies)
+          ? existingCookies
+          : [existingCookies.toString()];
+        res.setHeader('Set-Cookie', [...cookiesArray, serialize(name, value, options)]);
       },
       remove: (name: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', serialize(name, '', options));
+        const existingCookies = res.getHeader('Set-Cookie') || [];
+        const cookiesArray = Array.isArray(existingCookies)
+          ? existingCookies
+          : [existingCookies.toString()];
+        res.setHeader('Set-Cookie', [...cookiesArray, serialize(name, '', options)]);
       },
     },
     accessToken,
