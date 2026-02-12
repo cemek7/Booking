@@ -96,10 +96,30 @@ export function getSupabaseApiRouteClient(
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', serialize(name, value, options));
+        const cookie = serialize(name, value, options);
+        const existingCookies = res.getHeader('Set-Cookie');
+        
+        if (existingCookies) {
+          const cookiesArray = Array.isArray(existingCookies)
+            ? existingCookies
+            : [existingCookies.toString()];
+          res.setHeader('Set-Cookie', [...cookiesArray, cookie]);
+        } else {
+          res.setHeader('Set-Cookie', cookie);
+        }
       },
       remove: (name: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', serialize(name, '', options));
+        const cookie = serialize(name, '', options);
+        const existingCookies = res.getHeader('Set-Cookie');
+        
+        if (existingCookies) {
+          const cookiesArray = Array.isArray(existingCookies)
+            ? existingCookies
+            : [existingCookies.toString()];
+          res.setHeader('Set-Cookie', [...cookiesArray, cookie]);
+        } else {
+          res.setHeader('Set-Cookie', cookie);
+        }
       },
     },
     accessToken,
