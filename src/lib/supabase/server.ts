@@ -13,7 +13,7 @@ type CookieAdapter = {
 /**
  * Helper function to get existing cookies from a response as an array,
  * optionally excluding a specific cookie name to prevent duplicates.
- * 
+ *
  * @param res - The NextApiResponse object containing the Set-Cookie header
  * @param excludeName - Optional cookie name to exclude from the returned array
  * @returns Array of cookie strings from the Set-Cookie header
@@ -122,10 +122,12 @@ export function getSupabaseApiRouteClient(
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', [...getFilteredExistingCookies(res, name), serialize(name, value, options)]);
+        const filteredCookies = getFilteredExistingCookies(res, name);
+        res.setHeader('Set-Cookie', [...filteredCookies, serialize(name, value, options)]);
       },
       remove: (name: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', [...getFilteredExistingCookies(res, name), serialize(name, '', options)]);
+        const filteredCookies = getFilteredExistingCookies(res, name);
+        res.setHeader('Set-Cookie', [...filteredCookies, serialize(name, '', options)]);
       },
     },
     accessToken,
