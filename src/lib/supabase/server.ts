@@ -91,12 +91,18 @@ export function getSupabaseApiRouteClient(
   res: NextApiResponse,
   accessToken?: string,
 ) {
-  // Helper function to get existing cookies as an array
-  const getExistingCookies = () => {
+  // Helper function to get existing cookies as an array, filtering out a specific cookie name
+  const getExistingCookies = (excludeName?: string) => {
     const existingCookies = res.getHeader('Set-Cookie') || [];
-    return Array.isArray(existingCookies)
+    const cookiesArray = Array.isArray(existingCookies)
       ? existingCookies
       : [existingCookies.toString()];
+    
+    // Filter out the cookie with the same name if excludeName is provided
+    if (excludeName) {
+      return cookiesArray.filter((cookie) => !cookie.startsWith(`${excludeName}=`));
+    }
+    return cookiesArray;
   };
 
   return createClient(
@@ -105,10 +111,10 @@ export function getSupabaseApiRouteClient(
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', [...getExistingCookies(), serialize(name, value, options)]);
+        res.setHeader('Set-Cookie', [...getExistingCookies(name), serialize(name, value, options)]);
       },
       remove: (name: string, options: CookieOptions) => {
-        res.setHeader('Set-Cookie', [...getExistingCookies(), serialize(name, '', options)]);
+        res.setHeader('Set-Cookie', [...getExistingCookies(name), serialize(name, '', options)]);
       },
     },
     accessToken,
