@@ -13,15 +13,21 @@ type CookieAdapter = {
 /**
  * Helper function to get existing cookies from a response as an array,
  * optionally excluding a specific cookie name to prevent duplicates.
+ * 
+ * @param res - The NextApiResponse object containing the Set-Cookie header
+ * @param excludeName - Optional cookie name to exclude from the returned array
+ * @returns Array of cookie strings from the Set-Cookie header
  */
 function getFilteredExistingCookies(
   res: NextApiResponse,
   excludeName?: string
 ): string[] {
-  const existingCookies = res.getHeader('Set-Cookie') || [];
+  const existingCookies = res.getHeader('Set-Cookie');
   const cookiesArray = Array.isArray(existingCookies)
     ? existingCookies
-    : [existingCookies.toString()];
+    : existingCookies
+      ? [existingCookies.toString()]
+      : [];
   // Filter out the cookie with the same name if excludeName is provided
   if (excludeName) {
     return cookiesArray.filter((cookie) => !cookie.startsWith(`${excludeName}=`));
