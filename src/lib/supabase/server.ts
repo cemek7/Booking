@@ -104,6 +104,24 @@ export function getSupabaseRouteHandlerClient(accessToken?: string) {
 }
 
 /**
+ * Helper function to append a cookie to the Set-Cookie header without overwriting existing cookies.
+ * This is necessary for Pages API routes where multiple cookies (e.g., access and refresh tokens)
+ * need to be set in a single response.
+ */
+function appendCookie(res: NextApiResponse, cookie: string) {
+  const existingCookies = res.getHeader('Set-Cookie');
+  
+  if (existingCookies) {
+    const cookiesArray = Array.isArray(existingCookies)
+      ? existingCookies
+      : [existingCookies.toString()];
+    res.setHeader('Set-Cookie', [...cookiesArray, cookie]);
+  } else {
+    res.setHeader('Set-Cookie', cookie);
+  }
+}
+
+/**
  * Creates a Supabase client for Pages API Route usage.
  * This needs to be created for each request.
  *
@@ -122,12 +140,12 @@ export function getSupabaseApiRouteClient(
         return req.cookies[name];
       },
       set: (name: string, value: string, options: CookieOptions) => {
-        const filteredCookies = getFilteredExistingCookies(res, name);
-        res.setHeader('Set-Cookie', [...filteredCookies, serialize(name, value, options)]);
+        const cookie = serialize(name, value, options);
+        appendCookie(res, cookie);
       },
       remove: (name: string, options: CookieOptions) => {
-        const filteredCookies = getFilteredExistingCookies(res, name);
-        res.setHeader('Set-Cookie', [...filteredCookies, serialize(name, '', options)]);
+        const cookie = serialize(name, '', options);
+        appendCookie(res, cookie);
       },
     },
     accessToken,
