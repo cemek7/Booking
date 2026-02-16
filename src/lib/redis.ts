@@ -13,7 +13,7 @@ export function isRedisFeatureEnabled() {
   
   // If REDIS_ENABLED is explicitly set (non-empty string), it takes precedence
   if (typeof flag === 'string' && flag.trim() !== '') {
-    const isExplicitlyEnabled = ENABLED_VALUES.has(flag.toLowerCase());
+    const isExplicitlyEnabled = ENABLED_VALUES.has(flag.trim().toLowerCase());
     // If explicitly enabled, also require REDIS_URL to prevent runtime failures
     if (isExplicitlyEnabled) {
       return hasRedisUrl;
