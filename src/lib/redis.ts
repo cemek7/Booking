@@ -5,22 +5,94 @@
 type RedisClient = any;
 let client: RedisClient | null = null;
 
+const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+export function isRedisFeatureEnabled() {
+  const flag = process.env.REDIS_ENABLED;
+  const hasRedisUrl = Boolean(process.env.REDIS_URL);
+  
+  // If REDIS_ENABLED is explicitly set (non-empty string), it takes precedence
+  if (typeof flag === 'string' && flag.trim() !== '') {
+    const isExplicitlyEnabled = ENABLED_VALUES.has(flag.trim().toLowerCase());
+    // If explicitly enabled, also require REDIS_URL to prevent runtime failures
+    if (isExplicitlyEnabled) {
+      return hasRedisUrl;
+    }
+    // If explicitly disabled (e.g., "false", "0"), respect that regardless of REDIS_URL
+    return false;
+  }
+
+  // If REDIS_ENABLED is empty/unset, fall back to REDIS_URL presence
+  return hasRedisUrl;
+}
+
+/**
+ * Checks if a Redis client package (ioredis or redis) is installed.
+ * 
+ * NOTE: This function uses require.resolve, a Node.js CJS API.
+ * It is intended for server-side use only (Node.js runtime, not edge runtime).
+ * The try-catch blocks provide runtime safety, but this code may behave
+ * unpredictably in certain bundler contexts or edge runtime environments.
+ * 
+ * @returns {boolean} true if either ioredis or redis package is available
+ */
+export function hasInstalledRedisClient() {
+  try {
+    require.resolve('ioredis');
+    return true;
+  } catch {
+    try {
+      require.resolve('redis');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function isRedisConfigured() {
+  return Boolean(process.env.REDIS_URL);
+}
+
 function ensureClient() {
   if (client) return client;
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
+  if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
+  
+  // Try ioredis first
   try {
     const IORedis = require('ioredis');
-    client = new IORedis(url);
-    return client;
-  } catch (e) {
+    try {
+      client = new IORedis(url);
+      return client;
+    } catch (instantiationError) {
+      // If ioredis is installed but instantiation fails (e.g., invalid URL), report it clearly
+      throw new Error(`ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`);
+    }
+  } catch (requireError) {
+    // ioredis not available, try node-redis
+    if (requireError instanceof Error && requireError.message.includes('instantiation failed')) {
+      // This is an instantiation error, not a module-resolution error - rethrow it
+      throw requireError;
+    }
+    
     try {
       const redis = require('redis');
-      client = redis.createClient({ url });
-      // node-redis connect is async; we rely on caller to await connect if needed
-      if (typeof client.connect === 'function') client.connect().catch(() => {});
-      return client;
+      try {
+        client = redis.createClient({ url });
+        // node-redis connect is async; we rely on caller to await connect if needed
+        if (typeof client.connect === 'function') client.connect().catch(() => {});
+        return client;
+      } catch (instantiationError) {
+        throw new Error(`redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`);
+      }
     } catch (err) {
+      // If this is an instantiation error from node-redis, rethrow it
+      if (err instanceof Error && err.message.includes('instantiation failed')) {
+        throw err;
+      }
+      // Both packages are unavailable
       throw new Error('Redis client not installed (ioredis or redis)');
     }
   }
@@ -70,4 +142,13 @@ export async function pingRedis() {
   throw new Error('Redis client does not support ping');
 }
 
-export default { lpushRecent, getRecent, cacheSet, cacheGet, pingRedis };
+export default {
+  lpushRecent,
+  getRecent,
+  cacheSet,
+  cacheGet,
+  pingRedis,
+  isRedisFeatureEnabled,
+  hasInstalledRedisClient,
+  isRedisConfigured,
+};
