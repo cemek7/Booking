@@ -1,5 +1,5 @@
+import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { hasInstalledRedisClient, isRedisConfigured, isRedisFeatureEnabled, pingRedis } from '@/lib/redis';
 
 // --- Configuration ---
@@ -170,8 +170,8 @@ async function checkRedisHealth(): Promise<HealthStatus> {
  * Public health check - no authentication required
  * Returns detailed service health status
  */
-export async function GET() {
-  try {
+export const GET = createHttpHandler(
+  async (ctx) => {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
@@ -205,10 +205,11 @@ export async function GET() {
       },
     };
 
+    // Return NextResponse with custom status code for unhealthy state
     return NextResponse.json(healthCheck, {
       status: overallStatus === 'healthy' ? 200 : 503,
     });
-  } catch (error) {
-    return handleRouteError(error instanceof Error ? error : new Error(String(error)));
-  }
-}
+  },
+  'GET',
+  { auth: false }
+);
