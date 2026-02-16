@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { hasInstalledRedisClient, isRedisConfigured, isRedisFeatureEnabled, pingRedis } from '@/lib/redis';
+import { handleRouteError } from '@/lib/error-handling/api-error';
+import { pingRedis } from '@/lib/redis';
 
 // --- Configuration ---
 const {
@@ -14,6 +14,7 @@ const {
   EVOLUTION_API_URL,
   EVOLUTION_API_KEY,
   EVOLUTION_INSTANCE_NAME,
+  REDIS_URL,
   AWS_ACCESS_KEY_ID,
   AWS_S3_BUCKET,
   NEXT_PUBLIC_SUPABASE_URL,
@@ -140,12 +141,8 @@ async function checkStorageHealth(): Promise<HealthStatus> {
 
 async function checkRedisHealth(): Promise<HealthStatus> {
   const checkStart = Date.now();
-  if (!isRedisConfigured()) {
+  if (!REDIS_URL) {
     return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis configuration missing' };
-  }
-
-  if (!hasInstalledRedisClient()) {
-    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis enabled but no Redis client installed' };
   }
   try {
     await Promise.race([
@@ -170,26 +167,17 @@ async function checkRedisHealth(): Promise<HealthStatus> {
  * Public health check - no authentication required
  * Returns detailed service health status
  */
-export const GET = createHttpHandler(
-  async () => {
+export async function GET() {
+  try {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
-    // Run service checks in parallel to reduce worst-case response time
-    const [database, ai_services, whatsapp_evolution, storage, redis] = await Promise.all([
-      checkSupabaseHealth(),
-      checkAIServicesHealth(),
-      checkWhatsAppHealth(),
-      checkStorageHealth(),
-      isRedisFeatureEnabled() ? checkRedisHealth() : Promise.resolve(undefined),
-    ]);
-
     const serviceChecks = {
-      database,
-      ai_services,
-      whatsapp_evolution,
-      storage,
-      ...(redis && { redis }),
+      database: await checkSupabaseHealth(),
+      ai_services: await checkAIServicesHealth(),
+      whatsapp_evolution: await checkWhatsAppHealth(),
+      storage: await checkStorageHealth(),
+      ...(REDIS_URL && { redis: await checkRedisHealth() }),
     };
 
     const serviceStatuses = Object.values(serviceChecks).map(s => s.status);
@@ -214,11 +202,10 @@ export const GET = createHttpHandler(
       },
     };
 
-    // Return NextResponse with custom status code for unhealthy state
     return NextResponse.json(healthCheck, {
       status: overallStatus === 'healthy' ? 200 : 503,
     });
-  },
-  'GET',
-  { auth: false }
-);
+  } catch (error) {
+    return handleRouteError(error instanceof Error ? error : new Error(String(error)));
+  }
+}
