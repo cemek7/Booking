@@ -32,12 +32,12 @@ function env(key: string) { return process.env[key]; }
 export class PaystackProvider implements PaymentProvider {
   name = 'paystack';
   async createDepositIntent(input: DepositIntentInput): Promise<DepositIntentResult> {
-    if (!env('PAYSTACK_SECRET')) return { id: null, status: 'failed', provider: this.name, error: 'missing_credentials' };
+    if (!env('PAYSTACK_SECRET_KEY')) return { id: null, status: 'failed', provider: this.name, error: 'missing_credentials' };
     try {
       const amount = input.amount_minor_units; // already minor units
       const resp = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env('PAYSTACK_SECRET')}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env('PAYSTACK_SECRET_KEY')}` },
         body: JSON.stringify({ amount, email: input.customer_email || 'noemail@example.com', metadata: input.metadata || {} })
       });
       const j = await resp.json().catch(() => ({}));

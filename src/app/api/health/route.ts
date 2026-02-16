@@ -16,6 +16,8 @@ const {
   EVOLUTION_INSTANCE_NAME,
   AWS_ACCESS_KEY_ID,
   AWS_S3_BUCKET,
+  NEXT_PUBLIC_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY,
 } = process.env;
 
 const SERVICE_TIMEOUT = 10000; // 10 seconds
@@ -57,11 +59,20 @@ interface HealthCheckResult {
 
 async function checkSupabaseHealth(): Promise<HealthStatus> {
   const checkStart = Date.now();
+
+  if (!NEXT_PUBLIC_SUPABASE_URL || !NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return {
+      status: 'unhealthy',
+      last_check: new Date().toISOString(),
+      error: 'Supabase configuration missing',
+    };
+  }
+
   try {
     const response = await fetch(
-      `${process.env.SUPABASE_URL}/rest/v1/?${new URLSearchParams({ limit: '1' })}`,
+      `${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/?${new URLSearchParams({ limit: '1' })}`,
       {
-        headers: { 'apikey': process.env.SUPABASE_ANON_KEY || '' },
+        headers: { apikey: NEXT_PUBLIC_SUPABASE_ANON_KEY },
         signal: AbortSignal.timeout(SERVICE_TIMEOUT),
       }
     );
@@ -159,8 +170,8 @@ async function checkRedisHealth(): Promise<HealthStatus> {
  * Public health check - no authentication required
  * Returns detailed service health status
  */
-export const GET = createHttpHandler(
-  async (ctx) => {
+export async function GET() {
+  try {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
@@ -194,11 +205,10 @@ export const GET = createHttpHandler(
       },
     };
 
-    return { 
-      ...healthCheck,
-      _httpStatus: overallStatus === 'healthy' ? 200 : 503
-    };
-  },
-  'GET',
-  { auth: false } // Public endpoint, no auth required
-);
+    return NextResponse.json(healthCheck, {
+      status: overallStatus === 'healthy' ? 200 : 503,
+    });
+  } catch (error) {
+    return handleRouteError(error instanceof Error ? error : new Error(String(error)));
+  }
+}
