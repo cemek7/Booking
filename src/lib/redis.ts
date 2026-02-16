@@ -9,11 +9,21 @@ const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 export function isRedisFeatureEnabled() {
   const flag = process.env.REDIS_ENABLED;
+  const hasRedisUrl = Boolean(process.env.REDIS_URL);
+  
+  // If REDIS_ENABLED is explicitly set (non-empty string), it takes precedence
   if (typeof flag === 'string' && flag.trim() !== '') {
-    return ENABLED_VALUES.has(flag.toLowerCase());
+    const isExplicitlyEnabled = ENABLED_VALUES.has(flag.toLowerCase());
+    // If explicitly enabled, also require REDIS_URL to prevent runtime failures
+    if (isExplicitlyEnabled) {
+      return hasRedisUrl;
+    }
+    // If explicitly disabled (e.g., "false", "0"), respect that regardless of REDIS_URL
+    return false;
   }
 
-  return Boolean(process.env.REDIS_URL);
+  // If REDIS_ENABLED is empty/unset, fall back to REDIS_URL presence
+  return hasRedisUrl;
 }
 
 export function hasInstalledRedisClient() {
