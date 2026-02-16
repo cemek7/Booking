@@ -26,6 +26,16 @@ export function isRedisFeatureEnabled() {
   return hasRedisUrl;
 }
 
+/**
+ * Checks if a Redis client package (ioredis or redis) is installed.
+ * 
+ * NOTE: This function uses require.resolve, a Node.js CJS API.
+ * It is intended for server-side use only (Node.js runtime, not edge runtime).
+ * The try-catch blocks provide runtime safety, but this code may behave
+ * unpredictably in certain bundler contexts or edge runtime environments.
+ * 
+ * @returns {boolean} true if either ioredis or redis package is available
+ */
 export function hasInstalledRedisClient() {
   try {
     require.resolve('ioredis');
@@ -49,18 +59,40 @@ function ensureClient() {
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
   if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
+  
+  // Try ioredis first
   try {
     const IORedis = require('ioredis');
-    client = new IORedis(url);
-    return client;
-  } catch (e) {
+    try {
+      client = new IORedis(url);
+      return client;
+    } catch (instantiationError) {
+      // If ioredis is installed but instantiation fails (e.g., invalid URL), report it clearly
+      throw new Error(`ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`);
+    }
+  } catch (requireError) {
+    // ioredis not available, try node-redis
+    if (requireError instanceof Error && requireError.message.includes('instantiation failed')) {
+      // This is an instantiation error, not a module-resolution error - rethrow it
+      throw requireError;
+    }
+    
     try {
       const redis = require('redis');
-      client = redis.createClient({ url });
-      // node-redis connect is async; we rely on caller to await connect if needed
-      if (typeof client.connect === 'function') client.connect().catch(() => {});
-      return client;
+      try {
+        client = redis.createClient({ url });
+        // node-redis connect is async; we rely on caller to await connect if needed
+        if (typeof client.connect === 'function') client.connect().catch(() => {});
+        return client;
+      } catch (instantiationError) {
+        throw new Error(`redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`);
+      }
     } catch (err) {
+      // If this is an instantiation error from node-redis, rethrow it
+      if (err instanceof Error && err.message.includes('instantiation failed')) {
+        throw err;
+      }
+      // Both packages are unavailable
       throw new Error('Redis client not installed (ioredis or redis)');
     }
   }
