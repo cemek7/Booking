@@ -66,9 +66,9 @@ function resetConnectionState() {
 }
 
 function createIORedisClient(url: string): RedisClient {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const IORedis = require('ioredis');
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const IORedis = require('ioredis');
     resetConnectionState();
     client = new IORedis(url);
     return client;
@@ -82,9 +82,9 @@ function createIORedisClient(url: string): RedisClient {
 }
 
 function createNodeRedisClient(url: string): RedisClient {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const redis = require('redis');
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const redis = require('redis');
     resetConnectionState();
     client = redis.createClient({ url });
 
