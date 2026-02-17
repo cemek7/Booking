@@ -134,7 +134,7 @@ async function checkRedisHealth(): Promise<HealthStatus> {
   }
 
   if (!hasInstalledRedisClient()) {
-    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis configured but client library not installed' };
+    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis client library not installed' };
   }
   try {
     await Promise.race([

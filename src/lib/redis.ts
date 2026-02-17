@@ -16,7 +16,7 @@ let connectError: RedisError | null = null;
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause?: unknown): RedisError {
-  const error = new Error(message, cause ? { cause } : undefined) as RedisError;
+  const error = (cause ? new Error(message, { cause }) : new Error(message)) as RedisError;
   error.redisErrorKind = redisErrorKind;
   return error;
 }
