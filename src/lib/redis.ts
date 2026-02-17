@@ -12,7 +12,7 @@ type RedisError = Error & { redisErrorKind?: RedisErrorKind };
 let client: RedisClient | null = null;
 let connectPromise: Promise<void> | null = null;
 let connectError: RedisError | null = null;
-let isInitializing = false;
+let initializationPromise: Promise<RedisClient> | null = null;
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -124,38 +124,42 @@ function ensureClient() {
 }
 
 async function ensureReadyClient() {
-  // Guard against concurrent initialization
-  if (isInitializing) {
-    // Wait for the current initialization to complete
-    while (isInitializing) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
+  // If we're already initializing, wait for that initialization to complete
+  if (initializationPromise) {
+    return initializationPromise;
   }
 
+  // If we have a client and no error, check if it's ready
   if (client && !connectError) {
-    // Client already initialized successfully
     if (connectPromise) {
       await connectPromise;
+    }
+    if (connectError) {
+      throw connectError;
     }
     return client;
   }
 
-  try {
-    isInitializing = true;
-    const currentClient = ensureClient();
+  // Start initialization and store the promise so concurrent callers can await it
+  initializationPromise = (async () => {
+    try {
+      const currentClient = ensureClient();
 
-    if (connectPromise) {
-      await connectPromise;
+      if (connectPromise) {
+        await connectPromise;
+      }
+
+      if (connectError) {
+        throw connectError;
+      }
+
+      return currentClient;
+    } finally {
+      initializationPromise = null;
     }
+  })();
 
-    if (connectError) {
-      throw connectError;
-    }
-
-    return currentClient;
-  } finally {
-    isInitializing = false;
-  }
+  return initializationPromise;
 }
 
 export async function lpushRecent(chatId: string, messageObj: object, maxLen = 200) {
