@@ -4,6 +4,7 @@
 
 import { defaultLogger } from '@/lib/logger';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RedisClient = any;
 type RedisErrorKind = 'instantiation' | 'connection';
 type RedisError = Error & { redisErrorKind?: RedisErrorKind };
@@ -11,6 +12,7 @@ type RedisError = Error & { redisErrorKind?: RedisErrorKind };
 let client: RedisClient | null = null;
 let connectPromise: Promise<void> | null = null;
 let connectError: RedisError | null = null;
+let isInitializing = false;
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -55,9 +57,9 @@ function ensureClient() {
 
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
-  if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
 
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const IORedis = require('ioredis');
     try {
       connectPromise = null;
@@ -77,6 +79,7 @@ function ensureClient() {
     }
 
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const redis = require('redis');
       try {
         connectPromise = null;
@@ -115,23 +118,44 @@ function ensureClient() {
         throw nodeRedisError;
       }
 
-      throw new Error('Redis client not installed (ioredis or redis)');
+      throw new Error('Neither ioredis nor redis client library is installed');
     }
   }
 }
 
 async function ensureReadyClient() {
-  const currentClient = ensureClient();
-
-  if (connectPromise) {
-    await connectPromise;
+  // Guard against concurrent initialization
+  if (isInitializing) {
+    // Wait for the current initialization to complete
+    while (isInitializing) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
   }
 
-  if (connectError) {
-    throw connectError;
+  if (client && !connectError) {
+    // Client already initialized successfully
+    if (connectPromise) {
+      await connectPromise;
+    }
+    return client;
   }
 
-  return currentClient;
+  try {
+    isInitializing = true;
+    const currentClient = ensureClient();
+
+    if (connectPromise) {
+      await connectPromise;
+    }
+
+    if (connectError) {
+      throw connectError;
+    }
+
+    return currentClient;
+  } finally {
+    isInitializing = false;
+  }
 }
 
 export async function lpushRecent(chatId: string, messageObj: object, maxLen = 200) {
@@ -152,6 +176,7 @@ export async function getRecent(chatId: string, limit = 50) {
   }).reverse();
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cacheSet(key: string, value: any, ttlSec?: number) {
   const c = await ensureReadyClient();
   const v = JSON.stringify(value);
