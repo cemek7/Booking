@@ -89,7 +89,7 @@ function createNodeRedisClient(url: string): RedisClient {
     client = redis.createClient({ url });
 
     if (typeof client.connect === 'function') {
-      connectPromise = Promise.resolve(client.connect())
+      connectPromise = client.connect()
         .then(() => {
           connectError = null;
         })
@@ -148,7 +148,7 @@ async function ensureReadyClient() {
   }
 
   if (!client) {
-    throw new Error('Redis client unavailable after connection');
+    throw new Error('Redis client was reset during connection attempt');
   }
   return client;
 }
