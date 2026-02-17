@@ -16,7 +16,7 @@ let connectError: RedisError | null = null;
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause?: unknown): RedisError {
-  const error = new Error(message, cause != null ? { cause } : undefined) as RedisError;
+  const error = new Error(message, cause ? { cause } : undefined) as RedisError;
   error.redisErrorKind = redisErrorKind;
   return error;
 }
@@ -60,12 +60,16 @@ function isModuleAvailable(moduleName: string): boolean {
   }
 }
 
+function resetConnectionState() {
+  connectPromise = null;
+  connectError = null;
+}
+
 function createIORedisClient(url: string): RedisClient {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const IORedis = require('ioredis');
   try {
-    connectPromise = null;
-    connectError = null;
+    resetConnectionState();
     client = new IORedis(url);
     return client;
   } catch (instantiationError) {
@@ -81,8 +85,7 @@ function createNodeRedisClient(url: string): RedisClient {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const redis = require('redis');
   try {
-    connectPromise = null;
-    connectError = null;
+    resetConnectionState();
     client = redis.createClient({ url });
 
     if (typeof client.connect === 'function') {
