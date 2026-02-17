@@ -134,7 +134,7 @@ async function checkRedisHealth(): Promise<HealthStatus> {
   }
 
   if (!hasInstalledRedisClient()) {
-    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis enabled but no Redis client installed' };
+    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis configured but client library not installed' };
   }
   try {
     await Promise.race([
@@ -164,12 +164,20 @@ export const GET = createHttpHandler(
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
+    const [database, ai_services, whatsapp_evolution, storage, redis] = await Promise.all([
+      checkSupabaseHealth(),
+      checkAIServicesHealth(),
+      checkWhatsAppHealth(),
+      checkStorageHealth(),
+      isRedisFeatureEnabled() ? checkRedisHealth() : Promise.resolve(undefined),
+    ]);
+
     const serviceChecks = {
-      database: await checkSupabaseHealth(),
-      ai_services: await checkAIServicesHealth(),
-      whatsapp_evolution: await checkWhatsAppHealth(),
-      storage: await checkStorageHealth(),
-      ...(isRedisFeatureEnabled() && { redis: await checkRedisHealth() }),
+      database,
+      ai_services,
+      whatsapp_evolution,
+      storage,
+      ...(redis && { redis }),
     };
 
     const serviceStatuses = Object.values(serviceChecks).map(s => s.status);
