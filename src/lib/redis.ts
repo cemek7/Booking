@@ -31,19 +31,7 @@ export function isRedisFeatureEnabled() {
 }
 
 export function hasInstalledRedisClient() {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require.resolve('ioredis');
-    return true;
-  } catch {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require.resolve('redis');
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return isModuleAvailable('ioredis') || isModuleAvailable('redis');
 }
 
 export function isRedisConfigured() {

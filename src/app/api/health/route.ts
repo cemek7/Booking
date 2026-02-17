@@ -169,7 +169,7 @@ export const GET = createHttpHandler(
       checkAIServicesHealth(),
       checkWhatsAppHealth(),
       checkStorageHealth(),
-      isRedisFeatureEnabled() ? checkRedisHealth() : Promise.resolve(undefined),
+      isRedisFeatureEnabled() ? checkRedisHealth() : Promise.resolve(undefined), // Placeholder for array destructuring
     ]);
 
     const serviceChecks = {
