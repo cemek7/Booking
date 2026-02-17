@@ -4,6 +4,7 @@
 
 import { defaultLogger } from '@/lib/logger';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RedisClient = any;
 type RedisErrorKind = 'instantiation' | 'connection';
 type RedisError = Error & { redisErrorKind?: RedisErrorKind };
@@ -15,11 +16,8 @@ let connectError: RedisError | null = null;
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause?: unknown): RedisError {
-  const error = new Error(message) as RedisError;
+  const error = (cause ? new Error(message, { cause }) : new Error(message)) as RedisError;
   error.redisErrorKind = redisErrorKind;
-  if (cause) {
-    (error as Error & { cause?: unknown }).cause = cause;
-  }
   return error;
 }
 
@@ -33,21 +31,78 @@ export function isRedisFeatureEnabled() {
 }
 
 export function hasInstalledRedisClient() {
-  try {
-    require.resolve('ioredis');
-    return true;
-  } catch {
-    try {
-      require.resolve('redis');
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return isModuleAvailable('ioredis') || isModuleAvailable('redis');
 }
 
 export function isRedisConfigured() {
   return Boolean(process.env.REDIS_URL);
+}
+
+function isModuleAvailable(moduleName: string): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require.resolve(moduleName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resetConnectionState() {
+  connectPromise = null;
+  connectError = null;
+}
+
+function createIORedisClient(url: string): RedisClient {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const IORedis = require('ioredis');
+    resetConnectionState();
+    client = new IORedis(url);
+    return client;
+  } catch (instantiationError) {
+    throw createRedisError(
+      `ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
+      'instantiation',
+      instantiationError
+    );
+  }
+}
+
+function createNodeRedisClient(url: string): RedisClient {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const redis = require('redis');
+    resetConnectionState();
+    client = redis.createClient({ url });
+
+    if (typeof client.connect === 'function') {
+      connectPromise = client.connect()
+        .then(() => {
+          connectError = null;
+        })
+        .catch((error: unknown) => {
+          const wrappedError = createRedisError(
+            `node-redis connect failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            'connection',
+            error
+          );
+          connectError = wrappedError;
+          client = null;
+          connectPromise = null;
+          defaultLogger.error('Redis connect failed', { error: wrappedError.message });
+          throw wrappedError;
+        });
+    }
+
+    return client;
+  } catch (instantiationError) {
+    throw createRedisError(
+      `node-redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
+      'instantiation',
+      instantiationError
+    );
+  }
 }
 
 function ensureClient() {
@@ -55,73 +110,22 @@ function ensureClient() {
 
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
-  if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
 
-  try {
-    const IORedis = require('ioredis');
-    try {
-      connectPromise = null;
-      connectError = null;
-      client = new IORedis(url);
-      return client;
-    } catch (instantiationError) {
-      throw createRedisError(
-        `ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
-        'instantiation',
-        instantiationError
-      );
-    }
-  } catch (requireError) {
-    if ((requireError as RedisError).redisErrorKind === 'instantiation') {
-      throw requireError;
-    }
-
-    try {
-      const redis = require('redis');
-      try {
-        connectPromise = null;
-        connectError = null;
-        client = redis.createClient({ url });
-
-        if (typeof client.connect === 'function') {
-          connectPromise = Promise.resolve(client.connect())
-            .then(() => {
-              connectError = null;
-            })
-            .catch((error: unknown) => {
-              const wrappedError = createRedisError(
-                `node-redis connect failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                'connection',
-                error
-              );
-              connectError = wrappedError;
-              client = null;
-              connectPromise = null;
-              defaultLogger.error('Redis connect failed', { error: wrappedError.message });
-              throw wrappedError;
-            });
-        }
-
-        return client;
-      } catch (instantiationError) {
-        throw createRedisError(
-          `node-redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
-          'instantiation',
-          instantiationError
-        );
-      }
-    } catch (nodeRedisError) {
-      if ((nodeRedisError as RedisError).redisErrorKind === 'instantiation') {
-        throw nodeRedisError;
-      }
-
-      throw new Error('Redis client not installed (ioredis or redis)');
-    }
+  // Attempt ioredis
+  if (isModuleAvailable('ioredis')) {
+    return createIORedisClient(url);
   }
+
+  // Attempt node-redis
+  if (isModuleAvailable('redis')) {
+    return createNodeRedisClient(url);
+  }
+
+  throw new Error('Redis client not installed (ioredis or redis)');
 }
 
 async function ensureReadyClient() {
-  const currentClient = ensureClient();
+  ensureClient();
 
   if (connectPromise) {
     await connectPromise;
@@ -131,7 +135,10 @@ async function ensureReadyClient() {
     throw connectError;
   }
 
-  return currentClient;
+  if (!client) {
+    throw new Error('Redis client unavailable after connection failure');
+  }
+  return client;
 }
 
 export async function lpushRecent(chatId: string, messageObj: object, maxLen = 200) {
@@ -152,6 +159,7 @@ export async function getRecent(chatId: string, limit = 50) {
   }).reverse();
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cacheSet(key: string, value: any, ttlSec?: number) {
   const c = await ensureReadyClient();
   const v = JSON.stringify(value);
