@@ -136,7 +136,7 @@ async function ensureReadyClient() {
   }
 
   if (!client) {
-    throw new Error('Redis client was reset during connection attempt');
+    throw new Error('Redis client unavailable after connection failure');
   }
   return client;
 }
