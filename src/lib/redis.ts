@@ -67,6 +67,55 @@ export function isRedisConfigured() {
   return Boolean(process.env.REDIS_URL);
 }
 
+const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+export function isRedisFeatureEnabled() {
+  const flag = process.env.REDIS_ENABLED;
+  const hasRedisUrl = Boolean(process.env.REDIS_URL);
+  
+  // If REDIS_ENABLED is explicitly set (non-empty string), it takes precedence
+  if (typeof flag === 'string' && flag.trim() !== '') {
+    const isExplicitlyEnabled = ENABLED_VALUES.has(flag.trim().toLowerCase());
+    // If explicitly enabled, also require REDIS_URL to prevent runtime failures
+    if (isExplicitlyEnabled) {
+      return hasRedisUrl;
+    }
+    // If explicitly disabled (e.g., "false", "0"), respect that regardless of REDIS_URL
+    return false;
+  }
+
+  // If REDIS_ENABLED is empty/unset, fall back to REDIS_URL presence
+  return hasRedisUrl;
+}
+
+/**
+ * Checks if a Redis client package (ioredis or redis) is installed.
+ * 
+ * NOTE: This function uses require.resolve, a Node.js CJS API.
+ * It is intended for server-side use only (Node.js runtime, not edge runtime).
+ * The try-catch blocks provide runtime safety, but this code may behave
+ * unpredictably in certain bundler contexts or edge runtime environments.
+ * 
+ * @returns {boolean} true if either ioredis or redis package is available
+ */
+export function hasInstalledRedisClient() {
+  try {
+    require.resolve('ioredis');
+    return true;
+  } catch {
+    try {
+      require.resolve('redis');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function isRedisConfigured() {
+  return Boolean(process.env.REDIS_URL);
+}
+
 function ensureClient() {
   if (client) return client;
 
