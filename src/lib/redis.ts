@@ -9,6 +9,21 @@ type RedisClient = any;
 type RedisErrorKind = 'instantiation' | 'connection';
 type RedisError = Error & { redisErrorKind?: RedisErrorKind };
 
+/**
+ * Module-level state for Redis client singleton.
+ * 
+ * State Invariant: If connectError is non-null, then client MUST be null.
+ * This invariant is maintained by ensureClient() which sets client=null when
+ * connection fails (line 101). This ensures we never have a client instance
+ * in an error state.
+ * 
+ * Valid states:
+ * 1. Uninitialized: client=null, connectError=null, connectPromise=null
+ * 2. IORedis (sync): client!=null, connectError=null, connectPromise=null
+ * 3. node-redis (connecting): client!=null, connectError=null, connectPromise!=null
+ * 4. node-redis (connected): client!=null, connectError=null, connectPromise=null
+ * 5. Failed: client=null, connectError!=null, connectPromise=null
+ */
 let client: RedisClient | null = null;
 let connectPromise: Promise<void> | null = null;
 let connectError: RedisError | null = null;
@@ -130,6 +145,9 @@ async function ensureReadyClient() {
   }
 
   // If we have a client, check if it's ready
+  // Note: We don't check !connectError here because the state invariant
+  // guarantees that if connectError is set, client will be null.
+  // See module-level documentation for details on state management.
   if (client) {
     if (connectPromise) {
       await connectPromise;
