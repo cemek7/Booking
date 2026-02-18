@@ -129,8 +129,8 @@ async function ensureReadyClient() {
     return initializationPromise;
   }
 
-  // If we have a client and no error, check if it's ready
-  if (client && !connectError) {
+  // If we have a client, check if it's ready
+  if (client) {
     if (connectPromise) {
       await connectPromise;
     }
