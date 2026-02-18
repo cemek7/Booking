@@ -2,10 +2,40 @@
    This module is defensive: if REDIS_URL is missing or dependency not installed it throws
    only when a function requiring redis is called. */
 
+import { defaultLogger } from '@/lib/logger';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RedisClient = any;
+type RedisErrorKind = 'instantiation' | 'connection';
+type RedisError = Error & { redisErrorKind?: RedisErrorKind };
+
+/**
+ * Module-level state for Redis client singleton.
+ * 
+ * State Invariant: If connectError is non-null, then client MUST be null.
+ * This invariant is maintained by ensureClient() which sets client=null when
+ * connection fails (line 101). This ensures we never have a client instance
+ * in an error state.
+ * 
+ * Valid states:
+ * 1. Uninitialized: client=null, connectError=null, connectPromise=null
+ * 2. IORedis (sync): client!=null, connectError=null, connectPromise=null
+ * 3. node-redis (connecting): client!=null, connectError=null, connectPromise!=null
+ * 4. node-redis (connected): client!=null, connectError=null, connectPromise=null
+ * 5. Failed: client=null, connectError!=null, connectPromise=null
+ */
 let client: RedisClient | null = null;
+let connectPromise: Promise<void> | null = null;
+let connectError: RedisError | null = null;
+let initializationPromise: Promise<RedisClient> | null = null;
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause?: unknown): RedisError {
+  const error = new Error(message, cause != null ? { cause } : undefined) as RedisError;
+  error.redisErrorKind = redisErrorKind;
+  return error;
+}
 
 export function isRedisFeatureEnabled() {
   const flag = process.env.REDIS_ENABLED;
@@ -56,50 +86,124 @@ export function isRedisConfigured() {
 
 function ensureClient() {
   if (client) return client;
+
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
-  if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
-  
-  // Try ioredis first
+
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const IORedis = require('ioredis');
     try {
+      connectPromise = null;
+      connectError = null;
       client = new IORedis(url);
       return client;
     } catch (instantiationError) {
-      // If ioredis is installed but instantiation fails (e.g., invalid URL), report it clearly
-      throw new Error(`ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`);
+      throw createRedisError(
+        `ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
+        'instantiation',
+        instantiationError
+      );
     }
   } catch (requireError) {
-    // ioredis not available, try node-redis
-    if (requireError instanceof Error && requireError.message.includes('instantiation failed')) {
-      // This is an instantiation error, not a module-resolution error - rethrow it
+    if ((requireError as RedisError).redisErrorKind === 'instantiation') {
       throw requireError;
     }
-    
+
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const redis = require('redis');
       try {
+        connectPromise = null;
+        connectError = null;
         client = redis.createClient({ url });
-        // node-redis connect is async; we rely on caller to await connect if needed
-        if (typeof client.connect === 'function') client.connect().catch(() => {});
+
+        if (typeof client.connect === 'function') {
+          connectPromise = Promise.resolve(client.connect())
+            .then(() => {
+              connectError = null;
+              connectPromise = null;
+            })
+            .catch((error: unknown) => {
+              const wrappedError = createRedisError(
+                `node-redis connect failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                'connection',
+                error
+              );
+              connectError = wrappedError;
+              client = null;
+              connectPromise = null;
+              defaultLogger.error('Redis connect failed', { error: wrappedError.message });
+              throw wrappedError;
+            });
+        }
+
         return client;
       } catch (instantiationError) {
-        throw new Error(`redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`);
+        throw createRedisError(
+          `node-redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
+          'instantiation',
+          instantiationError
+        );
       }
-    } catch (err) {
-      // If this is an instantiation error from node-redis, rethrow it
-      if (err instanceof Error && err.message.includes('instantiation failed')) {
-        throw err;
+    } catch (nodeRedisError) {
+      if ((nodeRedisError as RedisError).redisErrorKind === 'instantiation') {
+        throw nodeRedisError;
       }
-      // Both packages are unavailable
-      throw new Error('Redis client not installed (ioredis or redis)');
+
+      throw new Error('Neither ioredis nor redis client library is installed');
     }
   }
 }
 
+async function ensureReadyClient() {
+  // If we're already initializing, wait for that initialization to complete
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  // If we have a client, check if it's ready
+  // Note: We don't check !connectError here because the state invariant
+  // guarantees that if connectError is set, client will be null.
+  // See module-level documentation for details on state management.
+  if (client) {
+    if (connectPromise) {
+      await connectPromise;
+    }
+    if (connectError) {
+      throw connectError;
+    }
+    return client;
+  }
+
+  // Start initialization and store the promise so concurrent callers can await it
+  initializationPromise = (async () => {
+    try {
+      ensureClient();
+
+      if (connectPromise) {
+        await connectPromise;
+      }
+
+      if (connectError) {
+        throw connectError;
+      }
+
+      if (!client) {
+        throw new Error('Redis client unavailable after connection');
+      }
+
+      return client;
+    } finally {
+      initializationPromise = null;
+    }
+  })();
+
+  return initializationPromise;
+}
+
 export async function lpushRecent(chatId: string, messageObj: object, maxLen = 200) {
-  const c = ensureClient();
+  const c = await ensureReadyClient();
   const payload = JSON.stringify(messageObj);
   if (c.lpush) await c.lpush(`chat:${chatId}:recent`, payload);
   else if (c.lPush) await c.lPush(`chat:${chatId}:recent`, payload);
@@ -108,7 +212,7 @@ export async function lpushRecent(chatId: string, messageObj: object, maxLen = 2
 }
 
 export async function getRecent(chatId: string, limit = 50) {
-  const c = ensureClient();
+  const c = await ensureReadyClient();
   const raw = (c.lrange) ? await c.lrange(`chat:${chatId}:recent`, 0, limit - 1) : await c.lRange(`chat:${chatId}:recent`, 0, limit - 1);
   if (!Array.isArray(raw)) return [];
   return raw.map((r: string) => {
@@ -116,8 +220,9 @@ export async function getRecent(chatId: string, limit = 50) {
   }).reverse();
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cacheSet(key: string, value: any, ttlSec?: number) {
-  const c = ensureClient();
+  const c = await ensureReadyClient();
   const v = JSON.stringify(value);
   if (typeof ttlSec === 'number') {
     if (c.set) await c.set(key, v, 'EX', ttlSec);
@@ -129,20 +234,20 @@ export async function cacheSet(key: string, value: any, ttlSec?: number) {
 }
 
 export async function cacheGet(key: string) {
-  const c = ensureClient();
+  const c = await ensureReadyClient();
   const v = (c.get) ? await c.get(key) : await c.GET(key);
   if (!v) return null;
   try { return JSON.parse(v); } catch { return v; }
 }
 
 export async function pingRedis() {
-  const c = ensureClient();
+  const c = await ensureReadyClient();
   if (typeof c.ping === 'function') return c.ping();
   if (typeof c.PING === 'function') return c.PING();
   throw new Error('Redis client does not support ping');
 }
 
-export default {
+const redisLib = {
   lpushRecent,
   getRecent,
   cacheSet,
@@ -152,3 +257,5 @@ export default {
   hasInstalledRedisClient,
   isRedisConfigured,
 };
+
+export default redisLib;
