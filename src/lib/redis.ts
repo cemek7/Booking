@@ -4,13 +4,30 @@
 
 import { defaultLogger } from '@/lib/logger';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RedisClient = any;
 type RedisErrorKind = 'instantiation' | 'connection';
 type RedisError = Error & { redisErrorKind?: RedisErrorKind };
 
+/**
+ * Module-level state for Redis client singleton.
+ * 
+ * State Invariant: If connectError is non-null, then client MUST be null.
+ * This invariant is maintained by ensureClient() which sets client=null when
+ * connection fails (line 101). This ensures we never have a client instance
+ * in an error state.
+ * 
+ * Valid states:
+ * 1. Uninitialized: client=null, connectError=null, connectPromise=null
+ * 2. IORedis (sync): client!=null, connectError=null, connectPromise=null
+ * 3. node-redis (connecting): client!=null, connectError=null, connectPromise!=null
+ * 4. node-redis (connected): client!=null, connectError=null, connectPromise=null
+ * 5. Failed: client=null, connectError!=null, connectPromise=null
+ */
 let client: RedisClient | null = null;
 let connectPromise: Promise<void> | null = null;
 let connectError: RedisError | null = null;
+let initializationPromise: Promise<RedisClient> | null = null;
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -55,9 +72,9 @@ function ensureClient() {
 
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
-  if (!hasInstalledRedisClient()) throw new Error('Redis client not installed (ioredis or redis)');
 
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const IORedis = require('ioredis');
     try {
       connectPromise = null;
@@ -77,6 +94,7 @@ function ensureClient() {
     }
 
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const redis = require('redis');
       try {
         connectPromise = null;
@@ -115,23 +133,51 @@ function ensureClient() {
         throw nodeRedisError;
       }
 
-      throw new Error('Redis client not installed (ioredis or redis)');
+      throw new Error('Neither ioredis nor redis client library is installed');
     }
   }
 }
 
 async function ensureReadyClient() {
-  const currentClient = ensureClient();
-
-  if (connectPromise) {
-    await connectPromise;
+  // If we're already initializing, wait for that initialization to complete
+  if (initializationPromise) {
+    return initializationPromise;
   }
 
-  if (connectError) {
-    throw connectError;
+  // If we have a client, check if it's ready
+  // Note: We don't check !connectError here because the state invariant
+  // guarantees that if connectError is set, client will be null.
+  // See module-level documentation for details on state management.
+  if (client) {
+    if (connectPromise) {
+      await connectPromise;
+    }
+    if (connectError) {
+      throw connectError;
+    }
+    return client;
   }
 
-  return currentClient;
+  // Start initialization and store the promise so concurrent callers can await it
+  initializationPromise = (async () => {
+    try {
+      const currentClient = ensureClient();
+
+      if (connectPromise) {
+        await connectPromise;
+      }
+
+      if (connectError) {
+        throw connectError;
+      }
+
+      return currentClient;
+    } finally {
+      initializationPromise = null;
+    }
+  })();
+
+  return initializationPromise;
 }
 
 export async function lpushRecent(chatId: string, messageObj: object, maxLen = 200) {
@@ -152,6 +198,7 @@ export async function getRecent(chatId: string, limit = 50) {
   }).reverse();
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cacheSet(key: string, value: any, ttlSec?: number) {
   const c = await ensureReadyClient();
   const v = JSON.stringify(value);
