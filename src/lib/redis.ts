@@ -32,42 +32,10 @@ let initializationPromise: Promise<RedisClient> | null = null;
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause?: unknown): RedisError {
-  const error = new Error(message) as RedisError;
+  const error = new Error(message, cause != null ? { cause } : undefined) as RedisError;
   error.redisErrorKind = redisErrorKind;
-  if (cause) {
-    (error as Error & { cause?: unknown }).cause = cause;
-  }
   return error;
 }
-
-export function isRedisFeatureEnabled() {
-  const flag = process.env.REDIS_ENABLED;
-  if (typeof flag === 'string') {
-    return ENABLED_VALUES.has(flag.toLowerCase());
-  }
-
-  return Boolean(process.env.REDIS_URL);
-}
-
-export function hasInstalledRedisClient() {
-  try {
-    require.resolve('ioredis');
-    return true;
-  } catch {
-    try {
-      require.resolve('redis');
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-export function isRedisConfigured() {
-  return Boolean(process.env.REDIS_URL);
-}
-
-const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 export function isRedisFeatureEnabled() {
   const flag = process.env.REDIS_ENABLED;
@@ -154,6 +122,7 @@ function ensureClient() {
           connectPromise = Promise.resolve(client.connect())
             .then(() => {
               connectError = null;
+              connectPromise = null;
             })
             .catch((error: unknown) => {
               const wrappedError = createRedisError(
@@ -210,7 +179,7 @@ async function ensureReadyClient() {
   // Start initialization and store the promise so concurrent callers can await it
   initializationPromise = (async () => {
     try {
-      const currentClient = ensureClient();
+      ensureClient();
 
       if (connectPromise) {
         await connectPromise;
@@ -220,7 +189,11 @@ async function ensureReadyClient() {
         throw connectError;
       }
 
-      return currentClient;
+      if (!client) {
+        throw new Error('Redis client unavailable after connection');
+      }
+
+      return client;
     } finally {
       initializationPromise = null;
     }

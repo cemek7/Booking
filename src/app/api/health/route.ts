@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { hasInstalledRedisClient, isRedisConfigured, isRedisFeatureEnabled, pingRedis } from '@/lib/redis';
 
 // --- Configuration ---
@@ -186,11 +185,11 @@ export const GET = createHttpHandler(
     ]);
 
     const serviceChecks = {
-      database: await checkSupabaseHealth(),
-      ai_services: await checkAIServicesHealth(),
-      whatsapp_evolution: await checkWhatsAppHealth(),
-      storage: await checkStorageHealth(),
-      ...(isRedisFeatureEnabled() && { redis: await checkRedisHealth() }),
+      database,
+      ai_services,
+      whatsapp_evolution,
+      storage,
+      ...(redis && { redis }),
     };
 
     const serviceStatuses = Object.values(serviceChecks).map(s => s.status);
