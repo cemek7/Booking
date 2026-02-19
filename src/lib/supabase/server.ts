@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { type NextApiRequest, type NextApiResponse } from 'next';
 import { serialize } from 'cookie';
+import { defaultLogger } from '@/lib/logger';
 
 type CookieAdapter = {
   get: (name: string) => string | undefined | Promise<string | undefined>;
@@ -60,10 +61,30 @@ function createClient(cookiesAdapter: CookieAdapter, accessToken?: string) {
 }
 
 /**
+ * Options for configuring Supabase server component client behavior
+ */
+type ServerComponentClientOptions = {
+  /**
+   * When true, logs cookie operation errors instead of silently swallowing them.
+   * Useful for route handlers where cookie failures should be visible.
+   * Default: false (silent for Server Components)
+   */
+  logCookieErrors?: boolean;
+};
+
+/**
  * Creates a Supabase client for Server Component usage.
  * This needs to be created for each request.
+ * 
+ * @param accessToken - Optional access token to inject into the client
+ * @param options - Configuration options for client behavior
  */
-export function getSupabaseServerComponentClient(accessToken?: string) {
+export function getSupabaseServerComponentClient(
+  accessToken?: string,
+  options?: ServerComponentClientOptions
+) {
+  const shouldLogErrors = options?.logCookieErrors ?? false;
+
   return createClient(
     {
       get: async (name: string) => {
@@ -74,7 +95,13 @@ export function getSupabaseServerComponentClient(accessToken?: string) {
         const cookieStore = await cookies();
         try {
           cookieStore.set({ name, value, ...options });
-        } catch {
+        } catch (error) {
+          if (shouldLogErrors) {
+            defaultLogger.warn('Failed to set cookie in route handler context', {
+              cookieName: name,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
           // The `set` method was called from a Server Component.
           // This can be ignored if you have middleware refreshing
           // user sessions.
@@ -84,7 +111,13 @@ export function getSupabaseServerComponentClient(accessToken?: string) {
         const cookieStore = await cookies();
         try {
           cookieStore.set({ name, value: '', ...options });
-        } catch {
+        } catch (error) {
+          if (shouldLogErrors) {
+            defaultLogger.warn('Failed to remove cookie in route handler context', {
+              cookieName: name,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
           // The `delete` method was called from a Server Component.
           // This can be ignored if you have middleware refreshing
           // user sessions.
@@ -100,25 +133,27 @@ export function getSupabaseServerComponentClient(accessToken?: string) {
  * This needs to be created for each request.
  */
 export function getSupabaseRouteHandlerClient(accessToken?: string) {
-  return getSupabaseServerComponentClient(accessToken);
+  return getSupabaseServerComponentClient(accessToken, { logCookieErrors: true });
 }
 
 /**
  * Helper function to append a cookie to the Set-Cookie header without overwriting existing cookies.
+ * Filters out any existing cookies with the same name to prevent duplicates.
  * This is necessary for Pages API routes where multiple cookies (e.g., access and refresh tokens)
  * need to be set in a single response.
+ * 
+ * @param res - The NextApiResponse object
+ * @param cookie - The serialized cookie string to append
  */
 function appendCookie(res: NextApiResponse, cookie: string) {
-  const existingCookies = res.getHeader('Set-Cookie');
+  // Extract cookie name from the serialized cookie string (format: "name=value; ...")
+  const cookieName = cookie.split('=')[0];
   
-  if (existingCookies) {
-    const cookiesArray = Array.isArray(existingCookies)
-      ? existingCookies
-      : [existingCookies.toString()];
-    res.setHeader('Set-Cookie', [...cookiesArray, cookie]);
-  } else {
-    res.setHeader('Set-Cookie', cookie);
-  }
+  // Get existing cookies, filtering out any with the same name
+  const filteredCookies = getFilteredExistingCookies(res, cookieName);
+  
+  // Set the header with filtered cookies plus the new cookie
+  res.setHeader('Set-Cookie', [...filteredCookies, cookie]);
 }
 
 /**
