@@ -12,6 +12,7 @@ import DataUnavailableState from './shared/DataUnavailableState';
 import { Users, Calendar, Clock, TrendingUp } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
 import type { ManagerOverviewMetrics, StaffPerformanceData, BookingTrendData } from '@/types/analytics-api';
+import { PERIOD_TO_STAFF_PERIOD } from './shared/analytics-constants';
 
 export interface ManagerMetricsProps {
   tenantId: string;
@@ -27,16 +28,7 @@ const PERIOD_TO_MANAGER_PERIOD: Record<TimePeriod, 'week' | 'month' | 'quarter' 
   custom: 'month',
 };
 
-const PERIOD_TO_STAFF_PERIOD: Record<TimePeriod, 'week' | 'month' | 'quarter'> = {
-  day: 'week',
-  week: 'week',
-  month: 'month',
-  quarter: 'quarter',
-  year: 'quarter',
-  custom: 'month',
-};
-
-export default function ManagerMetrics({ tenantId }: ManagerMetricsProps) {
+export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<ManagerOverviewMetrics | null>(null);
@@ -51,21 +43,33 @@ export default function ManagerMetrics({ tenantId }: ManagerMetricsProps) {
       try {
         const overviewRes = await authFetch<ManagerOverviewMetrics>(
           `/api/manager/analytics?metric=overview&period=${PERIOD_TO_MANAGER_PERIOD[period]}`,
-          { headers: { 'X-Tenant-ID': tenantId } }
+          { headers: { 'X-Tenant-ID': tenantId, 'X-User-ID': userId } }
         );
         const trendsRes = await authFetch<{ trends?: BookingTrendData[] }>('/api/analytics/trends?days=30', {
           headers: { 'X-Tenant-ID': tenantId },
         });
-        const staffRes = await authFetch<{ performance?: StaffPerformanceData[] }>(
-          `/api/analytics/staff?period=${PERIOD_TO_STAFF_PERIOD[period]}`,
-          { headers: { 'X-Tenant-ID': tenantId } }
+        const staffRes = await authFetch<{ success?: boolean; staffPerformance?: Array<{ staffId: string; staffName: string; bookings: number; completed: number; rating: number; utilization: number; revenue: number }> }>(
+          `/api/manager/analytics?metric=team&period=${PERIOD_TO_STAFF_PERIOD[period]}`,
+          { headers: { 'X-Tenant-ID': tenantId, 'X-User-ID': userId } }
         );
 
         if (cancelled) return;
 
         setOverview(overviewRes.status === 200 ? overviewRes.data || null : null);
         setTrends(trendsRes.status === 200 ? trendsRes.data?.trends || [] : []);
-        setStaffPerformance(staffRes.status === 200 ? staffRes.data?.performance || [] : []);
+
+        const rawStaff = staffRes.status === 200 ? staffRes.data?.staffPerformance || [] : [];
+        setStaffPerformance(
+          rawStaff.map((s) => ({
+            staff_id: s.staffId,
+            staff_name: s.staffName,
+            bookings_count: s.bookings,
+            revenue_total: s.revenue,
+            utilization_rate: s.utilization,
+            customer_rating: s.rating,
+            tips_total: 0,
+          }))
+        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -78,7 +82,7 @@ export default function ManagerMetrics({ tenantId }: ManagerMetricsProps) {
     return () => {
       cancelled = true;
     };
-  }, [period, tenantId]);
+  }, [period, tenantId, userId]);
 
   const hasData = Boolean(overview) || trends.length > 0 || staffPerformance.length > 0;
 
@@ -109,8 +113,8 @@ export default function ManagerMetrics({ tenantId }: ManagerMetricsProps) {
 
         <PieChart
           data={[
-            { name: 'Completed', value: Math.round((overview?.completionRate || 0) * 10), color: '#10b981' },
-            { name: 'Remaining', value: Math.max(1000 - Math.round((overview?.completionRate || 0) * 10), 0), color: '#e5e7eb' },
+            { name: 'Completed', value: Math.round(overview?.completionRate || 0), color: '#10b981' },
+            { name: 'Remaining', value: Math.max(100 - Math.round(overview?.completionRate || 0), 0), color: '#e5e7eb' },
           ]}
           title="Completion Ratio"
           description="Team completion ratio"

@@ -37,16 +37,16 @@ export default function SuperAdminMetrics() {
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, []);
 
   const totals = useMemo(() => {
     const totalTenants = tenantMetrics.length;
-    const totalUsersEstimate = tenantMetrics.reduce((sum, row) => sum + row.call_count, 0);
-    const totalRevenueEstimate = tenantMetrics.reduce((sum, row) => sum + row.total_tokens, 0);
+    const totalCalls = tenantMetrics.reduce((sum, row) => sum + row.call_count, 0);
+    const totalTokens = tenantMetrics.reduce((sum, row) => sum + row.total_tokens, 0);
     return {
       totalTenants,
-      totalUsersEstimate,
-      totalRevenueEstimate,
+      totalCalls,
+      totalTokens,
     };
   }, [tenantMetrics]);
 
@@ -67,14 +67,14 @@ export default function SuperAdminMetrics() {
 
       <StatsGrid columns={4}>
         <MetricCard label="Total Tenants" value={totals.totalTenants} icon={Building2} colorScheme="info" loading={loading} />
-        <MetricCard label="Total Calls" value={totals.totalUsersEstimate} icon={Users} colorScheme="success" loading={loading} />
-        <MetricCard label="Total Tokens" value={totals.totalRevenueEstimate} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => Number(v).toLocaleString()} />
+        <MetricCard label="Total Calls" value={totals.totalCalls} icon={Users} colorScheme="success" loading={loading} />
+        <MetricCard label="Total Tokens" value={totals.totalTokens} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => Number(v).toLocaleString()} />
         <MetricCard label="Data Freshness" value="30d window" icon={Activity} colorScheme="default" loading={loading} />
       </StatsGrid>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <BarChart
-          data={tenantMetrics.map((row) => ({ tenant: row.tenant_id.slice(0, 8), calls: row.call_count }))}
+          data={tenantMetrics.map((row) => ({ tenant: row.tenant_name || row.tenant_id.slice(0, 16), calls: row.call_count }))}
           dataKeys={['calls']}
           xAxisKey="tenant"
           title="API Call Count by Tenant"
@@ -82,7 +82,7 @@ export default function SuperAdminMetrics() {
           colors={['#3b82f6']}
         />
         <PieChart
-          data={tenantMetrics.map((row) => ({ name: row.tenant_id.slice(0, 8), value: row.total_tokens }))}
+          data={tenantMetrics.map((row) => ({ name: row.tenant_name || row.tenant_id.slice(0, 16), value: row.total_tokens }))}
           title="Token Usage Distribution"
           description="Token usage share by tenant"
           showPercentage

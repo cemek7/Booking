@@ -46,6 +46,7 @@ export interface ManagerOverviewMetrics {
 
 export interface AdminTenantMetric {
   tenant_id: string;
+  tenant_name?: string;
   total_tokens: number;
   call_count: number;
 }
