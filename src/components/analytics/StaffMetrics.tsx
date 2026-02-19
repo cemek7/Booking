@@ -4,13 +4,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
 import DateRangePicker, { TimePeriod } from './shared/DateRangePicker';
-import TrendChart from './charts/TrendChart';
 import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
 import DataUnavailableState from './shared/DataUnavailableState';
 import { Calendar, DollarSign, Star, TrendingUp } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
-import type { StaffMemberMetric, BookingTrendData } from '@/types/analytics-api';
+import type { StaffMemberMetric } from '@/types/analytics-api';
 
 export interface StaffMetricsProps {
   userId: string;
@@ -21,7 +20,6 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
   const [loading, setLoading] = useState(true);
   const [staffMetrics, setStaffMetrics] = useState<StaffMemberMetric[]>([]);
-  const [trends, setTrends] = useState<BookingTrendData[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,17 +28,12 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
       setLoading(true);
       try {
         const metricsRes = await authFetch<{ metrics?: StaffMemberMetric[] }>(
-          `/api/staff/metrics?tenant_id=${encodeURIComponent(tenantId)}`,
+          `/api/staff/metrics`,
           { headers: { 'X-Tenant-ID': tenantId } }
         );
 
-        const trendsRes = await authFetch<{ trends?: BookingTrendData[] }>('/api/analytics/trends?days=30', {
-          headers: { 'X-Tenant-ID': tenantId },
-        });
-
         if (cancelled) return;
         setStaffMetrics(metricsRes.status === 200 ? metricsRes.data?.metrics || [] : []);
-        setTrends(trendsRes.status === 200 ? trendsRes.data?.trends || [] : []);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -60,7 +53,19 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
     [staffMetrics, userId]
   );
 
-  const hasData = Boolean(currentUserMetrics) || trends.length > 0;
+  const completionShare = useMemo(() => {
+    const total = Math.max(1, staffMetrics.reduce((sum, row) => sum + (row.completed || 0), 0));
+    const completed = currentUserMetrics?.completed || 0;
+    const percent = Math.min(100, (completed / total) * 100);
+    return `${percent.toFixed(1)}%`;
+  }, [staffMetrics, currentUserMetrics]);
+
+  const sortedStaffMetrics = useMemo(
+    () => [...staffMetrics].sort((a, b) => b.completed - a.completed),
+    [staffMetrics]
+  );
+
+  const hasData = Boolean(currentUserMetrics) || staffMetrics.length > 0;
 
   if (!loading && !hasData) {
     return (
@@ -83,21 +88,12 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
         <MetricCard label="My Rating" value={currentUserMetrics?.rating || 0} icon={Star} colorScheme="warning" loading={loading} />
         <MetricCard
           label="Completion Share"
-          value={`${trends.length ? Math.min(100, ((currentUserMetrics?.completed || 0) / Math.max(1, trends.reduce((sum, row) => sum + (row.bookings || 0), 0))) * 100).toFixed(1) : '0.0'}%`}
+          value={completionShare}
           icon={TrendingUp}
           colorScheme="default"
           loading={loading}
         />
       </StatsGrid>
-
-      <TrendChart
-        data={trends}
-        dataKey="bookings"
-        title="Booking Trend"
-        description="Tenant booking trend from analytics API"
-        color="#3b82f6"
-        showTrend
-      />
 
       <PieChart
         data={[
@@ -111,7 +107,7 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
       />
 
       <BarChart
-        data={staffMetrics.slice(0, 10).map((row) => ({ user: row.user_id.slice(0, 8), completed: row.completed }))}
+        data={sortedStaffMetrics.slice(0, 10).map((row) => ({ user: row.user_id.slice(0, 8), completed: row.completed }))}
         dataKeys={['completed']}
         xAxisKey="user"
         title="Completed Bookings by Staff"

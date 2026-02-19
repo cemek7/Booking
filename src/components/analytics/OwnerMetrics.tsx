@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
 import DateRangePicker, { TimePeriod } from './shared/DateRangePicker';
@@ -13,71 +14,53 @@ import DataUnavailableState from './shared/DataUnavailableState';
 import { DollarSign, Calendar, Users, Star } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
 import type { DashboardMetric, BookingTrendData, StaffPerformanceData } from '@/types/analytics-api';
+import { PERIOD_TO_STAFF_PERIOD, PERIOD_DAYS } from './shared/analytics-constants';
 
 export interface OwnerMetricsProps {
   tenantId: string;
 }
 
-const PERIOD_TO_STAFF_PERIOD: Record<TimePeriod, 'week' | 'month' | 'quarter'> = {
-  day: 'week',
-  week: 'week',
-  month: 'month',
-  quarter: 'quarter',
-  year: 'quarter',
-  custom: 'month',
-};
-
 export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
-  const [loading, setLoading] = useState(true);
-  const [hasData, setHasData] = useState(true);
-  const [metrics, setMetrics] = useState<DashboardMetric[]>([]);
-  const [trends, setTrends] = useState<BookingTrendData[]>([]);
-  const [staffPerformance, setStaffPerformance] = useState<StaffPerformanceData[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const { data: metrics = [], isLoading: metricsLoading } = useQuery({
+    queryKey: ['ownerMetrics', tenantId, period],
+    queryFn: async () => {
+      const res = await authFetch<{ metrics?: DashboardMetric[] }>(
+        `/api/analytics/dashboard?period=${period === 'year' || period === 'custom' ? 'quarter' : period}`,
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.metrics || [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-    const load = async () => {
-      setLoading(true);
-      try {
-        const dashboardRes = await authFetch<{ metrics?: DashboardMetric[] }>(
-          `/api/analytics/dashboard?period=${period === 'year' || period === 'custom' ? 'quarter' : period}`,
-          { headers: { 'X-Tenant-ID': tenantId } }
-        );
+  const { data: trends = [], isLoading: trendsLoading } = useQuery({
+    queryKey: ['ownerTrends', tenantId, period],
+    queryFn: async () => {
+      const days = PERIOD_DAYS[period];
+      const res = await authFetch<{ trends?: BookingTrendData[] }>(`/api/analytics/trends?days=${days}`, {
+        headers: { 'X-Tenant-ID': tenantId },
+      });
+      return res.status === 200 ? res.data?.trends || [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-        const trendsRes = await authFetch<{ trends?: BookingTrendData[] }>('/api/analytics/trends?days=30', {
-          headers: { 'X-Tenant-ID': tenantId },
-        });
+  const { data: staffPerformance = [], isLoading: staffLoading } = useQuery({
+    queryKey: ['ownerStaff', tenantId, period],
+    queryFn: async () => {
+      const res = await authFetch<{ performance?: StaffPerformanceData[] }>(
+        `/api/analytics/staff?period=${PERIOD_TO_STAFF_PERIOD[period]}`,
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.performance || [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-        const staffRes = await authFetch<{ performance?: StaffPerformanceData[] }>(
-          `/api/analytics/staff?period=${PERIOD_TO_STAFF_PERIOD[period]}`,
-          { headers: { 'X-Tenant-ID': tenantId } }
-        );
-
-        if (cancelled) return;
-
-        const fetchedMetrics = dashboardRes.status === 200 ? dashboardRes.data?.metrics || [] : [];
-        const fetchedTrends = trendsRes.status === 200 ? trendsRes.data?.trends || [] : [];
-        const fetchedStaff = staffRes.status === 200 ? staffRes.data?.performance || [] : [];
-
-        setMetrics(fetchedMetrics);
-        setTrends(fetchedTrends);
-        setStaffPerformance(fetchedStaff);
-        setHasData(fetchedMetrics.length > 0 || fetchedTrends.length > 0 || fetchedStaff.length > 0);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    if (tenantId) {
-      load();
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [period, tenantId]);
+  const loading = metricsLoading || trendsLoading || staffLoading;
+  const hasData = metrics.length > 0 || trends.length > 0 || staffPerformance.length > 0;
 
   const metricById = useMemo(() => {
     const map = new Map<string, DashboardMetric>();
@@ -124,10 +107,37 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
       </div>
 
       <StatsGrid columns={4}>
-        <MetricCard label="Total Revenue" value={totalRevenue} trend={metricById.get('total_revenue')?.trend} icon={DollarSign} formatValue={formatCurrency} colorScheme="success" loading={loading} />
-        <MetricCard label="Total Bookings" value={totalBookings} trend={metricById.get('total_bookings')?.trend} icon={Calendar} colorScheme="info" loading={loading} />
-        <MetricCard label="Active Customers" value={activeCustomers} trend={metricById.get('new_customers')?.trend} icon={Users} loading={loading} />
-        <MetricCard label="Average Rating" value={Number(averageRating.toFixed(1))} icon={Star} colorScheme="warning" loading={loading} />
+        <MetricCard
+          label="Total Revenue"
+          value={totalRevenue}
+          trend={metricById.get('total_revenue')?.trend}
+          icon={DollarSign}
+          formatValue={formatCurrency}
+          colorScheme="success"
+          loading={loading}
+        />
+        <MetricCard
+          label="Total Bookings"
+          value={totalBookings}
+          trend={metricById.get('total_bookings')?.trend}
+          icon={Calendar}
+          colorScheme="info"
+          loading={loading}
+        />
+        <MetricCard
+          label="Active Customers"
+          value={activeCustomers}
+          trend={metricById.get('new_customers')?.trend}
+          icon={Users}
+          loading={loading}
+        />
+        <MetricCard
+          label="Average Rating"
+          value={Number(averageRating.toFixed(1))}
+          icon={Star}
+          colorScheme="warning"
+          loading={loading}
+        />
       </StatsGrid>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
