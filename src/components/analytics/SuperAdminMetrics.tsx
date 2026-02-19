@@ -43,10 +43,14 @@ export default function SuperAdminMetrics() {
     const totalTenants = tenantMetrics.length;
     const totalCalls = tenantMetrics.reduce((sum, row) => sum + row.call_count, 0);
     const totalTokens = tenantMetrics.reduce((sum, row) => sum + row.total_tokens, 0);
+    const totalUsersEstimate = tenantMetrics.reduce((sum, row) => sum + (row.user_count || 0), 0);
+    const totalRevenueEstimate = tenantMetrics.reduce((sum, row) => sum + (row.revenue_estimate || 0), 0);
     return {
       totalTenants,
       totalCalls,
       totalTokens,
+      totalUsersEstimate,
+      totalRevenueEstimate,
     };
   }, [tenantMetrics]);
 
@@ -67,8 +71,8 @@ export default function SuperAdminMetrics() {
 
       <StatsGrid columns={4}>
         <MetricCard label="Total Tenants" value={totals.totalTenants} icon={Building2} colorScheme="info" loading={loading} />
-        <MetricCard label="Total Calls" value={totals.totalCalls} icon={Users} colorScheme="success" loading={loading} />
-        <MetricCard label="Total Tokens" value={totals.totalTokens} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => Number(v).toLocaleString()} />
+        <MetricCard label="Total Users (Estimate)" value={totals.totalUsersEstimate} icon={Users} colorScheme="success" loading={loading} />
+        <MetricCard label="Total Revenue (Estimate)" value={totals.totalRevenueEstimate} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
         <MetricCard label="Data Freshness" value="30d window" icon={Activity} colorScheme="default" loading={loading} />
       </StatsGrid>
 

@@ -49,6 +49,8 @@ export interface AdminTenantMetric {
   tenant_name?: string;
   total_tokens: number;
   call_count: number;
+  user_count: number;
+  revenue_estimate: number;
 }
 
 export interface StaffMemberMetric {
