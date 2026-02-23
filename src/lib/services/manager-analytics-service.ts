@@ -235,9 +235,16 @@ export async function getOverviewAnalytics(
   // Calculate completion rate
   const completionRate = totalBookings > 0 ? (completedBookings / totalBookings) * 100 : 0;
 
-  // Mock team rating (would come from reviews/ratings table)
-  const teamRating = 4.7;
-  const previousRating = 4.6;
+  // Derive team rating from reservation metadata (customers submit ratings via booking flow)
+  const ratedCurrent = (currentBookings || []).filter(b => b.metadata?.rating != null);
+  const teamRating = ratedCurrent.length > 0
+    ? ratedCurrent.reduce((sum, b) => sum + Number(b.metadata.rating), 0) / ratedCurrent.length
+    : 0;
+
+  const ratedPrevious = (previousBookings || []).filter(b => b.metadata?.rating != null);
+  const previousRating = ratedPrevious.length > 0
+    ? ratedPrevious.reduce((sum, b) => sum + Number(b.metadata.rating), 0) / ratedPrevious.length
+    : 0;
 
   return {
     teamBookings: totalBookings,
@@ -414,15 +421,18 @@ export async function getTeamAnalytics(
     const maxBookings = workingDays * 8; // 8 hours per day
     const utilization = maxBookings > 0 ? (totalBookings / maxBookings) * 100 : 0;
 
-    // Mock rating (would come from reviews)
-    const rating = 4.5 + Math.random() * 0.5;
+    // Derive rating from reservation metadata (customers submit ratings via booking flow)
+    const ratedReservations = periodReservations.filter(r => r.metadata?.rating != null);
+    const rating = ratedReservations.length > 0
+      ? ratedReservations.reduce((sum, r) => sum + Number(r.metadata.rating), 0) / ratedReservations.length
+      : null;
 
     return {
       staffId: staff.user_id,
-      staffName: staff.users?.full_name || 'Unknown',
+      staffName: (staff as Record<string, unknown> & { users?: { full_name?: string } }).users?.full_name || 'Unknown',
       bookings: totalBookings,
       completed: completedBookings,
-      rating: Number(rating.toFixed(1)),
+      rating: rating !== null ? Number(rating.toFixed(1)) : 0,
       utilization: Math.min(Math.round(utilization), 100),
       revenue,
     };

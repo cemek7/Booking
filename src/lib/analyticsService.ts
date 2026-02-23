@@ -316,13 +316,18 @@ export class AnalyticsService {
         const bookedHours = reservations.length * 1; // Assuming 1 hour per booking
         const utilizationRate = totalHoursInPeriod > 0 ? (bookedHours / totalHoursInPeriod) * 100 : 0;
 
+        const ratedReservations = reservations.filter(r => r.metadata?.rating != null);
+        const customer_rating = ratedReservations.length > 0
+          ? ratedReservations.reduce((sum, r) => sum + Number(r.metadata.rating), 0) / ratedReservations.length
+          : null;
+
         return {
           staff_id: staff.id,
           staff_name: staff.name,
           bookings_count: completedBookings,
           revenue_total: Number(totalRevenue),
           utilization_rate: Math.min(utilizationRate, 100),
-          customer_rating: 4.5, // Mock rating - would come from reviews
+          customer_rating: customer_rating !== null ? Number(customer_rating.toFixed(2)) : 0,
           tips_total: Number(totalTips),
         };
       });
