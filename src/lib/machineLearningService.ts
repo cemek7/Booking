@@ -554,7 +554,7 @@ export class MachineLearningService {
       historical_demand: Math.min(historicalDemand / 10, 1), // Normalize to 0-1
       staff_availability: 0.8, // Would calculate from actual staff schedules
       seasonal_trend: this.calculateSeasonalTrend(timeSlot),
-      client_preferences: this.calculateClientPreferences(slotHour, tenantId),
+      client_preferences: this.calculateClientPreferences(slotHour, tenantId, relevantData),
     };
 
     const probability_score = Object.values(factors).reduce((sum, factor) => sum + factor, 0) / 4;
@@ -586,12 +586,23 @@ export class MachineLearningService {
     return 0.6;
   }
 
-  private calculateClientPreferences(hour: number, tenantId?: string): number {
-    // Mock client preference calculation
-    // In a real implementation, this would query tenant-specific booking patterns
-    const preferredHours = [10, 11, 14, 15, 16]; // Popular hours
-    const tenantBoost = tenantId ? 0.1 : 0; // Example logic for tenant-specific adjustment
-    return preferredHours.includes(hour) ? 0.8 + tenantBoost : 0.5 + tenantBoost;
+  private calculateClientPreferences(hour: number, tenantId?: string, historicalData?: Array<{ start_at?: string }>): number {
+    // Compute preference score from real booking hour distribution
+    if (historicalData && historicalData.length > 0) {
+      const hourCounts: Record<number, number> = {};
+      for (const b of historicalData) {
+        if (b.start_at) {
+          const h = new Date(b.start_at).getHours();
+          hourCounts[h] = (hourCounts[h] || 0) + 1;
+        }
+      }
+      const maxCount = Math.max(1, ...Object.values(hourCounts));
+      const hourCount = hourCounts[hour] || 0;
+      return 0.4 + (hourCount / maxCount) * 0.5; // Scale to 0.4–0.9
+    }
+    // Fallback: generic business-hours curve when no history is available
+    const businessScore = hour >= 9 && hour <= 17 ? 0.7 : 0.4;
+    return businessScore + (tenantId ? 0.05 : 0);
   }
 
   private async getHistoricalDemandData(tenantId: string, serviceId?: string): Promise<BookingData[]> {
@@ -979,24 +990,75 @@ export class MachineLearningService {
     customer: CustomerData,
     history: BookingData[]
   ): Promise<CustomerInsightMLData> {
-    // Mock customer insight generation
     const bookingCount = history.length;
-    const totalSpent = history.reduce((sum, booking) => 
+    const totalSpent = history.reduce((sum, booking) =>
       sum + (booking.price || 0), 0);
+
+    // Derive preferred services from real booking history (top 3 by frequency)
+    const serviceCounts: Record<string, number> = {};
+    for (const booking of history) {
+      const svc = booking.service_id || 'unknown';
+      serviceCounts[svc] = (serviceCounts[svc] || 0) + 1;
+    }
+    const preferredServices = Object.entries(serviceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([svc]) => svc);
+
+    // Derive preferred times from booking start_at distribution
+    const hourCounts: Record<number, number> = {};
+    for (const booking of history) {
+      if (booking.start_at) {
+        const h = new Date(booking.start_at).getHours();
+        hourCounts[h] = (hourCounts[h] || 0) + 1;
+      }
+    }
+    const topHour = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+    const dominantHour = topHour ? parseInt(topHour[0], 10) : -1;
+    const preferredTimes = dominantHour >= 0
+      ? [dominantHour < 12 ? 'morning' : dominantHour < 17 ? 'afternoon' : 'evening']
+      : [];
+
+    // Estimate booking pattern from interval between bookings
+    let bookingPattern = 'irregular';
+    if (bookingCount >= 2) {
+      const sorted = history
+        .filter(b => b.start_at)
+        .map(b => new Date(b.start_at!).getTime())
+        .sort((a, b) => a - b);
+      const avgGapDays = sorted.length > 1
+        ? (sorted[sorted.length - 1] - sorted[0]) / ((sorted.length - 1) * 86400000)
+        : 0;
+      bookingPattern = avgGapDays <= 10 ? 'regular_weekly'
+        : avgGapDays <= 35 ? 'regular_monthly'
+        : 'occasional';
+    }
+
+    // Churn probability: customers with no booking in 60+ days are higher risk
+    const lastBookingDate = history.length > 0
+      ? Math.max(0, ...history.filter(b => b.start_at).map(b => new Date(b.start_at!).getTime()))
+      : 0;
+    const daysSinceLastBooking = lastBookingDate > 0
+      ? (Date.now() - lastBookingDate) / 86400000
+      : 999;
+    const churnProbability = daysSinceLastBooking > 90 ? 0.8
+      : daysSinceLastBooking > 60 ? 0.5
+      : bookingCount < 2 ? 0.4
+      : 0.15;
 
     return {
       customer_id: customer.customer_id,
-      lifetime_value_prediction: totalSpent * 1.5, // Predicted LTV
-      churn_probability: bookingCount < 2 ? 0.7 : 0.2,
+      lifetime_value_prediction: totalSpent * 1.5,
+      churn_probability: churnProbability,
       next_booking_prediction: {
-        likelihood: bookingCount > 0 ? 0.8 : 0.3,
+        likelihood: bookingCount > 0 && daysSinceLastBooking < 90 ? 0.8 : 0.3,
         estimated_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        preferred_services: ['haircut', 'massage'], // Mock preferences
+        preferred_services: preferredServices,
       },
       personalization_profile: {
-        preferred_times: ['morning', 'afternoon'],
-        booking_patterns: 'regular_monthly',
-        price_sensitivity: 'medium',
+        preferred_times: preferredTimes,
+        booking_patterns: bookingPattern,
+        price_sensitivity: totalSpent / Math.max(bookingCount, 1) > 100 ? 'low' : 'medium',
         loyalty_score: Math.min(bookingCount * 10, 100),
       },
     };

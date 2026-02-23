@@ -471,23 +471,87 @@ export class AnalyticsService {
           break;
       }
 
-      // Mock conversion funnel data - would be calculated from actual user journey
+      // Build conversion funnel from real data: messages → reservations → transactions
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const [
+        { count: chatStarted },
+        { data: reservationData },
+        { count: paymentsMade },
+      ] = await Promise.all([
+        this.supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .eq('direction', 'inbound')
+          .gte('created_at', thirtyDaysAgo),
+        this.supabase
+          .from('reservations')
+          .select('id, status')
+          .eq('tenant_id', tenantId)
+          .gte('created_at', thirtyDaysAgo),
+        this.supabase
+          .from('transactions')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .in('status', ['completed', 'paid'])
+          .gte('created_at', thirtyDaysAgo),
+      ]);
+
+      const totalReservations = reservationData?.length || 0;
+      const completedReservations = reservationData?.filter(r => r.status === 'completed').length || 0;
+      const chatCount = chatStarted || 0;
+      // Estimate service-selected as reservations in any non-cancelled state
+      const serviceSelected = reservationData?.filter(r => r.status !== 'cancelled').length || 0;
+      const paidCount = paymentsMade || 0;
+
+      const funnelChat = chatCount;
+      const funnelReservation = totalReservations;
+      const funnelServiceSelected = serviceSelected;
+      const funnelPayment = paidCount;
+
       const conversionFunnels = [
-        { step: 'Website Visit', count: 1000, conversion_rate: 100 },
-        { step: 'Chat Started', count: 500, conversion_rate: 50 },
-        { step: 'Service Selected', count: 300, conversion_rate: 60 },
-        { step: 'Booking Completed', count: 200, conversion_rate: 67 },
-        { step: 'Payment Made', count: 180, conversion_rate: 90 },
+        { step: 'Chat Started',      count: funnelChat,          conversion_rate: 100 },
+        { step: 'Service Selected',  count: funnelServiceSelected, conversion_rate: funnelChat > 0 ? Math.round((funnelServiceSelected / funnelChat) * 100) : 0 },
+        { step: 'Booking Completed', count: funnelReservation,   conversion_rate: funnelServiceSelected > 0 ? Math.round((funnelReservation / funnelServiceSelected) * 100) : 0 },
+        { step: 'Payment Made',      count: funnelPayment,       conversion_rate: funnelReservation > 0 ? Math.round((funnelPayment / funnelReservation) * 100) : 0 },
+        { step: 'Service Completed', count: completedReservations, conversion_rate: funnelReservation > 0 ? Math.round((completedReservations / funnelReservation) * 100) : 0 },
       ];
 
-      // Mock retention cohorts - would be calculated from customer behavior
-      const retentionCohorts = [
-        { cohort: '2024-01', period: 1, retention_rate: 85 },
-        { cohort: '2024-01', period: 2, retention_rate: 65 },
-        { cohort: '2024-01', period: 3, retention_rate: 45 },
-        { cohort: '2024-02', period: 1, retention_rate: 88 },
-        { cohort: '2024-02', period: 2, retention_rate: 70 },
-      ];
+      // Build retention cohorts from real reservation data (last 3 months)
+      const { data: cohortReservations } = await this.supabase
+        .from('reservations')
+        .select('id, customer_name, phone, created_at, status')
+        .eq('tenant_id', tenantId)
+        .gte('created_at', new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString());
+
+      // Group reservations by cohort month and customer identifier
+      const cohortMap: Record<string, Set<string>> = {};
+      const cohortAll: Record<string, string[]> = {};
+      for (const r of cohortReservations || []) {
+        const month = r.created_at.slice(0, 7);
+        const customerId = r.phone || r.customer_name || 'unknown';
+        if (!cohortMap[month]) { cohortMap[month] = new Set(); cohortAll[month] = []; }
+        cohortMap[month].add(customerId);
+        cohortAll[month].push(customerId);
+      }
+
+      const cohortMonths = Object.keys(cohortMap).sort().slice(-2);
+      const retentionCohorts = cohortMonths.flatMap(cohort => {
+        const firstTimeCustomers = cohortMap[cohort];
+        const cohortSize = firstTimeCustomers.size;
+        return [1, 2, 3].map(period => {
+          const laterMonth = new Date(cohort + '-01');
+          laterMonth.setMonth(laterMonth.getMonth() + period);
+          const laterKey = laterMonth.toISOString().slice(0, 7);
+          const returnedCount = (cohortAll[laterKey] || []).filter(c => firstTimeCustomers.has(c)).length;
+          return {
+            cohort,
+            period,
+            retention_rate: cohortSize > 0 ? Math.round((returnedCount / cohortSize) * 100) : 0,
+          };
+        });
+      });
 
       const analytics: VerticalAnalytics = {
         vertical,

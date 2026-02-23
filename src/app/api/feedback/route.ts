@@ -36,7 +36,7 @@ export const POST = createHttpHandler(
         .select('id')
         .eq('reservation_id', reservation_id)
         .maybeSingle();
-    if (existing) throw ApiErrorFactory.badRequest('Feedback has already been submitted for this reservation. Each reservation can only be rated once.');
+    if (existing) throw ApiErrorFactory.badRequest(`Feedback already submitted for reservation ${reservation_id}. Each reservation can only be rated once.`);
     }
 
     const { data, error } = await ctx.supabase
