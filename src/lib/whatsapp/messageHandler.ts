@@ -85,6 +85,9 @@ class WhatsAppMessageHandler {
         case 'inquiry':
           response = await this.handleInquiryIntent(flow, messageContent, intent);
           break;
+        case 'payment':
+          response = await this.handlePaymentIntent(flow, messageContent, intent);
+          break;
         default:
           response = await this.handleUnknownIntent(flow, messageContent);
       }
@@ -180,7 +183,11 @@ class WhatsAppMessageHandler {
         if (bookingId) {
           await dialogManagerWhatsApp.advanceStep(sessionId, 'completed');
           await dialogManagerWhatsApp.closeSession(sessionId, 'completed');
-          return await this.getCompletionMessage(bookingId, bookingContext);
+          
+          // Generate payment link if service requires payment
+          const paymentLink = await this.generatePaymentLink(tenantId, bookingId, bookingContext);
+          
+          return await this.getCompletionMessage(bookingId, bookingContext, paymentLink);
         } else {
           return 'Sorry, I could not complete your booking. Please try again.';
         }
@@ -481,10 +488,6 @@ class WhatsAppMessageHandler {
 
   private async getConfirmationMessage(tenantId: string, context: Record<string, any>, phone: string): Promise<string> {
     return `Great! Let me confirm your booking:\n\n📋 Service: ${context.service_name}\n📅 Date: ${context.date}\n⏰ Time: ${context.time}\n\nDoes this look correct? (yes/no)`;
-  }
-
-  private async getCompletionMessage(bookingId: string, context: Record<string, any>): Promise<string> {
-    return `✅ Perfect! Your booking is confirmed!\n\n📋 Booking ID: ${bookingId}\n📅 ${context.date}\n⏰ ${context.time}\n\nYou'll receive a reminder 24 hours before your appointment.`;
   }
 
   private async getBusinessHoursMessage(tenantId: string): Promise<string> {
@@ -807,6 +810,164 @@ class WhatsAppMessageHandler {
       console.error('Error cancelling booking:', error);
       return false;
     }
+  }
+
+  /**
+   * Handle payment intent
+   */
+  private async handlePaymentIntent(
+    flow: ConversationFlow,
+    messageContent: string,
+    intent: Intent
+  ): Promise<string> {
+    console.log('💳 Processing payment intent');
+
+    const { customerId, tenantId } = flow;
+
+    // Find customer's pending bookings that need payment
+    const { data: booking, error } = await this.supabase
+      .from('reservations')
+      .select('id, start_at, metadata, service_id, services(name, price)')
+      .eq('customer_id', customerId)
+      .eq('tenant_id', tenantId)
+      .eq('status', 'pending')
+      .is('paid_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!booking) {
+      return 'You don\'t have any pending payments. All your bookings are confirmed!';
+    }
+
+    // Check if payment link already exists in metadata
+    if (booking.metadata?.payment_link) {
+      return `Here's your payment link for ${booking.services?.name}:\n\n💳 ${booking.metadata.payment_link}\n\nOnce paid, your booking will be confirmed!`;
+    }
+
+    // Generate new payment link
+    const paymentLink = await this.generatePaymentLink(tenantId, booking.id, {
+      service_id: booking.service_id,
+      service_name: booking.services?.name,
+    });
+
+    if (paymentLink) {
+      return `Here's your payment link:\n\n💳 ${paymentLink}\n\nClick to complete payment and confirm your booking!`;
+    }
+
+    return 'Payment processing is being set up. Please try again in a moment or contact us directly.';
+  }
+
+  /**
+   * Generate payment link for a booking
+   */
+  private async generatePaymentLink(
+    tenantId: string,
+    bookingId: string,
+    context: Record<string, any>
+  ): Promise<string | null> {
+    try {
+      // Get service price
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('price')
+        .eq('id', context.service_id)
+        .single();
+
+      if (!service || !service.price || service.price <= 0) {
+        // No payment required
+        return null;
+      }
+
+      // Get customer details
+      const { data: booking } = await this.supabase
+        .from('reservations')
+        .select('customer_id, customers(email, phone, name)')
+        .eq('id', bookingId)
+        .single();
+
+      if (!booking || !booking.customers) {
+        console.error('Could not find customer for payment');
+        return null;
+      }
+
+      // Get tenant payment settings
+      const { data: tenant } = await this.supabase
+        .from('tenants')
+        .select('settings')
+        .eq('id', tenantId)
+        .single();
+
+      const paymentProvider = tenant?.settings?.payment_provider || 'paystack';
+      
+      // Import payment service
+      const PaymentService = await import('@/lib/paymentService');
+      const paymentService = new PaymentService.default();
+
+      // Generate unique reference
+      const reference = `BOOK_${bookingId}_${Date.now()}`;
+
+      // Initialize payment
+      const callbackUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://booking.app'}/api/payments/callback`;
+      
+      const paymentResponse = await paymentService.initializePayment({
+        provider: paymentProvider as 'stripe' | 'paystack',
+        tenantId: tenantId,
+        amount: service.price,
+        currency: tenant?.settings?.currency || 'NGN',
+        email: booking.customers.email || `${booking.customers.phone}@whatsapp.booking`,
+        reference: reference,
+        callbackUrl: callbackUrl,
+        metadata: {
+          booking_id: bookingId,
+          customer_id: booking.customer_id,
+          service_name: context.service_name,
+          source: 'whatsapp',
+        },
+      });
+
+      if (!paymentResponse.success || !paymentResponse.authorizationUrl) {
+        console.error('Failed to initialize payment:', paymentResponse.error);
+        return null;
+      }
+
+      // Store payment reference and link in booking metadata
+      await this.supabase
+        .from('reservations')
+        .update({
+          metadata: {
+            ...booking.metadata,
+            payment_reference: reference,
+            payment_link: paymentResponse.authorizationUrl,
+            payment_provider: paymentProvider,
+          },
+        })
+        .eq('id', bookingId);
+
+      return paymentResponse.authorizationUrl;
+    } catch (error) {
+      console.error('Error generating payment link:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Update completion message to include payment link if needed
+   */
+  private async getCompletionMessage(
+    bookingId: string,
+    context: Record<string, any>,
+    paymentLink: string | null
+  ): Promise<string> {
+    let message = `✅ Perfect! Your booking is confirmed!\n\n📋 Booking ID: ${bookingId}\n📅 ${context.date}\n⏰ ${context.time}`;
+
+    if (paymentLink) {
+      message += `\n\n💳 Payment Required:\n${paymentLink}\n\n👆 Click to pay and confirm your appointment.`;
+    } else {
+      message += `\n\nYou'll receive a reminder 24 hours before your appointment. See you then! 🎉`;
+    }
+
+    return message;
   }
 }
 

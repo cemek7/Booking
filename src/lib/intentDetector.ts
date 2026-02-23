@@ -1,6 +1,6 @@
 import { recordLLMUsage, canMakeLLMRequest } from '@/lib/llmUsageTracker';
 
-export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'unknown';
+export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'payment' | 'unknown';
 
 export type ExtractedEntity = {
   type: 'time' | 'date' | 'service' | 'staff' | 'phone' | 'email' | 'name';
@@ -57,13 +57,14 @@ export async function detectIntent(
     try {
       // Enhanced system prompt for better classification
       const system = `You are an advanced booking intent classifier. Analyze the message and return JSON with:
-- intent: booking|reschedule|cancel|inquiry|business_info|product_inquiry|unknown
+- intent: booking|reschedule|cancel|inquiry|business_info|product_inquiry|payment|unknown
   - booking: user wants to make an appointment
   - reschedule: user wants to change existing booking
   - cancel: user wants to cancel a booking
   - inquiry: general questions about services, pricing, hours
   - business_info: user asks about the business itself (location, hours, contact, about us)
   - product_inquiry: user asks about products, items for sale, inventory, prices of goods
+  - payment: user wants to pay for a booking, asks about payment, or mentions payment link
 - confidence: 0-1 number (be conservative, use context)
 - entities: array of {type, value, confidence} objects for time, date, service, staff, phone, email, name
 - context: {hasTimeReference, hasServiceMention, hasStaffPreference, isUrgent, sentiment}
