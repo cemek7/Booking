@@ -7,7 +7,8 @@ import { isGlobalAdmin } from '@/types/unified-permissions';
  *
  * Admin-only endpoint for full platform aggregated metrics.
  * Per tenant it returns: LLM usage (call_count, total_tokens), user_count,
- * revenue_estimate (completed transactions), reservation counts, and active staff.
+ * active_staff_count, revenue_estimate (completed/paid transactions),
+ * and reservation counts — scoped to the requested window (?days=N, default 30).
  * Only global admins can access.
  */
 
@@ -17,17 +18,19 @@ export const GET = createHttpHandler(
     const ok = await isGlobalAdmin(ctx.supabase, ctx.user!.id, ctx.user!.email);
     if (!ok) throw ApiErrorFactory.insufficientPermissions(['admin']);
 
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const daysParam = parseInt(ctx.request.url ? new URL(ctx.request.url).searchParams.get('days') || '30' : '30', 10);
+    const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 30;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     // Run all queries in parallel for maximum performance
-    const [llmResult, userResult, revenueResult, tenantResult, reservationResult, staffResult] =
+    const [llmResult, userResult, revenueResult, tenantResult, reservationResult] =
       await Promise.all([
-        // LLM call usage
+        // LLM call usage (30d window)
         ctx.supabase
           .from('llm_calls')
           .select('tenant_id, total_tokens, created_at')
           .gte('created_at', since),
-        // All tenant members (for user count)
+        // All tenant members with roles — used for both user_count and active_staff_count
         ctx.supabase
           .from('tenant_users')
           .select('tenant_id, role'),
@@ -46,14 +49,15 @@ export const GET = createHttpHandler(
           .from('reservations')
           .select('tenant_id, status')
           .gte('created_at', since),
-        // Active staff (role='staff') — all time, not just 30d window
-        ctx.supabase
-          .from('tenant_users')
-          .select('tenant_id')
-          .eq('role', 'staff'),
       ]);
 
     if (llmResult.error) throw ApiErrorFactory.internal('Failed to fetch LLM metrics');
+
+    // Log non-critical query errors so they are visible in server logs
+    if (userResult.error) console.warn('[admin/metrics] tenant_users query failed', userResult.error.message);
+    if (revenueResult.error) console.warn('[admin/metrics] transactions query failed', revenueResult.error.message);
+    if (tenantResult.error) console.warn('[admin/metrics] tenants query failed', tenantResult.error.message);
+    if (reservationResult.error) console.warn('[admin/metrics] reservations query failed', reservationResult.error.message);
 
     // --- Build lookup maps ---
 
@@ -62,11 +66,15 @@ export const GET = createHttpHandler(
       if (t.id) tenantNames[t.id] = t.name || t.id;
     }
 
-    // user_count: all roles (owners + managers + staff)
+    // user_count (all roles) and active_staff_count (role='staff') derived from one query
     const userCounts: Record<string, number> = {};
+    const activeStaffCount: Record<string, number> = {};
     for (const u of userResult.data || []) {
       const t = u.tenant_id || 'unknown';
       userCounts[t] = (userCounts[t] || 0) + 1;
+      if (u.role === 'staff') {
+        activeStaffCount[t] = (activeStaffCount[t] || 0) + 1;
+      }
     }
 
     // revenue_estimate: sum of completed/paid transaction amounts
@@ -85,13 +93,6 @@ export const GET = createHttpHandler(
       if (r.status === 'completed') {
         completedReservations[t] = (completedReservations[t] || 0) + 1;
       }
-    }
-
-    // active_staff_count: users with role='staff'
-    const activeStaffCount: Record<string, number> = {};
-    for (const s of staffResult.data || []) {
-      const t = s.tenant_id || 'unknown';
-      activeStaffCount[t] = (activeStaffCount[t] || 0) + 1;
     }
 
     // --- Build per-tenant aggregation starting with LLM data ---

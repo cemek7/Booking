@@ -10,7 +10,7 @@ import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
 import { Building2, Users, DollarSign, Activity, Calendar, UserCheck } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
-
+import { PERIOD_DAYS } from './shared/analytics-constants';
 import type { AdminTenantMetric } from '@/types/analytics-api';
 
 export default function SuperAdminMetrics() {
@@ -24,7 +24,8 @@ export default function SuperAdminMetrics() {
     const load = async () => {
       setLoading(true);
       try {
-        const response = await authFetch<{ metrics?: AdminTenantMetric[] }>('/api/admin/metrics');
+        const days = PERIOD_DAYS[period];
+        const response = await authFetch<{ metrics?: AdminTenantMetric[] }>(`/api/admin/metrics?days=${days}`);
         if (cancelled) return;
         setTenantMetrics(response.status === 200 ? response.data?.metrics || [] : []);
       } finally {
@@ -37,7 +38,7 @@ export default function SuperAdminMetrics() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [period]);
 
   const totals = useMemo(() => {
     const totalTenants = tenantMetrics.length;

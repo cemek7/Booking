@@ -1,8 +1,11 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import { authFetch } from '@/lib/auth/auth-api-client';
+import type { AdminTenantMetric } from '@/types/analytics-api';
 
-type MetricsResponse = { requests: number; total_tokens: number; cost: number } | { data: any[] } | { error?: string };
+type LlmUsageResponse = { requests: number; total_tokens: number; cost: number } | { error?: string };
+type GlobalMetricsResponse = { metrics: AdminTenantMetric[] };
+type MetricsResponse = LlmUsageResponse | GlobalMetricsResponse;
 
 export default function OwnerLLMMetrics({ tenantId }: { tenantId: string }) {
   const [loading, setLoading] = useState(false);

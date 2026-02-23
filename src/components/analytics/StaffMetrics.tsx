@@ -46,7 +46,7 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, period]);
+  }, [tenantId]);
 
   const currentUserMetrics = useMemo(
     () => staffMetrics.find((row) => row.user_id === userId) || null,
