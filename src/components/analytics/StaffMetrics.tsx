@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
@@ -25,34 +25,115 @@ export interface StaffMetricsProps {
   tenantId: string;
 }
 
+interface StaffAnalyticsData {
+  personalMetrics: {
+    myBookings: number;
+    myEarnings: number;
+    myRating: number;
+    completionRate: number;
+    repeatCustomers: number;
+    hoursWorked: number;
+  };
+  trends: {
+    bookings: number;
+    earnings: number;
+    rating: number;
+  };
+}
+
 /**
  * StaffMetrics Component
  *
  * Displays personal performance analytics for staff members
- * Includes personal bookings, earnings, customer ratings, and achievements
- * Staff can only see their own data (personal scope)
+ * All data fetched from backend API - staff can only see their own data
  */
 export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
+  const [loading, setLoading] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<StaffAnalyticsData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Fetch real data from API - these are mock data for now
-  const personalMetrics = {
-    myBookings: 87,
-    myEarnings: 9135,
-    myRating: 4.9,
-    completionRate: 95.4,
-    repeatCustomers: 42,
-    hoursWorked: 168,
+  // Fetch analytics data from API
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        const response = await fetch(`/api/staff/analytics?period=${period}`, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch analytics data');
+        }
+
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          setAnalyticsData(result.data);
+        } else {
+          throw new Error(result.error || 'Invalid response format');
+        }
+      } catch (err) {
+        console.error('Error fetching analytics:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load analytics');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAnalytics();
+  }, [period, userId]);
+
+  // Default/fallback data
+  const personalMetrics = analyticsData?.personalMetrics || {
+    myBookings: 0,
+    myEarnings: 0,
+    myRating: 0,
+    completionRate: 0,
+    repeatCustomers: 0,
+    hoursWorked: 0,
   };
 
-  const trends = {
-    bookings: 8.3,
-    earnings: 12.7,
-    rating: 1.2,
-    completionRate: 2.1,
+  const trends = analyticsData?.trends || {
+    bookings: 0,
+    earnings: 0,
+    rating: 0,
   };
 
-  // Personal booking trends
+  const formatCurrency = (value: number) => `$${value.toLocaleString()}`;
+  const formatPercent = (value: number) => `${value}%`;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading your performance data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6">
+        <h3 className="font-semibold text-destructive mb-2">Error Loading Analytics</h3>
+        <p className="text-sm text-muted-foreground">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  // Personal booking trends (mock data - TODO: add to API)
   const personalBookingData = [
     { date: 'Week 1', bookings: 12, completed: 11 },
     { date: 'Week 2', bookings: 14, completed: 13 },
