@@ -1,6 +1,6 @@
 import { recordLLMUsage, canMakeLLMRequest } from '@/lib/llmUsageTracker';
 
-export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'payment' | 'unknown';
+export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'payment' | 'status' | 'unknown';
 
 export type ExtractedEntity = {
   type: 'time' | 'date' | 'service' | 'staff' | 'phone' | 'email' | 'name';
@@ -57,7 +57,7 @@ export async function detectIntent(
     try {
       // Enhanced system prompt for better classification
       const system = `You are an advanced booking intent classifier. Analyze the message and return JSON with:
-- intent: booking|reschedule|cancel|inquiry|business_info|product_inquiry|payment|unknown
+- intent: booking|reschedule|cancel|inquiry|business_info|product_inquiry|payment|status|unknown
   - booking: user wants to make an appointment
   - reschedule: user wants to change existing booking
   - cancel: user wants to cancel a booking
@@ -65,6 +65,7 @@ export async function detectIntent(
   - business_info: user asks about the business itself (location, hours, contact, about us)
   - product_inquiry: user asks about products, items for sale, inventory, prices of goods
   - payment: user wants to pay for a booking, asks about payment, or mentions payment link
+  - status: user asks about their booking status, booking details, or "where is my booking"
 - confidence: 0-1 number (be conservative, use context)
 - entities: array of {type, value, confidence} objects for time, date, service, staff, phone, email, name
 - context: {hasTimeReference, hasServiceMention, hasStaffPreference, isUrgent, sentiment}
@@ -335,6 +336,28 @@ function enhancedHeuristics(
     return {
       intent: 'product_inquiry',
       confidence: 0.75,
+      entities,
+      context: contextInfo,
+      fallbackUsed: true
+    };
+  }
+
+  // Payment intent
+  if (/\b(pay|payment|pay for|how to pay|payment link|i want to pay|need to pay|paying|paid)\b/.test(low)) {
+    return {
+      intent: 'payment',
+      confidence: 0.8,
+      entities,
+      context: contextInfo,
+      fallbackUsed: true
+    };
+  }
+  
+  // Status intent - check booking status
+  if (/\b(status|my booking|my appointment|booking details|where is my|check my|find my|show my|booking info|appointment info)\b/.test(low)) {
+    return {
+      intent: 'status',
+      confidence: 0.8,
       entities,
       context: contextInfo,
       fallbackUsed: true

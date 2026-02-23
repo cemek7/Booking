@@ -9,6 +9,7 @@ import { dialogManagerWhatsApp } from './dialogManagerExtension';
 import { EvolutionClient } from './evolutionClient';
 import { BookingEngine } from '@/lib/booking/engine';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
+import { BookingNotificationService } from '@/lib/bookingNotifications';
 
 interface ConversationFlow {
   tenantId: string;
@@ -35,6 +36,7 @@ class WhatsAppMessageHandler {
   private supabase = createServerSupabaseClient();
   private evolutionClient = new EvolutionClient();
   private bookingEngine = new BookingEngine();
+  private notificationService = new BookingNotificationService();
 
   /**
    * Main entry point: handle incoming message
@@ -87,6 +89,9 @@ class WhatsAppMessageHandler {
           break;
         case 'payment':
           response = await this.handlePaymentIntent(flow, messageContent, intent);
+          break;
+        case 'status':
+          response = await this.handleStatusIntent(flow, messageContent, intent);
           break;
         default:
           response = await this.handleUnknownIntent(flow, messageContent);
@@ -183,6 +188,12 @@ class WhatsAppMessageHandler {
         if (bookingId) {
           await dialogManagerWhatsApp.advanceStep(sessionId, 'completed');
           await dialogManagerWhatsApp.closeSession(sessionId, 'completed');
+          
+          // ✅ NEW: Send booking confirmation via WhatsApp
+          await this.sendWhatsAppConfirmation(tenantId, bookingId, bookingContext, flow.customerPhone);
+          
+          // ✅ NEW: Schedule reminder notifications (24h, 1h, 15min)
+          await this.scheduleBookingReminders(tenantId, bookingId, bookingContext, flow.customerPhone);
           
           // Generate payment link if service requires payment
           const paymentLink = await this.generatePaymentLink(tenantId, bookingId, bookingContext);
@@ -968,6 +979,174 @@ class WhatsAppMessageHandler {
     }
 
     return message;
+  }
+
+  /**
+   * Send WhatsApp confirmation after booking creation
+   */
+  private async sendWhatsAppConfirmation(
+    tenantId: string,
+    bookingId: string,
+    context: Record<string, any>,
+    customerPhone: string
+  ): Promise<void> {
+    try {
+      console.log(`📧 Sending WhatsApp confirmation for booking ${bookingId}`);
+
+      // Get service details for confirmation
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('name')
+        .eq('id', context.service_id)
+        .single();
+
+      const bookingData = {
+        bookingId,
+        tenantId,
+        customerPhone,
+        serviceName: service?.name || context.service_name || 'Service',
+        bookingDate: context.date,
+        bookingTime: context.time,
+        status: 'confirmed' as const,
+      };
+
+      const result = await this.notificationService.sendBookingConfirmation(bookingData);
+
+      if (result.success) {
+        console.log('✅ Confirmation sent successfully');
+      } else {
+        console.error('❌ Failed to send confirmation:', result.error);
+      }
+    } catch (error) {
+      console.error('Error in sendWhatsAppConfirmation:', error);
+      // Don't throw - confirmation failure shouldn't break booking flow
+    }
+  }
+
+  /**
+   * Schedule reminder notifications (24h, 1h, 15min before appointment)
+   */
+  private async scheduleBookingReminders(
+    tenantId: string,
+    bookingId: string,
+    context: Record<string, any>,
+    customerPhone: string
+  ): Promise<void> {
+    try {
+      console.log(`⏰ Scheduling reminders for booking ${bookingId}`);
+
+      // Get service details
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('name')
+        .eq('id', context.service_id)
+        .single();
+
+      // Get customer details
+      const { data: customer } = await this.supabase
+        .from('customers')
+        .select('name')
+        .eq('phone', customerPhone)
+        .single();
+
+      const bookingData = {
+        bookingId,
+        tenantId,
+        customerPhone,
+        customerName: customer?.name,
+        serviceName: service?.name || context.service_name || 'Service',
+        bookingDate: context.date,
+        bookingTime: context.time,
+        status: 'confirmed' as const,
+      };
+
+      const result = await this.notificationService.scheduleReminders(bookingData);
+
+      if (result.success) {
+        console.log('✅ Reminders scheduled successfully');
+      } else {
+        console.error('❌ Failed to schedule reminders:', result.error);
+      }
+    } catch (error) {
+      console.error('Error in scheduleBookingReminders:', error);
+      // Don't throw - reminder scheduling failure shouldn't break booking flow
+    }
+  }
+
+  /**
+   * Handle status intent - show customer their booking details
+   */
+  private async handleStatusIntent(
+    flow: ConversationFlow,
+    messageContent: string,
+    intent: Intent
+  ): Promise<string> {
+    console.log('📊 Processing status inquiry');
+
+    const { tenantId, customerId } = flow;
+
+    try {
+      // Find customer's upcoming bookings
+      const { data: bookings, error } = await this.supabase
+        .from('reservations')
+        .select(`
+          id,
+          start_at,
+          end_at,
+          status,
+          notes,
+          services:service_id (name),
+          staff:staff_id (users(full_name))
+        `)
+        .eq('customer_id', customerId)
+        .eq('tenant_id', tenantId)
+        .gte('start_at', new Date().toISOString())
+        .order('start_at', { ascending: true })
+        .limit(3);
+
+      if (error) {
+        console.error('Error fetching bookings:', error);
+        return 'Sorry, I had trouble looking up your bookings. Please try again.';
+      }
+
+      if (!bookings || bookings.length === 0) {
+        return '📅 You don\'t have any upcoming bookings.\n\nWould you like to make a new appointment? Just say "book"!';
+      }
+
+      // Format booking details
+      let message = `📅 Here are your upcoming bookings:\n\n`;
+
+      bookings.forEach((booking, index) => {
+        const startDate = new Date(booking.start_at);
+        const dateStr = startDate.toLocaleDateString('en-US', { 
+          weekday: 'short', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+        const timeStr = startDate.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        
+        const serviceName = booking.services?.name || 'Service';
+        const staffName = booking.staff?.users?.full_name || 'Team';
+        const statusEmoji = booking.status === 'confirmed' ? '✅' : 
+                           booking.status === 'pending' ? '⏳' : '📋';
+
+        message += `${index + 1}. ${statusEmoji} ${serviceName}\n`;
+        message += `   📅 ${dateStr} at ${timeStr}\n`;
+        message += `   👤 With ${staffName}\n`;
+        message += `   📋 Status: ${booking.status}\n`;
+        message += `   🆔 ID: ${booking.id}\n\n`;
+      });
+
+      message += `Need to reschedule or cancel? Just let me know!`;
+
+      return message;
+    } catch (error) {
+      console.error('Error in handleStatusIntent:', error);
+      return 'Sorry, I encountered an error checking your bookings. Please try again.';
+    }
   }
 }
 
