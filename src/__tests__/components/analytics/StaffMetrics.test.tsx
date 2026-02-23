@@ -9,8 +9,8 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
     status: 200,
     data: {
       metrics: [
-        { user_id: 'user-123', rating: 4.5, completed: 10, revenue: 500 },
-        { user_id: 'user-456', rating: 4.0, completed: 8, revenue: 400 },
+        { user_id: 'user-123', rating: 4.5, completed: 10, revenue: 500, utilization_rate: 62.5 },
+        { user_id: 'user-456', rating: 4.0, completed: 8, revenue: 400, utilization_rate: 50.0 },
       ],
     },
   }),
@@ -63,6 +63,7 @@ describe('StaffMetrics', () => {
       await waitFor(() => expect(screen.getByText('My Completed Bookings')).toBeInTheDocument());
       expect(screen.getByText('My Revenue')).toBeInTheDocument();
       expect(screen.getByText('My Rating')).toBeInTheDocument();
+      expect(screen.getByText('My Utilization')).toBeInTheDocument();
       expect(screen.getByText('Completion Share')).toBeInTheDocument();
     });
   });
@@ -76,6 +77,16 @@ describe('StaffMetrics', () => {
     it('should render the completed bookings by staff bar chart', () => {
       render(<StaffMetrics {...defaultProps} />);
       expect(screen.getByText('Completed Bookings by Staff')).toBeInTheDocument();
+    });
+
+    it('should render the utilization and revenue bar chart', () => {
+      render(<StaffMetrics {...defaultProps} />);
+      expect(screen.getByText('Staff Utilization & Revenue (Top 10)')).toBeInTheDocument();
+    });
+
+    it('should render the team performance table', () => {
+      render(<StaffMetrics {...defaultProps} />);
+      expect(screen.getByText('Team Performance Breakdown')).toBeInTheDocument();
     });
   });
 
@@ -107,6 +118,7 @@ describe('StaffMetrics', () => {
       await waitFor(() => expect(screen.getByText('My Completed Bookings')).toBeInTheDocument());
       expect(screen.getByText('My Revenue')).toBeInTheDocument();
       expect(screen.getByText('My Rating')).toBeInTheDocument();
+      expect(screen.getByText('My Utilization')).toBeInTheDocument();
       expect(screen.getByText('Completion Share')).toBeInTheDocument();
     });
 
@@ -146,6 +158,11 @@ describe('StaffMetrics', () => {
     it('should show completion share relative to team after loading', async () => {
       render(<StaffMetrics {...defaultProps} />);
       await waitFor(() => expect(screen.getByText('Completion Share')).toBeInTheDocument());
+    });
+
+    it('should show utilization metric after loading', async () => {
+      render(<StaffMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('My Utilization')).toBeInTheDocument());
     });
   });
 });

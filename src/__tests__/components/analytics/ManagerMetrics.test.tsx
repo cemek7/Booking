@@ -1,7 +1,28 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect } from '@jest/globals';
 import ManagerMetrics from '@/components/analytics/ManagerMetrics';
+
+// Mock authFetch to return role-appropriate data
+jest.mock('@/lib/auth/auth-api-client', () => ({
+  authFetch: jest.fn().mockImplementation((url: string) => {
+    if (url.includes('metric=overview')) {
+      return Promise.resolve({
+        status: 200,
+        data: {
+          teamBookings: 42,
+          teamRevenue: 5000,
+          activeStaff: 6,
+          teamRating: 4.3,
+          scheduleUtilization: 78,
+          completionRate: 85,
+          trends: { bookings: 5, revenue: 8, rating: 1 },
+        },
+      });
+    }
+    return Promise.resolve({ status: 200, data: {} });
+  }),
+}));
 
 // Mock all chart components
 jest.mock('@/components/analytics/charts/TrendChart', () => {
@@ -45,9 +66,12 @@ describe('ManagerMetrics', () => {
       expect(container.querySelector('select, button')).toBeInTheDocument();
     });
 
-    it('should display team metrics', () => {
-      const { container } = render(<ManagerMetrics {...defaultProps} />);
-      expect(container.textContent).toContain('Team');
+    it('should display team metrics labels after loading', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Bookings')).toBeInTheDocument());
+      expect(screen.getByText('Team Revenue')).toBeInTheDocument();
+      expect(screen.getByText('Active Staff')).toBeInTheDocument();
+      expect(screen.getByText('Team Rating')).toBeInTheDocument();
     });
   });
 
@@ -80,25 +104,38 @@ describe('ManagerMetrics', () => {
       expect(grids.length).toBeGreaterThan(0);
     });
 
-    it('should render multiple cards', () => {
-      const { container } = render(<ManagerMetrics {...defaultProps} />);
-      const cards = container.querySelectorAll('[class*="bg-"]');
-      expect(cards.length).toBeGreaterThan(0);
+    it('should render booking and revenue trend charts', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Booking Trend')).toBeInTheDocument());
+      expect(screen.getByText('Team Revenue Trend')).toBeInTheDocument();
+    });
+
+    it('should render completion ratio chart', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Completion Ratio')).toBeInTheDocument());
+    });
+
+    it('should render performance table', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Performance')).toBeInTheDocument());
     });
   });
 
   describe('Team Scope', () => {
-    it('should focus on team-level metrics', () => {
-      const { container } = render(<ManagerMetrics {...defaultProps} />);
-      expect(container.textContent).toContain('Team');
+    it('should show team revenue KPI after loading', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Revenue')).toBeInTheDocument());
     });
 
-    it('should not show global revenue in main KPIs', () => {
-      const { container } = render(<ManagerMetrics {...defaultProps} />);
-      // Manager view typically doesn't have "Total Revenue" as main KPI
-      const text = container.textContent || '';
-      const teamMentions = (text.match(/Team/g) || []).length;
-      expect(teamMentions).toBeGreaterThan(0);
+    it('should show team rating KPI after loading', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Rating')).toBeInTheDocument());
+    });
+
+    it('should show utilization and completion rate after loading', async () => {
+      render(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Schedule Utilization')).toBeInTheDocument());
+      expect(screen.getByText('Completion Rate')).toBeInTheDocument();
     });
   });
 
@@ -108,10 +145,9 @@ describe('ManagerMetrics', () => {
       expect(container.querySelector('div')).toBeInTheDocument();
     });
 
-    it('should render cards with content', () => {
+    it('should render with meaningful content', () => {
       const { container } = render(<ManagerMetrics {...defaultProps} />);
       expect(container.textContent).toBeTruthy();
-      expect(container.textContent!.length).toBeGreaterThan(0);
     });
   });
 });

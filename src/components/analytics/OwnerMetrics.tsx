@@ -11,7 +11,7 @@ import PieChart from './charts/PieChart';
 import AreaChart from './charts/AreaChart';
 import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
-import { DollarSign, Calendar, Users, Star } from 'lucide-react';
+import { DollarSign, Calendar, Users, Star, AlertTriangle, TrendingDown, BarChart2 } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
 import type { DashboardMetric, BookingTrendData, StaffPerformanceData } from '@/types/analytics-api';
 import { PERIOD_TO_STAFF_PERIOD, PERIOD_DAYS } from './shared/analytics-constants';
@@ -71,6 +71,11 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
   const totalRevenue = metricById.get('total_revenue')?.value || 0;
   const totalBookings = metricById.get('total_bookings')?.value || 0;
   const activeCustomers = metricById.get('new_customers')?.value || 0;
+  const cancellationRate = metricById.get('cancellation_rate')?.value || 0;
+  const noShowRate = metricById.get('no_show_rate')?.value || 0;
+  const avgBookingValue = metricById.get('avg_booking_value')?.value || 0;
+  const staffUtilization = metricById.get('staff_utilization')?.value || 0;
+
   const averageRating = staffPerformance.length
     ? staffPerformance.reduce((sum, row) => sum + (row.customer_rating || 0), 0) / staffPerformance.length
     : 0;
@@ -90,7 +95,6 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
     ].filter((item) => item.value > 0);
   }, [trends]);
 
-
   if (!loading && !hasData) {
     return (
       <DataUnavailableState
@@ -106,6 +110,7 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
         <DateRangePicker period={period} onPeriodChange={setPeriod} compact className="w-64" />
       </div>
 
+      {/* Primary KPIs */}
       <StatsGrid columns={4}>
         <MetricCard
           label="Total Revenue"
@@ -125,7 +130,7 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
           loading={loading}
         />
         <MetricCard
-          label="Active Customers"
+          label="New Customers"
           value={activeCustomers}
           trend={metricById.get('new_customers')?.trend}
           icon={Users}
@@ -140,39 +145,96 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
         />
       </StatsGrid>
 
+      {/* Operational KPIs */}
+      <StatsGrid columns={3}>
+        <MetricCard
+          label="Cancellation Rate"
+          value={`${Number(cancellationRate || 0).toFixed(1)}%`}
+          trend={metricById.get('cancellation_rate')?.trend}
+          icon={AlertTriangle}
+          colorScheme="default"
+          loading={loading}
+        />
+        <MetricCard
+          label="No-Show Rate"
+          value={`${Number(noShowRate || 0).toFixed(1)}%`}
+          trend={metricById.get('no_show_rate')?.trend}
+          icon={TrendingDown}
+          colorScheme="default"
+          loading={loading}
+        />
+        <MetricCard
+          label="Avg Booking Value"
+          value={avgBookingValue}
+          trend={metricById.get('avg_booking_value')?.trend}
+          icon={BarChart2}
+          formatValue={formatCurrency}
+          colorScheme="info"
+          loading={loading}
+        />
+      </StatsGrid>
+
+      {/* Revenue & Booking Trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <AreaChart data={trends} dataKeys={['revenue']} title="Revenue Trend" description="Revenue from analytics API" colors={['#10b981']} formatValue={(v) => formatCurrency(v)} />
-        <TrendChart data={trends} dataKey="bookings" title="Booking Trend" description="Bookings from analytics API" color="#3b82f6" showTrend />
+        <AreaChart data={trends} dataKeys={['revenue']} title="Revenue Trend" description="Revenue over time" colors={['#10b981']} formatValue={(v) => formatCurrency(v)} />
+        <TrendChart data={trends} dataKey="bookings" title="Booking Trend" description="Bookings over time" color="#3b82f6" showTrend />
       </div>
 
+      {/* Status Breakdown & Cancellation Trend */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <PieChart
           data={bookingStatusData}
           title="Booking Status Breakdown"
-          description="Status mix from backend analytics"
+          description="Completed vs Cancelled vs No-Show"
           showPercentage
           innerRadius={50}
         />
         <BarChart
-          data={trends.map((entry) => ({ date: entry.date, cancellations: entry.cancellations || 0 }))}
-          dataKeys={['cancellations']}
+          data={trends.map((entry) => ({
+            date: entry.date,
+            cancellations: entry.cancellations || 0,
+            no_shows: entry.no_shows || 0,
+          }))}
+          dataKeys={['cancellations', 'no_shows']}
           xAxisKey="date"
-          title="Cancellations"
-          description="Cancellation trend from analytics API"
-          colors={['#ef4444']}
+          title="Cancellations & No-Shows Over Time"
+          description="Daily cancellation and no-show counts"
+          colors={['#ef4444', '#f59e0b']}
         />
       </div>
 
+      {/* Staff utilization summary */}
+      <StatsGrid columns={2}>
+        <MetricCard
+          label="Staff Utilization"
+          value={`${Number(staffUtilization || 0).toFixed(1)}%`}
+          trend={metricById.get('staff_utilization')?.trend}
+          icon={BarChart2}
+          colorScheme="success"
+          loading={loading}
+        />
+        <MetricCard
+          label="Revenue per Booking"
+          value={totalBookings > 0 ? totalRevenue / totalBookings : 0}
+          icon={DollarSign}
+          formatValue={formatCurrency}
+          colorScheme="success"
+          loading={loading}
+        />
+      </StatsGrid>
+
+      {/* Staff Performance Table */}
       <PerformanceTable
         data={staffPerformance}
         title="Staff Performance"
-        description="Top staff based on API data"
+        description="Individual staff performance for the period"
         columns={[
           { key: 'staff_name', label: 'Staff Member', sortable: true },
           { key: 'bookings_count', label: 'Bookings', sortable: true, align: 'right' },
           { key: 'revenue_total', label: 'Revenue', sortable: true, align: 'right', formatValue: (value) => formatCurrency(value) },
           { key: 'customer_rating', label: 'Rating', sortable: true, align: 'right', formatValue: (value) => Number(value || 0).toFixed(1) },
           { key: 'utilization_rate', label: 'Utilization', sortable: true, align: 'right', formatValue: (value) => `${Number(value || 0).toFixed(1)}%` },
+          { key: 'tips_total', label: 'Tips', sortable: true, align: 'right', formatValue: (value) => formatCurrency(value) },
         ]}
       />
     </div>

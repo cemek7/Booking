@@ -61,4 +61,5 @@ export interface StaffMemberMetric {
   rating: number | null;
   completed: number;
   revenue: number;
+  utilization_rate: number;
 }
