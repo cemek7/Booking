@@ -395,9 +395,53 @@ class WhatsAppMessageHandler {
     context: Record<string, any>
   ): Promise<string | null> {
     try {
-      // TODO: Implement booking creation from context
-      // This should call the booking engine with the extracted details
-      return 'booking-id-' + Date.now();
+      const { service_id, date, time } = context;
+      if (!service_id || !date || !time) {
+        console.error('Missing booking context fields:', { service_id, date, time });
+        return null;
+      }
+
+      // Normalise date/time into an ISO datetime
+      const startTime = new Date(`${date}T${time}`);
+      if (isNaN(startTime.getTime())) {
+        console.error('Invalid date/time in booking context:', { date, time });
+        return null;
+      }
+
+      // Look up service duration so we can compute end_at
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('duration')
+        .eq('id', service_id)
+        .maybeSingle();
+
+      const durationMinutes: number = service?.duration ?? 60;
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60_000);
+
+      const { data: booking, error } = await this.supabase
+        .from('reservations')
+        .insert({
+          tenant_id: tenantId,
+          customer_id: customerId,
+          service_id,
+          start_at: startTime.toISOString(),
+          end_at: endTime.toISOString(),
+          status: 'pending',
+          source: 'whatsapp',
+          metadata: {
+            booking_source: 'whatsapp_chat',
+            timestamp: new Date().toISOString(),
+          },
+        })
+        .select('id')
+        .single();
+
+      if (error || !booking) {
+        console.error('Error inserting booking:', error);
+        return null;
+      }
+
+      return booking.id as string;
     } catch (error) {
       console.error('Error creating booking:', error);
       return null;
@@ -410,8 +454,43 @@ class WhatsAppMessageHandler {
     time?: string
   ): Promise<boolean> {
     try {
-      // TODO: Implement reschedule logic
-      return true;
+      if (!date && !time) return false;
+
+      // Fetch current booking to derive existing date/time and service duration
+      const { data: booking } = await this.supabase
+        .from('reservations')
+        .select('start_at, service_id')
+        .eq('id', bookingId)
+        .maybeSingle();
+
+      if (!booking) return false;
+
+      const existingStart = new Date(booking.start_at as string);
+      const newDate = date ?? existingStart.toISOString().split('T')[0];
+      const newTime = time ?? existingStart.toTimeString().substring(0, 5);
+
+      const newStartAt = new Date(`${newDate}T${newTime}`);
+      if (isNaN(newStartAt.getTime())) return false;
+
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('duration')
+        .eq('id', booking.service_id)
+        .maybeSingle();
+
+      const durationMs = ((service?.duration as number) ?? 60) * 60_000;
+      const newEndAt = new Date(newStartAt.getTime() + durationMs);
+
+      const { error } = await this.supabase
+        .from('reservations')
+        .update({
+          start_at: newStartAt.toISOString(),
+          end_at: newEndAt.toISOString(),
+          status: 'confirmed',
+        })
+        .eq('id', bookingId);
+
+      return !error;
     } catch (error) {
       console.error('Error rescheduling booking:', error);
       return false;

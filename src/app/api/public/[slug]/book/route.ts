@@ -6,6 +6,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 import publicBookingService from '@/lib/publicBookingService';
+import { sendBookingConfirmation, sendEmail } from '@/lib/integrations/email-service';
 import type { RouteContext } from '@/lib/error-handling/route-handler';
 
 /**
@@ -78,8 +79,53 @@ export const POST = createHttpHandler(
       }
     );
 
-    // TODO: Send confirmation email/WhatsApp
-    // TODO: Notify tenant owner
+    // Send confirmation email to customer and notify tenant owner.
+    // Fire-and-forget — notifications must not block the booking response.
+    void (async () => {
+      try {
+        const [serviceRes, tenantRes] = await Promise.all([
+          ctx.supabase
+            .from('services')
+            .select('name')
+            .eq('id', validated.service_id)
+            .maybeSingle(),
+          ctx.supabase
+            .from('tenants')
+            .select('name, settings')
+            .eq('id', tenant.id)
+            .maybeSingle(),
+        ]);
+
+        const serviceName: string = (serviceRes.data?.name as string) ?? 'your appointment';
+        const tenantSettings = tenantRes.data?.settings as Record<string, unknown> | null;
+        const ownerEmail = tenantSettings?.contact_email as string | undefined;
+
+        await sendBookingConfirmation(validated.customer_email, validated.customer_name, {
+          serviceName,
+          date: validated.date,
+          time: validated.time,
+        });
+
+        if (ownerEmail) {
+          await sendEmail({
+            to: ownerEmail,
+            subject: `New Booking: ${serviceName} on ${validated.date}`,
+            html: `
+              <h3>New Public Booking</h3>
+              <p><strong>Customer:</strong> ${validated.customer_name}</p>
+              <p><strong>Email:</strong> ${validated.customer_email}</p>
+              <p><strong>Phone:</strong> ${validated.customer_phone}</p>
+              <p><strong>Service:</strong> ${serviceName}</p>
+              <p><strong>Date:</strong> ${validated.date} at ${validated.time}</p>
+              ${validated.notes ? `<p><strong>Notes:</strong> ${validated.notes}</p>` : ''}
+              <p><strong>Booking ID:</strong> ${booking.id}</p>
+            `,
+          });
+        }
+      } catch (err) {
+        console.warn('[public/book] Failed to send notifications:', err);
+      }
+    })();
 
     return { booking_id: booking.id, status: 'pending' };
   },

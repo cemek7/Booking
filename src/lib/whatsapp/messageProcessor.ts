@@ -294,6 +294,13 @@ class WhatsAppMessageProcessor {
       // Create new dialog session
       const session = await dialogManager.startSession(tenantId, null);
 
+      // Look up the tenant's industry so the AI can apply vertical-specific logic
+      const { data: tenantData } = await this.supabase
+        .from('tenants')
+        .select('industry')
+        .eq('id', tenantId)
+        .maybeSingle();
+
       const conversationState: ConversationState = {
         tenant_id: tenantId,
         phone_number: phoneNumber,
@@ -301,7 +308,7 @@ class WhatsAppMessageProcessor {
         current_step: 'greeting',
         context: {
           created_at: new Date().toISOString(),
-          tenant_vertical: 'general' // TODO: Get from tenant settings
+          tenant_vertical: (tenantData?.industry as string) ?? 'general',
         },
         last_activity: new Date().toISOString(),
         conversation_history: []
