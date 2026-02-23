@@ -61,5 +61,7 @@ export interface StaffMemberMetric {
   rating: number | null;
   completed: number;
   revenue: number;
+  tips_total: number;
   utilization_rate: number;
+  avg_service_duration_min: number;
 }

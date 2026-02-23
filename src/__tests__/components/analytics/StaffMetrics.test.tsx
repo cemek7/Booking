@@ -9,8 +9,8 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
     status: 200,
     data: {
       metrics: [
-        { user_id: 'user-123', rating: 4.5, completed: 10, revenue: 500, utilization_rate: 62.5 },
-        { user_id: 'user-456', rating: 4.0, completed: 8, revenue: 400, utilization_rate: 50.0 },
+        { user_id: 'user-123', rating: 4.5, completed: 10, revenue: 500, tips_total: 50, utilization_rate: 62.5, avg_service_duration_min: 45 },
+        { user_id: 'user-456', rating: 4.0, completed: 8, revenue: 400, tips_total: 30, utilization_rate: 50.0, avg_service_duration_min: 40 },
       ],
     },
   }),
@@ -62,8 +62,10 @@ describe('StaffMetrics', () => {
       render(<StaffMetrics {...defaultProps} />);
       await waitFor(() => expect(screen.getByText('My Completed Bookings')).toBeInTheDocument());
       expect(screen.getByText('My Revenue')).toBeInTheDocument();
+      expect(screen.getByText('My Tips')).toBeInTheDocument();
       expect(screen.getByText('My Rating')).toBeInTheDocument();
       expect(screen.getByText('My Utilization')).toBeInTheDocument();
+      expect(screen.getByText('Avg Service Time')).toBeInTheDocument();
       expect(screen.getByText('Completion Share')).toBeInTheDocument();
     });
   });
@@ -79,9 +81,9 @@ describe('StaffMetrics', () => {
       expect(screen.getByText('Completed Bookings by Staff')).toBeInTheDocument();
     });
 
-    it('should render the utilization and revenue bar chart', () => {
+    it('should render the utilization, revenue and tips bar chart', () => {
       render(<StaffMetrics {...defaultProps} />);
-      expect(screen.getByText('Staff Utilization & Revenue (Top 10)')).toBeInTheDocument();
+      expect(screen.getByText('Staff Utilization, Revenue & Tips (Top 10)')).toBeInTheDocument();
     });
 
     it('should render the team performance table', () => {
@@ -117,8 +119,10 @@ describe('StaffMetrics', () => {
       render(<StaffMetrics {...defaultProps} />);
       await waitFor(() => expect(screen.getByText('My Completed Bookings')).toBeInTheDocument());
       expect(screen.getByText('My Revenue')).toBeInTheDocument();
+      expect(screen.getByText('My Tips')).toBeInTheDocument();
       expect(screen.getByText('My Rating')).toBeInTheDocument();
       expect(screen.getByText('My Utilization')).toBeInTheDocument();
+      expect(screen.getByText('Avg Service Time')).toBeInTheDocument();
       expect(screen.getByText('Completion Share')).toBeInTheDocument();
     });
 
@@ -146,6 +150,7 @@ describe('StaffMetrics', () => {
       render(<StaffMetrics {...defaultProps} />);
       await waitFor(() => expect(screen.getByText('My Completed Bookings')).toBeInTheDocument());
       expect(screen.getByText('My Revenue')).toBeInTheDocument();
+      expect(screen.getByText('My Tips')).toBeInTheDocument();
       expect(screen.getByText('My Rating')).toBeInTheDocument();
     });
 
@@ -163,6 +168,16 @@ describe('StaffMetrics', () => {
     it('should show utilization metric after loading', async () => {
       render(<StaffMetrics {...defaultProps} />);
       await waitFor(() => expect(screen.getByText('My Utilization')).toBeInTheDocument());
+    });
+
+    it('should show avg service time metric after loading', async () => {
+      render(<StaffMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Avg Service Time')).toBeInTheDocument());
+    });
+
+    it('should show tips metric after loading', async () => {
+      render(<StaffMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('My Tips')).toBeInTheDocument());
     });
   });
 });

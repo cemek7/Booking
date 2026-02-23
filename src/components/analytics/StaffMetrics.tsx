@@ -8,9 +8,10 @@ import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
 import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
-import { Calendar, DollarSign, Star, TrendingUp, Activity } from 'lucide-react';
+import { Calendar, DollarSign, Star, TrendingUp, Activity, Clock } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
 import type { StaffMemberMetric } from '@/types/analytics-api';
+import { PERIOD_DAYS } from './shared/analytics-constants';
 
 export interface StaffMetricsProps {
   userId: string;
@@ -29,7 +30,7 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
       setLoading(true);
       try {
         const metricsRes = await authFetch<{ metrics?: StaffMemberMetric[] }>(
-          `/api/staff/metrics`,
+          `/api/staff/metrics?days=${PERIOD_DAYS[period]}`,
           { headers: { 'X-Tenant-ID': tenantId } }
         );
 
@@ -47,7 +48,7 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [tenantId, period]);
 
   const currentUserMetrics = useMemo(
     () => staffMetrics.find((row) => row.user_id === userId) || null,
@@ -84,11 +85,16 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
       </div>
 
       {/* Personal KPIs */}
-      <StatsGrid columns={5}>
+      <StatsGrid columns={4}>
         <MetricCard label="My Completed Bookings" value={currentUserMetrics?.completed || 0} icon={Calendar} colorScheme="info" loading={loading} />
         <MetricCard label="My Revenue" value={currentUserMetrics?.revenue || 0} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
+        <MetricCard label="My Tips" value={currentUserMetrics?.tips_total || 0} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
         <MetricCard label="My Rating" value={currentUserMetrics?.rating ?? '—'} icon={Star} colorScheme="warning" loading={loading} />
+      </StatsGrid>
+
+      <StatsGrid columns={3}>
         <MetricCard label="My Utilization" value={`${(currentUserMetrics?.utilization_rate || 0).toFixed(1)}%`} icon={Activity} colorScheme="info" loading={loading} />
+        <MetricCard label="Avg Service Time" value={currentUserMetrics?.avg_service_duration_min ? `${currentUserMetrics.avg_service_duration_min.toFixed(0)}m` : '—'} icon={Clock} colorScheme="default" loading={loading} />
         <MetricCard
           label="Completion Share"
           value={completionShare}
@@ -130,24 +136,26 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
           user: row.user_id.slice(0, 8),
           utilization: row.utilization_rate || 0,
           revenue: row.revenue || 0,
+          tips: row.tips_total || 0,
         }))}
-        dataKeys={['utilization', 'revenue']}
+        dataKeys={['utilization', 'revenue', 'tips']}
         xAxisKey="user"
-        title="Staff Utilization & Revenue (Top 10)"
-        description="Utilization % and revenue contribution per staff member"
-        colors={['#6366f1', '#f59e0b']}
+        title="Staff Utilization, Revenue & Tips (Top 10)"
+        description="Utilization %, revenue, and tips per staff member"
+        colors={['#6366f1', '#f59e0b', '#10b981']}
       />
 
-      {/* Full Staff Performance Table */}
       <PerformanceTable
         data={sortedStaffMetrics}
         title="Team Performance Breakdown"
-        description="All staff members — last 30 days"
+        description="All staff members — selected period"
         columns={[
           { key: 'user_id', label: 'Staff ID', sortable: true, formatValue: (v) => String(v).slice(0, 8) },
           { key: 'completed', label: 'Completed', sortable: true, align: 'right' },
           { key: 'revenue', label: 'Revenue', sortable: true, align: 'right', formatValue: (v) => `$${Number(v || 0).toLocaleString()}` },
+          { key: 'tips_total', label: 'Tips', sortable: true, align: 'right', formatValue: (v) => `$${Number(v || 0).toLocaleString()}` },
           { key: 'utilization_rate', label: 'Utilization', sortable: true, align: 'right', formatValue: (v) => `${Number(v || 0).toFixed(1)}%` },
+          { key: 'avg_service_duration_min', label: 'Avg Time', sortable: true, align: 'right', formatValue: (v) => v ? `${Number(v).toFixed(0)}m` : '—' },
           { key: 'rating', label: 'Rating', sortable: true, align: 'right', formatValue: (v) => v != null ? Number(v).toFixed(1) : '—' },
         ]}
       />

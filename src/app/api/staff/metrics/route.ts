@@ -5,19 +5,22 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
  * GET /api/staff/metrics
  *
  * Returns per-staff-member metrics for a tenant: completed booking count,
- * revenue sum (from completed transactions), and utilization rate.
+ * revenue sum (from completed transactions), tips total, utilization rate,
+ * and average service duration — all scoped to the requested window (?days=N, default 30).
  * Uses X-Tenant-ID header (preferred) or tenant_id query param as fallback.
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID')
-      || new URL(ctx.request.url).searchParams.get('tenant_id');
+    const url = new URL(ctx.request.url);
+    const tenantId = ctx.request.headers.get('X-Tenant-ID') || url.searchParams.get('tenant_id');
 
     if (!tenantId) {
       throw ApiErrorFactory.badRequest('tenant_id required');
     }
 
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const daysParam = parseInt(url.searchParams.get('days') || '30', 10);
+    const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 30;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     // Fetch staff list, their completed reservations, and their revenue in parallel
     const [staffResult, reservationsResult, revenueResult] = await Promise.all([
@@ -64,8 +67,9 @@ export const GET = createHttpHandler(
       }
     }
 
-    // Sum revenue per staff member (linked via metadata.staff_id)
+    // Sum revenue and tips per staff member (linked via metadata.staff_id)
     const revenueByUser: Record<string, number> = {};
+    const tipsByUser: Record<string, number> = {};
     for (const t of revenueResult.data || []) {
       const row = t as Record<string, unknown>;
       const meta = row.metadata as Record<string, unknown> | undefined;
@@ -74,22 +78,34 @@ export const GET = createHttpHandler(
         || (meta?.user_id as string | undefined);
       if (!staffId) continue;
       revenueByUser[staffId] = (revenueByUser[staffId] || 0) + Number(t.amount || 0);
+      // Tips may be stored in metadata.tips or metadata.tip_amount
+      const tipAmount = Number(meta?.tips || meta?.tip_amount || 0);
+      if (tipAmount > 0) {
+        tipsByUser[staffId] = (tipsByUser[staffId] || 0) + tipAmount;
+      }
     }
 
-    // Utilization: fraction of available minutes used (8 working hours/day × 30-day window)
-    const MONTHLY_AVAILABLE_MINUTES = 8 * 60 * 30; // 8h/day × 30 days = 14 400 min
+    // Utilization: fraction of available minutes used (8 working hours/day × window days)
+    const availableMinutes = 8 * 60 * days;
+    const round1dp = (n: number) => Math.round(n * 10) / 10;
 
     const metrics = staff.map((s) => {
       const usedMinutes = durationByUser[s.user_id] || 0;
-      const utilization_rate = MONTHLY_AVAILABLE_MINUTES > 0
-        ? Math.min(100, (usedMinutes / MONTHLY_AVAILABLE_MINUTES) * 100)
+      const completedCount = completedByUser[s.user_id] || 0;
+      const utilization_rate = availableMinutes > 0
+        ? Math.min(100, (usedMinutes / availableMinutes) * 100)
+        : 0;
+      const avg_service_duration_min = completedCount > 0
+        ? round1dp(usedMinutes / completedCount)
         : 0;
       return {
         user_id: s.user_id,
         rating: null as number | null,
-        completed: completedByUser[s.user_id] || 0,
+        completed: completedCount,
         revenue: revenueByUser[s.user_id] || 0,
-        utilization_rate: Math.round(utilization_rate * 10) / 10,
+        tips_total: tipsByUser[s.user_id] || 0,
+        utilization_rate: round1dp(utilization_rate),
+        avg_service_duration_min,
       };
     });
 
