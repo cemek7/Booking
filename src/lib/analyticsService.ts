@@ -305,6 +305,44 @@ export class AnalyticsService {
 
       if (error) throw error;
 
+      // Get staff ratings from database for the period
+      const { data: staffRatings } = await this.supabase
+        .from('staff_ratings')
+        .select('staff_id, average_rating')
+        .eq('tenant_id', tenantId)
+        .gte('period_start', dateRange.start.toISOString().split('T')[0])
+        .lte('period_end', dateRange.end.toISOString().split('T')[0]);
+
+      const ratingsMap = new Map(
+        (staffRatings || []).map(r => [r.staff_id, r.average_rating])
+      );
+
+      // Fallback: Get average rating from reviews if staff_ratings not available
+      const { data: reviewRatings } = await this.supabase
+        .from('reviews')
+        .select('staff_id, staff_rating')
+        .eq('tenant_id', tenantId)
+        .gte('created_at', dateRange.start.toISOString())
+        .lte('created_at', dateRange.end.toISOString())
+        .not('staff_rating', 'is', null);
+
+      // Calculate average ratings from reviews for staff without aggregated ratings
+      const reviewRatingsMap = new Map<string, number>();
+      (reviewRatings || []).forEach(review => {
+        if (!ratingsMap.has(review.staff_id)) {
+          const existing = reviewRatingsMap.get(review.staff_id) || { total: 0, count: 0 };
+          existing.total += review.staff_rating;
+          existing.count += 1;
+          reviewRatingsMap.set(review.staff_id, existing);
+        }
+      });
+
+      reviewRatingsMap.forEach((value, staffId) => {
+        if (!ratingsMap.has(staffId)) {
+          ratingsMap.set(staffId, value.total / value.count);
+        }
+      });
+
       const performanceData: StaffPerformanceData[] = (staffData || []).map(staff => {
         const reservations = staff.reservations || [];
         const completedBookings = reservations.filter(r => r.status === 'completed').length;
@@ -316,13 +354,16 @@ export class AnalyticsService {
         const bookedHours = reservations.length * 1; // Assuming 1 hour per booking
         const utilizationRate = totalHoursInPeriod > 0 ? (bookedHours / totalHoursInPeriod) * 100 : 0;
 
+        // Get real rating from database or default to 0 if no reviews yet
+        const customerRating = ratingsMap.get(staff.id) || 0;
+
         return {
           staff_id: staff.id,
           staff_name: staff.name,
           bookings_count: completedBookings,
           revenue_total: Number(totalRevenue),
           utilization_rate: Math.min(utilizationRate, 100),
-          customer_rating: 4.5, // Mock rating - would come from reviews
+          customer_rating: Number(customerRating.toFixed(1)),
           tips_total: Number(totalTips),
         };
       });
@@ -439,33 +480,98 @@ export class AnalyticsService {
 
       switch (vertical) {
         case 'beauty':
-          uniqueMetrics = await this.getBeautyMetrics();
+          uniqueMetrics = await this.getBeautyMetrics(tenantId);
           break;
         case 'hospitality':
-          uniqueMetrics = await this.getHospitalityMetrics();
+          uniqueMetrics = await this.getHospitalityMetrics(tenantId);
           break;
         case 'medicine':
-          uniqueMetrics = await this.getMedicineMetrics();
+          uniqueMetrics = await this.getMedicineMetrics(tenantId);
           break;
       }
 
-      // Mock conversion funnel data - would be calculated from actual user journey
+      // Calculate conversion funnel from analytics events
+      const { data: events } = await this.supabase
+        .from('analytics_events')
+        .select('event_type')
+        .eq('tenant_id', tenantId)
+        .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) // Last 30 days
+        .in('event_type', ['website_visit', 'chat_started', 'service_selected', 'booking_completed', 'payment_made']);
+
+      const eventCounts = new Map<string, number>();
+      (events || []).forEach(event => {
+        eventCounts.set(event.event_type, (eventCounts.get(event.event_type) || 0) + 1);
+      });
+
+      const websiteVisits = eventCounts.get('website_visit') || 1;
+      const chatStarted = eventCounts.get('chat_started') || 0;
+      const serviceSelected = eventCounts.get('service_selected') || 0;
+      const bookingCompleted = eventCounts.get('booking_completed') || 0;
+      const paymentMade = eventCounts.get('payment_made') || 0;
+
       const conversionFunnels = [
-        { step: 'Website Visit', count: 1000, conversion_rate: 100 },
-        { step: 'Chat Started', count: 500, conversion_rate: 50 },
-        { step: 'Service Selected', count: 300, conversion_rate: 60 },
-        { step: 'Booking Completed', count: 200, conversion_rate: 67 },
-        { step: 'Payment Made', count: 180, conversion_rate: 90 },
+        { step: 'Website Visit', count: websiteVisits, conversion_rate: 100 },
+        { step: 'Chat Started', count: chatStarted, conversion_rate: websiteVisits > 0 ? (chatStarted / websiteVisits) * 100 : 0 },
+        { step: 'Service Selected', count: serviceSelected, conversion_rate: chatStarted > 0 ? (serviceSelected / chatStarted) * 100 : 0 },
+        { step: 'Booking Completed', count: bookingCompleted, conversion_rate: serviceSelected > 0 ? (bookingCompleted / serviceSelected) * 100 : 0 },
+        { step: 'Payment Made', count: paymentMade, conversion_rate: bookingCompleted > 0 ? (paymentMade / bookingCompleted) * 100 : 0 },
       ];
 
-      // Mock retention cohorts - would be calculated from customer behavior
-      const retentionCohorts = [
-        { cohort: '2024-01', period: 1, retention_rate: 85 },
-        { cohort: '2024-01', period: 2, retention_rate: 65 },
-        { cohort: '2024-01', period: 3, retention_rate: 45 },
-        { cohort: '2024-02', period: 1, retention_rate: 88 },
-        { cohort: '2024-02', period: 2, retention_rate: 70 },
-      ];
+      // Calculate retention cohorts from customer booking data
+      const { data: customerBookings } = await this.supabase
+        .from('reservations')
+        .select('customer_id, start_at, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'completed')
+        .gte('created_at', new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString()) // Last 6 months
+        .order('created_at', { ascending: true });
+
+      // Group customers by cohort (month of first booking)
+      const cohortData = new Map<string, { customers: Set<string>; periods: Map<number, Set<string>> }>();
+      
+      (customerBookings || []).forEach(booking => {
+        const cohortMonth = new Date(booking.created_at).toISOString().substring(0, 7); // YYYY-MM
+        const bookingMonth = new Date(booking.start_at).toISOString().substring(0, 7);
+        
+        if (!cohortData.has(cohortMonth)) {
+          cohortData.set(cohortMonth, { customers: new Set(), periods: new Map() });
+        }
+        
+        const cohort = cohortData.get(cohortMonth)!;
+        cohort.customers.add(booking.customer_id);
+        
+        // Calculate period difference in months
+        const cohortDate = new Date(cohortMonth + '-01');
+        const bookingDate = new Date(bookingMonth + '-01');
+        const periodDiff = (bookingDate.getFullYear() - cohortDate.getFullYear()) * 12 
+                          + (bookingDate.getMonth() - cohortDate.getMonth());
+        
+        if (!cohort.periods.has(periodDiff)) {
+          cohort.periods.set(periodDiff, new Set());
+        }
+        cohort.periods.get(periodDiff)!.add(booking.customer_id);
+      });
+
+      // Build retention cohorts array
+      const retentionCohorts: Array<{ cohort: string; period: number; retention_rate: number }> = [];
+      cohortData.forEach((data, cohortMonth) => {
+        const cohortSize = data.customers.size;
+        if (cohortSize > 0) {
+          data.periods.forEach((customers, period) => {
+            const retentionRate = (customers.size / cohortSize) * 100;
+            retentionCohorts.push({
+              cohort: cohortMonth,
+              period,
+              retention_rate: Number(retentionRate.toFixed(1)),
+            });
+          });
+        }
+      });
+
+      retentionCohorts.sort((a, b) => {
+        if (a.cohort !== b.cohort) return a.cohort.localeCompare(b.cohort);
+        return a.period - b.period;
+      });
 
       const analytics: VerticalAnalytics = {
         vertical,
@@ -615,36 +721,154 @@ export class AnalyticsService {
     }
   }
 
-  private async getBeautyMetrics(): Promise<Record<string, number>> {
-    // Beauty-specific metrics
+  private async getBeautyMetrics(tenantId: string): Promise<Record<string, number>> {
+    // Beauty-specific metrics derived from actual data
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    // Get rebooking rate (customers who booked again within 30 days)
+    const { data: allBookings } = await this.supabase
+      .from('reservations')
+      .select('customer_id, start_at')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'completed')
+      .gte('start_at', thirtyDaysAgo.toISOString())
+      .order('start_at', { ascending: true });
+
+    const customerBookingCounts = new Map<string, number>();
+    (allBookings || []).forEach(booking => {
+      const count = customerBookingCounts.get(booking.customer_id) || 0;
+      customerBookingCounts.set(booking.customer_id, count + 1);
+    });
+
+    const repeatCustomers = Array.from(customerBookingCounts.values()).filter(count => count > 1).length;
+    const totalCustomers = customerBookingCounts.size;
+    const rebookingRate = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
+
+    // Get product upsells from metadata
+    const { data: upsellData } = await this.supabase
+      .from('reservations')
+      .select('metadata')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'completed')
+      .gte('start_at', thirtyDaysAgo.toISOString())
+      .not('metadata->product_upsells', 'is', null);
+
+    const productUpsells = (upsellData || []).filter(r => r.metadata?.product_upsells).length;
+    const totalCompletedBookings = await this.getBookingsCount(tenantId, thirtyDaysAgo, new Date());
+    const upsellRate = totalCompletedBookings > 0 ? (productUpsells / totalCompletedBookings) * 100 : 0;
+
+    // Calculate staff utilization
+    const utilization = await this.getStaffUtilization(tenantId, thirtyDaysAgo, new Date());
+
     return {
-      stylist_utilization: 75,
-      product_upsells: 45,
-      loyalty_redemptions: 23,
-      before_after_uploads: 67,
-      rebooking_rate: 82,
+      stylist_utilization: Number(utilization.toFixed(1)),
+      product_upsells: Number(upsellRate.toFixed(1)),
+      loyalty_redemptions: 0, // Would need loyalty program table
+      before_after_uploads: 0, // Would need media uploads tracking
+      rebooking_rate: Number(rebookingRate.toFixed(1)),
     };
   }
 
-  private async getHospitalityMetrics(): Promise<Record<string, number>> {
-    // Hospitality-specific metrics
+  private async getHospitalityMetrics(tenantId: string): Promise<Record<string, number>> {
+    // Hospitality-specific metrics derived from actual data
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    // Get group booking rate (bookings with 3+ participants)
+    const { data: bookings } = await this.supabase
+      .from('reservations')
+      .select('metadata')
+      .eq('tenant_id', tenantId)
+      .gte('start_at', thirtyDaysAgo.toISOString());
+
+    const groupBookings = (bookings || []).filter(
+      b => b.metadata?.party_size && b.metadata.party_size >= 3
+    ).length;
+    const totalBookings = bookings?.length || 0;
+    const groupBookingRate = totalBookings > 0 ? (groupBookings / totalBookings) * 100 : 0;
+
+    // Get special requests rate
+    const specialRequests = (bookings || []).filter(
+      b => b.metadata?.special_requests && b.metadata.special_requests.length > 0
+    ).length;
+    const specialRequestsRate = totalBookings > 0 ? (specialRequests / totalBookings) * 100 : 0;
+
+    // Get average rating
+    const { data: reviews } = await this.supabase
+      .from('reviews')
+      .select('overall_rating')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', thirtyDaysAgo.toISOString());
+
+    const avgRating = reviews && reviews.length > 0
+      ? reviews.reduce((sum, r) => sum + r.overall_rating, 0) / reviews.length
+      : 0;
+
+    // Get package attach rate (bookings with packages)
+    const packageBookings = (bookings || []).filter(
+      b => b.metadata?.package_id
+    ).length;
+    const packageAttachRate = totalBookings > 0 ? (packageBookings / totalBookings) * 100 : 0;
+
     return {
-      adr_lift: 15, // Average Daily Rate lift from upsells
-      group_booking_rate: 25,
-      special_requests: 45,
-      guest_satisfaction: 4.7,
-      package_attach_rate: 35,
+      adr_lift: 0, // Would need baseline pricing data
+      group_booking_rate: Number(groupBookingRate.toFixed(1)),
+      special_requests: Number(specialRequestsRate.toFixed(1)),
+      guest_satisfaction: Number(avgRating.toFixed(1)),
+      package_attach_rate: Number(packageAttachRate.toFixed(1)),
     };
   }
 
-  private async getMedicineMetrics(): Promise<Record<string, number>> {
-    // Medicine-specific metrics (non-sensitive)
+  private async getMedicineMetrics(tenantId: string): Promise<Record<string, number>> {
+    // Medicine-specific metrics (non-sensitive) derived from actual data
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    // Get appointment compliance (completed vs scheduled)
+    const { data: appointments } = await this.supabase
+      .from('reservations')
+      .select('status')
+      .eq('tenant_id', tenantId)
+      .gte('start_at', thirtyDaysAgo.toISOString());
+
+    const scheduledCount = appointments?.length || 0;
+    const completedCount = (appointments || []).filter(a => a.status === 'completed').length;
+    const noShowCount = (appointments || []).filter(a => a.status === 'no_show').length;
+    const complianceRate = scheduledCount > 0 
+      ? ((completedCount / (scheduledCount - noShowCount)) * 100) 
+      : 0;
+
+    // Get follow-up scheduled rate
+    const { data: followUps } = await this.supabase
+      .from('reservations')
+      .select('metadata')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'completed')
+      .gte('start_at', thirtyDaysAgo.toISOString())
+      .not('metadata->follow_up_scheduled', 'is', null);
+
+    const followUpRate = completedCount > 0 
+      ? ((followUps?.length || 0) / completedCount) * 100 
+      : 0;
+
+    // Get average satisfaction from reviews
+    const { data: patientReviews } = await this.supabase
+      .from('reviews')
+      .select('overall_rating')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', thirtyDaysAgo.toISOString());
+
+    const patientSatisfaction = patientReviews && patientReviews.length > 0
+      ? patientReviews.reduce((sum, r) => sum + r.overall_rating, 0) / patientReviews.length
+      : 0;
+
     return {
-      appointment_compliance: 95,
-      follow_up_scheduled: 78,
-      test_turnaround_time: 24, // hours
-      digital_results_delivery: 92,
-      patient_satisfaction: 4.6,
+      appointment_compliance: Number(complianceRate.toFixed(1)),
+      follow_up_scheduled: Number(followUpRate.toFixed(1)),
+      test_turnaround_time: 0, // Would need lab results tracking
+      digital_results_delivery: 0, // Would need digital delivery tracking
+      patient_satisfaction: Number(patientSatisfaction.toFixed(1)),
     };
   }
 }
