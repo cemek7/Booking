@@ -9,6 +9,8 @@ import { dialogManagerWhatsApp } from './dialogManagerExtension';
 import { EvolutionClient } from './evolutionClient';
 import { BookingEngine } from '@/lib/booking/engine';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
+import { AdvancedConversationAI } from '@/lib/ai/advancedConversationAI';
+import { loadTenantDocuments, queryTenant } from '@/lib/retrieval';
 
 interface ConversationFlow {
   tenantId: string;
@@ -25,6 +27,7 @@ type DialogStep =
   | 'staff_selection'
   | 'date_selection'
   | 'time_selection'
+  | 'email_collection'
   | 'confirm_booking'
   | 'payment'
   | 'completed'
@@ -35,6 +38,7 @@ class WhatsAppMessageHandler {
   private supabase = createServerSupabaseClient();
   private evolutionClient = new EvolutionClient();
   private bookingEngine = new BookingEngine();
+  private conversationAI = new AdvancedConversationAI();
 
   /**
    * Main entry point: handle incoming message
@@ -49,6 +53,9 @@ class WhatsAppMessageHandler {
     console.log(`\n🤖 Handling WhatsApp message for tenant ${tenantId}`);
 
     try {
+      // Ensure tenant knowledge articles are loaded for RAG
+      void loadTenantDocuments(tenantId, this.supabase);
+
       // Get or create customer
       const customer = await dialogManagerWhatsApp.getOrCreateCustomer(
         tenantId,
@@ -69,6 +76,15 @@ class WhatsAppMessageHandler {
         currentStep: dialogState.current_step as DialogStep,
         bookingContext: dialogState.booking_context || {},
       };
+
+      // Maintain advanced AI conversation context and check for escalation
+      const aiContext = await this.conversationAI.maintainContext(tenantId, customerPhone, messageContent);
+      const multiTurnResult = await this.conversationAI.manageMultiTurnDialog(tenantId, customerPhone, messageContent, aiContext);
+
+      if (multiTurnResult.requires_human_escalation) {
+        await this.triggerHumanEscalation(tenantId, customerPhone, sessionId, dialogState, 'AI escalation triggered');
+        return '🙋 Let me connect you with a member of our team who can better assist you. Someone will respond shortly.';
+      }
 
       // Route based on intent
       let response: string;
@@ -161,6 +177,44 @@ class WhatsAppMessageHandler {
       }
 
       bookingContext.time = timeEntity.value;
+      await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
+
+      // Check if we already have the customer's email
+      const { data: customerRow } = await this.supabase
+        .from('customers')
+        .select('email')
+        .eq('id', customerId)
+        .maybeSingle();
+
+      if (customerRow?.email) {
+        // Email already on file — skip collection step
+        bookingContext.email = customerRow.email;
+        await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
+        await dialogManagerWhatsApp.advanceStep(sessionId, 'confirm_booking');
+        return await this.getConfirmationMessage(tenantId, bookingContext, flow.customerPhone);
+      }
+
+      // Ask for email before confirming
+      await dialogManagerWhatsApp.advanceStep(sessionId, 'email_collection');
+      return '📧 Please share your email address so we can send you a booking confirmation.';
+    }
+
+    if (currentStep === 'email_collection') {
+      // Validate email format
+      const emailMatch = messageContent.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      if (!emailMatch) {
+        return 'That doesn\'t look like a valid email address. Please send your email (e.g., name@example.com).';
+      }
+
+      const email = emailMatch[0].toLowerCase();
+      bookingContext.email = email;
+
+      // Persist email to customer record
+      await this.supabase
+        .from('customers')
+        .update({ email })
+        .eq('id', customerId);
+
       await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
       await dialogManagerWhatsApp.advanceStep(sessionId, 'confirm_booking');
 
@@ -282,7 +336,7 @@ class WhatsAppMessageHandler {
   }
 
   /**
-   * Handle inquiry intent
+   * Handle inquiry intent — uses RAG against tenant knowledge articles
    */
   private async handleInquiryIntent(
     flow: ConversationFlow,
@@ -291,16 +345,28 @@ class WhatsAppMessageHandler {
   ): Promise<string> {
     console.log('❓ Processing inquiry');
 
-    // Generic response for inquiries
-    if (messageContent.toLowerCase().includes('service')) {
+    const lower = messageContent.toLowerCase();
+
+    // 1. RAG: search tenant knowledge articles first
+    const ragDocs = queryTenant(flow.tenantId, messageContent, 2);
+    if (ragDocs.length > 0 && ragDocs[0].text.length > 10) {
+      // Return the best-matching article content (trim to first 300 chars for WhatsApp)
+      const answer = ragDocs[0].text.length > 300
+        ? ragDocs[0].text.slice(0, 300) + '…'
+        : ragDocs[0].text;
+      return `${answer}\n\nIs there anything else I can help you with?`;
+    }
+
+    // 2. Keyword-based fallback routing
+    if (lower.includes('service')) {
       return await this.getServiceSelectionMessage(flow.tenantId);
     }
 
-    if (messageContent.toLowerCase().includes('hours') || messageContent.toLowerCase().includes('open')) {
+    if (lower.includes('hours') || lower.includes('open')) {
       return await this.getBusinessHoursMessage(flow.tenantId);
     }
 
-    if (messageContent.toLowerCase().includes('price') || messageContent.toLowerCase().includes('cost')) {
+    if (lower.includes('price') || lower.includes('cost')) {
       return await this.getPricingMessage(flow.tenantId);
     }
 
@@ -358,7 +424,69 @@ class WhatsAppMessageHandler {
   }
 
   private async getTimeSelectionMessage(tenantId: string, serviceId: string, date: string): Promise<string> {
-    return `What time works best for you?\n\n⏰ Morning (9 AM - 12 PM)\n⏰ Afternoon (12 PM - 5 PM)\n⏰ Evening (5 PM - 9 PM)\n\nOr specify a time like "10:30 AM"`;
+    try {
+      // Parse the requested date — accept ISO dates or relative strings
+      const requestedDate = new Date(date);
+      const dayStart = isNaN(requestedDate.getTime())
+        ? new Date(new Date().setHours(8, 0, 0, 0))
+        : new Date(requestedDate.setHours(8, 0, 0, 0));
+      const dayEnd = new Date(dayStart.getTime() + 12 * 3_600_000); // 8am – 8pm
+
+      // 1. Try precomputed availability_slots first
+      const { data: slots } = await this.supabase
+        .from('availability_slots')
+        .select('start_time, end_time')
+        .gte('start_time', dayStart.toISOString())
+        .lte('start_time', dayEnd.toISOString())
+        .eq('is_available', true)
+        .order('start_time', { ascending: true })
+        .limit(8);
+
+      if (slots && slots.length > 0) {
+        const slotList = slots
+          .map((s: { start_time: string; end_time: string }, i: number) => {
+            const t = new Date(s.start_time);
+            return `${i + 1}. ${t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+          })
+          .join('\n');
+        return `Available times for ${dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}:\n\n${slotList}\n\nReply with a number or the time (e.g., "10:30 AM").`;
+      }
+
+      // 2. Fall back to checking reservations for free windows
+      const { data: existingBookings } = await this.supabase
+        .from('reservations')
+        .select('start_at, end_at')
+        .eq('tenant_id', tenantId)
+        .gte('start_at', dayStart.toISOString())
+        .lte('start_at', dayEnd.toISOString())
+        .not('status', 'in', '("cancelled","no_show")');
+
+      const booked = new Set<number>(
+        (existingBookings ?? []).map((b: { start_at: string }) =>
+          Math.floor(new Date(b.start_at).getTime() / (30 * 60_000))
+        )
+      );
+
+      const freeSlots: string[] = [];
+      for (let ts = dayStart.getTime(); ts < dayEnd.getTime() && freeSlots.length < 6; ts += 30 * 60_000) {
+        const bucket = Math.floor(ts / (30 * 60_000));
+        if (!booked.has(bucket)) {
+          freeSlots.push(
+            new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          );
+        }
+      }
+
+      if (freeSlots.length > 0) {
+        const list = freeSlots.map((t, i) => `${i + 1}. ${t}`).join('\n');
+        return `Available times for ${dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}:\n\n${list}\n\nReply with a number or the time (e.g., "10:30 AM").`;
+      }
+    } catch (err) {
+      console.warn('[messageHandler] getTimeSelectionMessage error:', err);
+    }
+
+    // Final fallback if no availability data at all
+    return `What time works best for you on ${date}?\n\n⏰ Morning (9 AM – 12 PM)\n⏰ Afternoon (12 PM – 5 PM)\n⏰ Evening (5 PM – 8 PM)\n\nOr type a specific time like "10:30 AM".`;
   }
 
   private async getConfirmationMessage(tenantId: string, context: Record<string, any>, phone: string): Promise<string> {
@@ -508,6 +636,43 @@ class WhatsAppMessageHandler {
     } catch (error) {
       console.error('Error cancelling booking:', error);
       return false;
+    }
+  }
+
+  /**
+   * Insert an escalation_queue row so a human agent can pick up this chat.
+   */
+  private async triggerHumanEscalation(
+    tenantId: string,
+    customerPhone: string,
+    sessionId: string,
+    dialogState: Record<string, any>,
+    reason: string
+  ): Promise<void> {
+    try {
+      // Snapshot the recent conversation history if stored on dialogState
+      const snapshot = Array.isArray(dialogState?.conversation_history)
+        ? dialogState.conversation_history.slice(-20)
+        : [];
+
+      const { error } = await this.supabase
+        .from('escalation_queue')
+        .insert({
+          tenant_id: tenantId,
+          customer_phone: customerPhone,
+          session_id: sessionId,
+          reason,
+          status: 'pending',
+          conversation_snapshot: snapshot,
+        });
+
+      if (error) {
+        console.error('[messageHandler] Failed to create escalation record:', error.message);
+      } else {
+        console.log(`[messageHandler] Escalation created for ${customerPhone} (tenant ${tenantId})`);
+      }
+    } catch (err) {
+      console.error('[messageHandler] triggerHumanEscalation error:', err);
     }
   }
 }

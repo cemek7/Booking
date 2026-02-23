@@ -731,27 +731,232 @@ class AdvancedConversationAI {
   // Including flow management, proactive action generation, etc.
 
   private async determineConversationFlow(context: ConversationContext, message: string): Promise<ConversationFlow> {
-    // Implementation for determining conversation flow
-    return this.createBasicFlow();
-  }
+    const stage = context.context.conversation_stage;
+    const flowId = `flow_${context.conversation_id}`;
 
-  private async generateContextualResponse(context: ConversationContext, message: string, flow: ConversationFlow): Promise<string> {
-    // Implementation for generating contextual responses
-    return "Thank you for your message. How can I help you today?";
-  }
+    // Reuse cached flow if one exists for this conversation
+    const existing = this.activeFlows.get(flowId);
 
-  private async updateConversationFlow(flow: ConversationFlow, message: string, response: string): Promise<ConversationFlow> {
-    // Implementation for updating conversation flow
+    const STAGE_STEPS: Record<ConversationContext['context']['conversation_stage'], string[]> = {
+      inquiry:     ['greeting', 'service_inquiry', 'availability_check'],
+      browsing:    ['greeting', 'service_inquiry', 'pricing_inquiry', 'availability_check'],
+      negotiating: ['greeting', 'service_inquiry', 'pricing_inquiry', 'objection_handling', 'availability_check'],
+      booking:     ['greeting', 'service_selection', 'staff_selection', 'date_time_selection', 'email_collection', 'confirmation'],
+      confirmed:   ['greeting', 'service_selection', 'staff_selection', 'date_time_selection', 'email_collection', 'confirmation', 'completed'],
+      completed:   ['greeting', 'service_selection', 'staff_selection', 'date_time_selection', 'email_collection', 'confirmation', 'completed'],
+    };
+
+    const STAGE_COMPLETION: Record<ConversationContext['context']['conversation_stage'], number> = {
+      inquiry: 10, browsing: 20, negotiating: 40, booking: 60, confirmed: 90, completed: 100,
+    };
+
+    const steps = STAGE_STEPS[stage];
+    const completedSteps = existing?.completed_steps ?? steps.slice(0, Math.max(0, steps.indexOf(stage)));
+    const currentStep = existing?.current_step ?? stage;
+
+    // Detect explicit booking intent in current message
+    const lowerMsg = message.toLowerCase();
+    const bookingKeywords = ['book', 'schedule', 'appointment', 'reserve'];
+    const nextStep = bookingKeywords.some(k => lowerMsg.includes(k)) && stage === 'browsing'
+      ? 'service_selection'
+      : currentStep;
+
+    const flow: ConversationFlow = {
+      flow_id: flowId,
+      current_step: nextStep,
+      completed_steps: completedSteps,
+      available_next_steps: steps.slice(steps.indexOf(nextStep) + 1),
+      flow_data: existing?.flow_data ?? {},
+      decision_points: [
+        { step: 'service_inquiry', condition: 'service_mentioned', branches: { yes: 'availability_check', no: 'service_inquiry' } },
+        { step: 'pricing_inquiry', condition: 'price_mentioned', branches: { yes: 'objection_handling', no: 'availability_check' } },
+        { step: 'confirmation', condition: 'confirmed', branches: { yes: 'completed', no: 'date_time_selection' } },
+      ],
+      completion_percentage: STAGE_COMPLETION[stage],
+      estimated_completion_time: stage === 'completed' ? 0 : (steps.length - completedSteps.length) * 60,
+    };
+
+    this.activeFlows.set(flowId, flow);
     return flow;
   }
 
+  private async generateContextualResponse(context: ConversationContext, message: string, flow: ConversationFlow): Promise<string> {
+    const stage = context.context.conversation_stage;
+    const sentiment = context.context.sentiment_history.slice(-1)[0]?.sentiment ?? 'neutral';
+    const urgency = context.context.urgency_level;
+
+    // Opening empathy for negative sentiment
+    const empathyPrefix = sentiment === 'negative'
+      ? "I'm sorry to hear that. "
+      : sentiment === 'positive' ? "Great! " : "";
+
+    // Unresolved questions carry forward
+    const unresolvedNote = context.context.unresolved_questions.length > 0
+      ? ` (I noticed you still have a question about: ${context.context.unresolved_questions[0]})`
+      : '';
+
+    const urgencyNote = urgency === 'urgent' || urgency === 'high'
+      ? " I'll prioritise this for you right away."
+      : '';
+
+    switch (stage) {
+      case 'inquiry':
+        return `${empathyPrefix}Welcome! How can I help you today? I can assist with bookings, check our services, or answer any questions you have.${urgencyNote}`;
+
+      case 'browsing':
+        return `${empathyPrefix}Here are some things I can help you with:\n\n📋 Book an appointment\n💰 Get service pricing\n📅 Check availability\n\nWhat would you like to know?${unresolvedNote}`;
+
+      case 'negotiating':
+        return `${empathyPrefix}I understand you have some questions about pricing or availability. Let me help clarify that for you.${urgencyNote}${unresolvedNote}`;
+
+      case 'booking':
+        return `${empathyPrefix}Let's get your appointment booked! ${flow.available_next_steps.length > 0 ? `Next step: ${flow.available_next_steps[0].replace(/_/g, ' ')}.` : ''}${urgencyNote}`;
+
+      case 'confirmed':
+        return `${empathyPrefix}Your appointment is confirmed! You'll receive a reminder 24 hours before. Is there anything else I can help you with?`;
+
+      case 'completed':
+        return `${empathyPrefix}Thank you for booking with us! We look forward to seeing you. Feel free to reach out if you need anything else.`;
+
+      default:
+        return `${empathyPrefix}How can I assist you today?`;
+    }
+  }
+
+  private async updateConversationFlow(flow: ConversationFlow, message: string, response: string): Promise<ConversationFlow> {
+    // Mark the current step as completed and advance
+    const updated = { ...flow };
+    if (!updated.completed_steps.includes(flow.current_step)) {
+      updated.completed_steps = [...updated.completed_steps, flow.current_step];
+    }
+    if (updated.available_next_steps.length > 0) {
+      updated.current_step = updated.available_next_steps[0];
+      updated.available_next_steps = updated.available_next_steps.slice(1);
+    }
+    updated.completion_percentage = Math.min(
+      100,
+      Math.round((updated.completed_steps.length / (updated.completed_steps.length + updated.available_next_steps.length + 1)) * 100)
+    );
+    this.activeFlows.set(flow.flow_id, updated);
+    return updated;
+  }
+
   private async generateProactiveActions(tenantId: string, customerPhone: string, context: ConversationContext, flow: ConversationFlow): Promise<ProactiveAction[]> {
-    // Implementation for generating proactive actions
-    return [];
+    const actions: ProactiveAction[] = [];
+    const stage = context.context.conversation_stage;
+    const lastSentiment = context.context.sentiment_history.slice(-1)[0]?.sentiment;
+    const tz = 'UTC';
+    const now = new Date().toISOString();
+
+    // Follow-up: customer was browsing but hasn't booked after 2+ turns
+    if (stage === 'browsing' && context.context.topics_discussed.length >= 2) {
+      actions.push({
+        action_type: 'follow_up',
+        trigger_condition: 'browsing_no_booking',
+        timing: { optimal_time: new Date(Date.now() + 3_600_000).toISOString(), time_zone: tz, delay_hours: 1 },
+        content: {
+          message: `Hi! I noticed you were looking at our services. Would you like to book an appointment? I can check availability for you right now.`,
+          personalization_data: { services: context.context.service_interests },
+        },
+        channel: 'whatsapp',
+        priority: 2,
+        success_probability: 0.55,
+        expected_outcome: 'booking_initiation',
+      });
+    }
+
+    // Reminder: booking confirmed but no activity in last 12h
+    if (stage === 'confirmed') {
+      actions.push({
+        action_type: 'reminder',
+        trigger_condition: 'appointment_24h',
+        timing: { optimal_time: now, time_zone: tz, delay_hours: 24 },
+        content: {
+          message: `Reminder: your appointment is tomorrow. Reply CANCEL if you need to cancel or RESCHEDULE to change the time.`,
+          personalization_data: {},
+        },
+        channel: 'whatsapp',
+        priority: 3,
+        success_probability: 0.92,
+        expected_outcome: 'confirmation',
+      });
+    }
+
+    // Offer: negative sentiment — send recovery offer
+    if (lastSentiment === 'negative') {
+      actions.push({
+        action_type: 'offer',
+        trigger_condition: 'negative_sentiment',
+        timing: { optimal_time: new Date(Date.now() + 1_800_000).toISOString(), time_zone: tz, delay_hours: 0 },
+        content: {
+          message: `We're sorry you had a frustrating experience. As a gesture of goodwill, our team will personally assist with your booking. Would that help?`,
+          personalization_data: {},
+        },
+        channel: 'whatsapp',
+        priority: 4,
+        success_probability: 0.45,
+        expected_outcome: 'recovery',
+      });
+    }
+
+    // Check-in: post-completed session
+    if (stage === 'completed') {
+      actions.push({
+        action_type: 'check_in',
+        trigger_condition: 'post_service',
+        timing: { optimal_time: new Date(Date.now() + 172_800_000).toISOString(), time_zone: tz, delay_hours: 48 },
+        content: {
+          message: `How was your recent visit? We'd love your feedback! Reply with a score from 1–5 ⭐`,
+          personalization_data: {},
+        },
+        channel: 'whatsapp',
+        priority: 2,
+        success_probability: 0.68,
+        expected_outcome: 'feedback',
+      });
+    }
+
+    // Upsell: repeat customer in browsing/inquiry stage
+    if ((stage === 'browsing' || stage === 'inquiry') && context.context.service_interests.length > 0) {
+      actions.push({
+        action_type: 'upsell',
+        trigger_condition: 'repeat_customer_browsing',
+        timing: { optimal_time: new Date(Date.now() + 86_400_000).toISOString(), time_zone: tz, delay_hours: 24 },
+        content: {
+          message: `Based on your interest in ${context.context.service_interests[0]}, you might also enjoy our complementary services. Would you like to know more?`,
+          personalization_data: { service: context.context.service_interests[0] },
+        },
+        channel: 'whatsapp',
+        priority: 1,
+        success_probability: 0.30,
+        expected_outcome: 'additional_booking',
+      });
+    }
+
+    return this.filterAndPrioritizeActions(actions, undefined, undefined, 3);
   }
 
   private shouldEscalateToHuman(context: ConversationContext, flow: ConversationFlow): boolean {
-    // Implementation for escalation decision
+    const message = context.context;
+
+    // 1. Explicit escalation request keywords
+    const recentTopics = message.topics_discussed.join(' ').toLowerCase();
+    const escalationKeywords = ['human', 'agent', 'person', 'speak to someone', 'real person', 'manager', 'supervisor'];
+    if (escalationKeywords.some(k => recentTopics.includes(k))) return true;
+
+    // 2. Persistent negative sentiment (3+ consecutive negative turns)
+    const recentSentiments = message.sentiment_history.slice(-3);
+    if (recentSentiments.length >= 3 && recentSentiments.every(s => s.sentiment === 'negative')) return true;
+
+    // 3. Too many unresolved questions (more than 3 suggests AI is failing)
+    if (message.unresolved_questions.length >= 3) return true;
+
+    // 4. Repeated objections (customer keeps raising the same concern)
+    if (message.objections_raised.length >= 3) return true;
+
+    // 5. Urgent + stuck in same step too long
+    if (message.urgency_level === 'urgent' && flow.completion_percentage < 30) return true;
+
     return false;
   }
 
