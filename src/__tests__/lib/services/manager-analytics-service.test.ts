@@ -12,16 +12,27 @@ import {
 import { AppUser } from '../../../../types/types';
 
 // Mock Supabase client
-const createMockSupabase = () => ({
-  from: jest.fn().mockReturnThis(),
-  select: jest.fn().mockReturnThis(),
-  eq: jest.fn().mockReturnThis(),
-  in: jest.fn().mockReturnThis(),
-  gte: jest.fn().mockReturnThis(),
-  lte: jest.fn().mockReturnThis(),
-  single: jest.fn(),
-  upsert: jest.fn().mockReturnThis(),
-});
+const createMockSupabase = () => {
+  const defaultResolved = { data: [] as unknown[], error: null, count: null };
+  // Proper thenable so Promise.all can await unrecognised-table queries
+  const thenFn = jest.fn().mockImplementation(
+    (onfulfilled: (v: typeof defaultResolved) => unknown) =>
+      Promise.resolve(defaultResolved).then(onfulfilled)
+  );
+  return {
+    from: jest.fn().mockReturnThis(),
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
+    gte: jest.fn().mockReturnThis(),
+    lte: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    single: jest.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+    upsert: jest.fn().mockReturnThis(),
+    then: thenFn,
+  };
+};
 
 const mockManagerUser: AppUser = {
   id: 'manager-123',

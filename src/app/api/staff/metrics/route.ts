@@ -6,7 +6,8 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
  *
  * Returns per-staff-member metrics for a tenant: completed booking count,
  * revenue sum (from completed transactions), tips total, utilization rate,
- * and average service duration — all scoped to the requested window (?days=N, default 30).
+ * average service duration, and avg customer rating from customer_feedback —
+ * all scoped to the requested window (?days=N, default 30).
  * Uses X-Tenant-ID header (preferred) or tenant_id query param as fallback.
  */
 export const GET = createHttpHandler(
@@ -22,8 +23,8 @@ export const GET = createHttpHandler(
     const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Fetch staff list, their completed reservations, and their revenue in parallel
-    const [staffResult, reservationsResult, revenueResult] = await Promise.all([
+    // Fetch staff list, completed reservations, revenue, and customer feedback in parallel
+    const [staffResult, reservationsResult, revenueResult, feedbackResult] = await Promise.all([
       ctx.supabase
         .from('tenant_users')
         .select('user_id, role')
@@ -40,6 +41,11 @@ export const GET = createHttpHandler(
         .select('amount, metadata')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
+        .gte('created_at', since),
+      ctx.supabase
+        .from('customer_feedback')
+        .select('staff_user_id, score')
+        .eq('tenant_id', tenantId)
         .gte('created_at', since),
     ]);
 
@@ -85,6 +91,14 @@ export const GET = createHttpHandler(
       }
     }
 
+    // Build per-staff rating maps from customer_feedback table
+    const ratingScoresByUser: Record<string, number[]> = {};
+    for (const fb of feedbackResult.data || []) {
+      const row = fb as { staff_user_id: string; score: number };
+      if (!ratingScoresByUser[row.staff_user_id]) ratingScoresByUser[row.staff_user_id] = [];
+      ratingScoresByUser[row.staff_user_id].push(row.score);
+    }
+
     // Utilization: fraction of available minutes used (8 working hours/day × window days)
     const availableMinutes = 8 * 60 * days;
     const round1dp = (n: number) => Math.round(n * 10) / 10;
@@ -98,9 +112,14 @@ export const GET = createHttpHandler(
       const avg_service_duration_min = completedCount > 0
         ? round1dp(usedMinutes / completedCount)
         : 0;
+      const scores = ratingScoresByUser[s.user_id] || [];
+      const rating = scores.length > 0
+        ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2))
+        : null;
       return {
         user_id: s.user_id,
-        rating: null as number | null,
+        rating,
+        rating_count: scores.length,
         completed: completedCount,
         revenue: revenueByUser[s.user_id] || 0,
         tips_total: tipsByUser[s.user_id] || 0,

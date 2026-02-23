@@ -287,23 +287,39 @@ export class AnalyticsService {
     try {
       const dateRange = this.getDateRange(period);
 
-      const { data: staffData, error } = await this.supabase
-        .from('staff')
-        .select(`
-          id,
-          name,
-          reservations!inner(
+      const [{ data: staffData, error }, { data: feedbackData }] = await Promise.all([
+        this.supabase
+          .from('staff')
+          .select(`
             id,
-            start_at,
-            status,
-            metadata
-          )
-        `)
-        .eq('tenant_id', tenantId)
-        .gte('reservations.start_at', dateRange.start.toISOString())
-        .lte('reservations.start_at', dateRange.end.toISOString());
+            name,
+            reservations!inner(
+              id,
+              start_at,
+              status,
+              metadata
+            )
+          `)
+          .eq('tenant_id', tenantId)
+          .gte('reservations.start_at', dateRange.start.toISOString())
+          .lte('reservations.start_at', dateRange.end.toISOString()),
+        this.supabase
+          .from('customer_feedback')
+          .select('staff_user_id, score')
+          .eq('tenant_id', tenantId)
+          .gte('created_at', dateRange.start.toISOString())
+          .lte('created_at', dateRange.end.toISOString()),
+      ]);
 
       if (error) throw error;
+
+      // Index feedback by staff id (staff.id matches customer_feedback.staff_user_id)
+      const feedbackByStaff: Record<string, number[]> = {};
+      for (const fb of feedbackData || []) {
+        const row = fb as { staff_user_id: string; score: number };
+        if (!feedbackByStaff[row.staff_user_id]) feedbackByStaff[row.staff_user_id] = [];
+        feedbackByStaff[row.staff_user_id].push(row.score);
+      }
 
       const performanceData: StaffPerformanceData[] = (staffData || []).map(staff => {
         const reservations = staff.reservations || [];
@@ -316,10 +332,11 @@ export class AnalyticsService {
         const bookedHours = reservations.length * 1; // Assuming 1 hour per booking
         const utilizationRate = totalHoursInPeriod > 0 ? (bookedHours / totalHoursInPeriod) * 100 : 0;
 
-        const ratedReservations = reservations.filter(r => r.metadata?.rating != null);
-        const customer_rating = ratedReservations.length > 0
-          ? ratedReservations.reduce((sum, r) => sum + Number(r.metadata.rating), 0) / ratedReservations.length
-          : null;
+        // Derive customer rating from customer_feedback table
+        const scores = feedbackByStaff[staff.id] || [];
+        const customer_rating = scores.length > 0
+          ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2))
+          : 0;
 
         return {
           staff_id: staff.id,
@@ -327,7 +344,7 @@ export class AnalyticsService {
           bookings_count: completedBookings,
           revenue_total: Number(totalRevenue),
           utilization_rate: Math.min(utilizationRate, 100),
-          customer_rating: customer_rating !== null ? Number(customer_rating.toFixed(2)) : 0,
+          customer_rating,
           tips_total: Number(totalTips),
         };
       });

@@ -59,6 +59,7 @@ export interface AdminTenantMetric {
 export interface StaffMemberMetric {
   user_id: string;
   rating: number | null;
+  rating_count: number;
   completed: number;
   revenue: number;
   tips_total: number;

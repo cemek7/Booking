@@ -9,8 +9,8 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
     status: 200,
     data: {
       metrics: [
-        { user_id: 'user-123', rating: 4.5, completed: 10, revenue: 500, tips_total: 50, utilization_rate: 62.5, avg_service_duration_min: 45 },
-        { user_id: 'user-456', rating: 4.0, completed: 8, revenue: 400, tips_total: 30, utilization_rate: 50.0, avg_service_duration_min: 40 },
+        { user_id: 'user-123', rating: 4.5, rating_count: 12, completed: 10, revenue: 500, tips_total: 50, utilization_rate: 62.5, avg_service_duration_min: 45 },
+        { user_id: 'user-456', rating: 4.0, rating_count: 8, completed: 8, revenue: 400, tips_total: 30, utilization_rate: 50.0, avg_service_duration_min: 40 },
       ],
     },
   }),
