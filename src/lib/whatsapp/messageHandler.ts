@@ -502,7 +502,8 @@ class WhatsAppMessageHandler {
   }
 
   private async getBusinessHoursMessage(tenantId: string): Promise<string> {
-    return `We're open:\n\n📅 Monday - Friday: 9 AM - 6 PM\n📅 Saturday: 10 AM - 4 PM\n📅 Sunday: Closed`;
+    // Fetch business hours from database
+    return await getBusinessHoursMessage(tenantId);
   }
 
   private async getPricingMessage(tenantId: string): Promise<string> {
