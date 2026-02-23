@@ -919,6 +919,64 @@ class AutomationWorkflows {
       max_attempts: 3
     };
   }
+
+  /**
+   * Create automated review collection system
+   * Automatically requests reviews via WhatsApp after completed bookings
+   */
+  async createReviewCollectionAutomation(
+    tenantId: string,
+    options: {
+      delayHours?: number; // Hours to wait after completion (default: 2)
+      maxRetries?: number; // Max retry attempts (default: 2)
+      enableABTesting?: boolean; // Test different message templates
+    } = {}
+  ): Promise<AutomationRule> {
+    const delayHours = options.delayHours || 2;
+    const maxRetries = options.maxRetries || 2;
+
+    const rule: AutomationRule = {
+      id: `review_collection_${tenantId}_${Date.now()}`,
+      tenant_id: tenantId,
+      name: 'Automated Review Collection',
+      description: 'Automatically request customer reviews via WhatsApp after service completion',
+      trigger: {
+        type: 'event_based',
+        conditions: [
+          {
+            field: 'status',
+            operator: 'equals',
+            value: 'completed'
+          }
+        ]
+      },
+      actions: [
+        {
+          type: 'trigger_workflow',
+          parameters: {
+            workflow: 'review_collection',
+            delay_hours: delayHours,
+            max_retries: maxRetries,
+            channel: 'whatsapp',
+            enable_ai: true,
+          },
+          delay_minutes: delayHours * 60,
+        }
+      ],
+      status: 'active',
+      success_rate: 0,
+      last_executed: new Date().toISOString(),
+      next_execution: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    await this.saveAutomationRule(rule);
+    this.activeRules.set(rule.id, rule);
+
+    console.log(`✅ Review collection automation created for tenant ${tenantId}`);
+    
+    return rule;
+  }
 }
 
 export { AutomationWorkflows, type AutomationRule, type ReminderOptimization, type RebookingStrategy, type ContentGeneration, type CrossVerticalInsight };
