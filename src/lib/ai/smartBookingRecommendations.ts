@@ -822,22 +822,32 @@ class SmartBookingRecommendations {
   // Additional helper methods would be implemented here...
   
   private async getStaffForService(tenantId: string, serviceId: string): Promise<any[]> {
-    const { data: staff } = await this.supabase
+    // 1. Try explicit staff_services mapping first
+    const { data: serviceLinks } = await this.supabase
       .from('staff_services')
-      .select('staff:staff_id(*)')
+      .select('staff_user_id')
+      .eq('tenant_id', tenantId)
       .eq('service_id', serviceId);
 
-    interface StaffServiceRelation {
-      staff: Staff;
+    if (serviceLinks && serviceLinks.length > 0) {
+      const staffIds = serviceLinks.map((r: { staff_user_id: string }) => r.staff_user_id);
+      const { data: staff } = await this.supabase
+        .from('tenant_users')
+        .select('user_id, name, email, role')
+        .eq('tenant_id', tenantId)
+        .in('user_id', staffIds)
+        .eq('status', 'active');
+      return (staff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
     }
 
-    interface Staff {
-      id: string;
-      name: string;
-      [key: string]: any;
-    }
-
-    return (staff as StaffServiceRelation[] | null)?.map((s: StaffServiceRelation) => s.staff) || [];
+    // 2. Fall back to all active staff for the tenant when no service mapping exists
+    const { data: allStaff } = await this.supabase
+      .from('tenant_users')
+      .select('user_id, name, email, role')
+      .eq('tenant_id', tenantId)
+      .eq('role', 'staff')
+      .eq('status', 'active');
+    return (allStaff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
   }
 
   private async calculateStaffCompatibility(customer: CustomerProfile, staff: any, serviceId: string): Promise<number> {

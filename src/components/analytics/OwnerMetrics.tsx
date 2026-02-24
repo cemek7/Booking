@@ -62,6 +62,20 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
   const loading = metricsLoading || trendsLoading || staffLoading;
   const hasData = metrics.length > 0 || trends.length > 0 || staffPerformance.length > 0;
 
+  // Revenue forecast (predictive analytics)
+  const { data: forecastData } = useQuery({
+    queryKey: ['ownerForecast', tenantId],
+    queryFn: async () => {
+      const res = await authFetch<{ forecast?: { forecast?: { next_month?: number; growth_rate?: number } } }>(
+        '/api/analytics/forecast?horizon=monthly',
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.forecast?.forecast ?? null : null;
+    },
+    enabled: !!tenantId,
+    staleTime: 1000 * 60 * 30, // forecast is expensive — cache 30 min
+  });
+
   const metricById = useMemo(() => {
     const map = new Map<string, DashboardMetric>();
     for (const metric of metrics) map.set(metric.id, metric);
@@ -173,6 +187,27 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
           loading={loading}
         />
       </StatsGrid>
+
+      {/* Revenue Forecast (predictive analytics) */}
+      {forecastData && (
+        <StatsGrid columns={2}>
+          <MetricCard
+            label="Forecasted Next Month Revenue"
+            value={forecastData.next_month ?? 0}
+            formatValue={formatCurrency}
+            icon={TrendingDown}
+            colorScheme="success"
+            loading={false}
+          />
+          <MetricCard
+            label="Predicted Growth Rate"
+            value={`${Number((forecastData.growth_rate ?? 0) * 100).toFixed(1)}%`}
+            icon={BarChart2}
+            colorScheme={((forecastData.growth_rate ?? 0) >= 0) ? 'success' : 'default'}
+            loading={false}
+          />
+        </StatsGrid>
+      )}
 
       {/* Revenue & Booking Trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

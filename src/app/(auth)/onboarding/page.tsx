@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
+import { setStoredTenantId } from '@/lib/auth/token-storage';
 
 const INDUSTRIES = [
   { value: '', label: 'Select industry (optional)' },
@@ -67,7 +68,14 @@ export default function OnboardingPage() {
       }
       const json = await res.json();
       if (json?.tenantId) {
-        try { if (typeof window !== 'undefined') localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId, slug: json.slug })); } catch (storageErr) { console.warn('localStorage unavailable:', storageErr); }
+        try {
+          if (typeof window !== 'undefined') {
+            // 1. Store in the canonical boka_auth_tenant_id key so authFetch headers work immediately
+            setStoredTenantId(json.tenantId);
+            // 2. Also store slug/id for any legacy current_tenant reads
+            localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId, slug: json.slug }));
+          }
+        } catch (storageErr) { console.warn('localStorage unavailable:', storageErr); }
         if (services.length || staff.length) {
           const seeded: string[] = [];
           if (services.length) seeded.push(`${services.length} service${services.length>1?'s':''}`);

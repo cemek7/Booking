@@ -11,6 +11,7 @@ import { BookingEngine } from '@/lib/booking/engine';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
 import { AdvancedConversationAI } from '@/lib/ai/advancedConversationAI';
 import { loadTenantDocuments, queryTenant } from '@/lib/retrieval';
+import { SmartBookingRecommendations } from '@/lib/ai/smartBookingRecommendations';
 
 interface ConversationFlow {
   tenantId: string;
@@ -39,6 +40,7 @@ class WhatsAppMessageHandler {
   private evolutionClient = new EvolutionClient();
   private bookingEngine = new BookingEngine();
   private conversationAI = new AdvancedConversationAI();
+  private smartRecs = new SmartBookingRecommendations();
 
   /**
    * Main entry point: handle incoming message
@@ -146,13 +148,54 @@ class WhatsAppMessageHandler {
         return `I couldn't find a service called "${serviceEntity.value}". Please choose from available services.`;
       }
 
-      // Update context and advance
+      // Update context, fetch staff options, and advance
       bookingContext.service_id = serviceId;
       bookingContext.service_name = serviceEntity.value;
+
+      // Fetch staff with ratings for this service
+      const staffOptions = await this.getStaffOptions(tenantId, serviceId);
+      bookingContext.staff_options = staffOptions;
+      await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
+
+      if (staffOptions.length === 0) {
+        // No staff available — skip staff selection, go straight to date
+        await dialogManagerWhatsApp.advanceStep(sessionId, 'date_selection');
+        return await this.getDateSelectionMessage(tenantId, serviceId);
+      }
+
+      await dialogManagerWhatsApp.advanceStep(sessionId, 'staff_selection');
+      return this.formatStaffSelectionMessage(staffOptions);
+    }
+
+    if (currentStep === 'staff_selection') {
+      // Parse staff selection — accept number ("1", "2"), name match, or "any"
+      const trimmed = messageContent.trim().toLowerCase();
+      const staffList: Array<{ id: string; name: string; rating: number | null }> =
+        bookingContext.staff_options || [];
+
+      let selectedStaff: { id: string; name: string } | undefined;
+      if (trimmed === 'any' || trimmed === 'anyone') {
+        // Auto-assign — leave staff_id null (booking engine will pick)
+        selectedStaff = undefined;
+      } else {
+        const numChoice = parseInt(messageContent.trim(), 10);
+        if (!isNaN(numChoice) && numChoice >= 1 && numChoice <= staffList.length) {
+          selectedStaff = staffList[numChoice - 1];
+        } else if (staffList.length > 0) {
+          selectedStaff = staffList.find(s => s.name.toLowerCase().includes(trimmed));
+        }
+      }
+
+      if (selectedStaff === undefined && trimmed !== 'any' && trimmed !== 'anyone' && staffList.length > 0) {
+        return this.formatStaffSelectionMessage(staffList);
+      }
+
+      bookingContext.staff_id = selectedStaff?.id ?? null;
+      bookingContext.staff_name = selectedStaff?.name ?? 'Any available';
       await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
       await dialogManagerWhatsApp.advanceStep(sessionId, 'date_selection');
 
-      return await this.getDateSelectionMessage(tenantId, serviceId);
+      return await this.getDateSelectionMessage(tenantId, bookingContext.service_id);
     }
 
     if (currentStep === 'date_selection') {
@@ -419,6 +462,49 @@ class WhatsAppMessageHandler {
     return `Which service would you like to book?\n\n${serviceList}`;
   }
 
+  private async getStaffOptions(
+    tenantId: string,
+    serviceId: string,
+  ): Promise<Array<{ id: string; name: string; rating: number | null }>> {
+    try {
+      const staffList = await (this.smartRecs as any).getStaffForService(tenantId, serviceId);
+      if (!staffList || staffList.length === 0) return [];
+
+      const enriched: Array<{ id: string; name: string; rating: number | null }> = await Promise.all(
+        staffList.map(async (s: { id: string; name: string }) => {
+          const { data: fb } = await this.supabase
+            .from('customer_feedback')
+            .select('score')
+            .eq('tenant_id', tenantId)
+            .eq('staff_user_id', s.id);
+          const avg = fb && fb.length > 0
+            ? fb.reduce((sum: number, f: { score: number }) => sum + f.score, 0) / fb.length
+            : null;
+          return { id: s.id, name: s.name, rating: avg };
+        })
+      );
+
+      // Sort by rating descending (nulls last)
+      enriched.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+      return enriched;
+    } catch {
+      return [];
+    }
+  }
+
+  private formatStaffSelectionMessage(
+    staffOptions: Array<{ id: string; name: string; rating: number | null }>,
+  ): string {
+    if (staffOptions.length === 0) {
+      return `Who would you like to see? Type the staff name or "any" for next available.`;
+    }
+    const lines = staffOptions.map((s, i) => {
+      const stars = s.rating !== null ? ` ⭐ ${s.rating.toFixed(1)}` : '';
+      return `${i + 1}. ${s.name}${stars}`;
+    });
+    return `Who would you like to see?\n\n${lines.join('\n')}\n\nReply with a number or name.`;
+  }
+
   private async getDateSelectionMessage(tenantId: string, serviceId: string): Promise<string> {
     return `When would you like to book? You can say:\n📅 Tomorrow\n📅 Next Monday\n📅 2025-01-20\n\nOr type "available" to see open slots.`;
   }
@@ -490,7 +576,8 @@ class WhatsAppMessageHandler {
   }
 
   private async getConfirmationMessage(tenantId: string, context: Record<string, any>, phone: string): Promise<string> {
-    return `Great! Let me confirm your booking:\n\n📋 Service: ${context.service_name}\n📅 Date: ${context.date}\n⏰ Time: ${context.time}\n\nDoes this look correct? (yes/no)`;
+    const staffLine = context.staff_name ? `\n👤 Staff: ${context.staff_name}` : '';
+    return `Great! Let me confirm your booking:\n\n📋 Service: ${context.service_name}${staffLine}\n📅 Date: ${context.date}\n⏰ Time: ${context.time}\n\nDoes this look correct? (yes/no)`;
   }
 
   private async getCompletionMessage(bookingId: string, context: Record<string, any>): Promise<string> {
@@ -523,7 +610,7 @@ class WhatsAppMessageHandler {
     context: Record<string, any>
   ): Promise<string | null> {
     try {
-      const { service_id, date, time } = context;
+      const { service_id, date, time, staff_id } = context;
       if (!service_id || !date || !time) {
         console.error('Missing booking context fields:', { service_id, date, time });
         return null;
@@ -552,6 +639,7 @@ class WhatsAppMessageHandler {
           tenant_id: tenantId,
           customer_id: customerId,
           service_id,
+          staff_user_id: staff_id ?? null,
           start_at: startTime.toISOString(),
           end_at: endTime.toISOString(),
           status: 'pending',
