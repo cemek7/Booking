@@ -34,6 +34,12 @@ const createMockSupabase = () => {
   };
 };
 
+// Helper: proper thenable that calls onfulfilled (resolve) so Promise.all and await work correctly.
+// jest.fn().mockResolvedValue() returns a Promise but never calls resolve, causing hangs.
+const mockThenable = (value: unknown) => jest.fn().mockImplementation(
+  (onfulfilled: (v: unknown) => unknown) => Promise.resolve(value).then(onfulfilled)
+);
+
 const mockManagerUser: AppUser = {
   id: 'manager-123',
   email: 'manager@test.com',
@@ -115,7 +121,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [{ user_id: 'staff-1' }, { user_id: 'staff-2' }],
             }),
           };
@@ -134,7 +140,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { id: '1', status: 'completed', metadata: {} },
                 { id: '2', status: 'completed', metadata: {} },
@@ -172,7 +178,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({ data: [] }),
+            then: mockThenable({ data: [] }),
           };
         }
         return mockSupabase;
@@ -214,7 +220,7 @@ describe('manager-analytics-service', () => {
             eq: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { amount: 100 },
                 { amount: 150 },
@@ -241,7 +247,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   staff_id: 'staff-1',
@@ -277,7 +283,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   service_id: 'service-1',
@@ -323,7 +329,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   staff_id: 'staff-1',
@@ -365,7 +371,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({ data: services }),
+            then: mockThenable({ data: services }),
           };
         }
         return mockSupabase;
@@ -391,7 +397,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   user_id: 'staff-1',
@@ -451,7 +457,7 @@ describe('manager-analytics-service', () => {
               expect(values).toEqual([staffId]);
               return mockSupabase;
             }),
-            then: jest.fn().mockResolvedValue({ data: [] }),
+            then: mockThenable({ data: [] }),
           };
         }
         return mockSupabase;
@@ -492,7 +498,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { status: 'completed' },
                 { status: 'completed' },
@@ -537,7 +543,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { start_at: '2024-01-15T09:00:00Z' },
                 { start_at: '2024-01-15T09:30:00Z' },
@@ -566,7 +572,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { status: 'cancelled', metadata: { cancellation_reason: 'Client Request' } },
                 { status: 'cancelled', metadata: { cancellation_reason: 'Client Request' } },
@@ -595,7 +601,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [{ status: 'cancelled', metadata: {} }],
             }),
           };
@@ -696,7 +702,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   user_id: 'staff-1',
@@ -763,7 +769,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   user_id: 'staff-1',

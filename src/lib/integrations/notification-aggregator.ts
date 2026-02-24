@@ -228,9 +228,21 @@ async function sendBookingNotificationEmail(data: BookingNotificationData) {
       );
     case 'cancellation':
       return sendCancellationEmail(data.customer.email!, data.customer.name, data.bookingDetails);
-    case 'reschedule':
-      // TODO: Implement reschedule email template
-      return null;
+    case 'reschedule': {
+      const oldDate = data.oldBooking?.date || '';
+      const oldTime = data.oldBooking?.time || '';
+      return sendEmail({
+        to: data.customer.email!,
+        subject: `Your booking has been rescheduled — ${data.bookingDetails.serviceName}`,
+        html: `<p>Hi ${data.customer.name},</p>
+<p>Your <strong>${data.bookingDetails.serviceName}</strong> booking has been rescheduled.</p>
+${oldDate || oldTime ? `<p><s>Previous: ${oldDate} at ${oldTime}</s></p>` : ''}
+<p><strong>New date:</strong> ${data.bookingDetails.date}<br/>
+<strong>New time:</strong> ${data.bookingDetails.time}</p>
+<p>If you have any questions, please contact us.</p>`,
+        text: `Hi ${data.customer.name}, your ${data.bookingDetails.serviceName} booking has been rescheduled to ${data.bookingDetails.date} at ${data.bookingDetails.time}.`,
+      });
+    }
   }
 }
 

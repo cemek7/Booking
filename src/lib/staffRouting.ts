@@ -38,7 +38,8 @@ export async function pickPreferredStaff(supabase: SupabaseClient, tenantId: str
   return free[0].user_id;
 }
 
-// Skill-based: placeholder - would check a staff_skills table. Currently falls back to preferred logic.
+// Skill-based: queries the staff_skills table for staff with the required skill, then intersects with free staff.
+// Falls back to preferred logic if no skilled staff are available or skill is not specified.
 export async function pickSkillBasedStaff(
   supabase: SupabaseClient,
   tenantId: string,

@@ -731,11 +731,53 @@ export class MachineLearningService {
         tenant_id: booking.tenant_id
       }));
       
-      // Get staff data (placeholder)
-      const staff: StaffData[] = [];
-      
-      // Get customer data (placeholder)
-      const customers: CustomerData[] = [];
+      // Get staff data from tenant_users + aggregate bookings per staff
+      const { data: staffUsers } = await this.supabase
+        .from('tenant_users')
+        .select('user_id')
+        .eq('tenant_id', tenantId)
+        .eq('role', 'staff');
+
+      const staff: StaffData[] = (staffUsers || []).map(u => {
+        const userBookings = (bookings || []).filter(b => b.staff_id === u.user_id);
+        const hoursWorked = userBookings.reduce((sum: number, b: Record<string, unknown>) => {
+          const dur = typeof b.duration === 'number' ? b.duration : 60;
+          return sum + dur / 60;
+        }, 0);
+        return {
+          staff_id: u.user_id,
+          working_hours: Math.round(hoursWorked * 10) / 10,
+          bookings_handled: userBookings.length,
+          utilization_rate: hoursWorked > 0 ? Math.min(100, (hoursWorked / 8) * 100) : 0,
+          date: startDate.toISOString().split('T')[0],
+          tenant_id: tenantId,
+        };
+      });
+
+      // Get customer data from customers table
+      const { data: customerRows } = await this.supabase
+        .from('customers')
+        .select('id, email, created_at')
+        .eq('tenant_id', tenantId);
+
+      const customers: CustomerData[] = (customerRows || []).map((c: Record<string, unknown>) => {
+        const cid = c.id as string;
+        const cBookings = (bookings || []).filter(b => b.customer_id === cid);
+        const totalSpent = cBookings.reduce((sum: number, b: Record<string, unknown>) => {
+          return sum + Number(b.price || 0);
+        }, 0);
+        const serviceIds = [...new Set(cBookings.map(b => b.service_id).filter(Boolean))] as string[];
+        return {
+          customer_id: cid,
+          booking_frequency: cBookings.length,
+          last_booking_date: cBookings.length > 0
+            ? cBookings.sort((a, b) => new Date(b.start_at as string).getTime() - new Date(a.start_at as string).getTime())[0].start_at as string
+            : (c.created_at as string),
+          total_spent: totalSpent,
+          preferred_services: serviceIds,
+          tenant_id: tenantId,
+        };
+      });
       
       return {
         bookings: bookings || [],

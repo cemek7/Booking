@@ -370,7 +370,10 @@ export async function getRevenueAnalytics(
   }
 
   (bookings || []).forEach(booking => {
-    const dateKey = new Date(booking.start_at).toISOString().split('T')[0];
+    if (!booking.start_at) return;
+    const d = new Date(booking.start_at);
+    if (isNaN(d.getTime())) return;
+    const dateKey = d.toISOString().split('T')[0];
     const trend = trendMap.get(dateKey);
     if (trend) {
       trend.revenue += Number(booking.metadata?.revenue || 0);
@@ -576,7 +579,10 @@ export async function getBookingAnalytics(
   }
 
   (bookings || []).forEach(booking => {
-    const dateKey = new Date(booking.start_at).toISOString().split('T')[0];
+    if (!booking.start_at) return;
+    const bd = new Date(booking.start_at);
+    if (isNaN(bd.getTime())) return;
+    const dateKey = bd.toISOString().split('T')[0];
     const trend = trendMap.get(dateKey);
     if (trend) {
       trend.bookings += 1;
