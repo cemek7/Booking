@@ -3,6 +3,7 @@ import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/e
 import { detectIntent } from '@/lib/intentDetector';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
 import dialogManager from '@/lib/dialogManager';
+import { reviewCollectionAgent } from '@/lib/ai/reviewCollectionAgent';
 
 export interface MessageQueueItem {
   id: string;
@@ -182,27 +183,60 @@ class WhatsAppMessageProcessor {
       conversationState.context.last_confidence = intentResult.confidence;
       conversationState.context.entities = intentResult.entities;
 
-      // Process message through dialog booking bridge
-      const dialogResponse = await dialogBookingBridge.processMessage(
-        message.tenant_id,
-        conversationState.session_id,
-        message.content,
-        message.from_number
-      );
+      let responseMessage: string | undefined;
+      let shouldCompleteConversation = false;
 
-      let responseMessage = dialogResponse.response;
-      let shouldCompleteConversation = dialogResponse.completed;
+      // Check if this is a review collection conversation
+      const { data: reviewSession } = await this.supabase
+        .from('whatsapp_sessions')
+        .select('*')
+        .eq('phone_number', message.from_number)
+        .eq('session_type', 'review_collection')
+        .eq('tenant_id', message.tenant_id)
+        .single();
 
-      // Handle different response scenarios
-      if (dialogResponse.error) {
-        console.warn('Dialog booking bridge error:', dialogResponse.error);
-        responseMessage = this.getErrorResponse(intentResult.intent);
-      } else if (!responseMessage && intentResult.intent !== 'unknown') {
-        // Generate contextual response based on intent
-        responseMessage = await this.generateContextualResponse(
-          intentResult,
-          conversationState
+      if (reviewSession) {
+        // Process as review collection
+        const reviewResponse = await reviewCollectionAgent.processReviewResponse(
+          message.tenant_id,
+          message.from_number,
+          message.content
         );
+
+        responseMessage = reviewResponse.reply;
+        shouldCompleteConversation = reviewResponse.completed;
+
+        // If review completed, clean up session
+        if (reviewResponse.completed) {
+          await this.supabase
+            .from('whatsapp_sessions')
+            .delete()
+            .eq('phone_number', message.from_number)
+            .eq('session_type', 'review_collection');
+        }
+      } else {
+        // Process message through dialog booking bridge
+        const dialogResponse = await dialogBookingBridge.processMessage(
+          message.tenant_id,
+          conversationState.session_id,
+          message.content,
+          message.from_number
+        );
+
+        responseMessage = dialogResponse.response;
+        shouldCompleteConversation = dialogResponse.completed;
+
+        // Handle different response scenarios
+        if (dialogResponse.error) {
+          console.warn('Dialog booking bridge error:', dialogResponse.error);
+          responseMessage = this.getErrorResponse(intentResult.intent);
+        } else if (!responseMessage && intentResult.intent !== 'unknown') {
+          // Generate contextual response based on intent
+          responseMessage = await this.generateContextualResponse(
+            intentResult,
+            conversationState
+          );
+        }
       }
 
       // Send response if we have one

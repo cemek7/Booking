@@ -235,9 +235,33 @@ export async function getOverviewAnalytics(
   // Calculate completion rate
   const completionRate = totalBookings > 0 ? (completedBookings / totalBookings) * 100 : 0;
 
-  // Mock team rating (would come from reviews/ratings table)
-  const teamRating = 4.7;
-  const previousRating = 4.6;
+  // Get team rating from reviews database
+  const { data: teamReviews } = await supabase
+    .from('reviews')
+    .select('staff_rating')
+    .eq('tenant_id', user.tenantId)
+    .in('staff_id', staffIds)
+    .gte('created_at', startDate.toISOString())
+    .lte('created_at', endDate.toISOString())
+    .not('staff_rating', 'is', null);
+
+  const teamRating = teamReviews && teamReviews.length > 0
+    ? teamReviews.reduce((sum, r) => sum + r.staff_rating, 0) / teamReviews.length
+    : 0;
+
+  // Get previous period rating for trend calculation
+  const { data: previousTeamReviews } = await supabase
+    .from('reviews')
+    .select('staff_rating')
+    .eq('tenant_id', user.tenantId)
+    .in('staff_id', staffIds)
+    .gte('created_at', previousRange.startDate.toISOString())
+    .lte('created_at', previousRange.endDate.toISOString())
+    .not('staff_rating', 'is', null);
+
+  const previousRating = previousTeamReviews && previousTeamReviews.length > 0
+    ? previousTeamReviews.reduce((sum, r) => sum + r.staff_rating, 0) / previousTeamReviews.length
+    : 0;
 
   return {
     teamBookings: totalBookings,
@@ -414,18 +438,61 @@ export async function getTeamAnalytics(
     const maxBookings = workingDays * 8; // 8 hours per day
     const utilization = maxBookings > 0 ? (totalBookings / maxBookings) * 100 : 0;
 
-    // Mock rating (would come from reviews)
-    const rating = 4.5 + Math.random() * 0.5;
-
     return {
       staffId: staff.user_id,
       staffName: staff.users?.full_name || 'Unknown',
       bookings: totalBookings,
       completed: completedBookings,
-      rating: Number(rating.toFixed(1)),
+      rating: 0, // Will be populated from ratings query below
       utilization: Math.min(Math.round(utilization), 100),
       revenue,
     };
+  });
+
+  // Get real ratings from database for all staff
+  const { data: staffRatings } = await supabase
+    .from('staff_ratings')
+    .select('staff_id, average_rating')
+    .eq('tenant_id', user.tenantId)
+    .in('staff_id', staffIds)
+    .gte('period_start', startDate.toISOString().split('T')[0])
+    .lte('period_end', endDate.toISOString().split('T')[0]);
+
+  const ratingsMap = new Map(
+    (staffRatings || []).map(r => [r.staff_id, r.average_rating])
+  );
+
+  // Fallback: Get ratings from reviews if staff_ratings not available
+  const { data: reviewData } = await supabase
+    .from('reviews')
+    .select('staff_id, staff_rating')
+    .eq('tenant_id', user.tenantId)
+    .in('staff_id', staffIds)
+    .gte('created_at', startDate.toISOString())
+    .lte('created_at', endDate.toISOString())
+    .not('staff_rating', 'is', null);
+
+  // Calculate average from reviews for staff without aggregated ratings
+  const reviewRatingsMap = new Map<string, { total: number; count: number }>();
+  (reviewData || []).forEach(review => {
+    if (!ratingsMap.has(review.staff_id)) {
+      const existing = reviewRatingsMap.get(review.staff_id) || { total: 0, count: 0 };
+      existing.total += review.staff_rating;
+      existing.count += 1;
+      reviewRatingsMap.set(review.staff_id, existing);
+    }
+  });
+
+  // Apply ratings to performance data
+  staffPerformance.forEach(staff => {
+    if (ratingsMap.has(staff.staffId)) {
+      staff.rating = Number(ratingsMap.get(staff.staffId)!.toFixed(1));
+    } else {
+      const reviewRating = reviewRatingsMap.get(staff.staffId);
+      if (reviewRating && reviewRating.count > 0) {
+        staff.rating = Number((reviewRating.total / reviewRating.count).toFixed(1));
+      }
+    }
   });
 
   // Calculate team metrics

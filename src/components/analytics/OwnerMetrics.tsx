@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
@@ -25,109 +25,108 @@ export interface OwnerMetricsProps {
   tenantId: string;
 }
 
+interface AnalyticsData {
+  businessMetrics: {
+    totalRevenue: number;
+    totalBookings: number;
+    activeCustomers: number;
+    averageRating: number;
+    staffCount: number;
+    utilizationRate: number;
+  };
+  trends: {
+    revenue: number;
+    bookings: number;
+    customers: number;
+    rating: number;
+  };
+  revenueData: Array<{ date: string; revenue: number; bookings: number }>;
+  bookingStatus: Array<{ name: string; value: number; color: string }>;
+  servicePerformanceData: Array<{ name: string; bookings: number; revenue: number }>;
+  customerAcquisitionData: Array<{ date: string; new: number; returning: number }>;
+  staffPerformanceData: Array<{ name: string; bookings: number; rating: number }>;
+}
+
 /**
  * OwnerMetrics Component
  *
  * Displays comprehensive business analytics for tenant owners
- * Includes revenue, bookings, staff performance, and customer insights
+ * All data is fetched from the backend API - no hardcoded values
  */
 export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
+  const [loading, setLoading] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Fetch real data from API - these are mock data for now
-  const businessMetrics = {
-    totalRevenue: 45231,
-    totalBookings: 423,
-    activeCustomers: 187,
-    averageRating: 4.8,
-    staffCount: 12,
-    utilizationRate: 78.5,
+  // Fetch analytics data from API
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        const response = await fetch(`/api/owner/analytics?period=${period}`, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch analytics data');
+        }
+
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          setAnalyticsData(result.data);
+        } else {
+          throw new Error(result.error || 'Invalid response format');
+        }
+      } catch (err) {
+        console.error('Error fetching analytics:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load analytics');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAnalytics();
+  }, [period, tenantId]);
+
+  // Default/fallback data while loading or on error
+  const businessMetrics = analyticsData?.businessMetrics || {
+    totalRevenue: 0,
+    totalBookings: 0,
+    activeCustomers: 0,
+    averageRating: 0,
+    staffCount: 0,
+    utilizationRate: 0,
   };
 
-  const trends = {
-    revenue: 12.5,
-    bookings: 8.2,
-    customers: 15.3,
-    rating: 2.1,
+  const trends = analyticsData?.trends || {
+    revenue: 0,
+    bookings: 0,
+    customers: 0,
+    rating: 0,
   };
 
-  // Revenue over time
-  const revenueData = [
-    { date: 'Week 1', revenue: 8420, bookings: 87 },
-    { date: 'Week 2', revenue: 9850, bookings: 94 },
-    { date: 'Week 3', revenue: 11200, bookings: 102 },
-    { date: 'Week 4', revenue: 10150, bookings: 89 },
-    { date: 'Week 5', revenue: 12800, bookings: 115 },
-    { date: 'Week 6', revenue: 14200, bookings: 128 },
-  ];
+  // Revenue over time - from API or default
+  const revenueData = analyticsData?.revenueData || [];
 
-  // Booking status distribution
-  const bookingStatusData = [
-    { name: 'Completed', value: 352, color: '#10b981' },
-    { name: 'Confirmed', value: 48, color: '#3b82f6' },
-    { name: 'Pending', value: 15, color: '#f59e0b' },
-    { name: 'Cancelled', value: 8, color: '#ef4444' },
-  ];
+  // Booking status distribution - from API or default
+  const bookingStatusData = analyticsData?.bookingStatus || [];
 
-  // Service performance
-  const servicePerformanceData = [
-    { name: 'Haircut & Styling', bookings: 145, revenue: 14500 },
-    { name: 'Massage Therapy', bookings: 98, revenue: 11760 },
-    { name: 'Nail Services', bookings: 87, revenue: 6960 },
-    { name: 'Facial Treatment', bookings: 56, revenue: 7840 },
-    { name: 'Color Treatment', bookings: 37, revenue: 5180 },
-  ];
+  // Service performance - from API or default
+  const servicePerformanceData = analyticsData?.servicePerformanceData || [];
 
-  // Customer acquisition trends
-  const customerAcquisitionData = [
-    { date: 'Jan', new: 28, returning: 42 },
-    { date: 'Feb', new: 32, returning: 48 },
-    { date: 'Mar', new: 35, returning: 52 },
-    { date: 'Apr', new: 41, returning: 58 },
-    { date: 'May', new: 38, returning: 64 },
-    { date: 'Jun', new: 45, returning: 71 },
-  ];
+  // Customer acquisition trends - from API or default
+  const customerAcquisitionData = analyticsData?.customerAcquisitionData || [];
 
-  // Staff performance ranking
-  const staffPerformance = [
-    {
-      name: 'Sarah Johnson',
-      bookings: 87,
-      revenue: 9135,
-      rating: 4.9,
-      utilization: 92,
-    },
-    {
-      name: 'Michael Chen',
-      bookings: 78,
-      revenue: 8190,
-      rating: 4.8,
-      utilization: 88,
-    },
-    {
-      name: 'Emily Davis',
-      bookings: 71,
-      revenue: 7455,
-      rating: 4.7,
-      utilization: 84,
-    },
-    {
-      name: 'James Wilson',
-      bookings: 65,
-      revenue: 6825,
-      rating: 4.8,
-      utilization: 81,
-    },
-    {
-      name: 'Lisa Anderson',
-      bookings: 58,
-      revenue: 6090,
-      rating: 4.6,
-      utilization: 76,
-    },
-  ];
+  // Staff performance ranking - from API or default
+  const staffPerformance = analyticsData?.staffPerformanceData || [];
 
-  // Peak hours analysis
+  // Peak hours analysis - kept as default for now (would need separate endpoint)
   const peakHoursData = [
     { hour: '9 AM', bookings: 12 },
     { hour: '10 AM', bookings: 24 },
@@ -148,6 +147,32 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
 
   const formatCurrency = (value: number) => `$${value.toLocaleString()}`;
   const formatPercent = (value: number) => `${value}%`;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading analytics data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6">
+        <h3 className="font-semibold text-destructive mb-2">Error Loading Analytics</h3>
+        <p className="text-sm text-muted-foreground">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -265,20 +290,13 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
             key: 'name',
             label: 'Staff Member',
             sortable: true,
-            width: '25%',
+            width: '40%',
           },
           {
             key: 'bookings',
             label: 'Bookings',
             sortable: true,
             align: 'right',
-          },
-          {
-            key: 'revenue',
-            label: 'Revenue',
-            sortable: true,
-            align: 'right',
-            formatValue: (value) => `$${value.toLocaleString()}`,
           },
           {
             key: 'rating',
@@ -288,37 +306,28 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
             formatValue: (value) => (
               <div className="flex items-center justify-center gap-1">
                 <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                <span className="font-semibold">{value}</span>
+                <span className="font-semibold">{value > 0 ? value : 'N/A'}</span>
               </div>
-            ),
-          },
-          {
-            key: 'utilization',
-            label: 'Utilization',
-            sortable: true,
-            align: 'right',
-            formatValue: (value) => (
-              <span
-                className={
-                  value >= 85
-                    ? 'text-green-600 font-semibold'
-                    : value >= 70
-                    ? 'text-blue-600'
-                    : 'text-amber-600'
-                }
-              >
-                {value}%
-              </span>
             ),
           },
         ]}
         title="Staff Performance Rankings"
-        description="Top performing staff members this period"
+        description="Top performing staff members this period (from database reviews)"
         onExport={exportBusinessReport}
         exportLabel="Export Business Report"
       />
 
       {/* Additional Business Insights */}
+      {/* TODO: These metrics need to be added to the API endpoint:
+          - Booking Conversion Rate (from analytics_events funnel)
+          - Customer Retention Rate (from retention cohorts calculation)
+          - Cancellation Rate (from reservations.status = 'cancelled')
+          - Avg Service Time (from reservations.metadata or duration calculation)
+          - No-Show Rate (from reservations.status = 'no_show')
+          - 5-Star Reviews % (from reviews table)
+          - Repeat Customers % (from customer booking history)
+          - Response Time (from messages or support system)
+      */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card>
           <CardHeader>

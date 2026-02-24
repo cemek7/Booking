@@ -43,8 +43,9 @@ interface MessageContext {
   content: string;
 }
 
-// Store processed message IDs to prevent duplicates (in production, use Redis)
-const processedMessages = new Set<string>();
+// Store processed message IDs to prevent duplicates (in-memory cache for fast lookup)
+// Note: Database is the source of truth, this is just a performance optimization
+const processedMessagesCache = new Set<string>();
 
 /**
  * GET: Webhook verification with Meta
@@ -145,6 +146,29 @@ async function processWebhookAsync(payload: WhatsAppWebhookPayload): Promise<voi
 }
 
 /**
+ * Check if message has already been processed (database-backed deduplication)
+ */
+async function isMessageProcessed(messageId: string, supabase: any): Promise<boolean> {
+  // Check if message exists in database within last 24 hours
+  const oneDayAgo = new Date();
+  oneDayAgo.setHours(oneDayAgo.getHours() - 24);
+
+  const { data, error } = await supabase
+    .from('whatsapp_message_queue')
+    .select('id')
+    .eq('message_id', messageId)
+    .gte('created_at', oneDayAgo.toISOString())
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error checking message deduplication:', error);
+    return false; // On error, process the message to avoid losing it
+  }
+
+  return !!data; // True if message exists in DB
+}
+
+/**
  * Handle incoming message from customer
  */
 async function handleIncomingMessage(
@@ -156,9 +180,10 @@ async function handleIncomingMessage(
   const customerPhone = message.from;
   const timestamp = new Date(parseInt(message.timestamp) * 1000).toISOString();
 
-  // Skip if already processed (idempotency)
-  if (processedMessages.has(messageId)) {
-    console.log(`⏭️  Message ${messageId} already processed, skipping`);
+  // Skip if already processed (persistent database check)
+  const alreadyProcessed = await isMessageProcessed(messageId, supabase);
+  if (alreadyProcessed) {
+    console.log(`⏭️  Message ${messageId} already processed (found in DB), skipping`);
     return;
   }
 
