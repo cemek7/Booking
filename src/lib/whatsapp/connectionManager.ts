@@ -325,11 +325,43 @@ class WhatsAppConnectionManager {
       const errorCount = errors?.length || 0;
       const uptimePercentage = Math.max(0, 100 - (errorCount * 2)); // 2% penalty per error
 
+      // Calculate average response time from messages table:
+      // find pairs of inbound→outbound messages in the last 24 h and measure the delta.
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: recentMessages } = await this.supabase
+        .from('messages')
+        .select('direction, created_at')
+        .eq('tenant_id', tenantId)
+        .gte('created_at', since24h)
+        .order('created_at', { ascending: true })
+        .limit(200);
+
+      let avgResponseTimeMs = 0;
+      if (recentMessages && recentMessages.length >= 2) {
+        const responseTimes: number[] = [];
+        for (let i = 0; i < recentMessages.length - 1; i++) {
+          const cur = recentMessages[i];
+          const nxt = recentMessages[i + 1];
+          // inbound message followed by an outbound reply
+          if (cur.direction === 'inbound' && nxt.direction === 'outbound') {
+            const delta = new Date(nxt.created_at).getTime() - new Date(cur.created_at).getTime();
+            if (delta > 0 && delta < 30 * 60 * 1000) { // ignore gaps > 30 min
+              responseTimes.push(delta);
+            }
+          }
+        }
+        if (responseTimes.length > 0) {
+          avgResponseTimeMs = Math.round(
+            responseTimes.reduce((s, v) => s + v, 0) / responseTimes.length
+          );
+        }
+      }
+
       const metrics: Partial<ConnectionMetrics> = {
         messages_sent_today: sentMessages?.length || 0,
         messages_received_today: receivedMessages?.length || 0,
         uptime_percentage: uptimePercentage,
-        average_response_time: 1500, // TODO: Calculate from actual response times
+        average_response_time: avgResponseTimeMs,
         error_count_24h: errorCount,
         total_conversations: conversations?.length || 0,
         active_conversations: activeConversations.length,

@@ -593,21 +593,113 @@ class PredictiveAnalyticsEngine {
   }
 
   private async analyzeServicePerformance(tenantId: string): Promise<Array<{ service: string; revenue: number; trend: 'up' | 'down' | 'stable' }>> {
-    // Placeholder implementation
-    return [
-      { service: 'Service A', revenue: 1000, trend: 'up' },
-      { service: 'Service B', revenue: 800, trend: 'stable' },
-      { service: 'Service C', revenue: 600, trend: 'down' }
-    ];
+    try {
+      // Last 60 days split into two 30-day halves to compute trend
+      const now = Date.now();
+      const recent30Start = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const prev30Start = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: txRecent } = await this.supabase
+        .from('transactions')
+        .select('amount, metadata')
+        .eq('tenant_id', tenantId)
+        .in('status', ['completed', 'paid'])
+        .gte('created_at', recent30Start);
+
+      const { data: txPrev } = await this.supabase
+        .from('transactions')
+        .select('amount, metadata')
+        .eq('tenant_id', tenantId)
+        .in('status', ['completed', 'paid'])
+        .gte('created_at', prev30Start)
+        .lt('created_at', recent30Start);
+
+      const aggregate = (rows: any[]) =>
+        rows.reduce((acc: Record<string, number>, r) => {
+          const svc = r.metadata?.service_name || r.metadata?.service || 'Other';
+          acc[svc] = (acc[svc] || 0) + Number(r.amount || 0);
+          return acc;
+        }, {});
+
+      const recentByService = aggregate(txRecent || []);
+      const prevByService = aggregate(txPrev || []);
+      const allServices = new Set([...Object.keys(recentByService), ...Object.keys(prevByService)]);
+
+      return Array.from(allServices).map(service => {
+        const recentRev = recentByService[service] || 0;
+        const prevRev = prevByService[service] || 0;
+        let trend: 'up' | 'down' | 'stable' = 'stable';
+        if (prevRev > 0) {
+          const change = (recentRev - prevRev) / prevRev;
+          if (change > 0.05) trend = 'up';
+          else if (change < -0.05) trend = 'down';
+        } else if (recentRev > 0) {
+          trend = 'up';
+        }
+        return { service, revenue: recentRev, trend };
+      }).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+    } catch (error) {
+      console.error('Error analyzing service performance:', error);
+      return [];
+    }
   }
 
   private async analyzeCustomerSegments(tenantId: string): Promise<Array<{ segment: string; revenue: number; growth: number }>> {
-    // Placeholder implementation
-    return [
-      { segment: 'VIP', revenue: 2000, growth: 15 },
-      { segment: 'Regular', revenue: 1500, growth: 5 },
-      { segment: 'New', revenue: 500, growth: 25 }
-    ];
+    try {
+      const now = Date.now();
+      const recent30Start = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const prev30Start = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Get per-customer totals for recent + previous periods
+      const { data: recentTx } = await this.supabase
+        .from('transactions')
+        .select('amount, metadata')
+        .eq('tenant_id', tenantId)
+        .in('status', ['completed', 'paid'])
+        .gte('created_at', recent30Start);
+
+      const { data: prevTx } = await this.supabase
+        .from('transactions')
+        .select('amount, metadata')
+        .eq('tenant_id', tenantId)
+        .in('status', ['completed', 'paid'])
+        .gte('created_at', prev30Start)
+        .lt('created_at', recent30Start);
+
+      // Segment by total spend: VIP (>500), Regular (100-500), New (<100)
+      const segment = (total: number) => total > 500 ? 'VIP' : total > 100 ? 'Regular' : 'New';
+
+      const byCustomer = (rows: any[]) =>
+        rows.reduce((acc: Record<string, number>, r) => {
+          const cid = r.metadata?.customer_id || 'unknown';
+          acc[cid] = (acc[cid] || 0) + Number(r.amount || 0);
+          return acc;
+        }, {});
+
+      const recentPerCustomer = byCustomer(recentTx || []);
+      const prevPerCustomer = byCustomer(prevTx || []);
+
+      const recentBySeg: Record<string, number> = {};
+      const prevBySeg: Record<string, number> = {};
+      for (const [, total] of Object.entries(recentPerCustomer)) {
+        const seg = segment(total);
+        recentBySeg[seg] = (recentBySeg[seg] || 0) + total;
+      }
+      for (const [, total] of Object.entries(prevPerCustomer)) {
+        const seg = segment(total);
+        prevBySeg[seg] = (prevBySeg[seg] || 0) + total;
+      }
+
+      return ['VIP', 'Regular', 'New'].map(seg => {
+        const rev = recentBySeg[seg] || 0;
+        const prev = prevBySeg[seg] || 0;
+        const growth = prev > 0 ? Math.round(((rev - prev) / prev) * 100) : (rev > 0 ? 100 : 0);
+        return { segment: seg, revenue: rev, growth };
+      });
+    } catch (error) {
+      console.error('Error analyzing customer segments:', error);
+      return [];
+    }
   }
 
   private getForecastValue(forecast: any, period: 'month' | 'quarter'): number {
@@ -662,39 +754,143 @@ class PredictiveAnalyticsEngine {
   // Additional helper methods for customer analytics, churn prediction, etc...
   
   private async analyzeSingleCustomer(tenantId: string, customerId: string, options: any): Promise<CustomerAnalytics> {
-    // Placeholder implementation - would analyze individual customer patterns
-    return {
-      customer_id: customerId,
-      tenant_id: tenantId,
-      lifetime_value: {
-        current_clv: 500,
-        predicted_clv: 750,
-        clv_percentile: 75,
-        value_segment: 'high'
-      },
-      behavior_patterns: {
-        booking_frequency: 2.5,
-        avg_session_duration: 15,
-        preferred_times: ['10:00', '14:00'],
-        preferred_services: ['service1', 'service2'],
-        price_sensitivity: 0.3,
-        loyalty_score: 85,
-        engagement_score: 90
-      },
-      churn_analysis: {
-        churn_probability: 0.15,
-        churn_risk_level: 'low',
-        days_since_last_booking: 30,
-        retention_factors: ['high_satisfaction', 'frequent_user'],
-        churn_indicators: [],
-        recommended_actions: []
-      },
-      segmentation: {
-        primary_segment: 'loyal',
-        secondary_segments: ['high_value'],
-        segment_migration_history: []
+    try {
+      // Try customer_analytics cache first
+      const { data: cached } = await this.supabase
+        .from('customer_analytics')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('customer_id', customerId)
+        .maybeSingle();
+
+      if (cached && new Date(cached.expires_at) > new Date()) {
+        return {
+          customer_id: customerId,
+          tenant_id: tenantId,
+          lifetime_value: {
+            current_clv: Number(cached.lifetime_value || 0),
+            predicted_clv: Number(cached.predicted_ltv || 0),
+            clv_percentile: 50,
+            value_segment: cached.lifetime_value > 500 ? 'vip' : cached.lifetime_value > 200 ? 'high' : cached.lifetime_value > 50 ? 'medium' : 'low',
+          },
+          behavior_patterns: {
+            booking_frequency: 0,
+            avg_session_duration: 0,
+            preferred_times: (cached.personalization_profile?.preferred_times as string[]) || [],
+            preferred_services: (cached.personalization_profile?.preferred_services as string[]) || [],
+            price_sensitivity: 0.5,
+            loyalty_score: Number(cached.loyalty_score || 50),
+            engagement_score: 50,
+          },
+          churn_analysis: {
+            churn_probability: Number(cached.churn_probability || 0.5),
+            churn_risk_level: Number(cached.churn_probability) > 0.7 ? 'high' : Number(cached.churn_probability) > 0.4 ? 'medium' : 'low',
+            days_since_last_booking: 0,
+            retention_factors: [],
+            churn_indicators: [],
+            recommended_actions: [],
+          },
+          segmentation: {
+            primary_segment: cached.personalization_profile?.segment || 'regular',
+            secondary_segments: [],
+            segment_migration_history: [],
+          },
+        };
       }
-    };
+
+      // Compute from reservations + transactions
+      const [{ data: reservations }, { data: transactions }] = await Promise.all([
+        this.supabase
+          .from('reservations')
+          .select('id, status, start_at, service, created_at')
+          .eq('tenant_id', tenantId)
+          .eq('customer_id', customerId)
+          .order('created_at', { ascending: false }),
+        this.supabase
+          .from('transactions')
+          .select('amount, status, created_at')
+          .eq('tenant_id', tenantId)
+          .eq('customer_id', customerId)
+          .in('status', ['completed', 'paid']),
+      ]);
+
+      const totalSpent = (transactions || []).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+      const bookingCount = (reservations || []).length;
+      const completedCount = (reservations || []).filter((r: any) => r.status === 'completed').length;
+      const lastBookingDate = reservations?.[0]?.created_at ? new Date(reservations[0].created_at) : null;
+      const daysSinceLastBooking = lastBookingDate
+        ? Math.floor((Date.now() - lastBookingDate.getTime()) / (1000 * 60 * 60 * 24))
+        : 999;
+
+      const churnProbability = daysSinceLastBooking > 180 ? 0.9 : daysSinceLastBooking > 90 ? 0.6 : daysSinceLastBooking > 60 ? 0.3 : 0.1;
+      const valueSegment: 'low' | 'medium' | 'high' | 'vip' = totalSpent > 500 ? 'vip' : totalSpent > 200 ? 'high' : totalSpent > 50 ? 'medium' : 'low';
+
+      // Extract preferred times from reservation start_at
+      const hourCounts: Record<number, number> = {};
+      for (const r of (reservations || [])) {
+        if (r.start_at) {
+          const h = new Date(r.start_at).getHours();
+          hourCounts[h] = (hourCounts[h] || 0) + 1;
+        }
+      }
+      // Extract preferred times from hour distribution
+      const preferredTimes = Object.entries(hourCounts)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([h]) => `${String(h).padStart(2, '0')}:00`);
+
+      // Extract preferred services
+      const svcCounts: Record<string, number> = {};
+      for (const r of (reservations || [])) {
+        if (r.service) svcCounts[r.service] = (svcCounts[r.service] || 0) + 1;
+      }
+      const preferredServices = Object.entries(svcCounts).sort(([, a], [, b]) => b - a).slice(0, 3).map(([s]) => s);
+
+      // Booking frequency = bookings per month over observed lifespan
+      const firstBookingDate = reservations && reservations.length > 0
+        ? new Date((reservations as any[])[reservations.length - 1].created_at)
+        : null;
+      const observedMonths = firstBookingDate && lastBookingDate
+        ? Math.max(1, (lastBookingDate.getTime() - firstBookingDate.getTime()) / (1000 * 60 * 60 * 24 * 30))
+        : 1;
+      const bookingFrequency = bookingCount > 0 ? bookingCount / observedMonths : 0;
+
+      return {
+        customer_id: customerId,
+        tenant_id: tenantId,
+        lifetime_value: {
+          current_clv: totalSpent,
+          predicted_clv: totalSpent * 1.5,
+          clv_percentile: 50,
+          value_segment: valueSegment,
+        },
+        behavior_patterns: {
+          booking_frequency: bookingFrequency,
+          avg_session_duration: 30,
+          preferred_times: preferredTimes,
+          preferred_services: preferredServices,
+          price_sensitivity: totalSpent > 200 ? 0.2 : 0.6,
+          loyalty_score: Math.min(100, completedCount * 10),
+          engagement_score: Math.min(100, bookingCount * 5),
+        },
+        churn_analysis: {
+          churn_probability: churnProbability,
+          churn_risk_level: churnProbability > 0.7 ? 'high' : churnProbability > 0.4 ? 'medium' : 'low',
+          days_since_last_booking: daysSinceLastBooking,
+          retention_factors: completedCount > 3 ? ['frequent_booker'] : [],
+          churn_indicators: daysSinceLastBooking > 90 ? ['long_absence'] : [],
+          recommended_actions: [],
+        },
+        segmentation: {
+          primary_segment: valueSegment === 'vip' ? 'vip' : bookingCount === 0 ? 'new' : 'regular',
+          secondary_segments: [],
+          segment_migration_history: [],
+        },
+      };
+    } catch (error) {
+      console.error('Error analyzing customer:', error);
+      return this.getFallbackCustomerAnalytics(tenantId, customerId);
+    }
   }
 
   private async getTenantCustomers(tenantId: string): Promise<any[]> {
@@ -775,17 +971,72 @@ class PredictiveAnalyticsEngine {
   // Additional methods for benchmarks and insights...
   
   private async getTenantPerformanceMetrics(tenantId: string, timeFrame?: string): Promise<any> {
-    return {
-      vertical: 'beauty',
-      metrics: {
-        revenue_per_customer: 150,
-        booking_frequency: 2.5,
-        customer_retention_rate: 0.85,
-        average_booking_value: 60,
-        conversion_rate: 0.25,
-        customer_satisfaction: 4.5
-      }
-    };
+    try {
+      const daysBack = timeFrame === 'yearly' ? 365 : timeFrame === 'quarterly' ? 90 : 30;
+      const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
+      const [
+        { data: transactions },
+        { data: reservations },
+        { data: feedback },
+        { data: tenantRow },
+      ] = await Promise.all([
+        this.supabase
+          .from('transactions')
+          .select('amount, metadata')
+          .eq('tenant_id', tenantId)
+          .in('status', ['completed', 'paid'])
+          .gte('created_at', since),
+        this.supabase
+          .from('reservations')
+          .select('id, status, phone')
+          .eq('tenant_id', tenantId)
+          .gte('created_at', since),
+        this.supabase
+          .from('customer_feedback')
+          .select('score')
+          .eq('tenant_id', tenantId),
+        this.supabase
+          .from('tenants')
+          .select('industry')
+          .eq('id', tenantId)
+          .maybeSingle(),
+      ]);
+
+      const totalRevenue = (transactions || []).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+      const totalBookings = (reservations || []).length;
+      const completedBookings = (reservations || []).filter((r: any) => r.status === 'completed').length;
+      const uniqueCustomers = new Set((reservations || []).map((r: any) => r.phone).filter(Boolean)).size;
+      const avgBookingValue = totalBookings > 0 ? totalRevenue / totalBookings : 0;
+      const avgRating = feedback && feedback.length > 0
+        ? (feedback as Array<{ score: number }>).reduce((s, f) => s + f.score, 0) / feedback.length
+        : 0;
+
+      return {
+        vertical: (tenantRow as any)?.industry || 'general',
+        metrics: {
+          revenue_per_customer: uniqueCustomers > 0 ? totalRevenue / uniqueCustomers : 0,
+          booking_frequency: uniqueCustomers > 0 ? totalBookings / uniqueCustomers : 0,
+          customer_retention_rate: totalBookings > 0 ? completedBookings / totalBookings : 0,
+          average_booking_value: avgBookingValue,
+          conversion_rate: totalBookings > 0 ? completedBookings / totalBookings : 0,
+          customer_satisfaction: avgRating,
+        },
+      };
+    } catch (error) {
+      console.error('Error getting tenant performance metrics:', error);
+      return {
+        vertical: 'general',
+        metrics: {
+          revenue_per_customer: 0,
+          booking_frequency: 0,
+          customer_retention_rate: 0,
+          average_booking_value: 0,
+          conversion_rate: 0,
+          customer_satisfaction: 0,
+        },
+      };
+    }
   }
 
   private async getIndustryBenchmarks(vertical: string): Promise<any> {

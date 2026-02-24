@@ -853,14 +853,14 @@ class WhatsAppTemplateManager {
       
       switch (outcome) {
         case 'delivered':
-          analytics.success_rate = this.calculateRate(analytics.total_sent, 'delivered');
+          analytics.success_rate = this.calculateRate(analytics.total_sent, analytics.success_rate);
           break;
         case 'read':
-          analytics.engagement_rate = this.calculateRate(analytics.total_sent, 'read');
+          analytics.engagement_rate = this.calculateRate(analytics.total_sent, analytics.engagement_rate);
           break;
         case 'responded':
         case 'converted':
-          analytics.conversion_rate = this.calculateRate(analytics.total_sent, 'converted');
+          analytics.conversion_rate = this.calculateRate(analytics.total_sent, analytics.conversion_rate);
           break;
       }
 
@@ -1273,11 +1273,14 @@ class WhatsAppTemplateManager {
   }
 
   /**
-   * Calculate effectiveness rate
+   * Calculate effectiveness rate incrementally.
+   * Uses the previous rate + totalSent to avoid Math.random().
+   * prevCount = round(prevRate/100 * (totalSent-1)); newRate = (prevCount+1)/totalSent*100
    */
-  private calculateRate(totalSent: number, outcomeType: string): number {
-    // Simplified calculation - in production, would query actual outcome data
-    return Math.random() * 100; // Placeholder
+  private calculateRate(totalSent: number, previousRate: number): number {
+    if (totalSent <= 0) return 0;
+    const prevCount = Math.round((previousRate / 100) * (totalSent - 1));
+    return ((prevCount + 1) / totalSent) * 100;
   }
 
   /**
@@ -1292,14 +1295,62 @@ class WhatsAppTemplateManager {
   }
 
   /**
-   * Get template timeline data
+   * Get template timeline data from whatsapp_template_usage grouped by date.
    */
   private async getTemplateTimeline(tenantId: string, options: any): Promise<Array<{
     date: string;
     metrics: Record<string, number>;
   }>> {
-    // Placeholder implementation
-    return [];
+    try {
+      let query = this.supabase
+        .from('whatsapp_template_usage')
+        .select('template_id, metadata, created_at')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: true });
+
+      if (options?.templateId) {
+        query = query.eq('template_id', options.templateId);
+      }
+      if (options?.dateRange?.from) {
+        query = query.gte('created_at', options.dateRange.from);
+      }
+      if (options?.dateRange?.to) {
+        query = query.lte('created_at', options.dateRange.to);
+      }
+      // Default: last 30 days
+      if (!options?.dateRange) {
+        query = query.gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+      }
+
+      const { data, error } = await query;
+      if (error || !data) return [];
+
+      // Group by date
+      const byDate: Record<string, { sent: number; delivered: number; read: number; converted: number }> = {};
+      for (const row of data) {
+        const date = row.created_at.split('T')[0];
+        if (!byDate[date]) byDate[date] = { sent: 0, delivered: 0, read: 0, converted: 0 };
+        byDate[date].sent += 1;
+        const outcome = row.metadata?.outcome as string | undefined;
+        if (outcome === 'delivered') byDate[date].delivered += 1;
+        else if (outcome === 'read') byDate[date].read += 1;
+        else if (outcome === 'converted' || outcome === 'responded') byDate[date].converted += 1;
+      }
+
+      return Object.entries(byDate).map(([date, m]) => ({
+        date,
+        metrics: {
+          sent: m.sent,
+          delivered: m.delivered,
+          read: m.read,
+          converted: m.converted,
+          success_rate: m.sent > 0 ? Math.round((m.delivered / m.sent) * 100) : 0,
+        },
+      }));
+    } catch (error) {
+      console.error('Error getting template timeline:', error);
+      return [];
+    }
   }
 
   /**

@@ -610,12 +610,98 @@ class AutomationWorkflows {
   }
 
   private async calculateReminderMetrics(tenantId: string): Promise<any> {
-    // Placeholder implementation
-    return {
-      response_rate: 0.85,
-      booking_confirmation_rate: 0.92,
-      customer_satisfaction: 4.6
-    };
+    try {
+      const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      const [{ data: notifs }, { data: reservations }] = await Promise.all([
+        this.supabase
+          .from('booking_notifications')
+          .select('status, metadata')
+          .eq('tenant_id', tenantId)
+          .gte('created_at', since7d),
+        this.supabase
+          .from('reservations')
+          .select('id, status')
+          .eq('tenant_id', tenantId)
+          .gte('created_at', since7d),
+      ]);
+
+      const total = notifs?.length || 0;
+      const responded = (notifs || []).filter((n: any) => n.status === 'delivered' || n.metadata?.responded).length;
+      const confirmed = (reservations || []).filter((r: any) => r.status === 'confirmed' || r.status === 'completed').length;
+      const totalRes = (reservations || []).length;
+
+      return {
+        response_rate: total > 0 ? responded / total : 0,
+        booking_confirmation_rate: totalRes > 0 ? confirmed / totalRes : 0,
+        customer_satisfaction: 0, // driven by customer_feedback, not available here
+      };
+    } catch {
+      return { response_rate: 0, booking_confirmation_rate: 0, customer_satisfaction: 0 };
+    }
+  }
+
+  private async calculateRebookingMetrics(tenantId: string): Promise<any> {
+    try {
+      const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: noShows } = await this.supabase
+        .from('reservations')
+        .select('id, phone, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'no_show')
+        .gte('created_at', since30d);
+
+      if (!noShows || noShows.length === 0) {
+        return { rebooking_rate: 0, average_recovery_time: 0, customer_retention_impact: 0 };
+      }
+
+      // For each no-show customer, check if they made a subsequent booking.
+      // Build a Map of phone → earliest no-show date to avoid O(n²) find().
+      const phoneToNoShowDate = new Map<string, string>();
+      for (const r of noShows) {
+        if (!r.phone) continue;
+        const existing = phoneToNoShowDate.get(r.phone);
+        if (!existing || r.created_at < existing) {
+          phoneToNoShowDate.set(r.phone, r.created_at);
+        }
+      }
+      const phones = [...phoneToNoShowDate.keys()];
+      let rebookedCount = 0;
+      const recoveryTimes: number[] = [];
+
+      for (const phone of phones) {
+        const noShowDate = phoneToNoShowDate.get(phone)!;
+        const { data: subsequent } = await this.supabase
+          .from('reservations')
+          .select('created_at')
+          .eq('tenant_id', tenantId)
+          .eq('phone', phone)
+          .gt('created_at', noShowDate)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (subsequent) {
+          rebookedCount++;
+          const recoveryMs = new Date(subsequent.created_at).getTime() - new Date(noShowDate).getTime();
+          recoveryTimes.push(recoveryMs / (1000 * 60 * 60)); // in hours
+        }
+      }
+
+      const rebooking_rate = phones.length > 0 ? rebookedCount / phones.length : 0;
+      const average_recovery_time = recoveryTimes.length > 0
+        ? recoveryTimes.reduce((s, v) => s + v, 0) / recoveryTimes.length
+        : 0;
+
+      return {
+        rebooking_rate,
+        average_recovery_time,
+        customer_retention_impact: rebooking_rate * 0.5,
+      };
+    } catch {
+      return { rebooking_rate: 0, average_recovery_time: 0, customer_retention_impact: 0 };
+    }
   }
 
   private async getMissedAppointments(tenantId: string, options: any): Promise<any[]> {
@@ -738,24 +824,37 @@ class AutomationWorkflows {
     };
   }
 
-  private async calculateRebookingMetrics(tenantId: string): Promise<any> {
-    // Placeholder implementation
-    return {
-      rebooking_rate: 0.35,
-      average_recovery_time: 48, // hours
-      customer_retention_impact: 0.25
-    };
-  }
-
   // Additional helper methods for content generation, cross-vertical learning, etc.
-  
+
   private async getCustomerAudienceData(tenantId: string, customerPhone: string): Promise<any> {
-    // Get customer profile and preferences
-    return {
-      customer_segment: 'regular',
-      demographics: { age_range: '25-35' },
-      preferences: { communication_style: 'friendly' }
-    };
+    try {
+      const { data: customer } = await this.supabase
+        .from('customers')
+        .select('id, email, metadata')
+        .eq('tenant_id', tenantId)
+        .eq('phone', customerPhone)
+        .maybeSingle();
+
+      const { data: reservations } = await this.supabase
+        .from('reservations')
+        .select('service, status, start_at')
+        .eq('tenant_id', tenantId)
+        .eq('phone', customerPhone)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      const totalBookings = (reservations || []).length;
+      const completed = (reservations || []).filter((r: any) => r.status === 'completed').length;
+      const segment = completed > 5 ? 'vip' : completed > 2 ? 'regular' : 'new';
+
+      return {
+        customer_segment: segment,
+        demographics: customer?.metadata || {},
+        preferences: { communication_style: totalBookings > 3 ? 'friendly' : 'professional' },
+      };
+    } catch {
+      return { customer_segment: 'general', demographics: {}, preferences: { communication_style: 'professional' } };
+    }
   }
 
   private async getGenericAudienceData(tenantId: string): Promise<any> {
@@ -767,8 +866,27 @@ class AutomationWorkflows {
   }
 
   private async getVerticalContext(tenantId: string): Promise<'beauty' | 'hospitality' | 'medicine'> {
-    // Get tenant's vertical from database
-    return 'beauty'; // Placeholder
+    try {
+      const { data } = await this.supabase
+        .from('tenants')
+        .select('industry')
+        .eq('id', tenantId)
+        .maybeSingle();
+
+      const industryMap: Record<string, 'beauty' | 'hospitality' | 'medicine'> = {
+        beauty: 'beauty',
+        wellness: 'beauty',
+        hospitality: 'hospitality',
+        hotel: 'hospitality',
+        medicine: 'medicine',
+        healthcare: 'medicine',
+        medical: 'medicine',
+      };
+      const industry = (data as any)?.industry?.toLowerCase() || '';
+      return industryMap[industry] || 'beauty';
+    } catch {
+      return 'beauty';
+    }
   }
 
   private async generateContentWithAI(

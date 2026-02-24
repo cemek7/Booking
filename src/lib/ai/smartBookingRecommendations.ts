@@ -841,63 +841,257 @@ class SmartBookingRecommendations {
   }
 
   private async calculateStaffCompatibility(customer: CustomerProfile, staff: any, serviceId: string): Promise<number> {
-    // Implement staff compatibility calculation
-    return 0.8; // Placeholder
+    try {
+      // Use average customer_feedback score for this staff member (0-1 scale from 1-5 rating)
+      const { data: feedback } = await this.supabase
+        .from('customer_feedback')
+        .select('score')
+        .eq('tenant_id', customer.tenant_id)
+        .eq('staff_user_id', staff.id);
+
+      if (feedback && feedback.length > 0) {
+        const avg = feedback.reduce((s: number, f: { score: number }) => s + f.score, 0) / feedback.length;
+        return (avg - 1) / 4; // normalise 1–5 → 0–1
+      }
+      return 0.5; // neutral when no feedback yet
+    } catch {
+      return 0.5;
+    }
   }
 
   private async calculateExpertiseMatch(staff: any, serviceId: string): Promise<number> {
-    // Implement expertise matching
-    return 0.9; // Placeholder
+    try {
+      // Count completed reservations for this staff+service combination
+      const { data: completions } = await this.supabase
+        .from('reservations')
+        .select('id')
+        .eq('staff_user_id', staff.id)
+        .eq('service_id', serviceId)
+        .eq('status', 'completed');
+
+      const count = completions?.length || 0;
+      // 10+ completions → 1.0; linear ramp below that
+      return Math.min(1.0, count / 10);
+    } catch {
+      return 0.5;
+    }
   }
 
   private async calculateAvailabilityScore(staffId: string, preferredDate?: string): Promise<number> {
-    // Implement availability scoring
-    return 0.7; // Placeholder
+    try {
+      const date = preferredDate || new Date().toISOString().split('T')[0];
+      const { data: slots } = await this.supabase
+        .from('availability_slots')
+        .select('is_available')
+        .eq('staff_user_id', staffId)
+        .eq('date', date);
+
+      if (!slots || slots.length === 0) return 0.5;
+      const available = slots.filter((s: { is_available: boolean }) => s.is_available).length;
+      return available / slots.length;
+    } catch {
+      return 0.5;
+    }
   }
 
   private async calculateCustomerStaffPreference(customer: CustomerProfile, staff: any): Promise<number> {
-    // Implement customer-staff preference calculation
-    return 0.5; // Placeholder
+    try {
+      // Count past reservations this customer had with this staff member
+      const { data: pastBookings } = await this.supabase
+        .from('reservations')
+        .select('id')
+        .eq('tenant_id', customer.tenant_id)
+        .eq('phone', customer.phone)
+        .eq('staff_user_id', staff.id)
+        .eq('status', 'completed');
+
+      const count = pastBookings?.length || 0;
+      // 3+ bookings together → strong preference
+      return Math.min(1.0, count / 3);
+    } catch {
+      return 0.3;
+    }
   }
 
   private async calculateStaffRevenuePotential(tenantId: string, staffId: string, customer: CustomerProfile): Promise<number> {
-    // Implement revenue potential calculation
-    return 0.6; // Placeholder
+    try {
+      // Use customer's average booking value as a proxy for revenue potential
+      const avg = customer.history.avg_booking_value;
+      if (avg <= 0) return 0.5;
+      // Normalise against a reasonable max (e.g. 500 currency units)
+      return Math.min(1.0, avg / 500);
+    } catch {
+      return 0.5;
+    }
   }
 
   private async getStaffNextAvailableSlots(staffId: string, preferredDate?: string): Promise<any[]> {
-    // Implement next available slots logic
-    return []; // Placeholder
+    try {
+      const from = preferredDate || new Date().toISOString().split('T')[0];
+      const { data: slots } = await this.supabase
+        .from('availability_slots')
+        .select('date, start_time, end_time')
+        .eq('staff_user_id', staffId)
+        .eq('is_available', true)
+        .gte('date', from)
+        .order('date', { ascending: true })
+        .order('start_time', { ascending: true })
+        .limit(5);
+
+      return (slots || []).map((s: { date: string; start_time: string; end_time: string }) => ({
+        date: s.date,
+        time: s.start_time,
+        confidence: 0.9,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   private async getOptimalTimeSlots(tenantId: string, serviceId: string, customer: CustomerProfile, preferredDate?: string): Promise<any[]> {
-    // Implement optimal time slots calculation
-    return []; // Placeholder
+    try {
+      const from = preferredDate || new Date().toISOString().split('T')[0];
+      const { data: slots } = await this.supabase
+        .from('availability_slots')
+        .select('date, start_time, staff_user_id')
+        .eq('tenant_id', tenantId)
+        .eq('is_available', true)
+        .gte('date', from)
+        .order('date', { ascending: true })
+        .order('start_time', { ascending: true })
+        .limit(10);
+
+      if (!slots) return [];
+
+      // Calculate demand factor per slot (how many staff are busy at that time)
+      const slotMap: Record<string, number> = {};
+      for (const s of slots) {
+        const key = `${s.date}T${s.start_time}`;
+        slotMap[key] = (slotMap[key] || 0) + 1;
+      }
+      const maxStaff = Math.max(1, ...Object.values(slotMap));
+
+      // Deduplicate and return unique date/time pairs
+      const seen = new Set<string>();
+      const result: any[] = [];
+      for (const s of slots) {
+        const key = `${s.date}T${s.start_time}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push({
+            date: s.date,
+            time: s.start_time,
+            demand_factor: (slotMap[key] || 1) / maxStaff,
+          });
+        }
+        if (result.length >= 5) break;
+      }
+      return result;
+    } catch {
+      return [];
+    }
   }
 
   private async getCustomerInteractions(tenantId: string, customerPhone: string, timeframe: any): Promise<any[]> {
-    // Implement interaction history retrieval
-    return []; // Placeholder
+    try {
+      const { data: msgs } = await this.supabase
+        .from('messages')
+        .select('id, direction, channel, payload, created_at')
+        .eq('tenant_id', tenantId)
+        .gte('created_at', timeframe.start)
+        .lte('created_at', timeframe.end)
+        .order('created_at', { ascending: true });
+
+      return (msgs || [])
+        .filter((m: any) => m.payload?.phone === customerPhone || m.payload?.from === customerPhone)
+        .map((m: any) => ({
+          created_at: m.created_at,
+          channel: m.channel || 'whatsapp',
+          action: m.direction === 'inbound' ? 'inquiry' : 'response',
+          outcome: 'engaged',
+        }));
+    } catch {
+      return [];
+    }
   }
 
   private async getCustomerBookings(tenantId: string, customerPhone: string, timeframe: any): Promise<any[]> {
-    // Implement booking history retrieval
-    return []; // Placeholder
+    try {
+      const { data: bookings } = await this.supabase
+        .from('reservations')
+        .select('id, status, start_at, service, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('phone', customerPhone)
+        .gte('created_at', timeframe.start)
+        .lte('created_at', timeframe.end);
+
+      return bookings || [];
+    } catch {
+      return [];
+    }
   }
 
   private calculateConversionProbability(interaction: any): number {
-    // Implement conversion probability calculation
-    return 0.5; // Placeholder
+    // Higher probability for inbound inquiries and quote requests
+    if (interaction.action === 'inquiry') return 0.4;
+    if (interaction.action === 'quote_sent') return 0.6;
+    if (interaction.action === 'booking_created') return 1.0;
+    return 0.2;
   }
 
-  private identifyDropOffPoints(funnel: any): any[] {
-    // Implement drop-off analysis
-    return []; // Placeholder
+  private identifyDropOffPoints(funnel: {
+    inquiry: number; quote: number; booking: number; completion: number; repeat: number;
+  }): any[] {
+    const points: any[] = [];
+    const steps = [
+      { step: 'inquiry_to_quote', from: funnel.inquiry, to: funnel.quote },
+      { step: 'quote_to_booking', from: funnel.quote, to: funnel.booking },
+      { step: 'booking_to_completion', from: funnel.booking, to: funnel.completion },
+      { step: 'completion_to_repeat', from: funnel.completion, to: funnel.repeat },
+    ];
+    for (const { step, from, to } of steps) {
+      if (from > 0) {
+        const drop_off_rate = Math.max(0, (from - to) / from);
+        if (drop_off_rate > 0.3) {
+          points.push({
+            step,
+            drop_off_rate,
+            improvement_suggestions: [`Improve follow-up at ${step.replace(/_/g, ' ')} stage`],
+          });
+        }
+      }
+    }
+    return points;
   }
 
-  private async generateNextBestActions(tenantId: string, customerPhone: string, touchpoints: any[], funnel: any): Promise<any[]> {
-    // Implement next best action generation
-    return []; // Placeholder
+  private async generateNextBestActions(
+    tenantId: string,
+    customerPhone: string,
+    touchpoints: any[],
+    funnel: { inquiry: number; quote: number; booking: number; completion: number; repeat: number },
+  ): Promise<any[]> {
+    const actions: any[] = [];
+    const now = new Date();
+
+    if (funnel.inquiry > 0 && funnel.booking === 0) {
+      actions.push({
+        action: 'Send follow-up offer',
+        timing: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+        channel: 'whatsapp',
+        expected_outcome: 'Convert inquiry to booking',
+        success_probability: 0.35,
+      });
+    }
+    if (funnel.completion > 0 && funnel.repeat === 0) {
+      actions.push({
+        action: 'Send re-engagement message with discount',
+        timing: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        channel: 'whatsapp',
+        expected_outcome: 'Drive repeat booking',
+        success_probability: 0.45,
+      });
+    }
+    return actions;
   }
 }
 

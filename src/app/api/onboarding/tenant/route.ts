@@ -22,6 +22,7 @@ const StaffSchema = z.object({
 
 const OnboardingBodySchema = z.object({
   name: z.string().min(1, 'Tenant name is required'),
+  industry: z.string().optional(),
   business_type: z.string().optional(),
   timezone: z.string().optional(),
   services: z.array(ServiceSchema).optional(),
@@ -51,10 +52,10 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
       }
 
-      const { tenantId } = await createTenant(ctx.supabase, userId, bodyValidation.data);
+      const { tenantId, slug } = await createTenant(ctx.supabase, userId, bodyValidation.data);
 
       span.setAttribute('tenant.id', tenantId);
-      return { success: true, tenantId };
+      return { success: true, tenantId, slug };
     } finally {
       span.end();
     }
