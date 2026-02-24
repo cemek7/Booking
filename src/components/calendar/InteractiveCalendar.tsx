@@ -7,9 +7,16 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import StaffSidebar from './StaffSidebar';
 import AppointmentModal from './AppointmentModal';
 import CreateAppointmentModal from './CreateAppointmentModal';
+import { authFetch } from '@/lib/auth/auth-api-client';
 
 // Setup the localizer by providing the moment Object
 const localizer = momentLocalizer(moment);
+
+// Palette for auto-assigning colors to staff
+const STAFF_COLORS = [
+  '#3174ad', '#2ca02c', '#d62728', '#9467bd',
+  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
+];
 
 // Define the structure of a calendar event
 interface CalendarEvent {
@@ -18,7 +25,6 @@ interface CalendarEvent {
   start: Date;
   end: Date;
   resourceId: number;
-  // Add any other properties you need for an event
 }
 
 // Define the structure for a resource (e.g., a staff member)
@@ -71,43 +77,49 @@ const InteractiveCalendar: React.FC = () => {
   const [selectedStaff, setSelectedStaff] = useState<number[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [slotInfo, setSlotInfo] = useState<SlotInfo | null>(null);
-
-  // Placeholder data - we will replace this with data fetched from the API
-  const placeholderEvents: CalendarEvent[] = [
-    {
-      id: 1,
-      title: 'Meeting with Client',
-      start: new Date(2025, 11, 12, 10, 0),
-      end: new Date(2025, 11, 12, 11, 0),
-      resourceId: 1,
-    },
-    {
-      id: 2,
-      title: 'Project Deadline',
-      start: new Date(2025, 11, 15, 14, 0),
-      end: new Date(2025, 11, 15, 15, 30),
-      resourceId: 2,
-    },
-    {
-      id: 3,
-      title: 'Team Sync',
-      start: new Date(2025, 11, 15, 9, 0),
-      end: new Date(2025, 11, 15, 9, 30),
-      resourceId: 1,
-    },
-  ];
-
-  const placeholderResources: Resource[] = [
-    { resourceId: 1, resourceTitle: 'Alice', color: '#3174ad' },
-    { resourceId: 2, resourceTitle: 'Bob', color: '#2ca02c' },
-  ];
+  const [loading, setLoading] = useState(true);
 
   React.useEffect(() => {
-    // In a real application, you would fetch your events and resources here
-    setEvents(placeholderEvents);
-    setResources(placeholderResources);
-    // By default, select all staff
-    setSelectedStaff(placeholderResources.map(r => r.resourceId));
+    let cancelled = false;
+    (async () => {
+      try {
+        const [staffRes, reservationsRes] = await Promise.all([
+          authFetch<{ staff: Array<{ id: string; name: string; email: string }> }>('/api/staff'),
+          authFetch<{ data: Array<{ id: string; title?: string; service_id?: string; staff_id?: string; start_at: string; end_at: string; status?: string }> }>('/api/reservations'),
+        ]);
+        if (cancelled) return;
+
+        // Build resources from real staff
+        const staffList = staffRes.data?.staff ?? [];
+        const builtResources: Resource[] = staffList.map((s, idx) => ({
+          resourceId: idx + 1,
+          resourceTitle: s.name || s.email || s.id,
+          color: STAFF_COLORS[idx % STAFF_COLORS.length],
+        }));
+        const staffIdToResourceId = new Map(staffList.map((s, idx) => [s.id, idx + 1]));
+
+        // Build events from real reservations
+        const reservations = reservationsRes.data?.data ?? [];
+        const builtEvents: CalendarEvent[] = reservations
+          .filter(r => r.start_at && r.end_at)
+          .map((r, idx) => ({
+            id: idx + 1,
+            title: r.title ?? r.service_id ?? 'Booking',
+            start: new Date(r.start_at),
+            end: new Date(r.end_at),
+            resourceId: staffIdToResourceId.get(r.staff_id ?? '') ?? 1,
+          }));
+
+        setResources(builtResources);
+        setEvents(builtEvents);
+        setSelectedStaff(builtResources.map(r => r.resourceId));
+      } catch {
+        // silently keep empty state on error
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const handleStaffSelectionChange = (selectedIds: number[]) => {
@@ -142,9 +154,17 @@ const InteractiveCalendar: React.FC = () => {
   };
 
   const handleCreateEvent = (newEvent: Omit<CalendarEvent, 'id'>) => {
-    const id = Math.max(...events.map(e => e.id)) + 1;
+    const id = events.length > 0 ? Math.max(...events.map(e => e.id)) + 1 : 1;
     setEvents([...events, { ...newEvent, id }]);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500">
+        Loading schedule…
+      </div>
+    );
+  }
 
   return (
     <div className="flex" style={{ height: '100vh' }}>
