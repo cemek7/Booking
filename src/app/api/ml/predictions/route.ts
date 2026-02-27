@@ -91,21 +91,3 @@ export const GET = createHttpHandler(
   'GET',
   { auth: true, roles: ['manager', 'owner'] }
 );
-      // The service already provides a structured error
-      return NextResponse.json({ error: result.error || 'Prediction failed' }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      type,
-      data: result.data,
-      usage: result.usage,
-      generated_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    span.recordException(error as Error);
-    return handleApiError(error, 'Failed to retrieve ML prediction');
-  } finally {
-    span.end();
-  }
-}

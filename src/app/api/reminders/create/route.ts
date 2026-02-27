@@ -73,9 +73,3 @@ export const POST = createHttpHandler(
   'POST',
   { auth: true }
 );
-    headers: {
-      Allow: 'POST, OPTIONS',
-      'Content-Type': 'application/json',
-    },
-  });
-}

@@ -81,13 +81,3 @@ export const POST = createHttpHandler(
   'POST',
   { auth: true, roles: ['manager', 'owner'] }
 );
-  try {
-    const { session, tenantId } = await getSession(request);
-    if (!session || !tenantId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const access = await validateTenantAccess(createServerSupabaseClient(), session.user.id, tenantId, ['manager', 'owner']);
-    if (!access) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }

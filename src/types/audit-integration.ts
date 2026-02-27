@@ -27,6 +27,8 @@ import {
 } from './audit-logging';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
+import { Role } from './roles';
+import { assertRole } from './type-safe-rbac';
 
 // ============================================================================
 // AUDITED PERMISSION CHECKER
@@ -151,11 +153,8 @@ export class AuditedPermissionChecker extends UnifiedPermissionChecker {
       await this.auditLogger.logRoleChange(
         adminUser,
         targetUserId,
-import { Role } from './roles';
-import { assertRole } from './type-safe-rbac';
-
-        oldRole: assertRole(oldRole, 'role change audit'),
-        newRole: assertRole(newRole, 'role change audit'),
+        assertRole(oldRole, 'role change audit'),
+        assertRole(newRole, 'role change audit'),
         tenantId,
         justification,
         {

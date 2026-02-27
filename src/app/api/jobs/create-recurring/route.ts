@@ -66,28 +66,3 @@ export const POST = createHttpHandler(
   'POST',
   { auth: true }
 );
-      ])
-      .select()
-      .maybeSingle();
-
-    if (insertError) {
-      console.error('[api/jobs/create-recurring] Error creating recurring job:', insertError);
-      return NextResponse.json({ error: insertError.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ job: jobData });
-  } catch (err: unknown) {
-    console.error('[api/jobs/create-recurring] error', err);
-    return NextResponse.json({ error: 'internal_error' }, { status: 500 });
-  }
-}
-
-export function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      Allow: 'POST, OPTIONS',
-      'Content-Type': 'application/json',
-    },
-  });
-}

@@ -70,11 +70,3 @@ export const GET = createHttpHandler(
   'GET',
   { auth: true, roles: ['owner'] }
 );
-
-  } catch (error) {
-    span.recordException(error as Error);
-    return handleApiError(error, 'Failed to retrieve job stats');
-  } finally {
-    span.end();
-  }
-}

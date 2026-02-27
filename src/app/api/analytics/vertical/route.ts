@@ -33,4 +33,3 @@ export const GET = createHttpHandler(
   'GET',
   { auth: true }
 );
-}

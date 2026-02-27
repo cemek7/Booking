@@ -68,29 +68,29 @@ export default function BookingConfirmation({
   if (variant === 'minimal') {
     return (
       <div className={`space-y-3 ${className}`}>
-        <div className=\"flex items-center justify-between\">
-          <div className=\"flex items-center gap-2\">
-            <CheckCircle className=\"h-5 w-5 text-green-600\" />
-            <span className=\"font-medium\">Booking Confirmed</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <span className="font-medium">Booking Confirmed</span>
           </div>
-          <Badge variant=\"outline\" className={statusColor}>
+          <Badge variant="outline" className={statusColor}>
             {booking.status}
           </Badge>
         </div>
         
-        <div className=\"text-sm space-y-1\">
-          <div className=\"flex items-center gap-2\">
-            <Calendar className=\"h-4 w-4 text-muted-foreground\" />
+        <div className="text-sm space-y-1">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
             {formatDate(appointmentDateTime)} at {formatTime(appointmentDateTime)}
           </div>
-          <div className=\"flex items-center gap-2\">
-            <User className=\"h-4 w-4 text-muted-foreground\" />
+          <div className="flex items-center gap-2">
+            <User className="h-4 w-4 text-muted-foreground" />
             {booking.service_name}
           </div>
         </div>
         
         {showCalendarButton && (
-          <QuickAddCalendar booking={booking} className=\"w-full\" />
+          <QuickAddCalendar booking={booking} className="w-full" />
         )}
       </div>
     );
@@ -101,70 +101,70 @@ export default function BookingConfirmation({
     return (
       <div className={`max-w-2xl mx-auto bg-white border border-gray-200 rounded-lg ${className}`} style={{ fontFamily: 'Arial, sans-serif' }}>
         {/* Header */}
-        <div className=\"bg-green-50 px-6 py-4 border-b border-green-200\">
-          <div className=\"flex items-center gap-3\">
-            <div className=\"w-8 h-8 bg-green-600 rounded-full flex items-center justify-center\">
-              <CheckCircle className=\"h-5 w-5 text-white\" />
+        <div className="bg-green-50 px-6 py-4 border-b border-green-200">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center">
+              <CheckCircle className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className=\"text-xl font-semibold text-green-900\">Booking Confirmed!</h1>
-              <p className=\"text-green-700 text-sm\">Your appointment has been successfully scheduled</p>
+              <h1 className="text-xl font-semibold text-green-900">Booking Confirmed!</h1>
+              <p className="text-green-700 text-sm">Your appointment has been successfully scheduled</p>
             </div>
           </div>
         </div>
 
         {/* Booking Details */}
-        <div className=\"px-6 py-6\">
-          <div className=\"grid grid-cols-1 md:grid-cols-2 gap-6\">
+        <div className="px-6 py-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Left Column */}
-            <div className=\"space-y-4\">
-              <div className=\"flex items-start gap-3\">
-                <Calendar className=\"h-5 w-5 text-blue-600 mt-0.5\" />
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <Calendar className="h-5 w-5 text-blue-600 mt-0.5" />
                 <div>
-                  <div className=\"font-medium text-gray-900\">Date & Time</div>
-                  <div className=\"text-gray-700\">{formatDate(appointmentDateTime)}</div>
-                  <div className=\"text-gray-700\">{formatTime(appointmentDateTime)} - {formatTime(endTime)}</div>
+                  <div className="font-medium text-gray-900">Date & Time</div>
+                  <div className="text-gray-700">{formatDate(appointmentDateTime)}</div>
+                  <div className="text-gray-700">{formatTime(appointmentDateTime)} - {formatTime(endTime)}</div>
                 </div>
               </div>
 
-              <div className=\"flex items-start gap-3\">
-                <User className=\"h-5 w-5 text-purple-600 mt-0.5\" />
+              <div className="flex items-start gap-3">
+                <User className="h-5 w-5 text-purple-600 mt-0.5" />
                 <div>
-                  <div className=\"font-medium text-gray-900\">Service</div>
-                  <div className=\"text-gray-700\">{booking.service_name}</div>
+                  <div className="font-medium text-gray-900">Service</div>
+                  <div className="text-gray-700">{booking.service_name}</div>
                   {booking.staff_name && (
-                    <div className=\"text-sm text-gray-600\">with {booking.staff_name}</div>
+                    <div className="text-sm text-gray-600">with {booking.staff_name}</div>
                   )}
                 </div>
               </div>
 
               {booking.location && (
-                <div className=\"flex items-start gap-3\">
-                  <MapPin className=\"h-5 w-5 text-red-600 mt-0.5\" />
+                <div className="flex items-start gap-3">
+                  <MapPin className="h-5 w-5 text-red-600 mt-0.5" />
                   <div>
-                    <div className=\"font-medium text-gray-900\">Location</div>
-                    <div className=\"text-gray-700\">{booking.location}</div>
+                    <div className="font-medium text-gray-900">Location</div>
+                    <div className="text-gray-700">{booking.location}</div>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Right Column */}
-            <div className=\"space-y-4\">
-              <div className=\"bg-gray-50 p-4 rounded-lg\">
-                <div className=\"font-medium text-gray-900 mb-2\">Booking Details</div>
-                <div className=\"space-y-1 text-sm\">
-                  <div className=\"flex justify-between\">
+            <div className="space-y-4">
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="font-medium text-gray-900 mb-2">Booking Details</div>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
                     <span>Booking ID:</span>
-                    <span className=\"font-mono\">{booking.id}</span>
+                    <span className="font-mono">{booking.id}</span>
                   </div>
-                  <div className=\"flex justify-between\">
+                  <div className="flex justify-between">
                     <span>Duration:</span>
                     <span>{booking.duration_minutes || 60} minutes</span>
                   </div>
-                  <div className=\"flex justify-between\">
+                  <div className="flex justify-between">
                     <span>Status:</span>
-                    <Badge variant=\"outline\" className={`${statusColor} text-xs`}>
+                    <Badge variant="outline" className={`${statusColor} text-xs`}>
                       {booking.status}
                     </Badge>
                   </div>
@@ -172,9 +172,9 @@ export default function BookingConfirmation({
               </div>
 
               {booking.notes && (
-                <div className=\"bg-blue-50 p-4 rounded-lg\">
-                  <div className=\"font-medium text-blue-900 mb-2\">Notes</div>
-                  <div className=\"text-sm text-blue-800\">{booking.notes}</div>
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <div className="font-medium text-blue-900 mb-2">Notes</div>
+                  <div className="text-sm text-blue-800">{booking.notes}</div>
                 </div>
               )}
             </div>
@@ -182,11 +182,11 @@ export default function BookingConfirmation({
 
           {/* Calendar Integration */}
           {showCalendarButton && (
-            <div className=\"mt-6 pt-6 border-t border-gray-200\">
-              <div className=\"flex flex-col sm:flex-row items-start sm:items-center gap-4\">
-                <div className=\"flex-1\">
-                  <h3 className=\"font-medium text-gray-900\">Add to Your Calendar</h3>
-                  <p className=\"text-sm text-gray-600\">Don't forget your appointment - add it to your calendar now</p>
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                <div className="flex-1">
+                  <h3 className="font-medium text-gray-900">Add to Your Calendar</h3>
+                  <p className="text-sm text-gray-600">Don't forget your appointment - add it to your calendar now</p>
                 </div>
                 <QuickAddCalendar booking={booking} />
               </div>
@@ -195,19 +195,19 @@ export default function BookingConfirmation({
 
           {/* Contact Information */}
           {booking.tenant && (
-            <div className=\"mt-6 pt-6 border-t border-gray-200\">
-              <h3 className=\"font-medium text-gray-900 mb-3\">Contact Information</h3>
-              <div className=\"grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm\">
-                <div className=\"flex items-center gap-2\">
-                  <Mail className=\"h-4 w-4 text-gray-500\" />
-                  <a href={`mailto:${booking.tenant.contact_email}`} className=\"text-blue-600 hover:underline\">
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <h3 className="font-medium text-gray-900 mb-3">Contact Information</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-gray-500" />
+                  <a href={`mailto:${booking.tenant.contact_email}`} className="text-blue-600 hover:underline">
                     {booking.tenant.contact_email}
                   </a>
                 </div>
                 {booking.tenant.contact_phone && (
-                  <div className=\"flex items-center gap-2\">
-                    <Phone className=\"h-4 w-4 text-gray-500\" />
-                    <a href={`tel:${booking.tenant.contact_phone}`} className=\"text-blue-600 hover:underline\">
+                  <div className="flex items-center gap-2">
+                    <Phone className="h-4 w-4 text-gray-500" />
+                    <a href={`tel:${booking.tenant.contact_phone}`} className="text-blue-600 hover:underline">
                       {booking.tenant.contact_phone}
                     </a>
                   </div>
@@ -223,60 +223,60 @@ export default function BookingConfirmation({
   // Default card variant
   return (
     <Card className={className}>
-      <CardHeader className=\"pb-4\">
-        <div className=\"flex items-center justify-between\">
-          <CardTitle className=\"flex items-center gap-2\">
-            <CheckCircle className=\"h-5 w-5 text-green-600\" />
+      <CardHeader className="pb-4">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5 text-green-600" />
             Booking Confirmed
           </CardTitle>
-          <Badge variant=\"outline\" className={statusColor}>
+          <Badge variant="outline" className={statusColor}>
             {booking.status}
           </Badge>
         </div>
       </CardHeader>
       
-      <CardContent className=\"space-y-4\">
+      <CardContent className="space-y-4">
         {/* Main booking info */}
-        <div className=\"grid grid-cols-1 md:grid-cols-2 gap-4\">
-          <div className=\"space-y-3\">
-            <div className=\"flex items-center gap-3\">
-              <Calendar className=\"h-4 w-4 text-muted-foreground\" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
               <div>
-                <div className=\"font-medium\">{formatDate(appointmentDateTime)}</div>
-                <div className=\"text-sm text-muted-foreground\">
+                <div className="font-medium">{formatDate(appointmentDateTime)}</div>
+                <div className="text-sm text-muted-foreground">
                   {formatTime(appointmentDateTime)} - {formatTime(endTime)}
                 </div>
               </div>
             </div>
             
-            <div className=\"flex items-center gap-3\">
-              <User className=\"h-4 w-4 text-muted-foreground\" />
+            <div className="flex items-center gap-3">
+              <User className="h-4 w-4 text-muted-foreground" />
               <div>
-                <div className=\"font-medium\">{booking.service_name}</div>
+                <div className="font-medium">{booking.service_name}</div>
                 {booking.staff_name && (
-                  <div className=\"text-sm text-muted-foreground\">with {booking.staff_name}</div>
+                  <div className="text-sm text-muted-foreground">with {booking.staff_name}</div>
                 )}
               </div>
             </div>
             
             {booking.location && (
-              <div className=\"flex items-center gap-3\">
-                <MapPin className=\"h-4 w-4 text-muted-foreground\" />
-                <div className=\"font-medium\">{booking.location}</div>
+              <div className="flex items-center gap-3">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                <div className="font-medium">{booking.location}</div>
               </div>
             )}
           </div>
           
-          <div className=\"space-y-3\">
+          <div className="space-y-3">
             <div>
-              <div className=\"text-sm text-muted-foreground\">Booking ID</div>
-              <div className=\"font-mono text-sm\">{booking.id}</div>
+              <div className="text-sm text-muted-foreground">Booking ID</div>
+              <div className="font-mono text-sm">{booking.id}</div>
             </div>
             
             <div>
-              <div className=\"text-sm text-muted-foreground\">Duration</div>
-              <div className=\"text-sm flex items-center gap-1\">
-                <Clock className=\"h-3 w-3\" />
+              <div className="text-sm text-muted-foreground">Duration</div>
+              <div className="text-sm flex items-center gap-1">
+                <Clock className="h-3 w-3" />
                 {booking.duration_minutes || 60} minutes
               </div>
             </div>
@@ -284,19 +284,19 @@ export default function BookingConfirmation({
         </div>
         
         {booking.notes && (
-          <div className=\"bg-muted/50 p-3 rounded-md\">
-            <div className=\"text-sm font-medium mb-1\">Notes</div>
-            <div className=\"text-sm text-muted-foreground\">{booking.notes}</div>
+          <div className="bg-muted/50 p-3 rounded-md">
+            <div className="text-sm font-medium mb-1">Notes</div>
+            <div className="text-sm text-muted-foreground">{booking.notes}</div>
           </div>
         )}
         
         {/* Calendar integration */}
         {showCalendarButton && (
-          <div className=\"pt-4 border-t\">
-            <div className=\"flex items-center justify-between\">
+          <div className="pt-4 border-t">
+            <div className="flex items-center justify-between">
               <div>
-                <div className=\"font-medium\">Add to Calendar</div>
-                <div className=\"text-sm text-muted-foreground\">Don't forget your appointment</div>
+                <div className="font-medium">Add to Calendar</div>
+                <div className="text-sm text-muted-foreground">Don't forget your appointment</div>
               </div>
               <QuickAddCalendar booking={booking} />
             </div>
@@ -311,12 +311,12 @@ export default function BookingConfirmation({
  * Email-ready booking confirmation component
  */
 export function BookingConfirmationEmail(props: BookingConfirmationProps) {
-  return <BookingConfirmation {...props} variant=\"email\" />;
+  return <BookingConfirmation {...props} variant="email" />;
 }
 
 /**
  * Minimal booking confirmation for notifications
  */
 export function BookingConfirmationMinimal(props: BookingConfirmationProps) {
-  return <BookingConfirmation {...props} variant=\"minimal\" />;
+  return <BookingConfirmation {...props} variant="minimal" />;
 }

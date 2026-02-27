@@ -48,5 +48,3 @@ export const POST = createHttpHandler(
   'POST',
   { auth: true }
 );
-  });
-}
