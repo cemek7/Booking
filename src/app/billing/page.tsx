@@ -1,7 +1,6 @@
-import { requireAuth } from '@/lib/auth/server-auth';
-import BillingClient from './BillingClient';
+import { redirect } from 'next/navigation';
 
-export default async function BillingPage() {
-  await requireAuth(['owner', 'manager']);
-  return <BillingClient />;
+// Billing has moved to the dashboard section (owner-only)
+export default function BillingRedirect() {
+  redirect('/dashboard/billing');
 }

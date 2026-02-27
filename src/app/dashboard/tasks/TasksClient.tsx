@@ -16,6 +16,11 @@ interface Task {
   created_at: string;
 }
 
+interface TasksClientProps {
+  /** true = owner/manager (full CRUD); false = staff (read-only todo list) */
+  canEdit: boolean;
+}
+
 const PRIORITY_COLORS: Record<Priority, string> = {
   low: 'bg-gray-100 text-gray-600',
   medium: 'bg-yellow-100 text-yellow-700',
@@ -34,8 +39,9 @@ const SAMPLE_TASKS: Task[] = [
   { id: '3', title: 'Send booking reminders', priority: 'low', status: 'done', created_at: new Date().toISOString() },
 ];
 
-export default function TasksClient() {
-  const [activeStatus, setActiveStatus] = useState<Status | 'all'>('all');
+export default function TasksClient({ canEdit }: TasksClientProps) {
+  // Staff see only todo tasks; managers/owners can filter across all statuses
+  const [activeStatus, setActiveStatus] = useState<Status | 'all'>(canEdit ? 'all' : 'todo');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', priority: 'medium' as Priority, due_date: '' });
   const [tasks, setTasks] = useState<Task[]>(SAMPLE_TASKS);
@@ -86,19 +92,26 @@ export default function TasksClient() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Tasks</h1>
-          <p className="text-sm text-gray-600 mt-1">Track and manage your team tasks.</p>
+          <p className="text-sm text-gray-600 mt-1">
+            {canEdit ? 'Track and manage your team tasks.' : 'Your assigned to-do items.'}
+          </p>
         </div>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700"
-        >
-          + New Task
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700"
+          >
+            + New Task
+          </button>
+        )}
       </div>
 
-      {/* Filter tabs */}
+      {/* Filter tabs — staff only sees the todo filter */}
       <div className="flex gap-2 flex-wrap">
-        {(['all', 'todo', 'in_progress', 'done'] as const).map((s) => (
+        {(canEdit
+          ? (['all', 'todo', 'in_progress', 'done'] as const)
+          : (['todo'] as const)
+        ).map((s) => (
           <button
             key={s}
             onClick={() => setActiveStatus(s)}
@@ -111,10 +124,16 @@ export default function TasksClient() {
             {s === 'all' ? 'All' : STATUS_LABELS[s]} ({counts[s]})
           </button>
         ))}
+        {/* Managers/owners can also see a quick summary badge */}
+        {canEdit && (
+          <span className="ml-auto self-center text-xs text-gray-400">
+            {counts.todo} open · {counts.in_progress} in progress · {counts.done} done
+          </span>
+        )}
       </div>
 
-      {/* New task form */}
-      {showForm && (
+      {/* New task form — only for owner/manager */}
+      {canEdit && showForm && (
         <div className="bg-white border rounded-xl p-5 space-y-3 shadow-sm">
           <h2 className="font-semibold text-sm">New Task</h2>
           <input
@@ -180,30 +199,40 @@ export default function TasksClient() {
                 task.status === 'done' ? 'opacity-60' : ''
               }`}
             >
-              <button
-                onClick={() => toggleStatus(task.id)}
-                title={`Current: ${STATUS_LABELS[task.status]} — click to advance`}
-                className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-                  task.status === 'done'
-                    ? 'bg-green-500 border-green-500 text-white'
-                    : task.status === 'in_progress'
-                    ? 'border-yellow-400 bg-yellow-50'
-                    : 'border-gray-300 hover:border-indigo-400'
-                }`}
-              >
-                {task.status === 'done' && <span className="text-xs leading-none">✓</span>}
-              </button>
+              {/* Status toggle button — only for owner/manager */}
+              {canEdit ? (
+                <button
+                  onClick={() => toggleStatus(task.id)}
+                  title={`Current: ${STATUS_LABELS[task.status]} — click to advance`}
+                  className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                    task.status === 'done'
+                      ? 'bg-green-500 border-green-500 text-white'
+                      : task.status === 'in_progress'
+                      ? 'border-yellow-400 bg-yellow-50'
+                      : 'border-gray-300 hover:border-indigo-400'
+                  }`}
+                >
+                  {task.status === 'done' && <span className="text-xs leading-none">✓</span>}
+                </button>
+              ) : (
+                /* Staff: read-only status indicator */
+                <div
+                  className="mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center border-gray-200 bg-gray-50"
+                  title={STATUS_LABELS[task.status]}
+                />
+              )}
+
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <p className={`text-sm font-medium ${task.status === 'done' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
-                    {task.title}
-                  </p>
+                  <p className="text-sm font-medium text-gray-900">{task.title}</p>
                   <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${PRIORITY_COLORS[task.priority]}`}>
                     {task.priority}
                   </span>
-                  <span className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-600">
-                    {STATUS_LABELS[task.status]}
-                  </span>
+                  {canEdit && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-600">
+                      {STATUS_LABELS[task.status]}
+                    </span>
+                  )}
                 </div>
                 {task.description && (
                   <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>
@@ -214,12 +243,16 @@ export default function TasksClient() {
                   </p>
                 )}
               </div>
-              <button
-                onClick={() => deleteTask(task.id)}
-                className="text-xs text-red-400 hover:text-red-600 flex-shrink-0"
-              >
-                Delete
-              </button>
+
+              {/* Delete — only for owner/manager */}
+              {canEdit && (
+                <button
+                  onClick={() => deleteTask(task.id)}
+                  className="text-xs text-red-400 hover:text-red-600 flex-shrink-0"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           ))}
         </div>

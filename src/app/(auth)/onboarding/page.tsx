@@ -363,13 +363,17 @@ export default function OnboardingPage() {
                 Go to Dashboard
               </button>
               {tenantId && (
-                <a href={`/book/${tenantId}`}
-                  className="block w-full py-2 border rounded-lg text-sm text-center text-indigo-600"
-                  target="_blank" rel="noopener noreferrer">
-                  View your booking page ↗
-                </a>
+                <button
+                  onClick={() => window.open(`/book/${tenantId}`, '_blank', 'noopener,noreferrer')}
+                  className="w-full py-2 border rounded-lg text-sm text-indigo-600 hover:bg-indigo-50 transition-colors"
+                >
+                  Preview your booking page ↗
+                </button>
               )}
             </div>
+            <p className="text-xs text-gray-400 pt-1">
+              You can always update your business details from the dashboard settings.
+            </p>
           </div>
         )}
       </div>
