@@ -110,8 +110,8 @@ export default function OnboardingPage() {
       let hadError = false;
       try {
         await Promise.all(
-          valid.map((s) =>
-            fetch('/api/services', {
+          valid.map(async (s) => {
+            const res = await fetch('/api/services', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenantId },
               body: JSON.stringify({
@@ -119,8 +119,9 @@ export default function OnboardingPage() {
                 duration: s.duration ? Number(s.duration) : undefined,
                 price: s.price ? Number(s.price) : undefined,
               }),
-            })
-          )
+            });
+            if (!res.ok) throw new Error(`service:${res.status}`);
+          })
         );
       } catch {
         hadError = true;
@@ -137,7 +138,7 @@ export default function OnboardingPage() {
       setLoading(true);
       let hadError = false;
       try {
-        await fetch('/api/staff', {
+        const res = await fetch('/api/staff', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenantId },
           body: JSON.stringify(
@@ -148,6 +149,7 @@ export default function OnboardingPage() {
             }))
           ),
         });
+        if (!res.ok) throw new Error(`staff:${res.status}`);
       } catch {
         hadError = true;
         toast.error('Some staff members could not be saved — you can add them later in the dashboard.');
@@ -164,8 +166,8 @@ export default function OnboardingPage() {
       let hadError = false;
       try {
         await Promise.all(
-          valid.map((f) =>
-            fetch('/api/faqs', {
+          valid.map(async (f) => {
+            const res = await fetch('/api/faqs', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenantId },
               body: JSON.stringify({
@@ -173,8 +175,9 @@ export default function OnboardingPage() {
                 answer: f.answer.trim(),
                 category: f.category.trim() || undefined,
               }),
-            })
-          )
+            });
+            if (!res.ok) throw new Error(`faq:${res.status}`);
+          })
         );
       } catch {
         hadError = true;
