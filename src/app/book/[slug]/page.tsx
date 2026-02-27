@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
-import { publicBookingService } from '@/lib/publicBookingService';
-import BookingContainer from './components/BookingContainer';
+import { getTenantPublicInfo, getTenantServices } from '@/lib/publicBookingService';
+import MiniSiteContainer from './components/MiniSiteContainer';
 import BookingPageSkeleton from './components/BookingPageSkeleton';
 
 interface BookingPageProps {
@@ -12,10 +12,10 @@ interface BookingPageProps {
 
 export async function generateMetadata({ params }: BookingPageProps) {
   try {
-    const tenant = await publicBookingService.getTenantPublicInfo(params.slug);
+    const tenant = await getTenantPublicInfo(params.slug);
     return {
-      title: `Book with ${tenant.name}`,
-      description: `Schedule your appointment with ${tenant.name}`,
+      title: `${tenant.name} — Book an Appointment`,
+      description: tenant.description || `Schedule your appointment with ${tenant.name}`,
     };
   } catch {
     return {
@@ -29,16 +29,17 @@ export const revalidate = 60; // ISR - revalidate every 60 seconds
 
 export default async function BookingPage({ params }: BookingPageProps) {
   try {
-    // Verify tenant exists
-    const tenant = await publicBookingService.getTenantPublicInfo(params.slug);
-    
+    const tenant = await getTenantPublicInfo(params.slug);
+
     if (!tenant) {
       notFound();
     }
 
+    const services = await getTenantServices(tenant.id).catch(() => []);
+
     return (
       <Suspense fallback={<BookingPageSkeleton />}>
-        <BookingContainer slug={params.slug} tenantId={tenant.id} />
+        <MiniSiteContainer tenant={tenant} services={services} />
       </Suspense>
     );
   } catch (error) {
