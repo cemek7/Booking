@@ -32,11 +32,17 @@ export const POST = createHttpHandler(
     const raw = await parseJsonBody(ctx.request);
     const body = SendLinkSchema.parse(raw);
 
-    // Build the public review URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.boka.io';
+    // Build the public review URL — use server-side APP_URL, fall back to request origin
+    const appUrl =
+      process.env.APP_URL ||
+      process.env.NEXTAUTH_URL ||
+      (() => {
+        const reqUrl = new URL(ctx.request.url);
+        return `${reqUrl.protocol}//${reqUrl.host}`;
+      })();
     const reviewUrl = body.reservation_id
-      ? `${baseUrl}/reviews/${slug}?reservationId=${body.reservation_id}`
-      : `${baseUrl}/reviews/${slug}`;
+      ? `${appUrl}/reviews/${slug}?reservationId=${body.reservation_id}`
+      : `${appUrl}/reviews/${slug}`;
 
     const greeting = body.customer_name ? `Hi ${body.customer_name}! ` : 'Hi! ';
     const message =
