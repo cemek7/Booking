@@ -45,7 +45,7 @@ export const POST = createHttpHandler(
     // Signature verification (Paystack & Stripe minimal implementations)
     const paystackSigHeader = ctx.request.headers.get('x-paystack-signature');
     const stripeSigHeader = ctx.request.headers.get('stripe-signature');
-    const paystackSecret = process.env.PAYSTACK_SECRET_KEY || process.env.PAYSTACK_WEBHOOK_SECRET || '';
+    const paystackSecret = process.env.PAYSTACK_SECRET_KEY || '';
     const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
     if (paystackSigHeader && provider.includes('paystack')) {

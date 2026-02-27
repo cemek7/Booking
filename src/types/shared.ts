@@ -22,3 +22,14 @@ export type BookingStep =
   | 'date_time'
   | 'confirmation'
   | 'completed';
+
+/**
+ * Represents an available time slot for public booking.
+ * Used by the availability API to show available booking times.
+ */
+export interface AvailabilityTimeSlot {
+  /** Time in HH:mm format (e.g., "09:00") */
+  time: string;
+  /** Whether this slot is available for booking */
+  available: boolean;
+}

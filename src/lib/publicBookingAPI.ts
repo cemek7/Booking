@@ -5,10 +5,7 @@
  * Used by the booking UI components
  */
 
-interface TimeSlot {
-  time: string;
-  available: boolean;
-}
+import type { TimeSlot } from '@/types';
 
 interface Service {
   id: string;

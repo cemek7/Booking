@@ -1,10 +1,34 @@
 /**
  * Public Booking API Routes
  * No authentication required - for public-facing booking
+ * 
+ * Timezone Handling:
+ * - All dates are handled in the server's timezone
+ * - Clients should send dates in ISO 8601 format or ensure timezone compatibility
+ * - Business hours are stored in the tenant's local timezone
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import type { TimeSlot } from '@/types';
+import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
+
+const SLOT_INTERVAL_MINUTES = 30;
+
+function parseAvailabilityDate(date: string): Date {
+  const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (isoDateMatch) {
+    const year = Number(isoDateMatch[1]);
+    const monthIndex = Number(isoDateMatch[2]) - 1;
+    const day = Number(isoDateMatch[3]);
+    const parsed = new Date(year, monthIndex, day);
+    if (parsed.getFullYear() === year && parsed.getMonth() === monthIndex && parsed.getDate() === day) {
+      return parsed;
+    }
+  }
+
+  throw ApiErrorFactory.badRequest('Invalid date format. Expected YYYY-MM-DD');
+}
 
 /**
  * GET /api/public/[slug]
@@ -28,7 +52,7 @@ export async function getTenantPublicInfo(slug: string) {
     .maybeSingle();
 
   if (error || !tenant) {
-    throw new Error('Tenant not found');
+    throw ApiErrorFactory.notFound('Tenant');
   }
 
   return {
@@ -63,7 +87,7 @@ export async function getTenantServices(tenantId: string) {
     .eq('is_active', true);
 
   if (error) {
-    throw new Error('Failed to fetch services');
+    throw ApiErrorFactory.databaseError(new Error(error.message));
   }
 
   return services || [];
@@ -77,60 +101,114 @@ export async function getAvailability(
   tenantId: string,
   serviceId: string,
   date: string,
-  staffId?: string
+  _staffId?: string
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
-  // Parse date
-  const targetDate = new Date(date);
+  // Date is interpreted in the server timezone. Clients should send YYYY-MM-DD in the tenant's timezone.
+  const targetDate = parseAvailabilityDate(date);
   const dayStart = new Date(targetDate);
   dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(targetDate);
   dayEnd.setHours(23, 59, 59, 999);
 
   // Get service duration
-  const { data: service } = await supabase
+  const { data: service, error: serviceError } = await supabase
     .from('services')
     .select('duration')
     .eq('id', serviceId)
-    .single();
+    .maybeSingle();
+
+  if (serviceError) {
+    throw ApiErrorFactory.databaseError(new Error(serviceError.message));
+  }
 
   if (!service) {
-    throw new Error('Service not found');
+    throw ApiErrorFactory.notFound('Service');
   }
 
   const durationMinutes = service.duration || 60;
 
   // Get business hours for the day
-  const { data: hours } = await supabase
+  const { data: hours, error: hoursError } = await supabase
     .from('business_hours')
     .select('start_time, end_time')
     .eq('tenant_id', tenantId)
     .eq('day_of_week', targetDate.getDay())
     .maybeSingle();
 
+  if (hoursError) {
+    throw ApiErrorFactory.databaseError(new Error(hoursError.message));
+  }
+
   if (!hours) {
     return []; // Closed on this day
   }
 
   // Get existing reservations
-  const { data: reservations } = await supabase
+  const { data: reservations, error: reservationsError } = await supabase
     .from('reservations')
     .select('start_at, end_at')
     .eq('tenant_id', tenantId)
-    .gte('start_at', dayStart.toISOString())
-    .lte('end_at', dayEnd.toISOString())
+    .lte('start_at', dayEnd.toISOString())
+    .gte('end_at', dayStart.toISOString())
     .in('status', ['confirmed', 'pending']);
+
+  if (reservationsError) {
+    throw ApiErrorFactory.databaseError(new Error(reservationsError.message));
+  }
 
   // Generate slots
   const slots = generateTimeSlots(
     hours.start_time,
     hours.end_time,
     durationMinutes,
-    reservations || []
+    reservations || [],
+    targetDate
   );
 
   return slots;
+}
+
+/**
+ * Helper: Get or create customer
+ */
+async function getCustomer(tenantId: string, payload: {
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+}) {
+  const supabase = getSupabaseRouteHandlerClient();
+  
+  // Get or create customer
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('email', payload.customer_email)
+    .maybeSingle();
+
+  if (!customer) {
+    const { data: newCustomer, error: createErr } = await supabase
+      .from('customers')
+      .insert({
+        tenant_id: tenantId,
+        name: payload.customer_name,
+        email: payload.customer_email,
+        phone: payload.customer_phone,
+        source: 'public_booking',
+      })
+      .select('id')
+      .single();
+
+    if (createErr || !newCustomer) {
+      throw ApiErrorFactory.databaseError(new Error(createErr?.message || 'Failed to create customer'));
+    }
+
+    return newCustomer;
+  }
+
+  return customer;
 }
 
 /**
@@ -152,75 +230,121 @@ export async function createPublicBooking(
 ) {
   const supabase = getSupabaseRouteHandlerClient();
 
-  // Validate inputs
-  if (!payload.service_id || !payload.date || !payload.time || !payload.customer_name || !payload.customer_email || !payload.customer_phone) {
-    throw new Error('Missing required fields');
-  }
-
   // Get or create customer
-  let { data: customer, error: customerErr } = await supabase
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('email', payload.customer_email)
+  const customer = await getCustomer(tenantId, payload);
+
+  // Parse start time and validate
+  const startTime = new Date(`${payload.date}T${payload.time}`);
+  
+  if (isNaN(startTime.getTime())) {
+    throw ApiErrorFactory.badRequest('Invalid date or time format');
+  }
+  
+  const { data: service, error: serviceError } = await supabase
+    .from('services')
+    .select('duration')
+    .eq('id', payload.service_id)
     .maybeSingle();
 
-  if (!customer) {
-    const { data: newCustomer, error: createErr } = await supabase
-      .from('customers')
+  if (serviceError) {
+    throw ApiErrorFactory.databaseError(new Error(serviceError.message));
+  }
+
+  if (!service) {
+    throw ApiErrorFactory.notFound('Service');
+  }
+
+  const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
+
+  // Use DoubleBookingPrevention service for transactionally safe conflict detection
+  // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint
+  // operating with anon role which would otherwise fail on RLS policies.
+  // SECURITY NOTE: The admin client bypasses ALL RLS policies, but DoubleBookingPrevention
+  // is designed to only access reservation_locks and reservations tables. Future: consider
+  // creating a more restricted service role or using function-level RLS bypass.
+  const adminClient = createSupabaseAdminClient();
+  const bookingPrevention = new DoubleBookingPrevention(adminClient);
+  
+  // Acquire slot lock to prevent race conditions
+  const lockResult = await bookingPrevention.acquireSlotLock({
+    tenantId,
+    startAt: startTime.toISOString(),
+    endAt: endTime.toISOString(),
+    resourceId: payload.staff_id,
+    lockDurationMinutes: 2, // Short lock for public booking
+  });
+
+  if (!lockResult.success) {
+    if (lockResult.isConflict) {
+      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+    }
+    throw ApiErrorFactory.internalServerError(new Error(lockResult.error || 'Failed to acquire booking lock'));
+  }
+
+  try {
+    // Perform comprehensive conflict check with proper overlap detection.
+    // 
+    // BUSINESS LOGIC: Conflict scope behavior
+    // - When staff_id IS provided: Checks conflicts only for that specific staff member,
+    //   allowing multiple staff to be booked simultaneously.
+    // 
+    // - When staff_id IS NOT provided: Checks conflicts only with OTHER unassigned bookings
+    //   (where staff_id IS NULL). This allows unassigned bookings even when some staff members
+    //   are busy, since the booking can later be assigned to any available staff member.
+    //   This is more permissive than a tenant-wide check and appropriate for multi-staff systems.
+    const conflictCheck = await bookingPrevention.checkBookingConflicts({
+      tenantId,
+      startAt: startTime.toISOString(),
+      endAt: endTime.toISOString(),
+      resourceIds: payload.staff_id ? [payload.staff_id] : undefined,
+      checkUnassignedOnly: !payload.staff_id, // Only check unassigned when no staff specified
+    });
+
+    if (conflictCheck.hasConflict) {
+      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+    }
+
+    // Create booking atomically after conflict check passes
+    const { data: booking, error: bookingErr } = await supabase
+      .from('reservations')
       .insert({
         tenant_id: tenantId,
-        name: payload.customer_name,
-        email: payload.customer_email,
-        phone: payload.customer_phone,
+        customer_id: customer.id,
+        service_id: payload.service_id,
+        staff_id: payload.staff_id || null,
+        start_at: startTime.toISOString(),
+        end_at: endTime.toISOString(),
+        status: 'pending',
+        notes: payload.notes,
         source: 'public_booking',
+        metadata: {
+          booking_source: 'public_storefront',
+          timestamp: new Date().toISOString(),
+        },
       })
       .select('id')
       .single();
 
-    if (createErr || !newCustomer) {
-      throw new Error('Failed to create customer');
+    if (bookingErr || !booking) {
+      throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
     }
 
-    customer = newCustomer;
+    return booking;
+  } finally {
+    // Always release the lock, even if an error occurs
+    // Wrap in try/catch to prevent lock release errors from masking the original exception
+    if (lockResult.lockId) {
+      try {
+        await bookingPrevention.releaseSlotLock(lockResult.lockId);
+      } catch (releaseError) {
+        // Log the release error but don't throw to preserve the original error
+        console.error('Failed to release slot lock:', {
+          lockId: lockResult.lockId,
+          error: releaseError instanceof Error ? releaseError.message : String(releaseError)
+        });
+      }
+    }
   }
-
-  // Parse start time
-  const startTime = new Date(`${payload.date}T${payload.time}`);
-  const { data: service } = await supabase
-    .from('services')
-    .select('duration')
-    .eq('id', payload.service_id)
-    .single();
-
-  const endTime = new Date(startTime.getTime() + (service?.duration || 60) * 60000);
-
-  // Create booking
-  const { data: booking, error: bookingErr } = await supabase
-    .from('reservations')
-    .insert({
-      tenant_id: tenantId,
-      customer_id: customer.id,
-      service_id: payload.service_id,
-      staff_id: payload.staff_id || null,
-      start_at: startTime.toISOString(),
-      end_at: endTime.toISOString(),
-      status: 'pending',
-      notes: payload.notes,
-      source: 'public_booking',
-      metadata: {
-        booking_source: 'public_storefront',
-        timestamp: new Date().toISOString(),
-      },
-    })
-    .select('id')
-    .single();
-
-  if (bookingErr || !booking) {
-    throw new Error('Failed to create booking');
-  }
-
-  return booking;
 }
 
 /**
@@ -230,21 +354,22 @@ function generateTimeSlots(
   startTime: string,
   endTime: string,
   durationMinutes: number,
-  existingReservations: Array<{ start_at: string; end_at: string }>
-): Array<{ time: string; available: boolean }> {
-  const slots: Array<{ time: string; available: boolean }> = [];
+  existingReservations: Array<{ start_at: string; end_at: string }>,
+  date: Date
+): TimeSlot[] {
+  const slots: TimeSlot[] = [];
 
   // Parse business hours
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
 
-  let current = new Date();
-  current.setHours(startHour, startMin, 0);
+  let current = new Date(date);
+  current.setHours(startHour, startMin, 0, 0);
 
-  const dayEnd = new Date();
-  dayEnd.setHours(endHour, endMin, 0);
+  const dayEnd = new Date(date);
+  dayEnd.setHours(endHour, endMin, 0, 0);
 
-  // Generate 30-minute intervals
+  // Generate time slots at configured interval
   while (current < dayEnd) {
     const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
 
@@ -260,15 +385,17 @@ function generateTimeSlots(
       available: !isBooked && slotEnd <= dayEnd,
     });
 
-    current = new Date(current.getTime() + 30 * 60000); // 30-minute intervals
+    current = new Date(current.getTime() + SLOT_INTERVAL_MINUTES * 60000);
   }
 
   return slots;
 }
 
-export default {
+const publicBookingService = {
   getTenantPublicInfo,
   getTenantServices,
   getAvailability,
   createPublicBooking,
 };
+
+export default publicBookingService;

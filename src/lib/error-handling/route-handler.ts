@@ -69,8 +69,13 @@ export function createApiHandler(
   handler: RouteHandler,
   options: RouteHandlerOptions = {}
 ) {
-  return async (request: NextRequest, context?: { params?: Record<string, string> }) => {
+  return async (request: NextRequest, context?: { params?: Promise<Record<string, string>> | Record<string, string> }) => {
     try {
+      // Await params if it's a Promise (Next.js 15+)
+      const params = context?.params 
+        ? (context.params instanceof Promise ? await context.params : context.params)
+        : undefined;
+
       // Check HTTP method
       if (options.methods && !options.methods.includes(request.method)) {
         return NextResponse.json(
@@ -158,8 +163,12 @@ export function createApiHandler(
             permissions: [],
           },
           supabase,
-          params: context?.params,
+          params,
         });
+
+        if (result instanceof NextResponse) {
+          return result;
+        }
 
         // Return response
         return NextResponse.json(result, { status: 200 });
@@ -169,8 +178,12 @@ export function createApiHandler(
         const result = await handler({
           request,
           supabase,
-          params: context?.params,
+          params,
         });
+
+        if (result instanceof NextResponse) {
+          return result;
+        }
 
         return NextResponse.json(result, { status: 200 });
       }
