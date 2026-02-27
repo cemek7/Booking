@@ -55,8 +55,8 @@ class WhatsAppMessageHandler {
     console.log(`\n🤖 Handling WhatsApp message for tenant ${tenantId}`);
 
     try {
-      // Ensure tenant knowledge articles are loaded for RAG
-      void loadTenantDocuments(tenantId, this.supabase);
+      // Ensure tenant knowledge articles are loaded for RAG before processing
+      await loadTenantDocuments(tenantId, this.supabase);
 
       // Get or create customer
       const customer = await dialogManagerWhatsApp.getOrCreateCustomer(

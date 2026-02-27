@@ -89,10 +89,13 @@ export async function createTenant(
       role: s.role || 'staff',
       status: s.status || 'active',
     }));
-    const { data: insertedStaff } = await supabase
+    const { data: insertedStaff, error: staffInsertError } = await supabase
       .from('tenant_users')
       .insert(staffRows)
       .select('user_id');
+    if (staffInsertError) {
+      throw new Error(`Failed to seed staff members: ${staffInsertError.message}`);
+    }
 
     // Seed default weekly availability for each seeded staff member (Mon–Fri, 09:00–17:00)
     if (insertedStaff && insertedStaff.length > 0) {
@@ -113,7 +116,10 @@ export async function createTenant(
       }
       if (scheduleRows.length > 0) {
         // staff_schedules table created in migration 027
-        await supabase.from('staff_schedules').insert(scheduleRows);
+        const { error: scheduleInsertError } = await supabase.from('staff_schedules').insert(scheduleRows);
+        if (scheduleInsertError) {
+          throw new Error(`Failed to seed staff schedules: ${scheduleInsertError.message}`);
+        }
       }
     }
   }

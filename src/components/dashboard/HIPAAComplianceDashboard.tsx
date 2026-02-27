@@ -94,11 +94,12 @@ export default function HIPAAComplianceDashboard() {
       // Get real active session count from audit_logs (distinct session_ids in last 24h)
       const supabase = getSupabaseBrowserClient();
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: sessionData } = await supabase
+      const { data: sessionData, error: sessionError } = await supabase
         .from('audit_logs')
         .select('session_id')
         .eq('tenant_id', tenantId)
         .gte('timestamp', oneDayAgo);
+      if (sessionError) throw sessionError;
       const activeSessions = sessionData
         ? new Set((sessionData as Array<{ session_id: string }>).map(r => r.session_id).filter(Boolean)).size
         : 0;
@@ -121,13 +122,14 @@ export default function HIPAAComplianceDashboard() {
       setIncidents(report.security_incidents || []);
 
       // Fetch recent PHI access from audit_logs
-      const { data: recentAccessData } = await supabase
+      const { data: recentAccessData, error: accessError } = await supabase
         .from('audit_logs')
         .select('id, user_id, user_role, action, resource, context, timestamp')
         .eq('tenant_id', tenantId)
         .eq('event_type', 'data_access')
         .order('timestamp', { ascending: false })
         .limit(10);
+      if (accessError) throw accessError;
       setRecentAccess(
         ((recentAccessData || []) as Array<{
           id: string; user_id: string; user_role: string; action: string;

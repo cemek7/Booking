@@ -67,8 +67,11 @@ const _authenticatedPOST = createHttpHandler(
  * so integration tests and local dev without a DB still work.
  */
 export async function POST(request: Request): Promise<Response> {
-  // Dev / CI fallback: bypass auth when Supabase env vars are absent
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Dev / CI fallback: bypass auth when Supabase env vars are absent (non-production only)
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY)
+  ) {
     const devTenantId = randomUUID();
     return new Response(
       JSON.stringify({ ok: true, devFallback: true, tenantId: devTenantId, slug: `dev-${devTenantId.slice(0, 6)}` }),

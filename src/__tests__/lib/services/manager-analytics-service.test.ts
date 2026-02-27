@@ -457,7 +457,8 @@ describe('manager-analytics-service', () => {
               expect(values).toEqual([staffId]);
               return mockSupabase;
             }),
-            then: mockThenable({ data: [] }),
+            // Return staff-1 so the authorization check in getManagedStaffIds passes
+            then: mockThenable({ data: [{ user_id: staffId }] }),
           };
         }
         return mockSupabase;

@@ -2,11 +2,11 @@
 -- Maps which staff members can perform which services (many-to-many)
 
 CREATE TABLE IF NOT EXISTS staff_services (
-  tenant_id   TEXT        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  staff_user_id TEXT      NOT NULL,
-  service_id  TEXT        NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (staff_user_id, service_id)
+  tenant_id     TEXT        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  staff_user_id TEXT        NOT NULL,
+  service_id    TEXT        NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_id, staff_user_id, service_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_staff_services_tenant ON staff_services(tenant_id);

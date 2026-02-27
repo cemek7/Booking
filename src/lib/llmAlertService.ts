@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/client';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/integrations/email-service';
 import { sendSMS } from '@/lib/integrations/sms-service';
 import { sendWhatsApp } from '@/lib/integrations/whatsapp-service';
@@ -32,7 +32,7 @@ export interface AlertNotification {
 }
 
 class LLMAlertService {
-  private supabase = createClient();
+  private get supabase() { return createSupabaseAdminClient(); }
 
   /**
    * Send alert notification for LLM usage violations
@@ -253,58 +253,54 @@ class LLMAlertService {
     return channels;
   }
 
-  /**
-   * Deliver alert through configured channels
-   */
   private async deliverAlert(
     alert: AlertNotification,
     config: NotificationConfig
   ): Promise<void> {
     const deliveryPromises = alert.channels.map(async (channel) => {
-      try {
-        switch (channel) {
-          case 'email':
-            await this.sendEmailAlert(alert, config);
-            break;
-          case 'sms':
-            await this.sendSMSAlert(alert, config);
-            break;
-          case 'whatsapp':
-            await this.sendWhatsAppAlert(alert, config);
-            break;
-          case 'in_app':
-            await this.saveInAppAlert(alert);
-            break;
-          default:
-            console.warn(`Unknown notification channel: ${channel}`);
-        }
-      } catch (error) {
-        console.error(`Failed to send ${channel} alert:`, error);
-        throw error;
+      switch (channel) {
+        case 'email':
+          await this.sendEmailAlert(alert, config);
+          break;
+        case 'sms':
+          await this.sendSMSAlert(alert, config);
+          break;
+        case 'whatsapp':
+          await this.sendWhatsAppAlert(alert, config);
+          break;
+        case 'in_app':
+          await this.saveInAppAlert(alert);
+          break;
+        default:
+          console.warn(`Unknown notification channel: ${channel}`);
       }
     });
 
-    try {
-      await Promise.allSettled(deliveryPromises);
-      
-      // Update alert status
-      await this.supabase
+    const results = await Promise.allSettled(deliveryPromises);
+    const allSucceeded = results.every(r => r.status === 'fulfilled');
+
+    if (!allSucceeded) {
+      const rejectedReasons = results
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map(r => r.reason);
+      console.error('Some alert channels failed:', rejectedReasons);
+    }
+
+    const supabase = this.supabase;
+    if (allSucceeded) {
+      await supabase
         .from('llm_alert_notifications')
-        .update({ 
-          status: 'sent', 
-          sent_at: new Date().toISOString() 
+        .update({
+          status: 'sent',
+          sent_at: new Date().toISOString(),
         })
         .eq('id', alert.id);
-
-    } catch (error) {
-      console.error('Failed to deliver alerts:', error);
-      
-      // Update alert status to failed and increment retry count
-      await this.supabase
+    } else {
+      await supabase
         .from('llm_alert_notifications')
-        .update({ 
-          status: 'failed', 
-          retry_count: alert.retry_count + 1 
+        .update({
+          status: 'failed',
+          retry_count: alert.retry_count + 1,
         })
         .eq('id', alert.id);
     }

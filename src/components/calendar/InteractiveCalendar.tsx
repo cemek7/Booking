@@ -102,13 +102,16 @@ const InteractiveCalendar: React.FC = () => {
         const reservations = reservationsRes.data?.data ?? [];
         const builtEvents: CalendarEvent[] = reservations
           .filter(r => r.start_at && r.end_at)
-          .map((r, idx) => ({
-            id: idx + 1,
-            title: r.title ?? r.service_id ?? 'Booking',
-            start: new Date(r.start_at),
-            end: new Date(r.end_at),
-            resourceId: staffIdToResourceId.get(r.staff_id ?? '') ?? 1,
-          }));
+          .map((r, idx) => {
+            const resourceId = staffIdToResourceId.get(r.staff_id ?? '');
+            return {
+              id: idx + 1,
+              title: r.title ?? r.service_id ?? 'Booking',
+              start: new Date(r.start_at),
+              end: new Date(r.end_at),
+              ...(resourceId !== undefined ? { resourceId } : {}),
+            };
+          });
 
         setResources(builtResources);
         setEvents(builtEvents);

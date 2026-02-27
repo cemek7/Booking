@@ -1,20 +1,8 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { AppUser } from '../../../../types/types';
+import { ManagerOverviewMetrics } from '@/types/analytics-api';
 
-// Types
-export interface ManagerOverviewMetrics {
-  teamBookings: number;
-  teamRevenue: number;
-  activeStaff: number;
-  teamRating: number;
-  scheduleUtilization: number;
-  completionRate: number;
-  trends: {
-    bookings: number;
-    revenue: number;
-    rating: number;
-  };
-}
+export type { ManagerOverviewMetrics };
 
 export interface ManagerRevenueData {
   totalRevenue: number;
@@ -203,6 +191,7 @@ export async function getOverviewAnalytics(
       .from('transactions')
       .select('amount')
       .eq('tenant_id', user.tenantId)
+      .in('user_id', staffIds)
       .eq('status', 'completed')
       .gte('created_at', startDate.toISOString())
       .lte('created_at', endDate.toISOString()),
@@ -210,6 +199,7 @@ export async function getOverviewAnalytics(
       .from('transactions')
       .select('amount')
       .eq('tenant_id', user.tenantId)
+      .in('user_id', staffIds)
       .eq('status', 'completed')
       .gte('created_at', previousRange.startDate.toISOString())
       .lte('created_at', previousRange.endDate.toISOString()),
@@ -411,7 +401,19 @@ export async function getTeamAnalytics(
   staffId: string | null = null
 ): Promise<ManagerTeamData> {
   const { startDate, endDate } = dateRange;
-  const staffIds = staffId ? [staffId] : await getManagedStaffIds(supabase, user);
+
+  // Authorize staffId: owners/superadmins can use any staffId; managers must own the staffId; staff cannot query others
+  if (staffId && user.role === 'staff') {
+    throw new Error('Unauthorized: staff role cannot query other staff analytics');
+  }
+  const managedIds = await getManagedStaffIds(supabase, user);
+  if (staffId) {
+    const isOwnerOrAdmin = user.role === 'owner' || user.role === 'superadmin';
+    if (!isOwnerOrAdmin && !managedIds.includes(staffId)) {
+      throw new Error('Unauthorized: staffId is not in your managed team');
+    }
+  }
+  const staffIds = staffId ? [staffId] : managedIds;
 
   // Get staff data with bookings and feedback in parallel
   const [{ data: staffData }, { data: feedbackData }] = await Promise.all([

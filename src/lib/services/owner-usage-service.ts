@@ -114,6 +114,10 @@ export async function getOwnerUsage(
     ]);
 
     if (tenantResult.error) throw new AppError(500, 'Failed to fetch tenant info', tenantResult.error);
+    if (currentLlmResult.error) throw new AppError(500, 'Failed to fetch current LLM usage', currentLlmResult.error);
+    if (lastLlmResult.error) throw new AppError(500, 'Failed to fetch last month LLM usage', lastLlmResult.error);
+    if (dailyLlmResult.error) throw new AppError(500, 'Failed to fetch daily LLM usage', dailyLlmResult.error);
+    if (reservationsResult.error) throw new AppError(500, 'Failed to fetch reservations', reservationsResult.error);
 
     const tenant = tenantResult.data;
 

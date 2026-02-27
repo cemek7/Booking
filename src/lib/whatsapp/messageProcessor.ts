@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { detectIntent } from '@/lib/intentDetector';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
@@ -295,11 +295,15 @@ class WhatsAppMessageProcessor {
       const session = await dialogManager.startSession(tenantId, null);
 
       // Look up the tenant's industry so the AI can apply vertical-specific logic
-      const { data: tenantData } = await this.supabase
+      const adminClient = createSupabaseAdminClient();
+      const { data: tenantData, error: tenantLookupError } = await adminClient
         .from('tenants')
         .select('industry')
         .eq('id', tenantId)
         .maybeSingle();
+      if (tenantLookupError) {
+        console.error(`[MessageProcessor] Failed to fetch tenant industry for ${tenantId}:`, tenantLookupError.message, tenantLookupError);
+      }
 
       const conversationState: ConversationState = {
         tenant_id: tenantId,
