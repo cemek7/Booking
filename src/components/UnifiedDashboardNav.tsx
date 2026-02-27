@@ -91,6 +91,13 @@ const navigationItems: NavItem[] = [
     icon: "⚙️"
   },
   {
+    href: "/dashboard/faqs",
+    label: "FAQ Knowledge Base",
+    description: "Manage FAQs that power your AI agent and public booking page",
+    roles: ["owner", "manager"],
+    icon: "💡"
+  },
+  {
     href: "/dashboard/billing",
     label: "Billing & Usage",
     description: "Manage subscription and usage metrics",

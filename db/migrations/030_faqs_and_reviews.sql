@@ -35,3 +35,8 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_id ON reviews(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_published ON reviews(tenant_id, is_published);
+-- Prevent duplicate reviews for the same reservation (NULL reservation_id is excluded
+-- so anonymous reviews, which have no reservation, remain unrestricted).
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_reviews_tenant_reservation
+  ON reviews(tenant_id, reservation_id)
+  WHERE reservation_id IS NOT NULL;

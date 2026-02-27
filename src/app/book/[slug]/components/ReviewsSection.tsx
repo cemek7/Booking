@@ -47,7 +47,11 @@ export default function ReviewsSection({ slug }: ReviewsSectionProps) {
       const res = await fetch(`/api/public/${slug}/reviews`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          customer_name: form.customer_name,
+          rating: form.rating,
+          comment: form.comment.trim() || undefined,
+        }),
       });
       if (res.ok) {
         const json = await res.json() as { data?: Review };
