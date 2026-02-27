@@ -51,10 +51,10 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
       }
 
-      const { tenantId } = await createTenant(ctx.supabase, userId, bodyValidation.data);
+      const { tenantId, tenantSlug } = await createTenant(ctx.supabase, userId, bodyValidation.data);
 
       span.setAttribute('tenant.id', tenantId);
-      return { success: true, tenantId };
+      return { success: true, tenantId, tenantSlug };
     } finally {
       span.end();
     }

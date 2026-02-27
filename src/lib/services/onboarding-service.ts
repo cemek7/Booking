@@ -15,6 +15,11 @@ interface Staff {
   status?: 'active' | 'on_leave';
 }
 
+interface TenantRow {
+  id: string;
+  slug: string | null;
+}
+
 export async function createTenant(
   supabase: SupabaseClient,
   userId: string,
@@ -33,8 +38,8 @@ export async function createTenant(
   const { data: tenant, error: tenantError } = await supabase
     .from('tenants')
     .insert({ id: tenantId, name, business_type, timezone })
-    .select('id')
-    .single();
+    .select('id, slug')
+    .single<TenantRow>();
 
   if (tenantError || !tenant) {
     throw new Error('Failed to create tenant');
@@ -74,5 +79,5 @@ export async function createTenant(
     await supabase.from('tenant_users').insert(staffRows);
   }
 
-  return { tenantId: tenant.id };
+  return { tenantId: tenant.id, tenantSlug: tenant.slug };
 }

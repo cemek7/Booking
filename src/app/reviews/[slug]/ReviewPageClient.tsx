@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import StarRating from '@/components/StarRating';
 
 interface Review {
   id: string;
@@ -20,43 +21,6 @@ interface TenantInfo {
   name: string;
   description?: string;
   logo?: string;
-}
-
-function StarRating({
-  rating,
-  interactive = false,
-  onChange,
-}: {
-  rating: number;
-  interactive?: boolean;
-  onChange?: (r: number) => void;
-}) {
-  const [hovered, setHovered] = useState(0);
-  return (
-    <div className="flex gap-1" role={interactive ? 'radiogroup' : undefined} aria-label={interactive ? 'Rating' : undefined}>
-      {[1, 2, 3, 4, 5].map((star) => (
-        <button
-          key={star}
-          type="button"
-          disabled={!interactive}
-          onClick={() => onChange?.(star)}
-          onMouseEnter={() => interactive && setHovered(star)}
-          onMouseLeave={() => interactive && setHovered(0)}
-          onKeyDown={(e) => {
-            if (interactive && (e.key === 'Enter' || e.key === ' ')) {
-              e.preventDefault();
-              onChange?.(star);
-            }
-          }}
-          aria-label={`${star} star${star !== 1 ? 's' : ''}`}
-          aria-pressed={interactive ? star === rating : undefined}
-          className={`text-2xl leading-none ${!interactive ? 'cursor-default' : 'cursor-pointer'}`}
-        >
-          <span className={star <= (hovered || rating) ? 'text-yellow-400' : 'text-gray-200'}>★</span>
-        </button>
-      ))}
-    </div>
-  );
 }
 
 interface ReviewPageClientProps {
@@ -94,7 +58,7 @@ export default function ReviewPageClient({ slug, reservationId }: ReviewPageClie
         body: JSON.stringify({
           customer_name: form.customer_name,
           rating: form.rating,
-          comment: form.comment || undefined,
+          comment: form.comment.trim() || undefined,
           reservation_id: reservationId,
         }),
       });

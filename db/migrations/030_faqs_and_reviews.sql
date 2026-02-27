@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS reviews (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   reservation_id UUID REFERENCES reservations(id) ON DELETE SET NULL,
   customer_name TEXT NOT NULL,
-  customer_email TEXT,
+  customer_email TEXT CHECK (
+    customer_email IS NULL
+    OR customer_email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+  ),
   rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
   comment TEXT,
   is_published BOOLEAN DEFAULT true,

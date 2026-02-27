@@ -33,13 +33,11 @@ export const POST = createHttpHandler(
     const body = SendLinkSchema.parse(raw);
 
     // Build the public review URL — use server-side APP_URL, fall back to request origin
-    const appUrl =
-      process.env.APP_URL ||
-      process.env.NEXTAUTH_URL ||
-      (() => {
-        const reqUrl = new URL(ctx.request.url);
-        return `${reqUrl.protocol}//${reqUrl.host}`;
-      })();
+    let appUrl = process.env.APP_URL || process.env.NEXTAUTH_URL;
+    if (!appUrl) {
+      const reqUrl = new URL(ctx.request.url);
+      appUrl = `${reqUrl.protocol}//${reqUrl.host}`;
+    }
     const reviewUrl = body.reservation_id
       ? `${appUrl}/reviews/${slug}?reservationId=${body.reservation_id}`
       : `${appUrl}/reviews/${slug}`;

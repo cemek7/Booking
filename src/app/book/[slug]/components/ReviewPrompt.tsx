@@ -1,30 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import StarRating from '@/components/StarRating';
 
 interface ReviewPromptProps {
   slug: string;
   reservationId?: string;
-}
-
-function StarRating({ rating, onChange }: { rating: number; onChange: (r: number) => void }) {
-  const [hovered, setHovered] = useState(0);
-  return (
-    <div className="flex justify-center gap-1">
-      {[1, 2, 3, 4, 5].map((star) => (
-        <button
-          key={star}
-          type="button"
-          onClick={() => onChange(star)}
-          onMouseEnter={() => setHovered(star)}
-          onMouseLeave={() => setHovered(0)}
-          className="text-2xl"
-        >
-          <span className={star <= (hovered || rating) ? 'text-yellow-400' : 'text-gray-200'}>★</span>
-        </button>
-      ))}
-    </div>
-  );
 }
 
 export default function ReviewPrompt({ slug, reservationId }: ReviewPromptProps) {
@@ -91,7 +72,7 @@ export default function ReviewPrompt({ slug, reservationId }: ReviewPromptProps)
   return (
     <div className="border rounded-xl p-4 space-y-3 text-left">
       <h3 className="font-medium text-sm text-center">Leave a Review</h3>
-      <StarRating rating={form.rating} onChange={(r) => setForm((f) => ({ ...f, rating: r }))} />
+      <StarRating rating={form.rating} interactive onChange={(r) => setForm((f) => ({ ...f, rating: r }))} />
       <input
         value={form.customer_name}
         onChange={(e) => setForm((f) => ({ ...f, customer_name: e.target.value }))}

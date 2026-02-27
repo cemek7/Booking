@@ -12,7 +12,10 @@ import { z } from 'zod';
 
 const ReviewCreateSchema = z.object({
   customer_name: z.string().min(1, 'Name is required'),
-  customer_email: z.string().email().optional(),
+  customer_email: z.preprocess(
+    (val) => (val === '' ? undefined : val),
+    z.string().email().optional()
+  ),
   rating: z.number().int().min(1).max(5),
   comment: z.string().optional(),
   reservation_id: z.string().uuid().optional(),

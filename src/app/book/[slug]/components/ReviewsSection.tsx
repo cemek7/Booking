@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import StarRating from '@/components/StarRating';
 
 interface Review {
   id: string;
@@ -18,31 +19,6 @@ interface ReviewFormState {
 
 interface ReviewsSectionProps {
   slug: string;
-}
-
-function StarRating({ rating, interactive = false, onChange }: {
-  rating: number;
-  interactive?: boolean;
-  onChange?: (r: number) => void;
-}) {
-  const [hovered, setHovered] = useState(0);
-  return (
-    <div className="flex gap-0.5">
-      {[1, 2, 3, 4, 5].map((star) => (
-        <button
-          key={star}
-          type="button"
-          disabled={!interactive}
-          onClick={() => onChange?.(star)}
-          onMouseEnter={() => interactive && setHovered(star)}
-          onMouseLeave={() => interactive && setHovered(0)}
-          className={`text-xl leading-none ${!interactive ? 'cursor-default' : 'cursor-pointer'}`}
-        >
-          <span className={star <= (hovered || rating) ? 'text-yellow-400' : 'text-gray-200'}>★</span>
-        </button>
-      ))}
-    </div>
-  );
 }
 
 export default function ReviewsSection({ slug }: ReviewsSectionProps) {

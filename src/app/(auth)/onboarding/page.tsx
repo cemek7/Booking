@@ -64,6 +64,7 @@ export default function OnboardingPage() {
   const [faqs, setFaqs] = useState<FaqDraft[]>([{ question: '', answer: '', category: '' }]);
   const [loading, setLoading] = useState(false);
   const [tenantId, setTenantId] = useState<string | null>(null);
+  const [tenantSlug, setTenantSlug] = useState<string | null>(null);
 
   function next() {
     setStep((s) => STEPS[Math.min(STEPS.indexOf(s) + 1, STEPS.length - 1)]);
@@ -91,9 +92,10 @@ export default function OnboardingPage() {
         toast.error((err as { error?: string })?.error || 'Failed to create tenant');
         return;
       }
-      const json = await res.json() as { tenantId?: string };
+      const json = await res.json() as { tenantId?: string; tenantSlug?: string };
       if (json?.tenantId) {
         setTenantId(json.tenantId);
+        if (json.tenantSlug) setTenantSlug(json.tenantSlug);
         try { localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId })); } catch {}
       }
       next();
@@ -362,9 +364,9 @@ export default function OnboardingPage() {
                 className="w-full py-2 bg-indigo-600 text-white rounded-lg font-medium">
                 Go to Dashboard
               </button>
-              {tenantId && (
+              {tenantSlug && (
                 <button
-                  onClick={() => window.open(`/book/${tenantId}`, '_blank', 'noopener,noreferrer')}
+                  onClick={() => window.open(`/book/${tenantSlug}`, '_blank', 'noopener,noreferrer')}
                   className="w-full py-2 border rounded-lg text-sm text-indigo-600 hover:bg-indigo-50 transition-colors"
                 >
                   Preview your booking page ↗
