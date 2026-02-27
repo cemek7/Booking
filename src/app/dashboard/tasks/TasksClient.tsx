@@ -17,8 +17,11 @@ interface Task {
 }
 
 interface TasksClientProps {
-  /** true = owner/manager (full CRUD); false = staff (read-only todo list) */
-  canEdit: boolean;
+  /**
+   * - owner/manager: full CRUD + three-state cycle (todo → in_progress → done)
+   * - staff: can tick tasks done/undone (todo ↔ done), but cannot create or delete
+   */
+  role: 'owner' | 'manager' | 'staff';
 }
 
 const PRIORITY_COLORS: Record<Priority, string> = {
@@ -39,9 +42,10 @@ const SAMPLE_TASKS: Task[] = [
   { id: '3', title: 'Send booking reminders', priority: 'low', status: 'done', created_at: new Date().toISOString() },
 ];
 
-export default function TasksClient({ canEdit }: TasksClientProps) {
-  // Staff see only todo tasks; managers/owners can filter across all statuses
-  const [activeStatus, setActiveStatus] = useState<Status | 'all'>(canEdit ? 'all' : 'todo');
+export default function TasksClient({ role }: TasksClientProps) {
+  const isManager = role === 'owner' || role === 'manager';
+
+  const [activeStatus, setActiveStatus] = useState<Status | 'all'>('all');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', priority: 'medium' as Priority, due_date: '' });
   const [tasks, setTasks] = useState<Task[]>(SAMPLE_TASKS);
@@ -65,11 +69,27 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
     toast.success('Task created');
   }
 
-  function toggleStatus(id: string) {
+  /** Owner/Manager: cycles todo → in_progress → done → todo */
+  function cycleStatus(id: string) {
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id !== id) return t;
         const next: Status = t.status === 'todo' ? 'in_progress' : t.status === 'in_progress' ? 'done' : 'todo';
+        return { ...t, status: next };
+      })
+    );
+  }
+
+  /**
+   * Staff: marks tasks done (todo/in_progress → done) or reverts to todo (done → todo).
+   * An in_progress task clicked by staff goes directly to done, signalling completion.
+   */
+  function tickTask(id: string) {
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        const next: Status = t.status === 'done' ? 'todo' : 'done';
+        toast.success(next === 'done' ? 'Marked as done ✓' : 'Marked as to do');
         return { ...t, status: next };
       })
     );
@@ -93,10 +113,10 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
         <div>
           <h1 className="text-2xl font-semibold">Tasks</h1>
           <p className="text-sm text-gray-600 mt-1">
-            {canEdit ? 'Track and manage your team tasks.' : 'Your assigned to-do items.'}
+            {isManager ? 'Track and manage your team tasks.' : 'Tick tasks as you complete them.'}
           </p>
         </div>
-        {canEdit && (
+        {isManager && (
           <button
             onClick={() => setShowForm((v) => !v)}
             className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700"
@@ -106,12 +126,9 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
         )}
       </div>
 
-      {/* Filter tabs — staff only sees the todo filter */}
+      {/* Filter tabs */}
       <div className="flex gap-2 flex-wrap">
-        {(canEdit
-          ? (['all', 'todo', 'in_progress', 'done'] as const)
-          : (['todo'] as const)
-        ).map((s) => (
+        {(['all', 'todo', 'in_progress', 'done'] as const).map((s) => (
           <button
             key={s}
             onClick={() => setActiveStatus(s)}
@@ -124,16 +141,15 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
             {s === 'all' ? 'All' : STATUS_LABELS[s]} ({counts[s]})
           </button>
         ))}
-        {/* Managers/owners can also see a quick summary badge */}
-        {canEdit && (
+        {isManager && (
           <span className="ml-auto self-center text-xs text-gray-400">
             {counts.todo} open · {counts.in_progress} in progress · {counts.done} done
           </span>
         )}
       </div>
 
-      {/* New task form — only for owner/manager */}
-      {canEdit && showForm && (
+      {/* New task form — owner/manager only */}
+      {isManager && showForm && (
         <div className="bg-white border rounded-xl p-5 space-y-3 shadow-sm">
           <h2 className="font-semibold text-sm">New Task</h2>
           <input
@@ -199,10 +215,10 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
                 task.status === 'done' ? 'opacity-60' : ''
               }`}
             >
-              {/* Status toggle button — only for owner/manager */}
-              {canEdit ? (
+              {isManager ? (
+                /* Owner/Manager: three-state cycle button */
                 <button
-                  onClick={() => toggleStatus(task.id)}
+                  onClick={() => cycleStatus(task.id)}
                   title={`Current: ${STATUS_LABELS[task.status]} — click to advance`}
                   className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
                     task.status === 'done'
@@ -215,11 +231,26 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
                   {task.status === 'done' && <span className="text-xs leading-none">✓</span>}
                 </button>
               ) : (
-                /* Staff: read-only status indicator */
-                <div
-                  className="mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center border-gray-200 bg-gray-50"
-                  title={STATUS_LABELS[task.status]}
-                />
+                /* Staff: checkbox — three distinct visual states:
+                   todo (unchecked) → click → done (checked)
+                   in_progress (amber dash) → click → done (checked)
+                   done (checked) → click → todo (unchecked)
+                */
+                <button
+                  onClick={() => tickTask(task.id)}
+                  title={task.status === 'done' ? 'Mark as to do' : 'Mark as done'}
+                  aria-label={task.status === 'done' ? 'Mark as to do' : task.status === 'in_progress' ? 'Mark as done (in progress)' : 'Mark as done'}
+                  className={`mt-0.5 w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                    task.status === 'done'
+                      ? 'bg-green-500 border-green-500 text-white'
+                      : task.status === 'in_progress'
+                      ? 'border-yellow-400 bg-yellow-50'
+                      : 'border-gray-300 hover:border-indigo-400 bg-white'
+                  }`}
+                >
+                  {task.status === 'done' && <span className="text-xs leading-none">✓</span>}
+                  {task.status === 'in_progress' && <span className="text-xs leading-none text-yellow-500">–</span>}
+                </button>
               )}
 
               <div className="flex-1 min-w-0">
@@ -230,11 +261,9 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
                   <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${PRIORITY_COLORS[task.priority]}`}>
                     {task.priority}
                   </span>
-                  {canEdit && (
-                    <span className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-600">
-                      {STATUS_LABELS[task.status]}
-                    </span>
-                  )}
+                  <span className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-600">
+                    {STATUS_LABELS[task.status]}
+                  </span>
                 </div>
                 {task.description && (
                   <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>
@@ -246,8 +275,8 @@ export default function TasksClient({ canEdit }: TasksClientProps) {
                 )}
               </div>
 
-              {/* Delete — only for owner/manager */}
-              {canEdit && (
+              {/* Delete — owner/manager only */}
+              {isManager && (
                 <button
                   onClick={() => deleteTask(task.id)}
                   className="text-xs text-red-400 hover:text-red-600 flex-shrink-0"
