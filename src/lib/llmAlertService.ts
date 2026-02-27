@@ -225,15 +225,28 @@ class LLMAlertService {
     // Critical alerts go to all enabled channels
     const isCritical = alertType.includes('exceeded');
     
-    if (config.email_notifications && (isCritical || config.budget_alerts || config.quota_alerts)) {
+    if (
+      config.email_notifications &&
+      config.notification_email &&
+      (
+        isCritical ||
+        (alertType === 'budget_warning' && config.budget_alerts) ||
+        (alertType === 'quota_warning' && config.quota_alerts) ||
+        alertType === 'daily_report'
+      )
+    ) {
       channels.push('email');
     }
     
-    if (config.sms_notifications && isCritical) {
+    if (config.sms_notifications && isCritical && config.notification_phone) {
       channels.push('sms');
     }
     
-    if (config.whatsapp_notifications && (isCritical || alertType === 'daily_report')) {
+    if (
+      config.whatsapp_notifications &&
+      (isCritical || alertType === 'daily_report') &&
+      config.notification_phone
+    ) {
       channels.push('whatsapp');
     }
 
