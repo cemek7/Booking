@@ -1,4 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
+import { sendEmail } from '@/lib/integrations/email-service';
+import { sendSMS } from '@/lib/integrations/sms-service';
+import { sendWhatsApp } from '@/lib/integrations/whatsapp-service';
 
 export interface NotificationConfig {
   tenant_id: string;
@@ -304,30 +307,17 @@ class LLMAlertService {
     if (!config.notification_email) {
       throw new Error('No email address configured for notifications');
     }
-
-    // TODO: Integrate with your email service (SendGrid, AWS SES, etc.)
-    // For now, we'll log the email that would be sent
-    console.log('EMAIL ALERT:', {
+    await sendEmail({
       to: config.notification_email,
       subject: `[BOOKA] ${alert.title}`,
-      body: `
-        ${alert.title}
-        
-        ${alert.message}
-        
-        Severity: ${alert.severity.toUpperCase()}
-        Time: ${new Date().toLocaleString()}
-        
-        Tenant ID: ${alert.tenant_id}
-        
-        ---
-        Manage your notification settings: https://app.booka.com/settings/notifications
-      `,
-      data: alert.data
+      html: `<p><strong>${alert.title}</strong></p>
+<p>${alert.message}</p>
+<p><strong>Severity:</strong> ${alert.severity.toUpperCase()}<br/>
+<strong>Time:</strong> ${new Date().toLocaleString()}<br/>
+<strong>Tenant ID:</strong> ${alert.tenant_id}</p>
+<p><a href="https://app.booka.com/settings/notifications">Manage notification settings</a></p>`,
+      text: `${alert.title}\n\n${alert.message}\n\nSeverity: ${alert.severity.toUpperCase()}\nTenant: ${alert.tenant_id}`,
     });
-
-    // Simulate email sending delay
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   /**
@@ -340,15 +330,10 @@ class LLMAlertService {
     if (!config.notification_phone) {
       throw new Error('No phone number configured for SMS notifications');
     }
-
-    // TODO: Integrate with SMS service (Twilio, AWS SNS, etc.)
-    console.log('SMS ALERT:', {
+    await sendSMS({
       to: config.notification_phone,
-      message: `BOOKA: ${alert.title} - ${alert.message.substring(0, 100)}...`,
-      data: alert.data
+      body: `BOOKA [${alert.severity.toUpperCase()}]: ${alert.title} — ${alert.message.substring(0, 120)}`,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   /**
@@ -361,15 +346,10 @@ class LLMAlertService {
     if (!config.notification_phone) {
       throw new Error('No phone number configured for WhatsApp notifications');
     }
-
-    // TODO: Integrate with WhatsApp Business API
-    console.log('WHATSAPP ALERT:', {
-      to: config.notification_phone,
-      message: `🚨 *${alert.title}*\n\n${alert.message}\n\n_Severity: ${alert.severity}_`,
-      data: alert.data
+    await sendWhatsApp({
+      number: config.notification_phone,
+      text: `🚨 *${alert.title}*\n\n${alert.message}\n\n_Severity: ${alert.severity}_`,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   /**

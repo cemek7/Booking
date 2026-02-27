@@ -175,57 +175,72 @@ export async function getOverviewAnalytics(
   // Get managed staff IDs
   const staffIds = await getManagedStaffIds(supabase, user);
 
-  // Get current period bookings
-  const { data: currentBookings } = await supabase
-    .from('reservations')
-    .select('id, status, staff_id, metadata')
-    .eq('tenant_id', user.tenantId)
-    .in('staff_id', staffIds)
-    .gte('start_at', startDate.toISOString())
-    .lte('start_at', endDate.toISOString());
-
-  // Get previous period bookings for trend calculation
-  const { data: previousBookings } = await supabase
-    .from('reservations')
-    .select('id, status, metadata')
-    .eq('tenant_id', user.tenantId)
-    .in('staff_id', staffIds)
-    .gte('start_at', previousRange.startDate.toISOString())
-    .lte('start_at', previousRange.endDate.toISOString());
+  // Run current period bookings, revenue, and feedback in parallel
+  const [
+    { data: currentBookings },
+    { data: previousBookings },
+    { data: revenueData },
+    { data: previousRevenueData },
+    { count: activeStaffCount },
+    { data: currentFeedback },
+    { data: previousFeedback },
+  ] = await Promise.all([
+    supabase
+      .from('reservations')
+      .select('id, status, staff_id')
+      .eq('tenant_id', user.tenantId)
+      .in('staff_id', staffIds)
+      .gte('start_at', startDate.toISOString())
+      .lte('start_at', endDate.toISOString()),
+    supabase
+      .from('reservations')
+      .select('id, status')
+      .eq('tenant_id', user.tenantId)
+      .in('staff_id', staffIds)
+      .gte('start_at', previousRange.startDate.toISOString())
+      .lte('start_at', previousRange.endDate.toISOString()),
+    supabase
+      .from('transactions')
+      .select('amount')
+      .eq('tenant_id', user.tenantId)
+      .eq('status', 'completed')
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString()),
+    supabase
+      .from('transactions')
+      .select('amount')
+      .eq('tenant_id', user.tenantId)
+      .eq('status', 'completed')
+      .gte('created_at', previousRange.startDate.toISOString())
+      .lte('created_at', previousRange.endDate.toISOString()),
+    supabase
+      .from('tenant_users')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', user.tenantId)
+      .in('user_id', staffIds)
+      .eq('role', 'staff'),
+    supabase
+      .from('customer_feedback')
+      .select('score')
+      .eq('tenant_id', user.tenantId)
+      .in('staff_user_id', staffIds)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString()),
+    supabase
+      .from('customer_feedback')
+      .select('score')
+      .eq('tenant_id', user.tenantId)
+      .in('staff_user_id', staffIds)
+      .gte('created_at', previousRange.startDate.toISOString())
+      .lte('created_at', previousRange.endDate.toISOString()),
+  ]);
 
   // Calculate metrics
   const totalBookings = currentBookings?.length || 0;
   const previousTotalBookings = previousBookings?.length || 0;
   const completedBookings = currentBookings?.filter(b => b.status === 'completed').length || 0;
-
-  // Calculate revenue
-  const { data: revenueData } = await supabase
-    .from('transactions')
-    .select('amount')
-    .eq('tenant_id', user.tenantId)
-    .eq('status', 'completed')
-    .gte('created_at', startDate.toISOString())
-    .lte('created_at', endDate.toISOString());
-
   const totalRevenue = (revenueData || []).reduce((sum, t) => sum + Number(t.amount), 0);
-
-  const { data: previousRevenueData } = await supabase
-    .from('transactions')
-    .select('amount')
-    .eq('tenant_id', user.tenantId)
-    .eq('status', 'completed')
-    .gte('created_at', previousRange.startDate.toISOString())
-    .lte('created_at', previousRange.endDate.toISOString());
-
   const previousRevenue = (previousRevenueData || []).reduce((sum, t) => sum + Number(t.amount), 0);
-
-  // Get active staff count
-  const { count: activeStaffCount } = await supabase
-    .from('tenant_users')
-    .select('*', { count: 'exact', head: true })
-    .eq('tenant_id', user.tenantId)
-    .in('user_id', staffIds)
-    .eq('role', 'staff');
 
   // Calculate schedule utilization
   const workingDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -235,9 +250,16 @@ export async function getOverviewAnalytics(
   // Calculate completion rate
   const completionRate = totalBookings > 0 ? (completedBookings / totalBookings) * 100 : 0;
 
-  // Mock team rating (would come from reviews/ratings table)
-  const teamRating = 4.7;
-  const previousRating = 4.6;
+  // Derive team rating from customer_feedback table (real scores, not JSONB estimates)
+  const currentScores = (currentFeedback || []).map(f => f.score);
+  const teamRating = currentScores.length > 0
+    ? currentScores.reduce((a, b) => a + b, 0) / currentScores.length
+    : 0;
+
+  const previousScores = (previousFeedback || []).map(f => f.score);
+  const previousRating = previousScores.length > 0
+    ? previousScores.reduce((a, b) => a + b, 0) / previousScores.length
+    : 0;
 
   return {
     teamBookings: totalBookings,
@@ -348,7 +370,10 @@ export async function getRevenueAnalytics(
   }
 
   (bookings || []).forEach(booking => {
-    const dateKey = new Date(booking.start_at).toISOString().split('T')[0];
+    if (!booking.start_at) return;
+    const d = new Date(booking.start_at);
+    if (isNaN(d.getTime())) return;
+    const dateKey = d.toISOString().split('T')[0];
     const trend = trendMap.get(dateKey);
     if (trend) {
       trend.revenue += Number(booking.metadata?.revenue || 0);
@@ -372,6 +397,13 @@ export async function getRevenueAnalytics(
  * Get team analytics for manager
  * Includes staff performance, team metrics, and schedule efficiency
  */
+
+interface StaffWithJoins {
+  user_id: string;
+  users?: { id?: string; full_name?: string };
+  reservations?: Array<{ id: string; status: string; start_at: string; metadata?: Record<string, unknown> }>;
+}
+
 export async function getTeamAnalytics(
   supabase: SupabaseClient,
   user: AppUser,
@@ -381,25 +413,42 @@ export async function getTeamAnalytics(
   const { startDate, endDate } = dateRange;
   const staffIds = staffId ? [staffId] : await getManagedStaffIds(supabase, user);
 
-  // Get staff data with bookings
-  const { data: staffData } = await supabase
-    .from('tenant_users')
-    .select(`
-      user_id,
-      users!inner(id, full_name),
-      reservations!reservations_staff_id_fkey(
-        id,
-        status,
-        start_at,
-        metadata
-      )
-    `)
-    .eq('tenant_id', user.tenantId)
-    .in('user_id', staffIds)
-    .eq('role', 'staff');
+  // Get staff data with bookings and feedback in parallel
+  const [{ data: staffData }, { data: feedbackData }] = await Promise.all([
+    supabase
+      .from('tenant_users')
+      .select(`
+        user_id,
+        users!inner(id, full_name),
+        reservations!reservations_staff_id_fkey(
+          id,
+          status,
+          start_at,
+          metadata
+        )
+      `)
+      .eq('tenant_id', user.tenantId)
+      .in('user_id', staffIds)
+      .eq('role', 'staff'),
+    supabase
+      .from('customer_feedback')
+      .select('staff_user_id, score')
+      .eq('tenant_id', user.tenantId)
+      .in('staff_user_id', staffIds)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString()),
+  ]);
+
+  // Index feedback scores by staff member
+  const feedbackByStaff: Record<string, number[]> = {};
+  for (const fb of feedbackData || []) {
+    const row = fb as { staff_user_id: string; score: number };
+    if (!feedbackByStaff[row.staff_user_id]) feedbackByStaff[row.staff_user_id] = [];
+    feedbackByStaff[row.staff_user_id].push(row.score);
+  }
 
   // Process staff performance
-  const staffPerformance = (staffData || []).map(staff => {
+  const staffPerformance = (staffData as StaffWithJoins[] || []).map(staff => {
     const reservations = staff.reservations || [];
     const periodReservations = reservations.filter(
       r => new Date(r.start_at) >= startDate && new Date(r.start_at) <= endDate
@@ -414,15 +463,18 @@ export async function getTeamAnalytics(
     const maxBookings = workingDays * 8; // 8 hours per day
     const utilization = maxBookings > 0 ? (totalBookings / maxBookings) * 100 : 0;
 
-    // Mock rating (would come from reviews)
-    const rating = 4.5 + Math.random() * 0.5;
+    // Derive rating from customer_feedback table
+    const scores = feedbackByStaff[staff.user_id] || [];
+    const rating = scores.length > 0
+      ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1))
+      : 0;
 
     return {
       staffId: staff.user_id,
       staffName: staff.users?.full_name || 'Unknown',
       bookings: totalBookings,
       completed: completedBookings,
-      rating: Number(rating.toFixed(1)),
+      rating,
       utilization: Math.min(Math.round(utilization), 100),
       revenue,
     };
@@ -527,7 +579,10 @@ export async function getBookingAnalytics(
   }
 
   (bookings || []).forEach(booking => {
-    const dateKey = new Date(booking.start_at).toISOString().split('T')[0];
+    if (!booking.start_at) return;
+    const bd = new Date(booking.start_at);
+    if (isNaN(bd.getTime())) return;
+    const dateKey = bd.toISOString().split('T')[0];
     const trend = trendMap.get(dateKey);
     if (trend) {
       trend.bookings += 1;

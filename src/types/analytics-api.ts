@@ -46,13 +46,23 @@ export interface ManagerOverviewMetrics {
 
 export interface AdminTenantMetric {
   tenant_id: string;
+  tenant_name?: string;
   total_tokens: number;
   call_count: number;
+  user_count: number;
+  revenue_estimate: number;
+  reservation_count: number;
+  completed_reservations: number;
+  active_staff_count: number;
 }
 
 export interface StaffMemberMetric {
   user_id: string;
   rating: number | null;
+  rating_count: number;
   completed: number;
   revenue: number;
+  tips_total: number;
+  utilization_rate: number;
+  avg_service_duration_min: number;
 }

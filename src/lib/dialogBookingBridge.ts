@@ -566,9 +566,42 @@ export class DialogBookingBridge {
     endTime?: string;
     formatted?: string;
   } {
-    // Placeholder for time extraction logic
-    // In production, implement proper date/time parsing
-    return {};
+    const msg = message.toLowerCase();
+    const now = new Date();
+
+    // Resolve the date part
+    let baseDate = new Date(now);
+    if (msg.includes('tomorrow')) {
+      baseDate.setDate(baseDate.getDate() + 1);
+    } else {
+      // e.g. "monday", "tuesday" etc.
+      const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+      const dayMatch = days.findIndex(d => msg.includes(d));
+      if (dayMatch !== -1) {
+        const diff = (dayMatch - now.getDay() + 7) % 7 || 7;
+        baseDate.setDate(baseDate.getDate() + diff);
+      }
+    }
+
+    // Extract time: "3pm", "3:30pm", "15:00", "3 pm", "3:30 pm"
+    const timeRegex = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|b(\d{1,2}):(\d{2})\b/i;
+    const match = message.match(timeRegex);
+    if (!match) return {};
+
+    let hours = parseInt(match[1] ?? match[4] ?? '0', 10);
+    const minutes = parseInt(match[2] ?? match[5] ?? '0', 10);
+    const meridiem = (match[3] ?? '').toLowerCase();
+    if (meridiem === 'pm' && hours < 12) hours += 12;
+    if (meridiem === 'am' && hours === 12) hours = 0;
+
+    baseDate.setHours(hours, minutes, 0, 0);
+    const startTime = baseDate.toISOString();
+
+    const endDate = new Date(baseDate.getTime() + 60 * 60 * 1000); // default 1h duration
+    const endTime = endDate.toISOString();
+
+    const formatted = baseDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return { startTime, endTime, formatted };
   }
 
   private async getAvailableServices(tenantId: string): Promise<Array<{ id: string; name: string }>> {

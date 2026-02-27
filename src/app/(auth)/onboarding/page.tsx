@@ -2,10 +2,23 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
+import { setStoredTenantId } from '@/lib/auth/token-storage';
+
+const INDUSTRIES = [
+  { value: '', label: 'Select industry (optional)' },
+  { value: 'beauty', label: 'Beauty & Personal Care' },
+  { value: 'wellness', label: 'Wellness & Fitness' },
+  { value: 'hospitality', label: 'Hospitality & Hotels' },
+  { value: 'medicine', label: 'Healthcare & Medicine' },
+  { value: 'education', label: 'Education & Tutoring' },
+  { value: 'legal', label: 'Legal & Consulting' },
+  { value: 'general', label: 'Other / General' },
+];
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [name, setName] = useState('');
+  const [industry, setIndustry] = useState('');
   const [timezone, setTimezone] = useState('');
   // Optional seed: one service
   const [serviceName, setServiceName] = useState('');
@@ -37,12 +50,13 @@ export default function OnboardingPage() {
         staff.push({ name: stName || undefined, email: stEmail || undefined, role: staffRole });
       }
 
-      const payload: { 
-        name: string; 
-        timezone?: string; 
-        services?: Array<{ name: string; duration?: number; price?: number }>; 
-        staff?: Array<{ name?: string; email?: string; role: string }> 
-      } = { name: n, timezone: timezone || undefined };
+      const payload: {
+        name: string;
+        industry?: string;
+        timezone?: string;
+        services?: Array<{ name: string; duration?: number; price?: number }>;
+        staff?: Array<{ name?: string; email?: string; role: string }>;
+      } = { name: n, timezone: timezone || undefined, industry: industry || undefined };
       if (services.length) payload.services = services;
       if (staff.length) payload.staff = staff;
 
@@ -54,7 +68,14 @@ export default function OnboardingPage() {
       }
       const json = await res.json();
       if (json?.tenantId) {
-        try { if (typeof window !== 'undefined') localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId })); } catch {}
+        try {
+          if (typeof window !== 'undefined') {
+            // 1. Store in the canonical boka_auth_tenant_id key so authFetch headers work immediately
+            setStoredTenantId(json.tenantId);
+            // 2. Also store slug/id for any legacy current_tenant reads
+            localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId, slug: json.slug }));
+          }
+        } catch (storageErr) { console.warn('localStorage unavailable:', storageErr); }
         if (services.length || staff.length) {
           const seeded: string[] = [];
           if (services.length) seeded.push(`${services.length} service${services.length>1?'s':''}`);
@@ -77,9 +98,13 @@ export default function OnboardingPage() {
     <div className="min-h-[60vh] flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-white border rounded-xl p-6 space-y-4">
         <h1 className="text-xl font-semibold">Welcome to Booka</h1>
-        <p className="text-sm text-gray-600">Let’s set up your business to get started.</p>
+        <p className="text-sm text-gray-600">Let's set up your business to get started.</p>
         <label className="block text-sm font-medium">Business Name</label>
         <input value={name} onChange={e=>setName(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="e.g. Glow Salon" />
+        <label className="block text-sm font-medium">Industry</label>
+        <select value={industry} onChange={e=>setIndustry(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
+          {INDUSTRIES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+        </select>
         <label className="block text-sm font-medium">Timezone (optional)</label>
         <input value={timezone} onChange={e=>setTimezone(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="e.g. Africa/Lagos" />
         <div className="pt-2 border-t mt-4">
