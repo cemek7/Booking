@@ -1,4 +1,4 @@
-import { createHttpHandler } from '../../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getStaffData,

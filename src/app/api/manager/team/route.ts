@@ -4,7 +4,7 @@
  * Provides manager-level team operations including staff management,
  * role assignments, and team coordination functionality
  */
-import { createHttpHandler } from '../../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getTeamData,

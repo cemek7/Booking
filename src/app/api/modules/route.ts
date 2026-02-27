@@ -1,4 +1,4 @@
-import { createHttpHandler } from '../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import VerticalModuleManager from '../../../lib/verticalModuleManager';
 import { z } from 'zod';
 

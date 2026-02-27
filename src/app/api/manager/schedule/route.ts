@@ -4,7 +4,7 @@
  * Provides manager-level scheduling operations including staff schedule management,
  * availability coordination, and scheduling optimization for team operations
  */
-import { createHttpHandler } from '../../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getTeamSchedule,
