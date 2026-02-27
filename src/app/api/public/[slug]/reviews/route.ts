@@ -53,6 +53,17 @@ export const POST = createHttpHandler(
     const raw = await parseJsonBody(ctx.request);
     const body = ReviewCreateSchema.parse(raw);
 
+    // Prevent duplicate reviews for the same reservation
+    if (body.reservation_id) {
+      const { data: existing } = await ctx.supabase
+        .from('reviews')
+        .select('id')
+        .eq('tenant_id', tenant.id)
+        .eq('reservation_id', body.reservation_id)
+        .maybeSingle();
+      if (existing) throw ApiErrorFactory.badRequest('A review has already been submitted for this reservation.');
+    }
+
     const { data, error } = await ctx.supabase
       .from('reviews')
       .insert({
@@ -62,6 +73,7 @@ export const POST = createHttpHandler(
         rating: body.rating,
         comment: body.comment ?? null,
         reservation_id: body.reservation_id ?? null,
+        // TODO: add IP-based rate limiting (requires infrastructure such as Redis)
         is_published: true,
       })
       .select('id,customer_name,rating,comment,created_at')

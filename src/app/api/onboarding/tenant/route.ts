@@ -24,6 +24,7 @@ const OnboardingBodySchema = z.object({
   name: z.string().min(1, 'Tenant name is required'),
   business_type: z.string().optional(),
   timezone: z.string().optional(),
+  description: z.string().optional(),
   services: z.array(ServiceSchema).optional(),
   staff: z.array(StaffSchema).optional(),
 });

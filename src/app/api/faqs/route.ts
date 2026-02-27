@@ -22,12 +22,17 @@ export const GET = createHttpHandler(
     const tenantId = ctx.user?.tenantId;
     if (!tenantId) throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
 
+    const url = new URL(ctx.request.url);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 200);
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
     const { data, error } = await ctx.supabase
       .from('faqs')
       .select('id,question,answer,category,is_active,sort_order,created_at,updated_at')
       .eq('tenant_id', tenantId)
       .order('sort_order', { ascending: true })
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .range(offset, offset + limit - 1);
 
     if (error) throw ApiErrorFactory.databaseError(error);
 

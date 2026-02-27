@@ -27,17 +27,18 @@ export async function createTenant(
     name: string;
     business_type?: string;
     timezone?: string;
+    description?: string;
     services?: Service[];
     staff?: Staff[];
   }
 ) {
-  const { name, business_type, timezone, services = [], staff = [] } = tenantDetails;
+  const { name, business_type, timezone, description, services = [], staff = [] } = tenantDetails;
 
   // Create tenant
   const tenantId = randomUUID();
   const { data: tenant, error: tenantError } = await supabase
     .from('tenants')
-    .insert({ id: tenantId, name, business_type, timezone })
+    .insert({ id: tenantId, name, business_type, timezone, description })
     .select('id, slug')
     .single<TenantRow>();
 

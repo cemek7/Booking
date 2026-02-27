@@ -107,6 +107,7 @@ export default function OnboardingPage() {
     const valid = services.filter((s) => s.name.trim());
     if (valid.length > 0 && tenantId) {
       setLoading(true);
+      let hadError = false;
       try {
         await Promise.all(
           valid.map((s) =>
@@ -122,8 +123,10 @@ export default function OnboardingPage() {
           )
         );
       } catch {
+        hadError = true;
         toast.error('Some services could not be saved — you can add them later in the dashboard.');
       } finally { setLoading(false); }
+      if (hadError) return; // stay on step so user can retry or use "Skip for now"
     }
     next();
   }
@@ -132,6 +135,7 @@ export default function OnboardingPage() {
     const valid = staffList.filter((s) => s.name.trim() || s.email.trim());
     if (valid.length > 0 && tenantId) {
       setLoading(true);
+      let hadError = false;
       try {
         await fetch('/api/staff', {
           method: 'POST',
@@ -145,8 +149,10 @@ export default function OnboardingPage() {
           ),
         });
       } catch {
+        hadError = true;
         toast.error('Some staff members could not be saved — you can add them later in the dashboard.');
       } finally { setLoading(false); }
+      if (hadError) return;
     }
     next();
   }
@@ -155,6 +161,7 @@ export default function OnboardingPage() {
     const valid = faqs.filter((f) => f.question.trim() && f.answer.trim());
     if (valid.length > 0 && tenantId) {
       setLoading(true);
+      let hadError = false;
       try {
         await Promise.all(
           valid.map((f) =>
@@ -170,8 +177,10 @@ export default function OnboardingPage() {
           )
         );
       } catch {
+        hadError = true;
         toast.error('Some FAQs could not be saved — you can add them later in the FAQ dashboard.');
       } finally { setLoading(false); }
+      if (hadError) return;
     }
     next();
   }
