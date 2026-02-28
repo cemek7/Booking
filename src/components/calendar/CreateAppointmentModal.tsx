@@ -15,7 +15,7 @@ interface CreateAppointmentModalProps {
 }
 
 interface CalendarEvent {
-  id: number;
+  id: string;
   title: string;
   start: Date;
   end: Date;

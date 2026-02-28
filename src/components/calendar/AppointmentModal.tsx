@@ -3,7 +3,7 @@
 import React from 'react';
 
 interface CalendarEvent {
-  id: number;
+  id: string;
   title: string;
   start: Date;
   end: Date;
