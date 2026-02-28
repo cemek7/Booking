@@ -4,7 +4,7 @@
  * This file consolidates all authentication-related types from scattered locations:
  * - UnifiedAuthContext (from unified-auth-orchestrator.ts)
  * - AuthSession, MFAConfig, APIKey, AuditLogEntry (from orchestrator)
- * - AuthenticationEvent, UserSession, LoginResult (from enhanced-auth-types.ts)
+ * - AuthenticationEvent, UserSession, LoginResult (previously in enhanced-auth-types.ts)
  * - AuthContext (from middleware.ts)
  * - AuthenticatedUser (from server-auth.ts)
  * 
@@ -14,7 +14,6 @@
  * USAGE:
  * Instead of scattered imports:
  *   import { UnifiedAuthContext } from '@/lib/auth/unified-auth-orchestrator'
- *   import { AuthenticationEvent } from '@/lib/auth/enhanced-auth-types'
  *   import { AuthContext } from '@/lib/auth/middleware'
  * 
  * Now use canonical import:

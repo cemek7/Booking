@@ -7,7 +7,7 @@
  * CONSOLIDATION NOTES:
  * - Role type: Canonical definition lives in roles.ts, re-exported here
  * - Permission types: Unified from permissions.ts and enhanced-permissions.ts
- * - Auth types: Consolidated from unified-auth.ts and enhanced-auth-types.ts
+ * - Auth types: Consolidated from unified-auth.ts (see src/types/auth.ts)
  * - User types: Merged and standardized
  * 
  * IMPORTS: Replace all scattered imports with "from '@/types'"

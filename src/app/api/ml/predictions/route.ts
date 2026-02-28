@@ -1,5 +1,5 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import MachineLearningService from '../../../../lib/machineLearningService';
+import MachineLearningService from '@/lib/machineLearningService';
 import { z } from 'zod';
 
 const PredictionTypeSchema = z.enum(['scheduling', 'demand', 'anomalies', 'pricing', 'insights']);

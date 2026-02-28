@@ -303,6 +303,13 @@ export async function getRevenueAnalytics(
     services?: { id: string; name: string } | null;
   }
 
+  // totalRevenue is sourced from the authoritative `transactions` table (settled payment records).
+  // NOTE: revenueByStaff and revenueByService below are sourced from reservations.metadata.revenue,
+  // which is a denormalised estimate stored at booking time. These two figures may not reconcile
+  // exactly because: (a) not every reservation has a corresponding completed transaction, and
+  // (b) refunds/adjustments are reflected in transactions but not in reservation metadata.
+  // TODO: once the reservations table carries a foreign-key to transactions, both breakdowns should
+  //       be derived from the same source.
   // Get revenue transactions
   const { data: transactions } = await supabase
     .from('transactions')

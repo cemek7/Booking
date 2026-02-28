@@ -23,7 +23,7 @@ export const GET = createHttpHandler(
     if (userId) query = query.eq('user_id', userId);
     
     const { data, error } = await query;
-    if (error) throw ApiErrorFactory.internal('Failed to fetch staff skills');
+    if (error) throw ApiErrorFactory.databaseError(error);
     
     return { assignments: data || [] };
   },
@@ -71,7 +71,7 @@ export const POST = createHttpHandler(
       .select()
       .maybeSingle();
     
-    if (error) throw ApiErrorFactory.internal('Failed to assign skill');
+    if (error) throw ApiErrorFactory.databaseError(error);
     
     return { assignment: data };
   },

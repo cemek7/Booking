@@ -1,6 +1,6 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { getOwnerUsage } from '../../../../lib/services/owner-usage-service';
-import { ApiErrorFactory } from '../../../../lib/error-handling/api-error';
+import { getOwnerUsage } from '@/lib/services/owner-usage-service';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 
 export const GET = createHttpHandler(
@@ -38,13 +38,14 @@ export const POST = createHttpHandler(
         .select('settings')
         .eq('id', tenantId)
         .single();
-      if (readError || !existing) throw ApiErrorFactory.internal('Failed to read tenant settings');
+      if (readError) throw ApiErrorFactory.databaseError(readError);
+      if (!existing) throw ApiErrorFactory.notFound('Tenant configuration');
       const merged = { ...(existing?.settings || {}), llm_budget_limit: budget_limit, llm_notification_threshold: notification_threshold ?? 80 };
       const { error } = await ctx.supabase
         .from('tenants')
         .update({ settings: merged })
         .eq('id', tenantId);
-      if (error) throw ApiErrorFactory.internal('Failed to update budget settings');
+      if (error) throw ApiErrorFactory.databaseError(error);
       return { message: 'Budget limit updated', budget_limit, notification_threshold: notification_threshold ?? 80 };
     }
 
@@ -56,13 +57,14 @@ export const POST = createHttpHandler(
         .select('settings')
         .eq('id', tenantId)
         .single();
-      if (readError || !existing) throw ApiErrorFactory.internal('Failed to read tenant settings');
+      if (readError) throw ApiErrorFactory.databaseError(readError);
+      if (!existing) throw ApiErrorFactory.notFound('Tenant configuration');
       const merged = { ...(existing?.settings || {}), ai_features_enabled: enabled };
       const { error } = await ctx.supabase
         .from('tenants')
         .update({ settings: merged })
         .eq('id', tenantId);
-      if (error) throw ApiErrorFactory.internal('Failed to update AI feature state');
+      if (error) throw ApiErrorFactory.databaseError(error);
       return { message: `AI features ${enabled ? 'resumed' : 'paused'}` };
     }
 
