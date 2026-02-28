@@ -27,7 +27,7 @@ export async function initializeUnifiedMiddleware() {
       condition: (ctx: MiddlewareContext) => {
         const pathname = new URL(ctx.request.url).pathname;
         // Skip auth for public paths
-        const publicPaths = ['/auth/', '/api/health', '/api/auth/'];
+        const publicPaths = ['/auth/', '/api/health', '/api/auth/', '/book/', '/reviews/'];
         return !publicPaths.some(p => pathname.startsWith(p));
       },
     },
