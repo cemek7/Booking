@@ -30,7 +30,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_feedback_reservation
 
 ALTER TABLE customer_feedback ENABLE ROW LEVEL SECURITY;
 
--- Tenant members (owner/manager) can read all feedback for their tenant
+-- All tenant members can read feedback for their tenant
 CREATE POLICY policy_feedback_tenant_select ON customer_feedback
   FOR SELECT USING (
     tenant_id IN (

@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { AppUser } from '../../../../types/types';
 import { ManagerOverviewMetrics } from '@/types/analytics-api';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 export type { ManagerOverviewMetrics };
 
@@ -162,6 +163,19 @@ export async function getOverviewAnalytics(
 
   // Get managed staff IDs
   const staffIds = await getManagedStaffIds(supabase, user);
+
+  // If no staff are managed, return empty metrics immediately
+  if (staffIds.length === 0) {
+    return {
+      teamBookings: 0,
+      teamRevenue: 0,
+      activeStaff: 0,
+      teamRating: 0,
+      scheduleUtilization: 0,
+      completionRate: 0,
+      trends: { bookings: 0, revenue: 0, rating: 0 },
+    };
+  }
 
   // Run current period bookings, revenue, and feedback in parallel
   const [
@@ -404,13 +418,13 @@ export async function getTeamAnalytics(
 
   // Authorize staffId: owners/superadmins can use any staffId; managers must own the staffId; staff cannot query others
   if (staffId && user.role === 'staff') {
-    throw new Error('Unauthorized: staff role cannot query other staff analytics');
+    throw ApiErrorFactory.forbidden('Staff role cannot query other staff analytics');
   }
   const managedIds = await getManagedStaffIds(supabase, user);
   if (staffId) {
     const isOwnerOrAdmin = user.role === 'owner' || user.role === 'superadmin';
     if (!isOwnerOrAdmin && !managedIds.includes(staffId)) {
-      throw new Error('Unauthorized: staffId is not in your managed team');
+      throw ApiErrorFactory.forbidden('staffId is not in your managed team');
     }
   }
   const staffIds = staffId ? [staffId] : managedIds;

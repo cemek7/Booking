@@ -1,4 +1,3 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { SupabaseClient } from '@supabase/supabase-js';
 import scheduler from './scheduler';
 

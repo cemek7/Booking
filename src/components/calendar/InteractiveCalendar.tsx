@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar, momentLocalizer, View, ToolbarProps } from 'react-big-calendar';
 import moment from 'moment';
@@ -21,7 +21,7 @@ const STAFF_COLORS = [
 
 // Define the structure of a calendar event
 interface CalendarEvent {
-  id: number;
+  id: string;
   title: string;
   start: Date;
   end: Date;
@@ -73,7 +73,8 @@ const CustomToolbar: React.FC<ToolbarProps> = ({ label, onNavigate, onView }) =>
 const InteractiveCalendar: React.FC = () => {
   const [view, setView] = useState<View>('month');
   const [date, setDate] = useState(new Date());
-  const [selectedStaff, setSelectedStaff] = useState<number[]>([]);
+  // null means "all staff selected" (default); array means explicit user selection
+  const [selectedStaff, setSelectedStaff] = useState<number[] | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [slotInfo, setSlotInfo] = useState<SlotInfo | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -94,7 +95,6 @@ const InteractiveCalendar: React.FC = () => {
     },
   });
 
-  const staffList = staffData ?? [];
   const resources: Resource[] = useMemo(() => (staffData ?? []).map((s, idx) => ({
     resourceId: idx + 1,
     resourceTitle: s.name || s.email || s.id,
@@ -106,19 +106,22 @@ const InteractiveCalendar: React.FC = () => {
     [staffData]
   );
 
-  // Sync selectedStaff when resources change
-  useEffect(() => {
-    setSelectedStaff(resources.map(r => r.resourceId));
-  }, [resources]);
+  // When null (default), show all resources; otherwise respect the explicit selection,
+  // filtering out any IDs that no longer exist after a refetch.
+  const effectiveSelectedStaff = useMemo(() => {
+    if (selectedStaff === null) return resources.map(r => r.resourceId);
+    const validIds = new Set(resources.map(r => r.resourceId));
+    return selectedStaff.filter(id => validIds.has(id));
+  }, [selectedStaff, resources]);
 
   // Derive builtEvents from reservations query data
   const builtEvents: CalendarEvent[] = useMemo(() => {
     return (reservationsData ?? [])
       .filter(r => r.start_at && r.end_at)
-      .map((r, idx) => {
+      .map((r) => {
         const resourceId = staffIdToResourceId.get(r.staff_id ?? '');
         return {
-          id: idx + 1,
+          id: r.id,
           title: r.title ?? r.service_id ?? 'Booking',
           start: new Date(r.start_at),
           end: new Date(r.end_at),
@@ -139,7 +142,7 @@ const InteractiveCalendar: React.FC = () => {
     setSelectedStaff(selectedIds);
   };
 
-  const filteredResources = resources.filter(r => selectedStaff.includes(r.resourceId));
+  const filteredResources = resources.filter(r => effectiveSelectedStaff.includes(r.resourceId));
 
   const eventPropGetter = (event: CalendarEvent) => {
     const resource = resources.find(r => r.resourceId === event.resourceId);
@@ -167,7 +170,7 @@ const InteractiveCalendar: React.FC = () => {
   };
 
   const handleCreateEvent = (newEvent: Omit<CalendarEvent, 'id'>) => {
-    const id = allEvents.length > 0 ? Math.max(...allEvents.map(e => e.id)) + 1 : 1;
+    const id = `local-${Date.now()}`;
     setEvents(prev => [...prev, { ...newEvent, id }]);
   };
 
@@ -183,7 +186,7 @@ const InteractiveCalendar: React.FC = () => {
     <div className="flex" style={{ height: '100vh' }}>
       <StaffSidebar
         staff={resources}
-        selectedStaff={selectedStaff}
+        selectedStaff={effectiveSelectedStaff}
         onSelectionChange={handleStaffSelectionChange}
       />
       <div className="flex-grow">

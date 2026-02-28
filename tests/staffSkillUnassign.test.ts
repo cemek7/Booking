@@ -5,20 +5,6 @@ const MOCK_USER = { id: 'u1', email: 'owner@test.com' };
 const MOCK_TENANT = { tenant_id: 't1', role: 'owner' };
 const MOCK_SKILL_ASSIGNMENT = { tenant_id: 't1' };
 
-/** Chainable query helper that resolves to the given value at the leaf method */
-function chainTo<T>(leaf: Record<string, () => T>): Record<string, unknown> {
-  const chain: Record<string, () => Record<string, unknown>> = {};
-  const addLevel = (obj: Record<string, unknown>) => {
-    ['select', 'eq', 'maybeSingle', 'delete'].forEach(method => {
-      if (!(method in obj)) {
-        obj[method] = () => addLevel({});
-      }
-    });
-    return obj;
-  };
-  return addLevel({ ...leaf } as Record<string, unknown>);
-}
-
 // Mock supabase server client (used for data queries after auth)
 jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: () => ({ from: () => ({ select: () => ({ eq: () => ({}) }) }) }),
