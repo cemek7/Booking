@@ -9,13 +9,13 @@ import {
   exportAnalyticsData,
   saveDashboardConfig,
 } from '@/lib/services/manager-analytics-service';
-import { AppUser } from '../../../../types/types';
+import { AppUser } from '@/types/auth';
 
 // Mock Supabase client
 const createMockSupabase = () => {
   const defaultResolved = { data: [] as unknown[], error: null, count: null };
   // Proper thenable so Promise.all can await unrecognised-table queries
-  const thenFn = jest.fn().mockImplementation(
+  const thenFn = (jest.fn() as jest.Mock<any>).mockImplementation(
     (onfulfilled: (v: typeof defaultResolved) => unknown) =>
       Promise.resolve(defaultResolved).then(onfulfilled)
   );
@@ -27,8 +27,8 @@ const createMockSupabase = () => {
     gte: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+    single: (jest.fn() as jest.Mock<any>).mockResolvedValue({ data: null, error: null }),
+    maybeSingle: (jest.fn() as jest.Mock<any>).mockResolvedValue({ data: null, error: null }),
     upsert: jest.fn().mockReturnThis(),
     then: thenFn,
   };
@@ -36,7 +36,7 @@ const createMockSupabase = () => {
 
 // Helper: proper thenable that calls onfulfilled (resolve) so Promise.all and await work correctly.
 // jest.fn().mockResolvedValue() returns a Promise but never calls resolve, causing hangs.
-const mockThenable = (value: unknown) => jest.fn().mockImplementation(
+const mockThenable = (value: unknown) => (jest.fn() as jest.Mock<any>).mockImplementation(
   (onfulfilled: (v: unknown) => unknown) => Promise.resolve(value).then(onfulfilled)
 );
 
@@ -132,6 +132,15 @@ describe('manager-analytics-service', () => {
 
     it('should calculate team bookings correctly', async () => {
       mockSupabase.from.mockImplementation((table: string) => {
+        if (table === 'tenant_users') {
+          return {
+            ...mockSupabase,
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            in: jest.fn().mockReturnThis(),
+            then: mockThenable({ data: [{ user_id: 'staff-1' }, { user_id: 'staff-2' }] }),
+          };
+        }
         if (table === 'reservations') {
           return {
             ...mockSupabase,

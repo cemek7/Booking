@@ -389,3 +389,19 @@ export type AuthContextCanonical = UnifiedAuthContext;
  * Alternative name for AuthenticationEvent
  */
 export type AuthEvent = AuthenticationEvent;
+
+// ============================================================================
+// APP USER (shared shape for service-layer functions)
+// ============================================================================
+
+/**
+ * Minimal authenticated user shape expected by service-layer functions.
+ * Mirrors the `user` field on RouteContext and the test mocks.
+ */
+export interface AppUser {
+  id: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  full_name?: string;
+}

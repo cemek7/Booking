@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { AppUser } from '../../../../types/types';
+import { AppUser } from '@/types/auth';
 import { ManagerOverviewMetrics } from '@/types/analytics-api';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
@@ -292,6 +292,17 @@ export async function getRevenueAnalytics(
   const { startDate, endDate } = dateRange;
   const staffIds = await getManagedStaffIds(supabase, user);
 
+  // Typed shape for the joined reservation query result
+  interface ReservationWithJoins {
+    id: string;
+    staff_id: string;
+    service_id: string;
+    start_at: string;
+    metadata?: { revenue?: number };
+    users?: { id: string; full_name: string } | null;
+    services?: { id: string; name: string } | null;
+  }
+
   // Get revenue transactions
   const { data: transactions } = await supabase
     .from('transactions')
@@ -304,7 +315,7 @@ export async function getRevenueAnalytics(
   const totalRevenue = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0);
 
   // Get bookings with staff and service info
-  const { data: bookings } = await supabase
+  const { data: rawBookings } = await supabase
     .from('reservations')
     .select(`
       id,
@@ -320,6 +331,8 @@ export async function getRevenueAnalytics(
     .eq('status', 'completed')
     .gte('start_at', startDate.toISOString())
     .lte('start_at', endDate.toISOString());
+
+  const bookings = (rawBookings as unknown as ReservationWithJoins[]) ?? [];
 
   // Revenue by staff
   const staffRevenueMap = new Map<string, { staffId: string; staffName: string; revenue: number; bookings: number }>();
@@ -667,7 +680,7 @@ export async function generateCustomReport(
     };
   }
 ) {
-  const { reportType, dateRange, filters } = data;
+  const { reportType, dateRange, filters: _filters } = data;
 
   let report: any = {
     reportType,
@@ -677,22 +690,22 @@ export async function generateCustomReport(
   };
 
   switch (reportType) {
-    case 'staff':
+    case 'staff': {
       const teamData = await getTeamAnalytics(supabase, user, dateRange, null);
       report.data = teamData;
       break;
-
-    case 'revenue':
+    }
+    case 'revenue': {
       const revenueData = await getRevenueAnalytics(supabase, user, dateRange);
       report.data = revenueData;
       break;
-
-    case 'bookings':
+    }
+    case 'bookings': {
       const bookingData = await getBookingAnalytics(supabase, user, dateRange);
       report.data = bookingData;
       break;
-
-    case 'comprehensive':
+    }
+    case 'comprehensive': {
       const [overview, revenue, team, bookings] = await Promise.all([
         getOverviewAnalytics(supabase, user, dateRange),
         getRevenueAnalytics(supabase, user, dateRange),
@@ -701,7 +714,7 @@ export async function generateCustomReport(
       ]);
       report.data = { overview, revenue, team, bookings };
       break;
-
+    }
     default:
       throw new Error(`Unknown report type: ${reportType}`);
   }
@@ -726,21 +739,21 @@ export async function exportAnalyticsData(
   let exportData: any;
 
   switch (dataType) {
-    case 'staff':
+    case 'staff': {
       const teamData = await getTeamAnalytics(supabase, user, dateRange, null);
       exportData = teamData.staffPerformance;
       break;
-
-    case 'revenue':
+    }
+    case 'revenue': {
       const revenueData = await getRevenueAnalytics(supabase, user, dateRange);
       exportData = revenueData.revenueByStaff;
       break;
-
-    case 'bookings':
+    }
+    case 'bookings': {
       const bookingData = await getBookingAnalytics(supabase, user, dateRange);
       exportData = bookingData.bookingTrends;
       break;
-
+    }
     default:
       throw new Error(`Unknown data type: ${dataType}`);
   }

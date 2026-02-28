@@ -42,7 +42,7 @@ describe('staff-skill DELETE API route', () => {
         'x-tenant-id': 't1'
       }
     });
-    const res: any = await staffSkillDELETE(req, { params: { user_id: 'u1', skill_id: 's1' } });
+    const res: any = await staffSkillDELETE(req as any, { params: { user_id: 'u1', skill_id: 's1' } });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('ok', true);
