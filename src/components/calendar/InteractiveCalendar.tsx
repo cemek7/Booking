@@ -9,6 +9,7 @@ import StaffSidebar from './StaffSidebar';
 import AppointmentModal from './AppointmentModal';
 import CreateAppointmentModal from './CreateAppointmentModal';
 import { authFetch } from '@/lib/auth/auth-api-client';
+import type { CalendarEvent } from '@/types/calendar';
 
 // Setup the localizer by providing the moment Object
 const localizer = momentLocalizer(moment);
@@ -18,15 +19,6 @@ const STAFF_COLORS = [
   '#3174ad', '#2ca02c', '#d62728', '#9467bd',
   '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
 ];
-
-// Define the structure of a calendar event
-interface CalendarEvent {
-  id: string;
-  title: string;
-  start: Date;
-  end: Date;
-  resourceId: number;
-}
 
 // Define the structure for a resource (e.g., a staff member)
 interface Resource {
@@ -125,7 +117,7 @@ const InteractiveCalendar: React.FC = () => {
           title: r.title ?? r.service_id ?? 'Booking',
           start: new Date(r.start_at),
           end: new Date(r.end_at),
-          ...(resourceId !== undefined ? { resourceId } : {}),
+          resourceId: resourceId ?? 0,
         };
       });
   }, [reservationsData, staffIdToResourceId]);

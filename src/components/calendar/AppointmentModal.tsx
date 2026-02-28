@@ -1,14 +1,7 @@
 'use client';
 
 import React from 'react';
-
-interface CalendarEvent {
-  id: string;
-  title: string;
-  start: Date;
-  end: Date;
-  resourceId: number;
-}
+import type { CalendarEvent } from '@/types/calendar';
 
 interface AppointmentModalProps {
   event: CalendarEvent | null;

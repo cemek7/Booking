@@ -39,7 +39,8 @@ export const DELETE = createHttpHandler(
       .from('staff_skills')
       .delete()
       .eq('user_id', userId)
-      .eq('skill_id', skillId);
+      .eq('skill_id', skillId)
+      .eq('tenant_id', skillAssignment.tenant_id);
 
     if (error) {
       throw ApiErrorFactory.databaseError(error);

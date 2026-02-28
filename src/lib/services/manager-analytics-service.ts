@@ -682,7 +682,19 @@ export async function generateCustomReport(
 ) {
   const { reportType, dateRange, filters: _filters } = data;
 
-  let report: any = {
+  type ReportPayload =
+    | { reportType: 'staff'; data: ManagerTeamData }
+    | { reportType: 'revenue'; data: ManagerRevenueData }
+    | { reportType: 'bookings'; data: ManagerBookingData }
+    | { reportType: 'comprehensive'; data: { overview: ManagerOverviewMetrics; revenue: ManagerRevenueData; team: ManagerTeamData; bookings: ManagerBookingData } };
+
+  let report: {
+    reportType: string;
+    generatedAt: string;
+    generatedBy: string;
+    period: { startDate: Date; endDate: Date };
+    data?: ReportPayload['data'];
+  } = {
     reportType,
     generatedAt: new Date().toISOString(),
     generatedBy: user.id,
@@ -736,22 +748,23 @@ export async function exportAnalyticsData(
 ) {
   const { dataType, format, dateRange } = data;
 
-  let exportData: any;
+  type ExportRow = Record<string, unknown>;
+  let exportData: ExportRow[];
 
   switch (dataType) {
     case 'staff': {
       const teamData = await getTeamAnalytics(supabase, user, dateRange, null);
-      exportData = teamData.staffPerformance;
+      exportData = teamData.staffPerformance as ExportRow[];
       break;
     }
     case 'revenue': {
       const revenueData = await getRevenueAnalytics(supabase, user, dateRange);
-      exportData = revenueData.revenueByStaff;
+      exportData = revenueData.revenueByStaff as ExportRow[];
       break;
     }
     case 'bookings': {
       const bookingData = await getBookingAnalytics(supabase, user, dateRange);
-      exportData = bookingData.bookingTrends;
+      exportData = bookingData.bookingTrends as ExportRow[];
       break;
     }
     default:
@@ -761,7 +774,7 @@ export async function exportAnalyticsData(
   if (format === 'csv') {
     // Convert to CSV format
     const headers = Object.keys(exportData[0] || {}).join(',');
-    const rows = exportData.map((row: any) =>
+    const rows = exportData.map((row) =>
       Object.values(row)
         .map(v => `"${v}"`)
         .join(',')

@@ -25,7 +25,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
       }
       if (table === 'staff_skills') {
         const selectChain = { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: MOCK_SKILL_ASSIGNMENT, error: null }) }) }) }) };
-        const deleteChain = { delete: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }) };
+        const deleteChain = { delete: () => ({ eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }) }) };
         return { ...selectChain, ...deleteChain };
       }
       return { select: () => ({ eq: () => ({}) }) };

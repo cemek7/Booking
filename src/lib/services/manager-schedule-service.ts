@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { AppUser } from '../../../../types';
+import { AppUser } from '@/types/auth';
 
 export async function getTeamSchedule(
   supabase: SupabaseClient,
