@@ -4,6 +4,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createTenant } from '@/lib/services/onboarding-service';
 import { trace } from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
+import type { NextRequest } from 'next/server';
 
 const tracer = trace.getTracer('boka-onboarding-api');
 
@@ -78,5 +79,5 @@ export async function POST(request: Request): Promise<Response> {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
-  return _authenticatedPOST(request);
+  return _authenticatedPOST(request as NextRequest);
 }

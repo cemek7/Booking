@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { readRawBody as readRaw, verifyHmac, normalizePayload, enqueueJob } from '@/lib/webhooks';
-import { getTenantIdByInstanceName, queueWhatsAppMessage } from '@/lib/whatsapp/messageProcessor';
+import { queueWhatsAppMessage } from '@/lib/whatsapp/messageProcessor';
+import { getTenantIdByInstanceName } from '@/lib/whatsapp/evolutionClient';
 import { whatsappMediaHandler } from '@/lib/whatsapp/mediaHandler';
 import { trace, Span } from '@opentelemetry/api';
 

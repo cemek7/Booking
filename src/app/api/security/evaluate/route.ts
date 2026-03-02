@@ -24,9 +24,7 @@ export const POST = createHttpHandler(
     // Evaluate security rules
     const result = await securityService.evaluateSecurityRules();
 
-    return {
-      success: true,
-      ...result,
+    return { ...result, success: true,
       timestamp: new Date().toISOString(),
     };
   },

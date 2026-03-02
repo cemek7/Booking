@@ -42,7 +42,7 @@ const SettingsSchemaBase = z.object({
   defaultCurrency: z.string().length(3).optional(),
   depositPercent: z.number().min(0).max(100).optional(),
   cancellationPolicy: z.string().optional(),
-  businessHours: z.record(z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() })).optional(),
+  businessHours: z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() })).optional(),
   staffAssignmentStrategy: z.enum(['round_robin','preferred','skill_based']).optional(),
   allowOverbooking: z.boolean().optional(),
   reminderLead: z.number().int().min(0).optional(),
@@ -94,7 +94,7 @@ const SettingsSchema = SettingsSchemaBase.superRefine((val, ctx) => {
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.params.tenantId;
+    const tenantId = ctx.params!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
@@ -134,7 +134,7 @@ export const GET = createHttpHandler(
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.params.tenantId;
+    const tenantId = ctx.params!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }

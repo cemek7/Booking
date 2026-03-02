@@ -225,19 +225,19 @@ export const GET = createHttpHandler(
       {
         title: 'Conflict Rate',
         value: `${conflictRate.toFixed(2)}%`,
-        status: (conflictRate > 0.1 ? 'warning' : 'good') as const,
+        status: (conflictRate > 0.1 ? 'warning' as const : 'good' as const),
         icon: '⚠️'
       },
       {
         title: 'Payment Drift',
         value: `${paymentDrift.toFixed(2)}%`,
-        status: (paymentDrift > 0.5 ? 'critical' : 'good') as const,
+        status: (paymentDrift > 0.5 ? 'critical' as const : 'good' as const),
         icon: '💳'
       },
       {
         title: 'API Error Rate',
         value: `${apiErrorRate.toFixed(2)}%`,
-        status: (apiErrorRate > 1 ? 'critical' : 'good') as const,
+        status: (apiErrorRate > 1 ? 'critical' as const : 'good' as const),
         icon: '🚨'
       },
       {
@@ -249,7 +249,7 @@ export const GET = createHttpHandler(
       {
         title: 'Support Tickets',
         value: supportTickets.count || 0,
-        status: ((supportTickets.count || 0) > 10 ? 'warning' : 'good') as const,
+        status: ((supportTickets.count || 0) > 10 ? 'warning' as const : 'good' as const),
         icon: '🎫'
       }
     ];

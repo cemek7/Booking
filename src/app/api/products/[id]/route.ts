@@ -26,7 +26,7 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
     const userRole = await getUserRole(ctx.user!.id);
@@ -83,7 +83,7 @@ export const PUT = createHttpHandler(
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
     const userRole = await getUserRole(ctx.user!.id);
@@ -258,7 +258,7 @@ export const DELETE = createHttpHandler(
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase

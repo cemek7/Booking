@@ -579,3 +579,5 @@ export async function getTenantIdByInstanceName(instanceName: string): Promise<s
     return null;
   }
 }
+// Alias for backward compatibility
+export { EvolutionAPIClient as EvolutionClient };

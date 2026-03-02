@@ -25,9 +25,7 @@ export const POST = createHttpHandler(
     // Perform PII scan
     const result = await securityService.scanPIIData();
 
-    return {
-      success: true,
-      ...result,
+    return { ...result, success: true,
       timestamp: new Date().toISOString(),
     };
   },

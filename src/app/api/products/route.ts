@@ -35,7 +35,7 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
     const userRole = await getUserRole(ctx.user!.id);
@@ -120,7 +120,7 @@ export const GET = createHttpHandler(
     }
 
     // Filter out cost prices if user doesn't have permission
-    const sanitizedProducts = products?.map(product => {
+    const sanitizedProducts = products?.map((product: Record<string, unknown>) => {
       if (!permissions.can_view_cost_prices) {
         const { cost_price_cents, ...productWithoutCost } = product;
         return productWithoutCost;

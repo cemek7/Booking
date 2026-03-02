@@ -3,7 +3,7 @@ import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { detectIntent } from '@/lib/intentDetector';
 import dialogManager from '@/lib/dialogManager';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
-import { EvolutionClient } from '@/lib/whatsapp/evolutionClient';
+import { queueWhatsAppMessage } from '@/lib/whatsapp/messageProcessor';
 import crypto from 'crypto';
 
 interface WhatsAppWebhookPayload {
@@ -228,8 +228,6 @@ async function processQueuedMessage(
   messageContent: string,
   supabase: any
 ): Promise<void> {
-  const evolutionClient = new EvolutionClient();
-
   try {
     // Update status to processing
     await supabase
@@ -238,9 +236,20 @@ async function processQueuedMessage(
       .eq('message_id', messageId);
 
     // Get or create dialog session
-    let sessionId = await dialogManager.getSessionIdByPhone(tenantId, customerPhone);
+    let sessionId: string | null = null;
+    // Look up existing session linked to customer phone
+    const { data: existingSession } = await supabase
+      .from('dialog_sessions')
+      .select('id')
+      .contains('metadata', { phone: customerPhone })
+      .eq('tenant_id', tenantId)
+      .eq('status', 'active')
+      .limit(1)
+      .single();
+    sessionId = existingSession?.id ?? null;
     if (!sessionId) {
-      sessionId = await dialogManager.startSession(tenantId);
+      const newSession = await dialogManager.startSession(tenantId);
+      sessionId = newSession.id;
       // Link session to customer phone
       await supabase
         .from('dialog_sessions')
@@ -259,17 +268,17 @@ async function processQueuedMessage(
     }
 
     // Route to booking bridge
-    const response = await dialogBookingBridge.handleMessage(
+    const response = await dialogBookingBridge.processMessage(
       tenantId,
       sessionId,
       messageContent,
-      intent
+      customerPhone
     );
 
     // Send response back to customer
     if (response) {
-      await evolutionClient.sendMessage(tenantId, customerPhone, response);
-      console.log(`✅ Sent response to ${customerPhone}: "${response.substring(0, 50)}..."`);
+      await queueWhatsAppMessage(tenantId, 'system', customerPhone, response.response);
+      console.log(`✅ Queued response to ${customerPhone}: "${response.response.substring(0, 50)}..."`);
     }
 
     // Mark message as completed
@@ -292,8 +301,9 @@ async function processQueuedMessage(
 
     // Send error message to customer
     try {
-      await evolutionClient.sendMessage(
+      await queueWhatsAppMessage(
         tenantId,
+        'system',
         customerPhone,
         'Sorry, something went wrong. Please try again or contact support.'
       );

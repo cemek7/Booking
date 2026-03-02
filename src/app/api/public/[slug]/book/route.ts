@@ -61,7 +61,7 @@ export const POST = createHttpHandler(
     if (!parseResult.success) {
       throw ApiErrorFactory.validationError({
         message: 'Invalid booking data',
-        errors: parseResult.error.errors,
+        errors: parseResult.error.issues,
       });
     }
 

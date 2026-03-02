@@ -61,7 +61,7 @@ export class AuditedPermissionChecker extends UnifiedPermissionChecker {
       const result = await super.checkAccess(userId, permission, context);
       
       // Get user details for audit logging
-      const user = result.user || await this.getUserProfile(userId, context.tenantId);
+      const user = result.user || await this.getUserProfile(userId, context.tenantId ?? '');
 
       if (user) {
         // Log the permission check
@@ -184,7 +184,7 @@ export class AuditedPermissionChecker extends UnifiedPermissionChecker {
   private isCrossTenantAccess(user: UnifiedUser, context: UnifiedPermissionContext): boolean {
     return (
       !user.isSuperAdmin &&
-      context.targetTenantId &&
+      !!context.targetTenantId &&
       context.targetTenantId !== user.tenantId
     );
   }
@@ -225,6 +225,7 @@ export async function auditedUnifiedAuth(
         permissionContext,
         {
           granted: authResult.success,
+          user: authResult.user,
           reason: authResult.error,
           appliedRules: ['authentication_check'],
           securityLevel: authResult.success ? 'low' : 'medium',
@@ -517,7 +518,7 @@ function extractRequestContext(request: NextRequest): {
   method: string;
 } {
   return {
-    ipAddress: request.ip || request.headers.get('x-forwarded-for') || 'unknown',
+    ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
     userAgent: request.headers.get('user-agent') || 'unknown',
     path: new URL(request.url).pathname,
     method: request.method
@@ -582,15 +583,3 @@ async function setupRealTimeAlerts(supabase: SupabaseClient): Promise<void> {
     .subscribe();
 }
 
-// Export all functions and classes
-export {
-  AuditedPermissionChecker,
-  auditedUnifiedAuth,
-  auditedRequireAuth,
-  auditedRequirePermission,
-  auditedRequireRole,
-  createAuditMiddleware,
-  generateTenantAuditReport,
-  getSecurityDashboard,
-  initializeAuditIntegration
-};

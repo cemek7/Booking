@@ -8,7 +8,7 @@ import {
 } from '@/lib/services/owner-staff-service';
 
 const StaffActionSchema = z.enum(['invite', 'update', 'remove']);
-const UserRoleSchema = z.enum(['owner', 'manager', 'staff', 'customer']);
+const UserRoleSchema = z.enum(['owner', 'manager', 'staff']);
 
 const InviteStaffSchema = z.object({
   email: z.string().email(),

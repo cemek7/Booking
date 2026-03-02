@@ -1,6 +1,5 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { Database } from '@/lib/database.types';
 import { CreateVariantRequest } from '@/types/product-catalogue';
 
 /**
