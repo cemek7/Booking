@@ -19,7 +19,7 @@ export const POST = createHttpHandler(
     }
 
     if (!transactionId) {
-      throw ApiErrorFactory.badRequest('transactionId' + ' is required');
+      throw ApiErrorFactory.badRequest('transactionId' );
     }
 
     // User auto-validated with roles check

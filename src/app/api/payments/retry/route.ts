@@ -17,7 +17,7 @@ export const POST = createHttpHandler(
     }
 
     if (!transactionId) {
-      throw ApiErrorFactory.badRequest('transactionId' + ' is required');
+      throw ApiErrorFactory.badRequest('transactionId' );
     }
 
     // Verify transaction belongs to tenant
