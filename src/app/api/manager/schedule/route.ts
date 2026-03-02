@@ -11,7 +11,7 @@ import {
   createScheduleOverride,
   updateStaffAvailability,
   bulkUpdateSchedules,
-} from '../../../../lib/services/manager-schedule-service';
+} from '@/lib/services/manager-schedule-service';
 
 const GetScheduleQuerySchema = z.object({
   startDate: z.string().datetime().optional(),

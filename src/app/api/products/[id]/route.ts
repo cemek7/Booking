@@ -49,7 +49,7 @@ export const GET = createHttpHandler(
       if (error.code === 'PGRST116') {
         throw ApiErrorFactory.notFound('Product not found');
       }
-      throw ApiErrorFactory.internal('Failed to fetch product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch product'));
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -218,7 +218,7 @@ export const PUT = createHttpHandler(
       if (error.code === '23505') {
         throw ApiErrorFactory.conflict('SKU already exists');
       }
-      throw ApiErrorFactory.internal('Failed to update product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to update product'));
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -284,7 +284,7 @@ export const DELETE = createHttpHandler(
         .eq('id', id);
 
       if (error) {
-        throw ApiErrorFactory.internal('Failed to delete product');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to delete product'));
       }
 
       return { 
@@ -304,7 +304,7 @@ export const DELETE = createHttpHandler(
         .single();
 
       if (error) {
-        throw ApiErrorFactory.internal('Failed to deactivate product');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to deactivate product'));
       }
 
       return { 

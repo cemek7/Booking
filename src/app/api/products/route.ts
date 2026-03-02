@@ -116,7 +116,7 @@ export const GET = createHttpHandler(
     const { data: products, error, count } = await queryBuilder;
 
     if (error) {
-      throw ApiErrorFactory.internal('Failed to fetch products');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch products'));
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -242,7 +242,7 @@ export const POST = createHttpHandler(
       if (error.code === '23505') {
         throw ApiErrorFactory.conflict('SKU already exists');
       }
-      throw ApiErrorFactory.internal('Failed to create product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create product'));
     }
 
     // Log inventory movement if tracking inventory

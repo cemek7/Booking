@@ -5,7 +5,7 @@ import {
   inviteStaffMember,
   updateStaffMember,
   removeStaffMember,
-} from '../../../../lib/services/owner-staff-service';
+} from '@/lib/services/owner-staff-service';
 
 const StaffActionSchema = z.enum(['invite', 'update', 'remove']);
 const UserRoleSchema = z.enum(['owner', 'manager', 'staff', 'customer']);

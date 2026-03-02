@@ -41,7 +41,7 @@ export const POST = createHttpHandler(
       .select()
       .maybeSingle();
 
-    if (error) throw ApiErrorFactory.internal('Failed to enqueue job');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to enqueue job'));
 
     return { data };
   },

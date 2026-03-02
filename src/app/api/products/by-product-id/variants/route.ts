@@ -44,7 +44,7 @@ export const GET = createHttpHandler(
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw ApiErrorFactory.internal('Failed to fetch variants');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch variants'));
     }
 
     return {
@@ -131,7 +131,7 @@ export const POST = createHttpHandler(
       .single();
 
     if (variantError) {
-      throw ApiErrorFactory.internal('Failed to create variant');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create variant'));
     }
 
     // Initialize inventory for the variant

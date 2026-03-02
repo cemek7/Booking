@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   getTenantSettings,
   updateTenantSettings,
-} from '../../../../lib/services/owner-settings-service';
+} from '@/lib/services/owner-settings-service';
 
 const TenantSettingsSchema = z.object({
   name: z.string().min(1).optional(),

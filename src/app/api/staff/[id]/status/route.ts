@@ -26,7 +26,7 @@ export const PATCH = createHttpHandler(
       .single();
 
     if (error) {
-      throw ApiErrorFactory.internal('Failed to update status');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to update status'));
     }
 
     return { ok: true, user_id: data?.user_id, status: data?.status };

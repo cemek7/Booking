@@ -59,7 +59,7 @@ export const POST = createHttpHandler(
       .select()
       .maybeSingle();
 
-    if (error) throw ApiErrorFactory.internal('Failed to create recurring job');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to create recurring job'));
 
     return { data };
   },

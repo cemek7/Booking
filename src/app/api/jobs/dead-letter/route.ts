@@ -1,5 +1,5 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import EnhancedJobManager from '../../../../lib/enhancedJobManager';
+import EnhancedJobManager from '@/lib/enhancedJobManager';
 import { z } from 'zod';
 
 // Zod schema for POST request body

@@ -61,7 +61,7 @@ export const GET = createHttpHandler(
         .gte('created_at', since),
     ]);
 
-    if (staffResult.error) throw ApiErrorFactory.internal('Failed to fetch staff');
+    if (staffResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch staff'));
 
     const staff = (staffResult.data || []) as Array<{ user_id: string; role: string }>;
 

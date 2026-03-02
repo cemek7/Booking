@@ -24,7 +24,7 @@ export const GET = createHttpHandler(
 
     const { data, error } = await q;
     if (error) {
-      throw ApiErrorFactory.internal(error.message);
+      throw ApiErrorFactory.internalServerError(new Error(error.message));
     }
 
     return { data };

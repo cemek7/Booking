@@ -593,14 +593,24 @@ export async function getBookingAnalytics(
   const { startDate, endDate } = dateRange;
   const staffIds = await getManagedStaffIds(supabase, user);
 
+  // Typed shape for the booking row returned by the reservations query
+  interface BookingRow {
+    id: string;
+    status: string;
+    start_at: string;
+    metadata?: { cancellation_reason?: string } | null;
+  }
+
   // Get all bookings
-  const { data: bookings } = await supabase
+  const { data: rawBookings } = await supabase
     .from('reservations')
     .select('id, status, start_at, metadata')
     .eq('tenant_id', user.tenantId)
     .in('staff_id', staffIds)
     .gte('start_at', startDate.toISOString())
     .lte('start_at', endDate.toISOString());
+
+  const bookings = (rawBookings as unknown as BookingRow[]) ?? [];
 
   // Bookings by status
   const bookingsByStatus = {

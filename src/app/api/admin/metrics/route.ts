@@ -51,7 +51,7 @@ export const GET = createHttpHandler(
           .gte('created_at', since),
       ]);
 
-    if (llmResult.error) throw ApiErrorFactory.internal('Failed to fetch LLM metrics');
+    if (llmResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch LLM metrics'));
 
     // Log non-critical query errors so they are visible in server logs
     if (userResult.error) console.warn('[admin/metrics] tenant_users query failed', userResult.error.message);

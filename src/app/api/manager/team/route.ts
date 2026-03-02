@@ -11,7 +11,7 @@ import {
   inviteTeamMember,
   updateTeamMemberRole,
   setTeamMemberActiveStatus,
-} from '../../../../lib/services/manager-team-service';
+} from '@/lib/services/manager-team-service';
 
 const TeamActionSchema = z.enum([
   'invite-member',

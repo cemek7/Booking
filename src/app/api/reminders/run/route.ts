@@ -28,7 +28,7 @@ export const POST = createHttpHandler(
       .eq('status', 'pending')
       .limit(100);
 
-    if (error) throw ApiErrorFactory.internal('Failed to fetch reminders');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reminders'));
 
     if (!rows || rows.length === 0) {
       return { processed: 0 };

@@ -20,7 +20,7 @@ export const GET = createHttpHandler(
     const result = await analyticsService.getStaffPerformance(tenantId, period);
 
     if (!result.success) {
-      throw ApiErrorFactory.internal(result.error || 'Failed to fetch staff performance data');
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to fetch staff performance data'));
     }
 
     return {

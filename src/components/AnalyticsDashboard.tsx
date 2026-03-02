@@ -19,34 +19,11 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { getUnifiedAnalyticsAccess, validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
 import { Role } from '@/types/roles';
+import type { BookingTrendData, StaffPerformanceData, DashboardMetric } from '@/types/analytics-api';
 
-export interface AnalyticsMetric {
-  id: string;
-  name: string;
-  value: number;
-  trend: number;
-  type: 'count' | 'percentage' | 'currency' | 'duration';
-  period: string;
-  last_updated: string;
-}
-
-export interface BookingTrendData {
-  date: string;
-  bookings: number;
-  revenue: number;
-  cancellations: number;
-  no_shows: number;
-}
-
-export interface StaffPerformanceData {
-  staff_id: string;
-  staff_name: string;
-  bookings_count: number;
-  revenue_total: number;
-  utilization_rate: number;
-  customer_rating: number;
-  tips_total: number;
-}
+export type { BookingTrendData, StaffPerformanceData };
+/** @deprecated Use DashboardMetric from '@/types/analytics-api' instead */
+export type AnalyticsMetric = DashboardMetric;
 
 interface AnalyticsDashboardProps {
   tenantId: string;

@@ -58,7 +58,7 @@ export const POST = createHttpHandler(
       if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === '23505') {
         throw ApiErrorFactory.badRequest(`Feedback already submitted for reservation ${reservation_id}. Each reservation can only be rated once.`);
       }
-      throw ApiErrorFactory.internal('Failed to save feedback');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to save feedback'));
     }
 
     return { success: true, feedback: data };
@@ -96,7 +96,7 @@ export const GET = createHttpHandler(
     }
 
     const { data, error } = await query;
-    if (error) throw ApiErrorFactory.internal('Failed to fetch feedback');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch feedback'));
 
     const rows = data || [];
     const totalScore = rows.reduce((sum, r) => sum + r.score, 0);

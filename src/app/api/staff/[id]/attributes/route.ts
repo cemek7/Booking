@@ -23,7 +23,7 @@ export const PATCH = createHttpHandler(
       .eq('tenant_id', ctx.user!.tenantId)
       .eq('user_id', id);
     
-    if (error) throw ApiErrorFactory.internal('Failed to update staff attributes');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to update staff attributes'));
     
     return { ok: true };
   },

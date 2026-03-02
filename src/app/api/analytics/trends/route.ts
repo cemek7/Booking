@@ -16,7 +16,7 @@ export const GET = createHttpHandler(
     const result = await analyticsService.getBookingTrends(tenantId, days);
 
     if (!result.success) {
-      throw ApiErrorFactory.internal(result.error || 'Failed to fetch booking trends');
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to fetch booking trends'));
     }
 
     return {
