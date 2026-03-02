@@ -292,70 +292,77 @@ export async function getRevenueAnalytics(
   const { startDate, endDate } = dateRange;
   const staffIds = await getManagedStaffIds(supabase, user);
 
-  // Typed shape for the joined reservation query result
-  interface ReservationWithJoins {
+  // Typed shape for the single-source transaction query result (joined to reservations).
+  interface TransactionWithJoins {
     id: string;
-    staff_id: string;
-    service_id: string;
-    start_at: string;
-    metadata?: { revenue?: number };
-    users?: { id: string; full_name: string } | null;
-    services?: { id: string; name: string } | null;
+    amount: number | string;
+    created_at: string;
+    reservation_id: string | null;
+    reservations?: {
+      id: string;
+      staff_id: string;
+      service_id: string;
+      start_at: string;
+      users?: { id: string; full_name: string } | null;
+      services?: { id: string; name: string } | null;
+    } | null;
   }
 
-  // totalRevenue is sourced from the authoritative `transactions` table (settled payment records).
-  // NOTE: revenueByStaff and revenueByService below are sourced from reservations.metadata.revenue,
-  // which is a denormalised estimate stored at booking time. These two figures may not reconcile
-  // exactly because: (a) not every reservation has a corresponding completed transaction, and
-  // (b) refunds/adjustments are reflected in transactions but not in reservation metadata.
-  // TODO: once the reservations table carries a foreign-key to transactions, both breakdowns should
-  //       be derived from the same source.
-  // Get revenue transactions
-  const { data: transactions } = await supabase
+  // All metrics (totalRevenue, revenueByStaff, revenueByService, trends) are derived from the
+  // same `transactions` query, joined to `reservations` via reservation_id to resolve staff_id
+  // and service_id. Using a single source ensures the per-staff and per-service breakdowns
+  // always reconcile with the overall total.
+  const { data: rawTx } = await supabase
     .from('transactions')
-    .select('amount, created_at, metadata')
+    .select(`
+      id,
+      amount,
+      created_at,
+      reservation_id,
+      reservations(
+        id,
+        staff_id,
+        service_id,
+        start_at,
+        users!reservations_staff_id_fkey(id, full_name),
+        services(id, name)
+      )
+    `)
     .eq('tenant_id', user.tenantId)
     .eq('status', 'completed')
     .gte('created_at', startDate.toISOString())
-    .lte('created_at', endDate.toISOString());
+    .lte('created_at', endDate.toISOString())
+    .not('reservation_id', 'is', null);
 
-  const totalRevenue = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0);
+  const allTx = (rawTx as unknown as TransactionWithJoins[]) ?? [];
 
-  // Get bookings with staff and service info
-  const { data: rawBookings } = await supabase
-    .from('reservations')
-    .select(`
-      id,
-      staff_id,
-      service_id,
-      start_at,
-      metadata,
-      users!reservations_staff_id_fkey(id, full_name),
-      services(id, name)
-    `)
-    .eq('tenant_id', user.tenantId)
-    .in('staff_id', staffIds)
-    .eq('status', 'completed')
-    .gte('start_at', startDate.toISOString())
-    .lte('start_at', endDate.toISOString());
+  // Restrict to transactions whose linked reservation was handled by managed staff.
+  // When staffIds is empty the manager has no assigned staff in this tenant, so all
+  // revenue metrics are legitimately zero (consistent with how other analytics functions
+  // handle this case with `.in('staff_id', [])` returning no rows).
+  const staffIdSet = new Set(staffIds);
+  const managedTx = staffIds.length === 0
+    ? []
+    : allTx.filter(tx => tx.reservations?.staff_id && staffIdSet.has(tx.reservations.staff_id));
 
-  const bookings = (rawBookings as unknown as ReservationWithJoins[]) ?? [];
+  const totalRevenue = managedTx.reduce((sum, t) => sum + Number(t.amount), 0);
 
   // Revenue by staff
   const staffRevenueMap = new Map<string, { staffId: string; staffName: string; revenue: number; bookings: number }>();
 
-  (bookings || []).forEach(booking => {
-    const staffId = booking.staff_id;
-    const staffName = booking.users?.full_name || 'Unknown';
-    const revenue = Number(booking.metadata?.revenue || 0);
+  managedTx.forEach(tx => {
+    const res = tx.reservations;
+    if (!res) return;
+    const staffId = res.staff_id;
+    const staffName = res.users?.full_name || 'Unknown';
+    const revenue = Number(tx.amount);
 
     if (!staffRevenueMap.has(staffId)) {
       staffRevenueMap.set(staffId, { staffId, staffName, revenue: 0, bookings: 0 });
     }
-
-    const staffData = staffRevenueMap.get(staffId)!;
-    staffData.revenue += revenue;
-    staffData.bookings += 1;
+    const entry = staffRevenueMap.get(staffId)!;
+    entry.revenue += revenue;
+    entry.bookings += 1;
   });
 
   const revenueByStaff = Array.from(staffRevenueMap.values())
@@ -364,25 +371,26 @@ export async function getRevenueAnalytics(
   // Revenue by service
   const serviceRevenueMap = new Map<string, { serviceId: string; serviceName: string; revenue: number; count: number }>();
 
-  (bookings || []).forEach(booking => {
-    const serviceId = booking.service_id;
-    const serviceName = booking.services?.name || 'Unknown';
-    const revenue = Number(booking.metadata?.revenue || 0);
+  managedTx.forEach(tx => {
+    const res = tx.reservations;
+    if (!res) return;
+    const serviceId = res.service_id;
+    const serviceName = res.services?.name || 'Unknown';
+    const revenue = Number(tx.amount);
 
     if (!serviceRevenueMap.has(serviceId)) {
       serviceRevenueMap.set(serviceId, { serviceId, serviceName, revenue: 0, count: 0 });
     }
-
-    const serviceData = serviceRevenueMap.get(serviceId)!;
-    serviceData.revenue += revenue;
-    serviceData.count += 1;
+    const entry = serviceRevenueMap.get(serviceId)!;
+    entry.revenue += revenue;
+    entry.count += 1;
   });
 
   const revenueByService = Array.from(serviceRevenueMap.values())
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 10); // Top 10 services
 
-  // Revenue trends by day
+  // Revenue trends by day (keyed by transaction settlement date)
   const trendMap = new Map<string, { date: string; revenue: number; bookings: number }>();
   const days = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
 
@@ -393,14 +401,14 @@ export async function getRevenueAnalytics(
     trendMap.set(dateKey, { date: dateKey, revenue: 0, bookings: 0 });
   }
 
-  (bookings || []).forEach(booking => {
-    if (!booking.start_at) return;
-    const d = new Date(booking.start_at);
+  managedTx.forEach(tx => {
+    if (!tx.created_at) return;
+    const d = new Date(tx.created_at);
     if (isNaN(d.getTime())) return;
     const dateKey = d.toISOString().split('T')[0];
     const trend = trendMap.get(dateKey);
     if (trend) {
-      trend.revenue += Number(booking.metadata?.revenue || 0);
+      trend.revenue += Number(tx.amount);
       trend.bookings += 1;
     }
   });
