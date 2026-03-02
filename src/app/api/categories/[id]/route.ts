@@ -16,7 +16,7 @@ const UpdateCategoryBodySchema = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   display_order: z.number().int().optional(),
   is_active: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 // Zod schema for DELETE query parameters

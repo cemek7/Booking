@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const usageData = await getOwnerUsage(ctx.supabase, ctx.user.tenantId);
+    const usageData = await getOwnerUsage(ctx.supabase, ctx.user!.tenantId!);
     return usageData;
   },
   'GET',
@@ -27,7 +27,7 @@ export const POST = createHttpHandler(
     }
 
     const { action, budget_limit, notification_threshold } = parsed.data;
-    const tenantId = ctx.user.tenantId;
+    const tenantId = ctx.user!.tenantId;
     if (!tenantId) throw ApiErrorFactory.badRequest('Tenant ID is required');
 
     if (action === 'set_budget') {

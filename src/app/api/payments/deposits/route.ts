@@ -17,7 +17,7 @@ export const POST = createHttpHandler(
 
     // Validation
     if (!amount || !email || !reservationId) {
-      throw ApiErrorFactory.missingRequiredField('amount, email, reservationId');
+      throw ApiErrorFactory.badRequest('amount, email, reservationId' + ' is required');
     }
 
     if (amount <= 0) {

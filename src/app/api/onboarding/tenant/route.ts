@@ -35,7 +35,7 @@ const _authenticatedPOST = createHttpHandler(
     const span = tracer.startSpan('api.onboarding.tenant.post');
     try {
       if (!ctx.user?.id) {
-        throw ApiErrorFactory.unauthorized('User ID required');
+        throw ApiErrorFactory.missingAuthorization();
       }
 
       const userId = ctx.user.id;

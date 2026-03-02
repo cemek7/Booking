@@ -99,7 +99,7 @@ export const GET = createHttpHandler(
     if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch feedback'));
 
     const rows = data || [];
-    const totalScore = rows.reduce((sum, r) => sum + r.score, 0);
+    const totalScore = rows.reduce((sum: number, r: { score: number }) => sum + r.score, 0);
     const avgScore = rows.length > 0 ? Number((totalScore / rows.length).toFixed(2)) : null;
 
     return {

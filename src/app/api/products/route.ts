@@ -29,7 +29,7 @@ export const GET = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
@@ -38,7 +38,7 @@ export const GET = createHttpHandler(
     const tenantIds = tenantUsers.map(tu => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Build base query
@@ -164,7 +164,7 @@ export const POST = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id)
+      .eq('user_id', ctx.user!.id)
       .limit(1)
       .single();
 
@@ -257,7 +257,7 @@ export const POST = createHttpHandler(
           previous_quantity: 0,
           new_quantity: productData.stock_quantity,
           reason: 'Initial stock',
-          performed_by: ctx.user.id,
+          performed_by: ctx.user!.id,
         });
     }
 

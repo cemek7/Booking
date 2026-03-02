@@ -92,7 +92,7 @@ export const POST = createHttpHandler(
       throw new Error(result.error || 'Module operation failed');
     }
     
-    return { success: true, ...result };
+    return { ...result, success: true };
   },
   'POST',
   { auth: true, roles: ['owner'] }

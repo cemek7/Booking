@@ -10,7 +10,7 @@ const SettingsSchemaBase = z.object({
   brandingColor: z.string().regex(/^#?[0-9a-fA-F]{3,8}$/).optional(),
   tone: z.string().min(1).optional(),
   styleGuidelines: z.string().min(1).optional(),
-  voiceParameters: z.record(z.any()).optional(),
+  voiceParameters: z.record(z.string(), z.any()).optional(),
   samplePhrases: z.array(z.string().min(1)).optional(),
   brandTagline: z.string().optional(),
   greeting: z.string().optional(),

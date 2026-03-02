@@ -54,7 +54,7 @@ export const POST = createHttpHandler(
         throw error;
       }
       console.error('[auth/finish] unexpected error:', error);
-      throw ApiErrorFactory.internalServerError('Failed to finalize authentication');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to finalize authentication'));
     }
   },
   'POST',

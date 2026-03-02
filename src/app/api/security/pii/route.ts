@@ -49,10 +49,7 @@ export const GET = createHttpHandler(
       .order('column_name', { ascending: true });
 
     if (piiRegistry.error) {
-      throw ApiErrorFactory.internalError(
-        piiRegistry.error.message,
-        'PII_REGISTRY_FETCH_FAILED'
-      );
+      throw ApiErrorFactory.internalServerError(new Error(piiRegistry.error.message));
     }
 
     return {

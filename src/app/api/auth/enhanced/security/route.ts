@@ -116,7 +116,7 @@ export const PATCH = createHttpHandler(
       };
     } catch (error) {
       console.error('[auth/security] settings update failed:', error);
-      throw ApiErrorFactory.internalServerError('Failed to update security settings');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to update security settings'));
     }
   },
   'PATCH',
@@ -175,7 +175,7 @@ export const DELETE = createHttpHandler(
       };
     } catch (error) {
       console.error('[auth/security] session termination failed:', error);
-      throw ApiErrorFactory.internalServerError('Failed to terminate session');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to terminate session'));
     }
   },
   'DELETE',

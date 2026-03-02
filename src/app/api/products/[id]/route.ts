@@ -20,7 +20,7 @@ export const GET = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
@@ -29,7 +29,7 @@ export const GET = createHttpHandler(
     const tenantIds = tenantUsers.map(tu => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Fetch product with related data
@@ -77,7 +77,7 @@ export const PUT = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
@@ -86,7 +86,7 @@ export const PUT = createHttpHandler(
     const tenantIds = tenantUsers.map(tu => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Verify product exists and user has access
@@ -194,7 +194,7 @@ export const PUT = createHttpHandler(
               previous_quantity: existingProduct.stock_quantity,
               new_quantity: body.stock_quantity,
               reason: 'Manual adjustment via product update',
-              performed_by: ctx.user.id,
+              performed_by: ctx.user!.id,
             });
         }
         
@@ -252,7 +252,7 @@ export const DELETE = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');

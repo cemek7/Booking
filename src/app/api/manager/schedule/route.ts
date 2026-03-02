@@ -44,7 +44,7 @@ export const GET = createHttpHandler(
     const start = startDate ? new Date(startDate) : new Date();
     const end = endDate ? new Date(endDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    const scheduleData = await getTeamSchedule(ctx.supabase, ctx.user.tenantId, { start, end }, staffId);
+    const scheduleData = await getTeamSchedule(ctx.supabase, ctx.user!.tenantId!, { start, end }, staffId);
     return { success: true, ...scheduleData };
   },
   'GET',
@@ -64,13 +64,13 @@ export const POST = createHttpHandler(
     let result;
     switch (action) {
       case 'create-override':
-        result = await createScheduleOverride(ctx.supabase, ctx.user.tenantId, data);
+        result = await createScheduleOverride(ctx.supabase, ctx.user!.tenantId!, data);
         break;
       case 'update-availability':
-        result = await updateStaffAvailability(ctx.supabase, ctx.user.tenantId, data);
+        result = await updateStaffAvailability(ctx.supabase, ctx.user!.tenantId!, data);
         break;
       case 'bulk-update':
-        result = await bulkUpdateSchedules(ctx.supabase, ctx.user.tenantId, data);
+        result = await bulkUpdateSchedules(ctx.supabase, ctx.user!.tenantId!, data);
         break;
       default:
         throw new Error('Invalid schedule action');

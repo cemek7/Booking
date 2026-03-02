@@ -31,7 +31,7 @@ export const POST = createHttpHandler(
     const expectedSecret = process.env.CRON_SECRET;
 
     if (expectedSecret && cronSecret !== expectedSecret) {
-      throw ApiErrorFactory.authError('Invalid cron secret');
+      throw ApiErrorFactory.missingAuthorization();
     }
 
     const results = {
@@ -141,7 +141,7 @@ export const POST = createHttpHandler(
       if (error instanceof Error && 'statusCode' in error) {
         throw error;
       }
-      throw ApiErrorFactory.internalError('Auto-cancel job failed');
+      throw ApiErrorFactory.internalServerError(new Error('Auto-cancel job failed'));
     }
   },
   'POST',

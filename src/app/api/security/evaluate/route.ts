@@ -47,10 +47,7 @@ export const GET = createHttpHandler(
     const result = await securityService.generateComplianceReport();
     
     if (!result.success) {
-      throw ApiErrorFactory.internalError(
-        result.error || 'Failed to generate compliance report',
-        'COMPLIANCE_REPORT_FAILED'
-      );
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to generate compliance report'));
     }
 
     return {

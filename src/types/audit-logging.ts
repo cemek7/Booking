@@ -847,11 +847,3 @@ export function getAuditLogger(): AuditLogger {
   return globalAuditLogger;
 }
 
-// Export types and classes
-export type {
-  AuditEvent,
-  AuditEventType,
-  AuditContext,
-  AuditResult,
-  ComplianceFlag
-};

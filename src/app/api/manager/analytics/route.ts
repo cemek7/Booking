@@ -8,6 +8,7 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
+import type { AppUser } from '@/types/auth';
 import {
   calculateDateRange,
   getOverviewAnalytics,
@@ -49,22 +50,22 @@ export const GET = createHttpHandler(
     let result;
     switch (metric) {
       case 'overview':
-        result = await getOverviewAnalytics(ctx.supabase, ctx.user, dateRange);
+        result = await getOverviewAnalytics(ctx.supabase, ctx.user! as AppUser, dateRange);
         break;
       case 'revenue':
-        result = await getRevenueAnalytics(ctx.supabase, ctx.user, dateRange);
+        result = await getRevenueAnalytics(ctx.supabase, ctx.user! as AppUser, dateRange);
         break;
       case 'team':
-        result = await getTeamAnalytics(ctx.supabase, ctx.user, dateRange, staffId || null);
+        result = await getTeamAnalytics(ctx.supabase, ctx.user! as AppUser, dateRange, staffId || null);
         break;
       case 'bookings':
-        result = await getBookingAnalytics(ctx.supabase, ctx.user, dateRange);
+        result = await getBookingAnalytics(ctx.supabase, ctx.user! as AppUser, dateRange);
         break;
       default:
-        result = await getOverviewAnalytics(ctx.supabase, ctx.user, dateRange);
+        result = await getOverviewAnalytics(ctx.supabase, ctx.user! as AppUser, dateRange);
     }
 
-    return { success: true, ...result };
+    return { ...result, success: true };
   },
   'GET',
   { auth: true, roles: ['manager', 'owner'] }
@@ -84,19 +85,19 @@ export const POST = createHttpHandler(
     let result;
     switch (action) {
       case 'generate-report':
-        result = await generateCustomReport(ctx.supabase, ctx.user, data);
+        result = await generateCustomReport(ctx.supabase, ctx.user! as AppUser, data);
         break;
       case 'export-data':
-        result = await exportAnalyticsData(ctx.supabase, ctx.user, data);
+        result = await exportAnalyticsData(ctx.supabase, ctx.user! as AppUser, data);
         break;
       case 'save-dashboard':
-        result = await saveDashboardConfig(ctx.supabase, ctx.user, data);
+        result = await saveDashboardConfig(ctx.supabase, ctx.user! as AppUser, data);
         break;
       default:
         throw ApiErrorFactory.badRequest('Invalid analytics action');
     }
 
-    return { success: true, ...result };
+    return { ...result, success: true };
   },
   'POST',
   { auth: true, roles: ['manager', 'owner'] }

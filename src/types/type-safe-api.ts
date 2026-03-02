@@ -245,7 +245,3 @@ export const TypeSafeApiUtils = {
   multiRoleRoute
 } as const;
 
-export type {
-  TypeSafeApiHandler,
-  TypeSafeRouteConfig
-};

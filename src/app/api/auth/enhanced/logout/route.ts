@@ -83,7 +83,7 @@ export const DELETE = createHttpHandler(
       };
     } catch (error) {
       console.error('[auth/logout] global logout failed:', error);
-      throw ApiErrorFactory.internalServerError('Failed to logout from all sessions');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to logout from all sessions'));
     }
   },
   'DELETE',

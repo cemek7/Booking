@@ -19,7 +19,7 @@ const AuthMiddlewareOptionsSchema = z.object({
   session: z.any().optional(),
   userRole: z.string().optional(),
   supabase: z.any(),
-  protectedRoutes: z.record(z.array(z.string())),
+  protectedRoutes: z.record(z.string(), z.array(z.string())),
 });
 
 export type AuthMiddlewareOptions = z.infer<typeof AuthMiddlewareOptionsSchema>;

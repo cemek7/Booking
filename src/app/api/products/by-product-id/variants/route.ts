@@ -21,7 +21,7 @@ export const GET = createHttpHandler(
       .from('products')
       .select('id, tenant_id')
       .eq('id', productId)
-      .eq('tenant_id', ctx.user.tenantId)
+      .eq('tenant_id', ctx.user!.tenantId)
       .single();
 
     if (!product) {
@@ -40,7 +40,7 @@ export const GET = createHttpHandler(
         )
       `)
       .eq('product_id', productId)
-      .eq('tenant_id', ctx.user.tenantId)
+      .eq('tenant_id', ctx.user!.tenantId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -91,7 +91,7 @@ export const POST = createHttpHandler(
       .from('products')
       .select('id, tenant_id')
       .eq('id', productId)
-      .eq('tenant_id', ctx.user.tenantId)
+      .eq('tenant_id', ctx.user!.tenantId)
       .single();
 
     if (productError || !product) {
@@ -104,7 +104,7 @@ export const POST = createHttpHandler(
         .from('product_variants')
         .select('id')
         .eq('sku', sku.trim().toUpperCase())
-        .eq('tenant_id', ctx.user.tenantId)
+        .eq('tenant_id', ctx.user!.tenantId)
         .single();
 
       if (existingSku) {
@@ -117,7 +117,7 @@ export const POST = createHttpHandler(
       .from('product_variants')
       .insert({
         product_id: productId,
-        tenant_id: ctx.user.tenantId,
+        tenant_id: ctx.user!.tenantId,
         name: name.trim(),
         description: description?.trim() || null,
         sku: sku?.trim().toUpperCase() || null,
@@ -140,7 +140,7 @@ export const POST = createHttpHandler(
       .insert({
         product_id: productId,
         variant_id: variant.id,
-        tenant_id: ctx.user.tenantId,
+        tenant_id: ctx.user!.tenantId,
         current_stock: 0,
         reserved_stock: 0,
         available_stock: 0,

@@ -46,7 +46,7 @@ export const GET = createHttpHandler(
 
     let lifetimeSpend = 0;
     if (allReservations.length > 0) {
-      const reservationIds = allReservations.map(r => r.id);
+      const reservationIds = allReservations.map((r: { id: string }) => r.id);
       const { data: services, error: servicesError } = await ctx.supabase
         .from('reservation_services')
         .select('quantity, services(price)')
@@ -54,7 +54,7 @@ export const GET = createHttpHandler(
       
       if (servicesError) throw servicesError;
 
-      lifetimeSpend = services.reduce((total, item) => {
+      lifetimeSpend = services.reduce((total: number, item: { quantity?: number; services?: { price?: number } | null }) => {
         const price = item.services?.price ?? 0;
         const quantity = item.quantity ?? 1;
         return total + (price * quantity);
@@ -72,7 +72,7 @@ export const GET = createHttpHandler(
 
     if (recentError) throw recentError;
 
-    const recentWithTotals = await Promise.all(recentReservations.map(async (res) => {
+    const recentWithTotals = await Promise.all(recentReservations.map(async (res: { id: string; start_at: string; status: string }) => {
       const { data: services, error } = await ctx.supabase
         .from('reservation_services')
         .select('quantity, services(price)')
@@ -83,7 +83,7 @@ export const GET = createHttpHandler(
         return { ...res, total: 0 };
       }
 
-      const total = services.reduce((acc, item) => {
+      const total = services.reduce((acc: number, item: { quantity?: number; services?: { price?: number } | null }) => {
         const price = item.services?.price ?? 0;
         const quantity = item.quantity ?? 1;
         return acc + (price * quantity);
