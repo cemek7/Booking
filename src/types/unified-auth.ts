@@ -58,9 +58,7 @@ export async function unifiedAuth(
 ): Promise<UnifiedAuthResult> {
   try {
     // Step 1: Get authenticated user session
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabase = createServerSupabaseClient(supabaseUrl, supabaseKey, { cookies });
+    const supabase = createServerSupabaseClient();
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError || !session?.user) {
@@ -81,7 +79,7 @@ export async function unifiedAuth(
     // Step 5: Get unified user profile
     const user = await permissionChecker.getUserProfile(
       session.user.id, 
-      tenantContext.tenantId
+      tenantContext.tenantId ?? undefined
     );
 
     if (!user) {
