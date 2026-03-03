@@ -1,4 +1,4 @@
-import { createHttpHandler } from '../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import VerticalModuleManager from '../../../lib/verticalModuleManager';
 import { z } from 'zod';
 
@@ -92,7 +92,7 @@ export const POST = createHttpHandler(
       throw new Error(result.error || 'Module operation failed');
     }
     
-    return { success: true, ...result };
+    return { ...result, success: true };
   },
   'POST',
   { auth: true, roles: ['owner'] }

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import GlassCard from '@/components/ui/GlassCard';
+import type { CalendarEvent } from '@/types/calendar';
 
 interface SlotInfo {
   start: Date;
@@ -12,14 +13,6 @@ interface CreateAppointmentModalProps {
   slotInfo: SlotInfo | null;
   onClose: () => void;
   onCreate: (event: Omit<CalendarEvent, 'id'>) => void;
-}
-
-interface CalendarEvent {
-  id: number;
-  title: string;
-  start: Date;
-  end: Date;
-  resourceId: number;
 }
 
 const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({

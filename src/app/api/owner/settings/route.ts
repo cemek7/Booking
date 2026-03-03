@@ -1,9 +1,9 @@
-import { createHttpHandler } from '../../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getTenantSettings,
   updateTenantSettings,
-} from '../../../../lib/services/owner-settings-service';
+} from '@/lib/services/owner-settings-service';
 
 const TenantSettingsSchema = z.object({
   name: z.string().min(1).optional(),
@@ -24,7 +24,7 @@ const TenantSettingsSchema = z.object({
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const settingsData = await getTenantSettings(ctx.supabase, ctx.user.tenantId);
+    const settingsData = await getTenantSettings(ctx.supabase, ctx.user!.tenantId!);
     return { success: true, ...settingsData };
   },
   'GET',
@@ -40,7 +40,7 @@ export const POST = createHttpHandler(
       throw new Error(`Invalid request body: ${JSON.stringify(bodyValidation.error.issues)}`);
     }
 
-    const result = await updateTenantSettings(ctx.supabase, ctx.user.tenantId, bodyValidation.data);
+    const result = await updateTenantSettings(ctx.supabase, ctx.user!.tenantId!, bodyValidation.data);
     return { success: true, ...result };
   },
   'POST',

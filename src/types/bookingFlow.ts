@@ -465,35 +465,3 @@ export function isValidTransition(
   return validTransitions[from]?.includes(to) || false;
 }
 
-// Export all types
-export type {
-  ConversationState,
-  BookingFlowContext,
-  ServiceSelection,
-  DateTimeSelection,
-  StaffSelection,
-  TimeSlot,
-  BookingMessage,
-  MessageIntent,
-  ExtractedEntity,
-  EntityType,
-  ConversationFlowConfig,
-  FlowStep,
-  ValidationRule,
-  StepCondition,
-  StepAction,
-  NotificationSettings,
-  BookingFlowResponse,
-  FlowAction,
-  MessageProcessingResult,
-  ConversationAnalytics,
-  BookingNotificationType,
-  BookingNotification,
-  ScheduledNotification,
-  DateTimeParser,
-  ParsedDateTime,
-  BusinessHours,
-  ValidationResult,
-  ServiceAvailability,
-  StaffAvailabilitySlot
-};

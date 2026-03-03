@@ -469,28 +469,3 @@ export function getAnalyticsForRole(role: UserRole): {
   }
 }
 
-// Export all types
-export type {
-  TimePeriod,
-  DataGranularity,
-  MetricType,
-  DataPoint,
-  TimeSeriesData,
-  KpiMetric,
-  DashboardWidget,
-  WidgetConfig,
-  DashboardLayout,
-  AnalyticsQuery,
-  AnalyticsFilter,
-  RoleAnalyticsData,
-  AnalyticsSummary,
-  AnalyticsPermissions,
-  SuperadminAnalytics,
-  OwnerAnalytics,
-  ManagerAnalytics,
-  StaffAnalytics,
-  AnalyticsEvent,
-  RealtimeMetric,
-  RealtimeUpdate,
-  AnalyticsExport
-};

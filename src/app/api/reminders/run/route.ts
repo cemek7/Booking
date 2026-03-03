@@ -28,7 +28,7 @@ export const POST = createHttpHandler(
       .eq('status', 'pending')
       .limit(100);
 
-    if (error) throw ApiErrorFactory.internal('Failed to fetch reminders');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reminders'));
 
     if (!rows || rows.length === 0) {
       return { processed: 0 };
@@ -72,40 +72,3 @@ export const POST = createHttpHandler(
   'POST',
   { auth: true }
 );
-
-            if (updateError) {
-              console.error(`[api/reminders/run] Failed to update attempts for reminder ${id}:`, updateError);
-            }
-          }
-        } else {
-          // No phone number - mark as failed
-          const { error: updateError } = await supabase
-            .from('reminders')
-            .update({ status: 'failed' })
-            .eq('id', id);
-
-          if (updateError) {
-            console.error(`[api/reminders/run] Failed to mark reminder ${id} as failed:`, updateError);
-          }
-        }
-      } catch (err) {
-        console.error('[api/reminders/run] error processing reminder', err);
-      }
-    }
-
-    return NextResponse.json({ processed });
-  } catch (err: unknown) {
-    console.error('[api/reminders/run] error', err);
-    return NextResponse.json({ error: 'internal_error' }, { status: 500 });
-  }
-}
-
-export function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      Allow: 'POST, OPTIONS',
-      'Content-Type': 'application/json',
-    },
-  });
-}

@@ -8,7 +8,7 @@ const CreateServiceBodySchema = z.object({
   duration_minutes: z.number().int().positive().optional().default(60),
   price_cents: z.number().int().min(0).optional().default(0),
   active: z.boolean().optional().default(true),
-  metadata: z.record(z.unknown()).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const UpdateServiceBodySchema = z.object({
@@ -17,7 +17,7 @@ const UpdateServiceBodySchema = z.object({
   duration_minutes: z.number().int().positive().optional(),
   price_cents: z.number().int().min(0).optional(),
   active: z.boolean().optional(),
-  metadata: z.record(z.unknown()).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const DeleteServiceBodySchema = z.object({

@@ -1,20 +1,9 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { AppUser } from '../../../../types/types';
+import { AppUser } from '@/types/auth';
+import { ManagerOverviewMetrics } from '@/types/analytics-api';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
-// Types
-export interface ManagerOverviewMetrics {
-  teamBookings: number;
-  teamRevenue: number;
-  activeStaff: number;
-  teamRating: number;
-  scheduleUtilization: number;
-  completionRate: number;
-  trends: {
-    bookings: number;
-    revenue: number;
-    rating: number;
-  };
-}
+export type { ManagerOverviewMetrics };
 
 export interface ManagerRevenueData {
   totalRevenue: number;
@@ -175,6 +164,19 @@ export async function getOverviewAnalytics(
   // Get managed staff IDs
   const staffIds = await getManagedStaffIds(supabase, user);
 
+  // If no staff are managed, return empty metrics immediately
+  if (staffIds.length === 0) {
+    return {
+      teamBookings: 0,
+      teamRevenue: 0,
+      activeStaff: 0,
+      teamRating: 0,
+      scheduleUtilization: 0,
+      completionRate: 0,
+      trends: { bookings: 0, revenue: 0, rating: 0 },
+    };
+  }
+
   // Run current period bookings, revenue, and feedback in parallel
   const [
     { data: currentBookings },
@@ -203,6 +205,7 @@ export async function getOverviewAnalytics(
       .from('transactions')
       .select('amount')
       .eq('tenant_id', user.tenantId)
+      .in('user_id', staffIds)
       .eq('status', 'completed')
       .gte('created_at', startDate.toISOString())
       .lte('created_at', endDate.toISOString()),
@@ -210,6 +213,7 @@ export async function getOverviewAnalytics(
       .from('transactions')
       .select('amount')
       .eq('tenant_id', user.tenantId)
+      .in('user_id', staffIds)
       .eq('status', 'completed')
       .gte('created_at', previousRange.startDate.toISOString())
       .lte('created_at', previousRange.endDate.toISOString()),
@@ -288,50 +292,77 @@ export async function getRevenueAnalytics(
   const { startDate, endDate } = dateRange;
   const staffIds = await getManagedStaffIds(supabase, user);
 
-  // Get revenue transactions
-  const { data: transactions } = await supabase
+  // Typed shape for the single-source transaction query result (joined to reservations).
+  interface TransactionWithJoins {
+    id: string;
+    amount: number | string;
+    created_at: string;
+    reservation_id: string | null;
+    reservations?: {
+      id: string;
+      staff_id: string;
+      service_id: string;
+      start_at: string;
+      users?: { id: string; full_name: string } | null;
+      services?: { id: string; name: string } | null;
+    } | null;
+  }
+
+  // All metrics (totalRevenue, revenueByStaff, revenueByService, trends) are derived from the
+  // same `transactions` query, joined to `reservations` via reservation_id to resolve staff_id
+  // and service_id. Using a single source ensures the per-staff and per-service breakdowns
+  // always reconcile with the overall total.
+  const { data: rawTx } = await supabase
     .from('transactions')
-    .select('amount, created_at, metadata')
+    .select(`
+      id,
+      amount,
+      created_at,
+      reservation_id,
+      reservations(
+        id,
+        staff_id,
+        service_id,
+        start_at,
+        users!reservations_staff_id_fkey(id, full_name),
+        services(id, name)
+      )
+    `)
     .eq('tenant_id', user.tenantId)
     .eq('status', 'completed')
     .gte('created_at', startDate.toISOString())
-    .lte('created_at', endDate.toISOString());
+    .lte('created_at', endDate.toISOString())
+    .not('reservation_id', 'is', null);
 
-  const totalRevenue = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0);
+  const allTx = (rawTx as unknown as TransactionWithJoins[]) ?? [];
 
-  // Get bookings with staff and service info
-  const { data: bookings } = await supabase
-    .from('reservations')
-    .select(`
-      id,
-      staff_id,
-      service_id,
-      start_at,
-      metadata,
-      users!reservations_staff_id_fkey(id, full_name),
-      services(id, name)
-    `)
-    .eq('tenant_id', user.tenantId)
-    .in('staff_id', staffIds)
-    .eq('status', 'completed')
-    .gte('start_at', startDate.toISOString())
-    .lte('start_at', endDate.toISOString());
+  // Restrict to transactions whose linked reservation was handled by managed staff.
+  // When staffIds is empty the manager has no assigned staff in this tenant, so all
+  // revenue metrics are legitimately zero (consistent with how other analytics functions
+  // handle this case with `.in('staff_id', [])` returning no rows).
+  const staffIdSet = new Set(staffIds);
+  const managedTx = staffIds.length === 0
+    ? []
+    : allTx.filter(tx => tx.reservations?.staff_id && staffIdSet.has(tx.reservations.staff_id));
+
+  const totalRevenue = managedTx.reduce((sum, t) => sum + Number(t.amount), 0);
 
   // Revenue by staff
   const staffRevenueMap = new Map<string, { staffId: string; staffName: string; revenue: number; bookings: number }>();
 
-  (bookings || []).forEach(booking => {
-    const staffId = booking.staff_id;
-    const staffName = booking.users?.full_name || 'Unknown';
-    const revenue = Number(booking.metadata?.revenue || 0);
+  managedTx.forEach(tx => {
+    const res = tx.reservations;
+    if (!res) return;
+    const staffId = res.staff_id;
+    const staffName = res.users?.full_name || 'Unknown';
+    const revenue = Number(tx.amount);
 
     if (!staffRevenueMap.has(staffId)) {
       staffRevenueMap.set(staffId, { staffId, staffName, revenue: 0, bookings: 0 });
     }
-
-    const staffData = staffRevenueMap.get(staffId)!;
-    staffData.revenue += revenue;
-    staffData.bookings += 1;
+    const entry = staffRevenueMap.get(staffId)!;
+    entry.revenue += revenue;
+    entry.bookings += 1;
   });
 
   const revenueByStaff = Array.from(staffRevenueMap.values())
@@ -340,25 +371,26 @@ export async function getRevenueAnalytics(
   // Revenue by service
   const serviceRevenueMap = new Map<string, { serviceId: string; serviceName: string; revenue: number; count: number }>();
 
-  (bookings || []).forEach(booking => {
-    const serviceId = booking.service_id;
-    const serviceName = booking.services?.name || 'Unknown';
-    const revenue = Number(booking.metadata?.revenue || 0);
+  managedTx.forEach(tx => {
+    const res = tx.reservations;
+    if (!res) return;
+    const serviceId = res.service_id;
+    const serviceName = res.services?.name || 'Unknown';
+    const revenue = Number(tx.amount);
 
     if (!serviceRevenueMap.has(serviceId)) {
       serviceRevenueMap.set(serviceId, { serviceId, serviceName, revenue: 0, count: 0 });
     }
-
-    const serviceData = serviceRevenueMap.get(serviceId)!;
-    serviceData.revenue += revenue;
-    serviceData.count += 1;
+    const entry = serviceRevenueMap.get(serviceId)!;
+    entry.revenue += revenue;
+    entry.count += 1;
   });
 
   const revenueByService = Array.from(serviceRevenueMap.values())
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 10); // Top 10 services
 
-  // Revenue trends by day
+  // Revenue trends by day (keyed by transaction settlement date)
   const trendMap = new Map<string, { date: string; revenue: number; bookings: number }>();
   const days = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
 
@@ -369,14 +401,14 @@ export async function getRevenueAnalytics(
     trendMap.set(dateKey, { date: dateKey, revenue: 0, bookings: 0 });
   }
 
-  (bookings || []).forEach(booking => {
-    if (!booking.start_at) return;
-    const d = new Date(booking.start_at);
+  managedTx.forEach(tx => {
+    if (!tx.created_at) return;
+    const d = new Date(tx.created_at);
     if (isNaN(d.getTime())) return;
     const dateKey = d.toISOString().split('T')[0];
     const trend = trendMap.get(dateKey);
     if (trend) {
-      trend.revenue += Number(booking.metadata?.revenue || 0);
+      trend.revenue += Number(tx.amount);
       trend.bookings += 1;
     }
   });
@@ -411,7 +443,19 @@ export async function getTeamAnalytics(
   staffId: string | null = null
 ): Promise<ManagerTeamData> {
   const { startDate, endDate } = dateRange;
-  const staffIds = staffId ? [staffId] : await getManagedStaffIds(supabase, user);
+
+  // Authorize staffId: owners/superadmins can use any staffId; managers must own the staffId; staff cannot query others
+  if (staffId && user.role === 'staff') {
+    throw ApiErrorFactory.forbidden('Staff role cannot query other staff analytics');
+  }
+  const managedIds = await getManagedStaffIds(supabase, user);
+  if (staffId) {
+    const isOwnerOrAdmin = user.role === 'owner' || user.role === 'superadmin';
+    if (!isOwnerOrAdmin && !managedIds.includes(staffId)) {
+      throw ApiErrorFactory.forbidden('staffId is not in your managed team');
+    }
+  }
+  const staffIds = staffId ? [staffId] : managedIds;
 
   // Get staff data with bookings and feedback in parallel
   const [{ data: staffData }, { data: feedbackData }] = await Promise.all([
@@ -549,14 +593,24 @@ export async function getBookingAnalytics(
   const { startDate, endDate } = dateRange;
   const staffIds = await getManagedStaffIds(supabase, user);
 
+  // Typed shape for the booking row returned by the reservations query
+  interface BookingRow {
+    id: string;
+    status: string;
+    start_at: string;
+    metadata?: { cancellation_reason?: string } | null;
+  }
+
   // Get all bookings
-  const { data: bookings } = await supabase
+  const { data: rawBookings } = await supabase
     .from('reservations')
     .select('id, status, start_at, metadata')
     .eq('tenant_id', user.tenantId)
     .in('staff_id', staffIds)
     .gte('start_at', startDate.toISOString())
     .lte('start_at', endDate.toISOString());
+
+  const bookings = (rawBookings as unknown as BookingRow[]) ?? [];
 
   // Bookings by status
   const bookingsByStatus = {
@@ -651,9 +705,21 @@ export async function generateCustomReport(
     };
   }
 ) {
-  const { reportType, dateRange, filters } = data;
+  const { reportType, dateRange, filters: _filters } = data;
 
-  let report: any = {
+  type ReportPayload =
+    | { reportType: 'staff'; data: ManagerTeamData }
+    | { reportType: 'revenue'; data: ManagerRevenueData }
+    | { reportType: 'bookings'; data: ManagerBookingData }
+    | { reportType: 'comprehensive'; data: { overview: ManagerOverviewMetrics; revenue: ManagerRevenueData; team: ManagerTeamData; bookings: ManagerBookingData } };
+
+  let report: {
+    reportType: string;
+    generatedAt: string;
+    generatedBy: string;
+    period: { startDate: Date; endDate: Date };
+    data?: ReportPayload['data'];
+  } = {
     reportType,
     generatedAt: new Date().toISOString(),
     generatedBy: user.id,
@@ -661,22 +727,22 @@ export async function generateCustomReport(
   };
 
   switch (reportType) {
-    case 'staff':
+    case 'staff': {
       const teamData = await getTeamAnalytics(supabase, user, dateRange, null);
       report.data = teamData;
       break;
-
-    case 'revenue':
+    }
+    case 'revenue': {
       const revenueData = await getRevenueAnalytics(supabase, user, dateRange);
       report.data = revenueData;
       break;
-
-    case 'bookings':
+    }
+    case 'bookings': {
       const bookingData = await getBookingAnalytics(supabase, user, dateRange);
       report.data = bookingData;
       break;
-
-    case 'comprehensive':
+    }
+    case 'comprehensive': {
       const [overview, revenue, team, bookings] = await Promise.all([
         getOverviewAnalytics(supabase, user, dateRange),
         getRevenueAnalytics(supabase, user, dateRange),
@@ -685,7 +751,7 @@ export async function generateCustomReport(
       ]);
       report.data = { overview, revenue, team, bookings };
       break;
-
+    }
     default:
       throw new Error(`Unknown report type: ${reportType}`);
   }
@@ -707,24 +773,25 @@ export async function exportAnalyticsData(
 ) {
   const { dataType, format, dateRange } = data;
 
-  let exportData: any;
+  type ExportRow = Record<string, unknown>;
+  let exportData: ExportRow[];
 
   switch (dataType) {
-    case 'staff':
+    case 'staff': {
       const teamData = await getTeamAnalytics(supabase, user, dateRange, null);
-      exportData = teamData.staffPerformance;
+      exportData = teamData.staffPerformance as ExportRow[];
       break;
-
-    case 'revenue':
+    }
+    case 'revenue': {
       const revenueData = await getRevenueAnalytics(supabase, user, dateRange);
-      exportData = revenueData.revenueByStaff;
+      exportData = revenueData.revenueByStaff as ExportRow[];
       break;
-
-    case 'bookings':
+    }
+    case 'bookings': {
       const bookingData = await getBookingAnalytics(supabase, user, dateRange);
-      exportData = bookingData.bookingTrends;
+      exportData = bookingData.bookingTrends as ExportRow[];
       break;
-
+    }
     default:
       throw new Error(`Unknown data type: ${dataType}`);
   }
@@ -732,7 +799,7 @@ export async function exportAnalyticsData(
   if (format === 'csv') {
     // Convert to CSV format
     const headers = Object.keys(exportData[0] || {}).join(',');
-    const rows = exportData.map((row: any) =>
+    const rows = exportData.map((row) =>
       Object.values(row)
         .map(v => `"${v}"`)
         .join(',')

@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
 import DateRangePicker, { TimePeriod } from './shared/DateRangePicker';
@@ -32,78 +33,81 @@ const PERIOD_TO_MANAGER_PERIOD: Record<TimePeriod, 'week' | 'month' | 'quarter' 
 
 export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
-  const [loading, setLoading] = useState(true);
-  const [overview, setOverview] = useState<ManagerOverviewMetrics | null>(null);
-  const [staffPerformance, setStaffPerformance] = useState<StaffPerformanceData[]>([]);
-  const [trends, setTrends] = useState<BookingTrendData[]>([]);
-  const [revenue, setRevenue] = useState<ManagerRevenueData | null>(null);
-  const [bookingData, setBookingData] = useState<ManagerBookingData | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const managerPeriod = PERIOD_TO_MANAGER_PERIOD[period];
+  const staffPeriod = PERIOD_TO_STAFF_PERIOD[period];
+  const headers = { 'X-Tenant-ID': tenantId, 'X-User-ID': userId };
 
-    const load = async () => {
-      setLoading(true);
-      try {
-        const managerPeriod = PERIOD_TO_MANAGER_PERIOD[period];
-        const staffPeriod = PERIOD_TO_STAFF_PERIOD[period];
-        const headers = { 'X-Tenant-ID': tenantId, 'X-User-ID': userId };
+  const { data: overview, isLoading: overviewLoading } = useQuery({
+    queryKey: ['managerOverview', tenantId, userId, managerPeriod],
+    queryFn: async () => {
+      const res = await authFetch<ManagerOverviewMetrics>(
+        `/api/manager/analytics?metric=overview&period=${managerPeriod}`,
+        { headers }
+      );
+      return res.status === 200 ? res.data ?? null : null;
+    },
+    enabled: !!tenantId,
+  });
 
-        const [overviewRes, trendsRes, staffRes, revenueRes, bookingRes] = await Promise.all([
-          authFetch<ManagerOverviewMetrics>(
-            `/api/manager/analytics?metric=overview&period=${managerPeriod}`,
-            { headers }
-          ),
-          authFetch<{ trends?: BookingTrendData[] }>(`/api/analytics/trends?days=30`, {
-            headers: { 'X-Tenant-ID': tenantId },
-          }),
-          authFetch<{ success?: boolean; staffPerformance?: Array<{ staffId: string; staffName: string; bookings: number; completed: number; rating: number; utilization: number; revenue: number }> }>(
-            `/api/manager/analytics?metric=team&period=${staffPeriod}`,
-            { headers }
-          ),
-          authFetch<{ success?: boolean } & ManagerRevenueData>(
-            `/api/manager/analytics?metric=revenue&period=${managerPeriod}`,
-            { headers }
-          ),
-          authFetch<{ success?: boolean } & ManagerBookingData>(
-            `/api/manager/analytics?metric=bookings&period=${managerPeriod}`,
-            { headers }
-          ),
-        ]);
+  const { data: trends = [], isLoading: trendsLoading } = useQuery({
+    queryKey: ['managerTrends', tenantId, period],
+    queryFn: async () => {
+      const res = await authFetch<{ trends?: BookingTrendData[] }>(
+        `/api/analytics/trends?days=30`,
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.trends ?? [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-        if (cancelled) return;
+  const { data: staffPerformance = [], isLoading: teamLoading } = useQuery({
+    queryKey: ['managerTeam', tenantId, userId, staffPeriod],
+    queryFn: async () => {
+      const res = await authFetch<{ success?: boolean; staffPerformance?: Array<{ staffId: string; staffName: string; bookings: number; completed: number; rating: number; utilization: number; revenue: number }> }>(
+        `/api/manager/analytics?metric=team&period=${staffPeriod}`,
+        { headers }
+      );
+      const raw = res.status === 200 ? res.data?.staffPerformance ?? [] : [];
+      return raw.map((s): StaffPerformanceData => ({
+        staff_id: s.staffId,
+        staff_name: s.staffName,
+        bookings_count: s.bookings,
+        revenue_total: s.revenue,
+        utilization_rate: s.utilization,
+        customer_rating: s.rating,
+        tips_total: 0,
+      }));
+    },
+    enabled: !!tenantId,
+  });
 
-        setOverview(overviewRes.status === 200 ? overviewRes.data || null : null);
-        setTrends(trendsRes.status === 200 ? trendsRes.data?.trends || [] : []);
+  const { data: revenue, isLoading: revenueLoading } = useQuery({
+    queryKey: ['managerRevenue', tenantId, userId, managerPeriod],
+    queryFn: async () => {
+      const res = await authFetch<{ success?: boolean } & ManagerRevenueData>(
+        `/api/manager/analytics?metric=revenue&period=${managerPeriod}`,
+        { headers }
+      );
+      return res.status === 200 && res.data ? (res.data as unknown as ManagerRevenueData) : null;
+    },
+    enabled: !!tenantId,
+  });
 
-        const rawStaff = staffRes.status === 200 ? staffRes.data?.staffPerformance || [] : [];
-        setStaffPerformance(
-          rawStaff.map((s) => ({
-            staff_id: s.staffId,
-            staff_name: s.staffName,
-            bookings_count: s.bookings,
-            revenue_total: s.revenue,
-            utilization_rate: s.utilization,
-            customer_rating: s.rating,
-            tips_total: 0,
-          }))
-        );
+  const { data: bookingData, isLoading: bookingLoading } = useQuery({
+    queryKey: ['managerBookings', tenantId, userId, managerPeriod],
+    queryFn: async () => {
+      const res = await authFetch<{ success?: boolean } & ManagerBookingData>(
+        `/api/manager/analytics?metric=bookings&period=${managerPeriod}`,
+        { headers }
+      );
+      return res.status === 200 && res.data ? (res.data as unknown as ManagerBookingData) : null;
+    },
+    enabled: !!tenantId,
+  });
 
-        setRevenue(revenueRes.status === 200 && revenueRes.data ? (revenueRes.data as unknown as ManagerRevenueData) : null);
-        setBookingData(bookingRes.status === 200 && bookingRes.data ? (bookingRes.data as unknown as ManagerBookingData) : null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    if (tenantId) {
-      load();
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [period, tenantId, userId]);
+  const loading = overviewLoading || trendsLoading || teamLoading || revenueLoading || bookingLoading;
 
   const hasData = Boolean(overview) || trends.length > 0 || staffPerformance.length > 0;
   const formatCurrency = (value: number | string) => `$${Number(value || 0).toLocaleString()}`;

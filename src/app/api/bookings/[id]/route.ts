@@ -35,7 +35,7 @@ export const PATCH = createHttpHandler(
     const validation = UpdateBookingSchema.safeParse(body);
 
     if (!validation.success) {
-      throw ApiErrorFactory.badRequest('Invalid request body', validation.error.issues);
+      throw ApiErrorFactory.badRequest('Invalid request body');
     }
 
     const updateData = validation.data;
@@ -73,7 +73,7 @@ export const PATCH = createHttpHandler(
 
         if (conflictError) {
           console.error('Error checking for booking conflicts:', conflictError);
-          throw ApiErrorFactory.internalServerError('Failed to check for conflicts');
+          throw ApiErrorFactory.internalServerError(new Error('Failed to check for conflicts'));
         }
         if (overlaps && overlaps.length > 0) {
           throw ApiErrorFactory.conflict('A conflicting booking already exists for this staff member at the selected time.');
@@ -91,7 +91,7 @@ export const PATCH = createHttpHandler(
 
     if (updateError) {
       console.error('Failed to update booking:', updateError);
-      throw ApiErrorFactory.internalServerError('Failed to update booking');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to update booking'));
     }
 
     if (isCancellation) {

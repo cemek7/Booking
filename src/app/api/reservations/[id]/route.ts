@@ -30,7 +30,7 @@ interface ReservationUpdatePayload {
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const reservationId = ctx.params.id;
+    const reservationId = ctx.params!.id;
     if (!reservationId) {
       throw ApiErrorFactory.validationError({ id: 'Reservation ID is required' });
     }
@@ -144,7 +144,7 @@ export const PATCH = createHttpHandler(
       await ctx.supabase
         .from('reservation_logs')
         .insert({ reservation_id: reservationId, tenant_id: tenantId, action: 'update', actor, notes })
-        .then(({ error: logErr }) => {
+        .then(({ error: logErr }: { error: unknown }) => {
           if (logErr) console.warn('[api/reservations/[id]] Failed to insert update log:', logErr);
         });
     } catch (e) {
@@ -159,7 +159,7 @@ export const PATCH = createHttpHandler(
 
 export const DELETE = createHttpHandler(
   async (ctx) => {
-    const reservationId = ctx.params.id;
+    const reservationId = ctx.params!.id;
     if (!reservationId) {
       throw ApiErrorFactory.validationError({ id: 'Reservation ID is required' });
     }
@@ -227,7 +227,7 @@ export const DELETE = createHttpHandler(
         action: 'cancel',
         actor,
         notes,
-      }).then(({ error: logErr }) => {
+      }).then(({ error: logErr }: { error: unknown }) => {
         if (logErr) console.warn('[api/reservations/[id]] Failed to insert cancellation log:', logErr);
       });
     } catch (e) {

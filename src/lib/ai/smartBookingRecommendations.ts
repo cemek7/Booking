@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getSupabaseServerComponentClient } from '@/lib/supabase/server';
 
 interface CustomerProfile {
   id: string;
@@ -80,7 +80,7 @@ interface StaffRecommendation {
 }
 
 class SmartBookingRecommendations {
-  private supabase = createServerSupabaseClient();
+  private get supabase() { return getSupabaseServerComponentClient(); }
   private customerProfiles = new Map<string, CustomerProfile>();
 
   /**

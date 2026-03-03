@@ -406,7 +406,7 @@ export class UnifiedPermissionChecker {
     return false;
   }
 
-  private async hasAnyRole(user: UnifiedUser, roles: Role[]): Promise<boolean> {
+  protected async hasAnyRole(user: UnifiedUser, roles: Role[]): Promise<boolean> {
     if (user.isSuperAdmin) return true;
     
     // Check direct role match

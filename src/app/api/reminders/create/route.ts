@@ -29,10 +29,10 @@ export const POST = createHttpHandler(
       .eq('id', reservation_id)
       .maybeSingle();
 
-    if (reservationError) throw ApiErrorFactory.internal('Failed to fetch reservation');
+    if (reservationError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservation'));
     if (!reservation) throw ApiErrorFactory.notFound('Reservation not found');
     if (typeof reservation.start_at !== 'string') {
-      throw ApiErrorFactory.internal('Invalid reservation start time');
+      throw ApiErrorFactory.internalServerError(new Error('Invalid reservation start time'));
     }
 
     // Calculate reminder times: 24 hours and 2 hours before start
@@ -66,16 +66,10 @@ export const POST = createHttpHandler(
     ];
 
     const { error } = await ctx.supabase.from('reminders').insert(reminders);
-    if (error) throw ApiErrorFactory.internal('Failed to create reminders');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to create reminders'));
 
     return { created: reminders.length };
   },
   'POST',
   { auth: true }
 );
-    headers: {
-      Allow: 'POST, OPTIONS',
-      'Content-Type': 'application/json',
-    },
-  });
-}

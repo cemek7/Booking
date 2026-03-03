@@ -16,7 +16,7 @@ export const GET = createHttpHandler(
     const result = await analyticsService.getDashboardMetrics(tenantId, period);
 
     if (!result.success) {
-      throw ApiErrorFactory.internal(result.error || 'Failed to fetch dashboard metrics');
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to fetch dashboard metrics'));
     }
 
     return {

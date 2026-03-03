@@ -38,7 +38,7 @@ export const POST = createHttpHandler(
     const validation = RequestBodySchema.safeParse(body);
 
     if (!validation.success) {
-      throw ApiErrorFactory.badRequest('Invalid request body', validation.error.issues);
+      throw ApiErrorFactory.badRequest('Invalid request body');
     }
 
     const { bookingId, customEvent } = validation.data;
@@ -78,8 +78,10 @@ export const POST = createHttpHandler(
       calendarEvent = bookingToCalendarEvent({
         id: booking.id,
         service_name: booking.service?.name || 'Appointment',
-        start_time: booking.start_at,
-        end_time: booking.end_at,
+        appointment_date: booking.start_at.split('T')[0],
+        appointment_time: booking.start_at.split('T')[1]?.substring(0, 5) || '00:00',
+        duration_minutes: booking.service?.duration_minutes ||
+          Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000),
         customer_name: booking.customer_name,
         customer_email: booking.customer_email,
         staff_name: booking.staff?.name,
@@ -168,8 +170,10 @@ export const GET = createHttpHandler(
     const calendarEvent = bookingToCalendarEvent({
       id: booking.id,
       service_name: booking.service?.name || 'Appointment',
-      start_time: booking.start_at,
-      end_time: booking.end_at,
+      appointment_date: booking.start_at.split('T')[0],
+      appointment_time: booking.start_at.split('T')[1]?.substring(0, 5) || '00:00',
+      duration_minutes: booking.service?.duration_minutes ||
+        Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000),
       customer_name: booking.customer_name,
       customer_email: booking.customer_email,
       staff_name: booking.staff?.name,

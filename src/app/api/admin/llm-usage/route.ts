@@ -25,7 +25,7 @@ export const GET = createHttpHandler(
       if ((error as { code?: string })?.code === '42P01') {
         return { requests: 0, total_tokens: 0, cost: 0 };
       }
-      throw ApiErrorFactory.internal('Failed to query LLM calls');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to query LLM calls'));
     }
 
     let totalRequests = (data || []).length;

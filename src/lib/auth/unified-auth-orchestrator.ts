@@ -205,7 +205,7 @@ export class UnifiedAuthOrchestrator {
         email: user.email,
         role,
         tenantId,
-      }, request);
+      }, 'success', request.headers.get('x-forwarded-for') || undefined);
 
       return {
         userId: user.id,

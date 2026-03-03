@@ -5,7 +5,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS escalation_queue (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id             UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id             TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   customer_phone        TEXT NOT NULL,
   session_id            TEXT NOT NULL,
   reason                TEXT NOT NULL,

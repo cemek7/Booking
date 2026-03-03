@@ -55,7 +55,7 @@ export const POST = createHttpHandler(
       };
     } catch (error) {
       console.error('[auth/api-keys] creation failed:', error);
-      throw ApiErrorFactory.internalServerError('Failed to create API key');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create API key'));
     }
   },
   'POST',
@@ -94,7 +94,7 @@ export const GET = createHttpHandler(
 
     if (error) {
       console.error('[auth/api-keys] fetch failed:', error);
-      throw ApiErrorFactory.internalServerError('Failed to fetch API keys');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch API keys'));
     }
 
     return {
@@ -146,7 +146,7 @@ export const DELETE = createHttpHandler(
 
     if (updateError) {
       console.error('[auth/api-keys] deactivation failed:', updateError);
-      throw ApiErrorFactory.internalServerError('Failed to deactivate API key');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to deactivate API key'));
     }
 
     return {

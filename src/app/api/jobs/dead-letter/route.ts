@@ -1,5 +1,5 @@
-import { createHttpHandler } from '../../../../lib/create-http-handler';
-import EnhancedJobManager from '../../../../lib/enhancedJobManager';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import EnhancedJobManager from '@/lib/enhancedJobManager';
 import { z } from 'zod';
 
 // Zod schema for POST request body
@@ -92,41 +92,3 @@ export const GET = createHttpHandler(
   'GET',
   { auth: true, roles: ['owner'] }
 );
-    if (!queryValidation.success) {
-      return NextResponse.json(
-        { error: 'Invalid query parameters', details: queryValidation.error.issues },
-        { status: 400 }
-      );
-    }
-    const { limit, offset } = queryValidation.data;
-
-    const supabase = createServerSupabaseClient();
-    const { data: deadLetterJobs, error, count } = await supabase
-      .from('jobs')
-      .select('*', { count: 'exact' })
-      .eq('status', 'dead_letter')
-      .eq('tenant_id', tenantId) // Tenant isolation
-      .order('updated_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (error) {
-      throw error;
-    }
-
-    span.setAttributes({
-      'dead_letter.count': count ?? 0,
-      'tenant.id': tenantId,
-    });
-
-    return NextResponse.json({
-      success: true,
-      data: deadLetterJobs,
-      count: count ?? 0,
-    });
-  } catch (error) {
-    span.recordException(error as Error);
-    return handleApiError(error, 'Failed to retrieve dead-letter jobs');
-  } finally {
-    span.end();
-  }
-}

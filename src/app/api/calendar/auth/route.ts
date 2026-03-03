@@ -40,7 +40,7 @@ export const GET = createHttpHandler(
     });
 
     if (!queryValidation.success) {
-      throw ApiErrorFactory.badRequest('Invalid query parameters', queryValidation.error.issues);
+      throw ApiErrorFactory.badRequest('Invalid query parameters');
     }
 
     const { staff_id, return_url } = queryValidation.data;

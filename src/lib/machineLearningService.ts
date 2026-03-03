@@ -748,7 +748,7 @@ export class MachineLearningService {
           staff_id: u.user_id,
           working_hours: Math.round(hoursWorked * 10) / 10,
           bookings_handled: userBookings.length,
-          utilization_rate: hoursWorked > 0 ? Math.min(100, (hoursWorked / 8) * 100) : 0,
+          utilization_rate: hoursWorked > 0 ? Math.min(1, hoursWorked / 8) : 0,
           date: startDate.toISOString().split('T')[0],
           tenant_id: tenantId,
         };

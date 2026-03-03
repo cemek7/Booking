@@ -19,17 +19,29 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.badRequest('tenant_id required');
     }
 
+    // Role-based access: staff members can only see their own metrics
+    const userRole = ctx.user?.role;
+    const userId = ctx.user?.id;
+    const isStaffOnly = userRole === 'staff';
+
     const daysParam = parseInt(url.searchParams.get('days') || '30', 10);
     const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     // Fetch staff list, completed reservations, revenue, and customer feedback in parallel
+    const staffQuery = ctx.supabase
+      .from('tenant_users')
+      .select('user_id, role')
+      .eq('tenant_id', tenantId)
+      .neq('role', 'owner');
+
+    // Staff role can only see their own record
+    if (isStaffOnly && userId) {
+      staffQuery.eq('user_id', userId);
+    }
+
     const [staffResult, reservationsResult, revenueResult, feedbackResult] = await Promise.all([
-      ctx.supabase
-        .from('tenant_users')
-        .select('user_id, role')
-        .eq('tenant_id', tenantId)
-        .neq('role', 'owner'),
+      staffQuery,
       ctx.supabase
         .from('reservations')
         .select('raw, status, start_at, end_at')
@@ -49,7 +61,7 @@ export const GET = createHttpHandler(
         .gte('created_at', since),
     ]);
 
-    if (staffResult.error) throw ApiErrorFactory.internal('Failed to fetch staff');
+    if (staffResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch staff'));
 
     const staff = (staffResult.data || []) as Array<{ user_id: string; role: string }>;
 

@@ -1,5 +1,8 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { trace, metrics } from '@opentelemetry/api';
+import type { BookingTrendData, StaffPerformanceData } from '@/types/analytics-api';
+
+export type { BookingTrendData, StaffPerformanceData };
 
 export interface AnalyticsMetric {
   id: string;
@@ -9,24 +12,6 @@ export interface AnalyticsMetric {
   type: 'count' | 'percentage' | 'currency' | 'duration';
   period: string;
   last_updated: string;
-}
-
-export interface BookingTrendData {
-  date: string;
-  bookings: number;
-  revenue: number;
-  cancellations: number;
-  no_shows: number;
-}
-
-export interface StaffPerformanceData {
-  staff_id: string;
-  staff_name: string;
-  bookings_count: number;
-  revenue_total: number;
-  utilization_rate: number;
-  customer_rating: number;
-  tips_total: number;
 }
 
 export interface CustomerInsight {

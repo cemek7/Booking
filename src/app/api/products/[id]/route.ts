@@ -20,16 +20,16 @@ export const GET = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Fetch product with related data
@@ -49,7 +49,7 @@ export const GET = createHttpHandler(
       if (error.code === 'PGRST116') {
         throw ApiErrorFactory.notFound('Product not found');
       }
-      throw ApiErrorFactory.internal('Failed to fetch product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch product'));
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -77,16 +77,16 @@ export const PUT = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Verify product exists and user has access
@@ -194,7 +194,7 @@ export const PUT = createHttpHandler(
               previous_quantity: existingProduct.stock_quantity,
               new_quantity: body.stock_quantity,
               reason: 'Manual adjustment via product update',
-              performed_by: ctx.user.id,
+              performed_by: ctx.user!.id,
             });
         }
         
@@ -218,7 +218,7 @@ export const PUT = createHttpHandler(
       if (error.code === '23505') {
         throw ApiErrorFactory.conflict('SKU already exists');
       }
-      throw ApiErrorFactory.internal('Failed to update product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to update product'));
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -252,13 +252,13 @@ export const DELETE = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase
@@ -284,7 +284,7 @@ export const DELETE = createHttpHandler(
         .eq('id', id);
 
       if (error) {
-        throw ApiErrorFactory.internal('Failed to delete product');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to delete product'));
       }
 
       return { 
@@ -304,7 +304,7 @@ export const DELETE = createHttpHandler(
         .single();
 
       if (error) {
-        throw ApiErrorFactory.internal('Failed to deactivate product');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to deactivate product'));
       }
 
       return { 

@@ -29,12 +29,13 @@ export const POST = createHttpHandler(
 
     const { reservation_id, staff_user_id, customer_name, score, comment } = parsed.data;
 
-    // Prevent duplicate feedback for the same reservation
+    // Prevent duplicate feedback for the same reservation (best-effort pre-check, tenant-scoped)
     if (reservation_id) {
       const { data: existing } = await ctx.supabase
         .from('customer_feedback')
         .select('id')
         .eq('reservation_id', reservation_id)
+        .eq('tenant_id', tenantId)
         .maybeSingle();
     if (existing) throw ApiErrorFactory.badRequest(`Feedback already submitted for reservation ${reservation_id}. Each reservation can only be rated once.`);
     }
@@ -52,7 +53,13 @@ export const POST = createHttpHandler(
       .select()
       .single();
 
-    if (error) throw ApiErrorFactory.internal('Failed to save feedback');
+    if (error) {
+      // PostgreSQL unique violation (23505) means a race with the duplicate check
+      if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === '23505') {
+        throw ApiErrorFactory.badRequest(`Feedback already submitted for reservation ${reservation_id}. Each reservation can only be rated once.`);
+      }
+      throw ApiErrorFactory.internalServerError(new Error('Failed to save feedback'));
+    }
 
     return { success: true, feedback: data };
   },
@@ -89,10 +96,10 @@ export const GET = createHttpHandler(
     }
 
     const { data, error } = await query;
-    if (error) throw ApiErrorFactory.internal('Failed to fetch feedback');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch feedback'));
 
     const rows = data || [];
-    const totalScore = rows.reduce((sum, r) => sum + r.score, 0);
+    const totalScore = rows.reduce((sum: number, r: { score: number }) => sum + r.score, 0);
     const avgScore = rows.length > 0 ? Number((totalScore / rows.length).toFixed(2)) : null;
 
     return {

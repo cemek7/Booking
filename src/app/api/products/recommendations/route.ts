@@ -1,4 +1,4 @@
-import { createHttpHandler } from '@/lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import { Product } from '@/types/product-catalogue';
 
@@ -91,7 +91,7 @@ export const POST = createHttpHandler(
     // Combine recommendations with product details and sort by score
     const enrichedRecommendations = recommendations
       .map(rec => {
-        const product = products?.find(p => p.id === rec.product_id);
+        const product = products?.find((p: { id: string }) => p.id === rec.product_id);
         return product ? { ...rec, product } : null;
       })
       .filter(Boolean)
@@ -192,12 +192,12 @@ async function generateRecommendations(
       .in('id', options.product_ids);
 
     if (selectedProducts && selectedProducts.length > 0) {
-      const avgPrice = selectedProducts.reduce((sum, p) => sum + p.price_cents, 0) / selectedProducts.length;
+      const avgPrice = selectedProducts.reduce((sum: number, p: { price_cents: number }) => sum + p.price_cents, 0) / selectedProducts.length;
       const maxRecommendedPrice = avgPrice * options.price_range_factor;
 
       // Filter out products that are too expensive
       for (const [productId, score] of scores.entries()) {
-        const product = allProducts.find(p => p.id === productId);
+        const product = allProducts.find((p: { id: string; price_cents: number }) => p.id === productId);
         if (product && product.price_cents > maxRecommendedPrice) {
           scores.delete(productId);
         }
@@ -291,8 +291,8 @@ async function addProductAffinityRecommendations(
 
   if (!viewedProducts) return;
 
-  const categoryIds = [...new Set(viewedProducts.map(p => p.category_id).filter(Boolean))];
-  const allTags = [...new Set(viewedProducts.flatMap(p => p.tags || []))];
+  const categoryIds = [...new Set(viewedProducts.map((p: { category_id?: string | null; tags?: string[] }) => p.category_id).filter(Boolean))];
+  const allTags = [...new Set(viewedProducts.flatMap((p: { category_id?: string | null; tags?: string[] }) => p.tags || []))];
 
   // Boost products in same categories
   if (categoryIds.length > 0) {
@@ -311,7 +311,7 @@ async function addProductAffinityRecommendations(
 
         // Tag similarity
         if (productDetail.tags && allTags.length > 0) {
-          const commonTags = productDetail.tags.filter(tag => allTags.includes(tag));
+          const commonTags = productDetail.tags.filter((tag: string) => allTags.includes(tag));
           if (commonTags.length > 0) {
             score.score += commonTags.length * 8;
             score.reasons.push(`Similar tags: ${commonTags.join(', ')}`);
@@ -343,7 +343,7 @@ async function addCustomerHistoryRecommendations(
 
   if (!customerBookings) return;
 
-  const purchasedProducts = new Set();
+  const purchasedProducts = new Set<string>();
   const productPurchaseCount = new Map<string, number>();
 
   for (const booking of customerBookings) {
@@ -397,7 +397,7 @@ async function addCustomerHistoryRecommendations(
   for (const productId of purchasedProducts) {
     const score = scores.get(productId);
     if (score) {
-      const purchaseCount = productPurchaseCount.get(productId) || 0;
+      const purchaseCount = productPurchaseCount.get(productId as string) || 0;
       const recencyPenalty = Math.min(purchaseCount * 10, 30);
       score.score -= recencyPenalty;
       score.reasons.push('Recently purchased');

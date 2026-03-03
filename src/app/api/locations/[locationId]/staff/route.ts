@@ -34,7 +34,7 @@ export const GET = createHttpHandler(
         throw ApiErrorFactory.databaseError(slError);
       }
 
-      const staffIds = staffLocations?.map(sl => sl.staff_id) || [];
+      const staffIds = staffLocations?.map((sl: { staff_id: string }) => sl.staff_id) || [];
 
       if (staffIds.length === 0) {
         span.setAttribute('db.results.count', 0);

@@ -4,7 +4,7 @@
  * This file consolidates all authentication-related types from scattered locations:
  * - UnifiedAuthContext (from unified-auth-orchestrator.ts)
  * - AuthSession, MFAConfig, APIKey, AuditLogEntry (from orchestrator)
- * - AuthenticationEvent, UserSession, LoginResult (from enhanced-auth-types.ts)
+ * - AuthenticationEvent, UserSession, LoginResult (previously in enhanced-auth-types.ts)
  * - AuthContext (from middleware.ts)
  * - AuthenticatedUser (from server-auth.ts)
  * 
@@ -14,7 +14,6 @@
  * USAGE:
  * Instead of scattered imports:
  *   import { UnifiedAuthContext } from '@/lib/auth/unified-auth-orchestrator'
- *   import { AuthenticationEvent } from '@/lib/auth/enhanced-auth-types'
  *   import { AuthContext } from '@/lib/auth/middleware'
  * 
  * Now use canonical import:
@@ -389,3 +388,19 @@ export type AuthContextCanonical = UnifiedAuthContext;
  * Alternative name for AuthenticationEvent
  */
 export type AuthEvent = AuthenticationEvent;
+
+// ============================================================================
+// APP USER (shared shape for service-layer functions)
+// ============================================================================
+
+/**
+ * Minimal authenticated user shape expected by service-layer functions.
+ * Mirrors the `user` field on RouteContext and the test mocks.
+ */
+export interface AppUser {
+  id: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  full_name?: string;
+}

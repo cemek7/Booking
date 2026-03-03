@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { SupabaseClient } from '@supabase/supabase-js';
 import scheduler from './scheduler';
 
 export type RoutingStrategy = 'round_robin' | 'preferred' | 'skill_based';
@@ -12,7 +12,11 @@ async function fetchStaff(supabase: SupabaseClient, tenantId: string): Promise<S
   return data as StaffUser[];
 }
 
-// Round-robin: naive persistent pointer stored in kv table (platform_settings_kv) or fallback memory-less choice.
+// Round-robin: persistent pointer stored in platform_settings_kv table with fallback to random.
+// NOTE: The read-then-write is not atomic. Under concurrent load two requests may read the same
+// index and assign the same staff member, causing a minor load-imbalance. The fallback already
+// handles the total-failure case. Upgrading to a true atomic counter (e.g. Postgres advisory
+// lock or a "SELECT … FOR UPDATE" CTE) should be considered when fairness is critical.
 export async function pickRoundRobinStaff(supabase: SupabaseClient, tenantId: string): Promise<string | null> {
   const staff = await fetchStaff(supabase, tenantId);
   if (!staff.length) return null;

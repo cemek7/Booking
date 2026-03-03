@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Calendar, momentLocalizer, View, ToolbarProps } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
@@ -8,6 +9,7 @@ import StaffSidebar from './StaffSidebar';
 import AppointmentModal from './AppointmentModal';
 import CreateAppointmentModal from './CreateAppointmentModal';
 import { authFetch } from '@/lib/auth/auth-api-client';
+import type { CalendarEvent } from '@/types/calendar';
 
 // Setup the localizer by providing the moment Object
 const localizer = momentLocalizer(moment);
@@ -17,15 +19,6 @@ const STAFF_COLORS = [
   '#3174ad', '#2ca02c', '#d62728', '#9467bd',
   '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
 ];
-
-// Define the structure of a calendar event
-interface CalendarEvent {
-  id: number;
-  title: string;
-  start: Date;
-  end: Date;
-  resourceId: number;
-}
 
 // Define the structure for a resource (e.g., a staff member)
 interface Resource {
@@ -70,63 +63,78 @@ const CustomToolbar: React.FC<ToolbarProps> = ({ label, onNavigate, onView }) =>
 };
 
 const InteractiveCalendar: React.FC = () => {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [resources, setResources] = useState<Resource[]>([]);
   const [view, setView] = useState<View>('month');
   const [date, setDate] = useState(new Date());
-  const [selectedStaff, setSelectedStaff] = useState<number[]>([]);
+  // null means "all staff selected" (default); array means explicit user selection
+  const [selectedStaff, setSelectedStaff] = useState<number[] | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [slotInfo, setSlotInfo] = useState<SlotInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [staffRes, reservationsRes] = await Promise.all([
-          authFetch<{ staff: Array<{ id: string; name: string; email: string }> }>('/api/staff'),
-          authFetch<{ data: Array<{ id: string; title?: string; service_id?: string; staff_id?: string; start_at: string; end_at: string; status?: string }> }>('/api/reservations'),
-        ]);
-        if (cancelled) return;
+  const { data: staffData, isLoading: staffLoading } = useQuery({
+    queryKey: ['calendar-staff'],
+    queryFn: async () => {
+      const res = await authFetch<{ staff: Array<{ id: string; name: string; email: string }> }>('/api/staff');
+      return res.status === 200 ? (res.data?.staff ?? []) : [];
+    },
+  });
 
-        // Build resources from real staff
-        const staffList = staffRes.data?.staff ?? [];
-        const builtResources: Resource[] = staffList.map((s, idx) => ({
-          resourceId: idx + 1,
-          resourceTitle: s.name || s.email || s.id,
-          color: STAFF_COLORS[idx % STAFF_COLORS.length],
-        }));
-        const staffIdToResourceId = new Map(staffList.map((s, idx) => [s.id, idx + 1]));
+  const { data: reservationsData, isLoading: reservationsLoading } = useQuery({
+    queryKey: ['calendar-reservations'],
+    queryFn: async () => {
+      const res = await authFetch<{ data: Array<{ id: string; title?: string; service_id?: string; staff_id?: string; start_at: string; end_at: string; status?: string }> }>('/api/reservations');
+      return res.status === 200 ? (res.data?.data ?? []) : [];
+    },
+  });
 
-        // Build events from real reservations
-        const reservations = reservationsRes.data?.data ?? [];
-        const builtEvents: CalendarEvent[] = reservations
-          .filter(r => r.start_at && r.end_at)
-          .map((r, idx) => ({
-            id: idx + 1,
-            title: r.title ?? r.service_id ?? 'Booking',
-            start: new Date(r.start_at),
-            end: new Date(r.end_at),
-            resourceId: staffIdToResourceId.get(r.staff_id ?? '') ?? 1,
-          }));
+  const resources: Resource[] = useMemo(() => (staffData ?? []).map((s, idx) => ({
+    resourceId: idx + 1,
+    resourceTitle: s.name || s.email || s.id,
+    color: STAFF_COLORS[idx % STAFF_COLORS.length],
+  })), [staffData]);
 
-        setResources(builtResources);
-        setEvents(builtEvents);
-        setSelectedStaff(builtResources.map(r => r.resourceId));
-      } catch {
-        // silently keep empty state on error
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  const staffIdToResourceId = useMemo(
+    () => new Map((staffData ?? []).map((s, idx) => [s.id, idx + 1])),
+    [staffData]
+  );
+
+  // When null (default), show all resources; otherwise respect the explicit selection,
+  // filtering out any IDs that no longer exist after a refetch.
+  const effectiveSelectedStaff = useMemo(() => {
+    if (selectedStaff === null) return resources.map(r => r.resourceId);
+    const validIds = new Set(resources.map(r => r.resourceId));
+    return selectedStaff.filter(id => validIds.has(id));
+  }, [selectedStaff, resources]);
+
+  // Derive builtEvents from reservations query data
+  const builtEvents: CalendarEvent[] = useMemo(() => {
+    return (reservationsData ?? [])
+      .filter(r => r.start_at && r.end_at)
+      .map((r) => {
+        const resourceId = staffIdToResourceId.get(r.staff_id ?? '');
+        return {
+          id: r.id,
+          title: r.title ?? r.service_id ?? 'Booking',
+          start: new Date(r.start_at),
+          end: new Date(r.end_at),
+          resourceId: resourceId ?? 0,
+        };
+      });
+  }, [reservationsData, staffIdToResourceId]);
+
+  // Merge query-derived events with locally created events
+  const allEvents = useMemo(() => {
+    const localIds = new Set(builtEvents.map(e => e.id));
+    return [...builtEvents, ...events.filter(e => !localIds.has(e.id))];
+  }, [builtEvents, events]);
+
+  const loading = staffLoading || reservationsLoading;
 
   const handleStaffSelectionChange = (selectedIds: number[]) => {
     setSelectedStaff(selectedIds);
   };
 
-  const filteredResources = resources.filter(r => selectedStaff.includes(r.resourceId));
+  const filteredResources = resources.filter(r => effectiveSelectedStaff.includes(r.resourceId));
 
   const eventPropGetter = (event: CalendarEvent) => {
     const resource = resources.find(r => r.resourceId === event.resourceId);
@@ -154,8 +162,8 @@ const InteractiveCalendar: React.FC = () => {
   };
 
   const handleCreateEvent = (newEvent: Omit<CalendarEvent, 'id'>) => {
-    const id = events.length > 0 ? Math.max(...events.map(e => e.id)) + 1 : 1;
-    setEvents([...events, { ...newEvent, id }]);
+    const id = `local-${Date.now()}`;
+    setEvents(prev => [...prev, { ...newEvent, id }]);
   };
 
   if (loading) {
@@ -170,13 +178,13 @@ const InteractiveCalendar: React.FC = () => {
     <div className="flex" style={{ height: '100vh' }}>
       <StaffSidebar
         staff={resources}
-        selectedStaff={selectedStaff}
+        selectedStaff={effectiveSelectedStaff}
         onSelectionChange={handleStaffSelectionChange}
       />
       <div className="flex-grow">
         <Calendar
           localizer={localizer}
-          events={events}
+          events={allEvents}
           resources={view === 'day' ? filteredResources : undefined}
           startAccessor="start"
           endAccessor="end"

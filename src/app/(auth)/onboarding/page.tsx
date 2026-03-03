@@ -40,7 +40,7 @@ export default function OnboardingPage() {
       if (sName) {
         const dur = Number(serviceDuration);
         const price = Number(servicePrice);
-        services.push({ name: sName, duration: Number.isFinite(dur) ? Math.max(0, Math.floor(dur)) : undefined, price: Number.isFinite(price) ? price : undefined });
+        services.push({ name: sName, duration: Number.isFinite(dur) && Math.floor(dur) > 0 ? Math.floor(dur) : undefined, price: Number.isFinite(price) && price > 0 ? price : undefined });
       }
 
       const staff = [] as Array<{ name?: string; email?: string; role?: 'owner'|'staff' }>;

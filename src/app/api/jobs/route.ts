@@ -1,11 +1,11 @@
-import { createHttpHandler } from '../../../lib/create-http-handler';
-import EnhancedJobManager from '../../../lib/enhancedJobManager';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import EnhancedJobManager from '@/lib/enhancedJobManager';
 import { z } from 'zod';
 
 // Zod schema for POST request body
 const ScheduleJobBodySchema = z.object({
   name: z.string().min(1, 'Job name is required'),
-  payload: z.record(z.any()),
+  payload: z.record(z.string(), z.any()),
   priority: z.number().int().min(1).max(10).default(5).optional(),
   scheduled_at: z.string().datetime().optional(),
   retry_policy: z.object({
@@ -70,11 +70,3 @@ export const GET = createHttpHandler(
   'GET',
   { auth: true, roles: ['owner'] }
 );
-
-  } catch (error) {
-    span.recordException(error as Error);
-    return handleApiError(error, 'Failed to retrieve job stats');
-  } finally {
-    span.end();
-  }
-}

@@ -52,7 +52,7 @@ async function enrichSuggestions(suggestions: Suggestion[], tenantId: string): P
       ...suggestion,
       product_name: product?.name || 'Unknown Product',
       sku: product?.sku,
-      category: product?.category as { id: string; name: string } | null,
+      category: (product?.category as unknown as { id: string; name: string } | null),
       estimated_cost,
     };
   });

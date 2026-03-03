@@ -28,4 +28,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_feedback_reservation
   ON customer_feedback (reservation_id)
   WHERE reservation_id IS NOT NULL;
 
+ALTER TABLE customer_feedback ENABLE ROW LEVEL SECURITY;
+
+-- All tenant members can read feedback for their tenant
+CREATE POLICY policy_feedback_tenant_select ON customer_feedback
+  FOR SELECT USING (
+    tenant_id IN (
+      SELECT tenant_id FROM tenant_users
+      WHERE user_id = auth.uid()::text
+    )
+  );
+
+-- Feedback can be inserted for the caller's tenant
+CREATE POLICY policy_feedback_tenant_insert ON customer_feedback
+  FOR INSERT WITH CHECK (
+    tenant_id IN (
+      SELECT tenant_id FROM tenant_users
+      WHERE user_id = auth.uid()::text
+    )
+  );
+
+-- Staff members can update/delete only their own feedback rows
+CREATE POLICY policy_feedback_staff_modify ON customer_feedback
+  FOR ALL USING (
+    staff_user_id = auth.uid()::text
+    AND tenant_id IN (
+      SELECT tenant_id FROM tenant_users
+      WHERE user_id = auth.uid()::text
+    )
+  );
+
 COMMIT;

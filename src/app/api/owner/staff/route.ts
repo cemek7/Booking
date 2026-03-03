@@ -1,14 +1,14 @@
-import { createHttpHandler } from '../../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getStaffData,
   inviteStaffMember,
   updateStaffMember,
   removeStaffMember,
-} from '../../../../lib/services/owner-staff-service';
+} from '@/lib/services/owner-staff-service';
 
 const StaffActionSchema = z.enum(['invite', 'update', 'remove']);
-const UserRoleSchema = z.enum(['owner', 'manager', 'staff', 'customer']);
+const UserRoleSchema = z.enum(['owner', 'manager', 'staff']);
 
 const InviteStaffSchema = z.object({
   email: z.string().email(),
@@ -33,7 +33,7 @@ const PostStaffBodySchema = z.object({
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const staffData = await getStaffData(ctx.supabase, ctx.user.tenantId);
+    const staffData = await getStaffData(ctx.supabase, ctx.user!.tenantId!);
     return { success: true, ...staffData };
   },
   'GET',
@@ -54,15 +54,15 @@ export const POST = createHttpHandler(
     switch (action) {
       case 'invite':
         const inviteData = InviteStaffSchema.parse(data);
-        result = await inviteStaffMember(ctx.supabase, ctx.user.tenantId, inviteData);
+        result = await inviteStaffMember(ctx.supabase, ctx.user!.tenantId!, inviteData);
         break;
       case 'update':
         const updateData = UpdateStaffSchema.parse(data);
-        result = await updateStaffMember(ctx.supabase, ctx.user.tenantId, updateData.staffId, updateData);
+        result = await updateStaffMember(ctx.supabase, ctx.user!.tenantId!, updateData.staffId, updateData);
         break;
       case 'remove':
         const removeData = RemoveStaffSchema.parse(data);
-        result = await removeStaffMember(ctx.supabase, ctx.user.tenantId, removeData.staffId);
+        result = await removeStaffMember(ctx.supabase, ctx.user!.tenantId!, removeData.staffId);
         break;
       default:
         throw new Error('Invalid staff action');

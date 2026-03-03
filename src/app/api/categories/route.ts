@@ -20,7 +20,7 @@ const CreateCategoryBodySchema = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   display_order: z.number().int().default(0),
   is_active: z.boolean().default(true),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 interface Category {

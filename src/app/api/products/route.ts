@@ -29,16 +29,16 @@ export const GET = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Build base query
@@ -116,11 +116,11 @@ export const GET = createHttpHandler(
     const { data: products, error, count } = await queryBuilder;
 
     if (error) {
-      throw ApiErrorFactory.internal('Failed to fetch products');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch products'));
     }
 
     // Filter out cost prices if user doesn't have permission
-    const sanitizedProducts = products?.map(product => {
+    const sanitizedProducts = products?.map((product: Record<string, unknown>) => {
       if (!permissions.can_view_cost_prices) {
         const { cost_price_cents, ...productWithoutCost } = product;
         return productWithoutCost;
@@ -164,7 +164,7 @@ export const POST = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id)
+      .eq('user_id', ctx.user!.id)
       .limit(1)
       .single();
 
@@ -242,7 +242,7 @@ export const POST = createHttpHandler(
       if (error.code === '23505') {
         throw ApiErrorFactory.conflict('SKU already exists');
       }
-      throw ApiErrorFactory.internal('Failed to create product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create product'));
     }
 
     // Log inventory movement if tracking inventory
@@ -257,7 +257,7 @@ export const POST = createHttpHandler(
           previous_quantity: 0,
           new_quantity: productData.stock_quantity,
           reason: 'Initial stock',
-          performed_by: ctx.user.id,
+          performed_by: ctx.user!.id,
         });
     }
 

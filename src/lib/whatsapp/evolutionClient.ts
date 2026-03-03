@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 
 export interface EvolutionAPIConfig {
   baseUrl: string;
@@ -50,7 +50,7 @@ export interface MessageTemplate {
 
 class EvolutionAPIClient {
   private config: EvolutionAPIConfig;
-  private supabase = createClient();
+  private get supabase() { return createSupabaseAdminClient(); }
 
   constructor(config: EvolutionAPIConfig) {
     this.config = config;
@@ -526,7 +526,7 @@ export function createEvolutionClient(config: EvolutionAPIConfig): EvolutionAPIC
  */
 export async function getTenantWhatsAppConfig(tenantId: string): Promise<EvolutionAPIConfig | null> {
   try {
-    const supabase = createClient();
+    const supabase = createSupabaseAdminClient();
     
     const { data, error } = await supabase
       .from('whatsapp_configurations')
@@ -579,3 +579,5 @@ export async function getTenantIdByInstanceName(instanceName: string): Promise<s
     return null;
   }
 }
+// Alias for backward compatibility
+export { EvolutionAPIClient as EvolutionClient };

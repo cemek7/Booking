@@ -4,6 +4,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createTenant } from '@/lib/services/onboarding-service';
 import { trace } from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
+import type { NextRequest } from 'next/server';
 
 const tracer = trace.getTracer('boka-onboarding-api');
 
@@ -35,7 +36,7 @@ const _authenticatedPOST = createHttpHandler(
     const span = tracer.startSpan('api.onboarding.tenant.post');
     try {
       if (!ctx.user?.id) {
-        throw ApiErrorFactory.unauthorized('User ID required');
+        throw ApiErrorFactory.missingAuthorization();
       }
 
       const userId = ctx.user.id;
@@ -67,13 +68,16 @@ const _authenticatedPOST = createHttpHandler(
  * so integration tests and local dev without a DB still work.
  */
 export async function POST(request: Request): Promise<Response> {
-  // Dev / CI fallback: bypass auth when Supabase env vars are absent
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Dev / CI fallback: bypass auth when Supabase env vars are absent (non-production only)
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY)
+  ) {
     const devTenantId = randomUUID();
     return new Response(
       JSON.stringify({ ok: true, devFallback: true, tenantId: devTenantId, slug: `dev-${devTenantId.slice(0, 6)}` }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
-  return _authenticatedPOST(request);
+  return _authenticatedPOST(request as NextRequest);
 }

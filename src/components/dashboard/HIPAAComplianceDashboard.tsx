@@ -26,6 +26,7 @@ import {
 import { hipaaCompliance } from '@/lib/compliance/hipaaCompliance';
 import { encryptionManager } from '@/lib/encryption';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getStoredTenantId } from '@/lib/auth/token-storage';
 
 interface ComplianceMetrics {
   phi_access_total: number;
@@ -55,6 +56,7 @@ interface PHIAccessLog {
 }
 
 export default function HIPAAComplianceDashboard() {
+  const [tenantId] = useState<string | null>(() => getStoredTenantId());
   const [metrics, setMetrics] = useState<ComplianceMetrics | null>(null);
   const [incidents, setIncidents] = useState<SecurityIncident[]>([]);
   const [recentAccess, setRecentAccess] = useState<PHIAccessLog[]>([]);
@@ -63,10 +65,14 @@ export default function HIPAAComplianceDashboard() {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchComplianceData = async () => {
+    if (!tenantId) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     setRefreshing(true);
     try {
       // Fetch compliance metrics
-      const tenantId = 'current-tenant-id'; // Get from context
       const endDate = new Date();
       const startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
       
@@ -88,11 +94,12 @@ export default function HIPAAComplianceDashboard() {
       // Get real active session count from audit_logs (distinct session_ids in last 24h)
       const supabase = getSupabaseBrowserClient();
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: sessionData } = await supabase
+      const { data: sessionData, error: sessionError } = await supabase
         .from('audit_logs')
         .select('session_id')
         .eq('tenant_id', tenantId)
         .gte('timestamp', oneDayAgo);
+      if (sessionError) throw sessionError;
       const activeSessions = sessionData
         ? new Set((sessionData as Array<{ session_id: string }>).map(r => r.session_id).filter(Boolean)).size
         : 0;
@@ -115,13 +122,14 @@ export default function HIPAAComplianceDashboard() {
       setIncidents(report.security_incidents || []);
 
       // Fetch recent PHI access from audit_logs
-      const { data: recentAccessData } = await supabase
+      const { data: recentAccessData, error: accessError } = await supabase
         .from('audit_logs')
         .select('id, user_id, user_role, action, resource, context, timestamp')
         .eq('tenant_id', tenantId)
         .eq('event_type', 'data_access')
         .order('timestamp', { ascending: false })
         .limit(10);
+      if (accessError) throw accessError;
       setRecentAccess(
         ((recentAccessData || []) as Array<{
           id: string; user_id: string; user_role: string; action: string;
@@ -146,7 +154,7 @@ export default function HIPAAComplianceDashboard() {
 
   const generateComplianceReport = async () => {
     try {
-      const tenantId = 'current-tenant-id';
+      if (!tenantId) return;
       const endDate = new Date();
       const startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
       
@@ -187,6 +195,14 @@ export default function HIPAAComplianceDashboard() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+      </div>
+    );
+  }
+
+  if (!tenantId) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-gray-500">Tenant context unavailable. Please sign in again.</p>
       </div>
     );
   }

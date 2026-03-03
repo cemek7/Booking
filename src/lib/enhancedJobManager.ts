@@ -600,6 +600,63 @@ export class EnhancedJobManager {
       return { success: false, error: 'Handler not found', retry: false };
     });
   }
+
+  /**
+   * Process jobs in the dead-letter queue.
+   * Retries or deletes failed jobs that have exceeded max retries.
+   */
+  async processDeadLetterQueue(options: {
+    manual_retry: boolean;
+    batch_size: number;
+    tenant_id: string;
+  }): Promise<{ requeued: number; deleted: number }> {
+    const { manual_retry, batch_size, tenant_id } = options;
+    let requeued = 0;
+    let deleted = 0;
+
+    const { data: failedJobs } = await this.supabase
+      .from('jobs')
+      .select('id')
+      .eq('tenant_id', tenant_id)
+      .eq('status', 'failed')
+      .limit(batch_size);
+
+    for (const job of failedJobs ?? []) {
+      if (manual_retry) {
+        await this.supabase
+          .from('jobs')
+          .update({ status: 'pending', attempts: 0, scheduled_at: new Date().toISOString() })
+          .eq('id', job.id);
+        requeued++;
+      } else {
+        await this.supabase.from('jobs').delete().eq('id', job.id);
+        deleted++;
+      }
+    }
+
+    return { requeued, deleted };
+  }
+
+  /**
+   * Retrieve jobs from the dead-letter queue with pagination.
+   */
+  async getDeadLetterJobs(options: {
+    limit: number;
+    offset: number;
+    tenant_id: string;
+  }): Promise<{ jobs: unknown[]; total: number }> {
+    const { limit, offset, tenant_id } = options;
+
+    const { data: jobs, count } = await this.supabase
+      .from('jobs')
+      .select('*', { count: 'exact' })
+      .eq('tenant_id', tenant_id)
+      .eq('status', 'failed')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    return { jobs: jobs ?? [], total: count ?? 0 };
+  }
 }
 
 export default EnhancedJobManager;

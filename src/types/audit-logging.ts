@@ -12,7 +12,6 @@
  * - PCI DSS - Payment card industry security
  */
 
-import { createClientComponentClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Role } from './roles';
 import type { UnifiedUser, UnifiedPermissionContext, UnifiedAccessResult } from './unified-permissions';
@@ -526,7 +525,7 @@ export class AuditLogger {
     delete sanitized.creditCard;
     delete sanitized.ssn;
 
-    return sanitized;
+    return sanitized as unknown as AuditContext;
   }
 
   private extractResource(context: UnifiedPermissionContext): string {
@@ -847,11 +846,3 @@ export function getAuditLogger(): AuditLogger {
   return globalAuditLogger;
 }
 
-// Export types and classes
-export type {
-  AuditEvent,
-  AuditEventType,
-  AuditContext,
-  AuditResult,
-  ComplianceFlag
-};

@@ -59,12 +59,12 @@ export const GET = createHttpHandler(
       days[k] = { bookings: 0, deposits: 0, llm_tokens: 0 };
     }
 
-    (data || []).forEach(row => {
-      if (row.day && days[row.day]) {
+    (data || []).forEach((row: Record<string, unknown>) => {
+      if (typeof row.day === 'string' && row.day && days[row.day]) {
         days[row.day] = {
-          bookings: row.bookings || 0,
-          deposits: row.deposits || 0,
-          llm_tokens: row.llm_tokens || 0,
+          bookings: (row.bookings as number) || 0,
+          deposits: (row.deposits as number) || 0,
+          llm_tokens: (row.llm_tokens as number) || 0,
         };
       }
     });

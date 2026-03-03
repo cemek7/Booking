@@ -571,20 +571,21 @@ export class DialogBookingBridge {
 
     // Resolve the date part
     let baseDate = new Date(now);
+    let explicitDayMatch = -1;
     if (msg.includes('tomorrow')) {
       baseDate.setDate(baseDate.getDate() + 1);
     } else {
       // e.g. "monday", "tuesday" etc.
       const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-      const dayMatch = days.findIndex(d => msg.includes(d));
-      if (dayMatch !== -1) {
-        const diff = (dayMatch - now.getDay() + 7) % 7 || 7;
+      explicitDayMatch = days.findIndex(d => msg.includes(d));
+      if (explicitDayMatch !== -1) {
+        const diff = (explicitDayMatch - now.getDay() + 7) % 7 || 7;
         baseDate.setDate(baseDate.getDate() + diff);
       }
     }
 
     // Extract time: "3pm", "3:30pm", "15:00", "3 pm", "3:30 pm"
-    const timeRegex = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|b(\d{1,2}):(\d{2})\b/i;
+    const timeRegex = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\b(\d{1,2}):(\d{2})\b/i;
     const match = message.match(timeRegex);
     if (!match) return {};
 
@@ -595,11 +596,19 @@ export class DialogBookingBridge {
     if (meridiem === 'am' && hours === 12) hours = 0;
 
     baseDate.setHours(hours, minutes, 0, 0);
-    const startTime = baseDate.toISOString();
 
+    // Advance past datetimes so we never book in the past
+    if (baseDate <= now) {
+      if (explicitDayMatch !== -1) {
+        baseDate.setDate(baseDate.getDate() + 7);
+      } else {
+        baseDate.setDate(baseDate.getDate() + 1);
+      }
+    }
+
+    const startTime = baseDate.toISOString();
     const endDate = new Date(baseDate.getTime() + 60 * 60 * 1000); // default 1h duration
     const endTime = endDate.toISOString();
-
     const formatted = baseDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     return { startTime, endTime, formatted };
   }

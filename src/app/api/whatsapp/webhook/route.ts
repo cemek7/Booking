@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import WhatsAppProductService from '@/lib/whatsapp/product-service';
 import { Product, ProductCategory } from '@/types/product-catalogue';
 
@@ -254,7 +254,7 @@ async function handleBrowseCatalog(
 ) {
   if (!state.tenant_id) return;
 
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   const { data: categories } = await supabase
     .from('categories')
@@ -282,7 +282,7 @@ async function handleCategorySelection(
 ) {
   if (!state.tenant_id) return;
 
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   // Get category details
   const { data: category } = await supabase
@@ -325,7 +325,7 @@ async function handleProductSelection(
 ) {
   if (!state.tenant_id) return;
 
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   const { data: product } = await supabase
     .from('products')
@@ -358,7 +358,7 @@ async function handleMoreImages(
 ) {
   if (!state.tenant_id) return;
 
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   const { data: product } = await supabase
     .from('products')
@@ -422,7 +422,7 @@ async function handleSearch(
 ) {
   if (!state.tenant_id) return;
 
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   // Search products
   const { data: products } = await supabase
@@ -476,7 +476,7 @@ async function getTenantIdFromPhone(customerPhone: string): Promise<string | nul
   // In a real app, you'd look up the tenant based on the WhatsApp business account
   // or have customers registered with their phone numbers
   
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   // Try to find customer by phone number
   const { data: customer } = await supabase
@@ -494,7 +494,7 @@ async function getTenantIdFromPhone(customerPhone: string): Promise<string | nul
 }
 
 async function getCustomerName(customerPhone: string): Promise<string | undefined> {
-  const supabase = createClient();
+  const supabase = getSupabaseRouteHandlerClient();
   
   const { data: customer } = await supabase
     .from('customers')

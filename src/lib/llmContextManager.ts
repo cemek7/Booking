@@ -16,18 +16,31 @@
  *   payloads to the LLM. The default limit is 20 messages.
  */
 
-import type { SupabaseClient } from '@supabase/supabase-js';
 import type { LlmContext, LlmContextMessage, GetContextOpts } from '@/types/llm';
 import { redactAndTruncate } from './pii';
 import redisLib from './redis';
 import summarizer from './summarizer';
 import { Role } from '@/types';
 
+export async function getContextForTenant(
+  tenantId: string,
+  opts: GetContextOpts = {}
+): Promise<LlmContext> {
+  const { supabaseClient, limit = 20 } = opts;
+  if (!supabaseClient) throw new Error('supabaseClient is required');
+
+  // Fetch tenant record
+  const { data: tenantData } = await supabaseClient
+    .from('tenants')
+    .select('id, name, settings')
+    .eq('id', tenantId)
+    .maybeSingle();
+
   type RecentRaw = { id?: unknown; sender?: string | null; role?: Role | null; content?: string | null; created_at?: string | null };
   let recentMessagesRaw: Array<RecentRaw> = [];
   try {
     // find latest chat id for tenant
-    const { data: lastChat } = await supabase.from('chats').select('id').eq('tenant_id', tenantId).order('last_message_at', { ascending: false }).limit(1).maybeSingle();
+    const { data: lastChat } = await supabaseClient.from('chats').select('id').eq('tenant_id', tenantId).order('last_message_at', { ascending: false }).limit(1).maybeSingle();
     const chatId = lastChat && lastChat.id ? String(lastChat.id) : null;
     if (chatId) {
       try {
@@ -43,7 +56,7 @@ import { Role } from '@/types';
     // If not enough from cache, fill from DB (messages table inbound)
     if (recentMessagesRaw.length < limit) {
       const remaining = limit - recentMessagesRaw.length;
-      const { data: messages, error: messagesErr } = await supabase
+      const { data: messages, error: messagesErr } = await supabaseClient
         .from('messages')
         .select('id, sender as role, content, created_at')
         .eq('tenant_id', tenantId)
@@ -71,7 +84,7 @@ import { Role } from '@/types';
   let recentChat: LlmContext['recentChat'] = null;
   try {
     type ChatRow = { id?: unknown; customer_id?: string | null; message?: string | null; created_at?: string | null; metadata?: Record<string, unknown> | null };
-    const { data: chatRow } = await supabase.from('chats').select('id, customer_id, message, created_at, metadata').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(1).maybeSingle() as { data?: ChatRow };
+    const { data: chatRow } = await supabaseClient.from('chats').select('id, customer_id, message, created_at, metadata').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(1).maybeSingle() as { data?: ChatRow };
     if (chatRow) {
       recentChat = { id: String(chatRow.id), customer_id: chatRow.customer_id ?? null, message: redactAndTruncate(chatRow.message ?? null), created_at: chatRow.created_at ?? null, metadata: chatRow.metadata ?? null };
       // prefer an existing summarized version stored in metadata
@@ -93,11 +106,11 @@ import { Role } from '@/types';
   }
 
   // LLM calls sample
-  const { data: llmCalls, error: callsErr } = await supabase.from('llm_calls').select('id, model, tokens, created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
+  const { data: llmCalls, error: callsErr } = await supabaseClient.from('llm_calls').select('id, model, tokens, created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
   if (callsErr) console.warn('llmContextManager: llm_calls fetch error', callsErr);
 
   // top faqs
-  const { data: faqsData, error: faqsErr } = await supabase.from('faqs').select('question, answer').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
+  const { data: faqsData, error: faqsErr } = await supabaseClient.from('faqs').select('question, answer').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
   if (faqsErr) console.warn('llmContextManager: faqs fetch error', faqsErr);
   const faqs = Array.isArray(faqsData) ? faqsData.map((f: { question?: string | null; answer?: string | null }) => ({ question: redactAndTruncate(f.question ?? ''), answer: redactAndTruncate(f.answer ?? '') })) : [];
 

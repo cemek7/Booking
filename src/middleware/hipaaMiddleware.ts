@@ -89,7 +89,7 @@ export class HIPAAMiddleware {
       // Check for suspicious activity
       const suspiciousActivity = await this.detectSuspiciousActivity(context);
       if (suspiciousActivity.detected) {
-        await this.handleSuspiciousActivity(context, suspiciousActivity);
+        await this.handleSuspiciousActivity(context, suspiciousActivity as { type: string; details: any });
       }
       
       observability.recordBusinessMetric('phi_request_processed_total', 1, {
@@ -106,7 +106,7 @@ export class HIPAAMiddleware {
       
       // Log security incident
       await this.logSecurityIncident('MIDDLEWARE_ERROR', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
         request_url: request.url,
         ip_address: this.getClientIP(request)
       });
@@ -255,7 +255,7 @@ export class HIPAAMiddleware {
       console.error('Error logging PHI access:', error);
       // Don't block request for logging errors, but track them
       await this.logSecurityIncident('PHI_LOGGING_ERROR', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
         context: JSON.stringify(context)
       });
     }
