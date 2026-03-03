@@ -212,7 +212,10 @@ export const POST = createHttpHandler(
           });
 
         if (movementError) {
-          console.error('Failed to log inventory movement:', movementError);
+          // Roll back booking before surfacing the error
+          const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+          if (rbErr) console.error('Booking rollback failed:', rbErr);
+          throw ApiErrorFactory.internalServerError(new Error('Failed to log inventory movement'));
         }
 
         // Fetch current inventory with an availability guard to minimize the TOCTOU window.
@@ -253,13 +256,19 @@ export const POST = createHttpHandler(
           }
           const { data: updatedRows, error: invUpdateError } = await guardedUpdateQuery.select('product_id');
           if (invUpdateError) {
-            console.error('Failed to update inventory stock levels:', invUpdateError);
+            const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+            if (rbErr) console.error('Booking rollback failed:', rbErr);
+            throw ApiErrorFactory.internalServerError(new Error('Failed to update inventory stock levels'));
           } else if (!updatedRows || updatedRows.length === 0) {
             // Another concurrent request modified the stock between our read and write
-            console.warn('Inventory update skipped due to concurrent modification for product:', productItem.product_id);
+            const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+            if (rbErr) console.error('Booking rollback failed:', rbErr);
+            throw ApiErrorFactory.conflict(`Inventory conflict for product ${productItem.product_id}: concurrent modification detected`);
           }
         } else {
-          console.error('Inventory record not found or insufficient stock for product:', productItem.product_id);
+          const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+          if (rbErr) console.error('Booking rollback failed:', rbErr);
+          throw ApiErrorFactory.internalServerError(new Error(`Inventory record not found for product ${productItem.product_id}`));
         }
       }
     }

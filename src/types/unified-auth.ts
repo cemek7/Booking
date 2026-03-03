@@ -76,14 +76,20 @@ export async function unifiedAuth(
       return createAuthFailure('Tenant access required', 403);
     }
 
-    // Step 5: Get unified user profile
-    const user = await permissionChecker.getUserProfile(
-      session.user.id, 
-      tenantContext.tenantId ?? undefined
-    );
+    // Step 5: Get unified user profile using the canonical tenant (no request override).
+    // Passing an empty string causes getUserProfile to fall back to the user's primary tenant.
+    const user = await permissionChecker.getUserProfile(session.user.id, '');
 
     if (!user) {
       return createAuthFailure('User profile not found or inactive', 403);
+    }
+
+    // Enforce tenant matching when the request supplies a tenant context.
+    // Privileged actors (superadmin) are allowed to explicitly override the tenant.
+    if (tenantContext.tenantId && !user.isSuperAdmin) {
+      if (user.tenantId !== tenantContext.tenantId) {
+        return createAuthFailure('Tenant access denied', 403);
+      }
     }
 
     // Step 6: Check role requirements

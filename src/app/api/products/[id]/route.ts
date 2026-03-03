@@ -15,25 +15,19 @@ export const GET = createHttpHandler(
     const id = ctx.request.url.split('/').pop();
     if (!id) throw ApiErrorFactory.badRequest('Product ID required');
 
-    // Get user's tenant(s)
+    // Get user's tenant membership including per-tenant role
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
-      .select('tenant_id')
+      .select('tenant_id, role')
       .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
-    // Look up permissions for this role; throw explicitly if the role is not recognised.
-    const permissions = PRODUCT_ROLE_PERMISSIONS[ctx.user!.role as keyof typeof PRODUCT_ROLE_PERMISSIONS];
-    if (!permissions) {
-      throw ApiErrorFactory.forbidden(`Role '${ctx.user!.role}' is not authorised for product operations`);
-    }
-
-    // Fetch product with related data
+    // Fetch product first to determine its tenant
     const { data: product, error } = await ctx.supabase
       .from('products')
       .select(`
@@ -51,6 +45,19 @@ export const GET = createHttpHandler(
         throw ApiErrorFactory.notFound('Product not found');
       }
       throw ApiErrorFactory.internalServerError(new Error('Failed to fetch product'));
+    }
+
+    // Resolve the per-tenant role for the product's actual tenant
+    const tenantMembership = tenantUsers.find(
+      (tu: { tenant_id: string; role: string }) => tu.tenant_id === product.tenant_id
+    );
+    if (!tenantMembership) {
+      throw ApiErrorFactory.forbidden('No access to the product tenant');
+    }
+    const perTenantRole = tenantMembership.role as keyof typeof PRODUCT_ROLE_PERMISSIONS;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[perTenantRole];
+    if (!permissions) {
+      throw ApiErrorFactory.forbidden(`Role '${perTenantRole}' is not authorised for product operations`);
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -74,23 +81,17 @@ export const PUT = createHttpHandler(
     const id = ctx.request.url.split('/').pop();
     if (!id) throw ApiErrorFactory.badRequest('Product ID required');
 
-    // Get user's tenant(s)
+    // Get user's tenant membership including per-tenant role
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
-      .select('tenant_id')
+      .select('tenant_id, role')
       .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
-
-    // Look up permissions for this role; throw explicitly if the role is not recognised.
-    const permissions = PRODUCT_ROLE_PERMISSIONS[ctx.user!.role as keyof typeof PRODUCT_ROLE_PERMISSIONS];
-    if (!permissions) {
-      throw ApiErrorFactory.forbidden(`Role '${ctx.user!.role}' is not authorised for product operations`);
-    }
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase
@@ -102,6 +103,19 @@ export const PUT = createHttpHandler(
 
     if (!existingProduct) {
       throw ApiErrorFactory.notFound('Product not found');
+    }
+
+    // Resolve the per-tenant role for the product's actual tenant and get permissions.
+    const tenantMembership = tenantUsers.find(
+      (tu: { tenant_id: string; role: string }) => tu.tenant_id === existingProduct.tenant_id
+    );
+    if (!tenantMembership) {
+      throw ApiErrorFactory.forbidden('No access to the product tenant');
+    }
+    const perTenantRole = tenantMembership.role as keyof typeof PRODUCT_ROLE_PERMISSIONS;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[perTenantRole];
+    if (!permissions) {
+      throw ApiErrorFactory.forbidden(`Role '${perTenantRole}' is not authorised for product operations`);
     }
 
     const body: UpdateProductRequest = await ctx.request.json();
