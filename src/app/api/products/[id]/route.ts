@@ -1,7 +1,6 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { UpdateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
-import { normalizeRole } from '@/types/roles';
 
 interface RouteParams {
   params: { id: string };
@@ -28,9 +27,11 @@ export const GET = createHttpHandler(
 
     const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
-    // Get user permissions based on their tenant role, normalizing any legacy role aliases.
-    // normalizeRole throws for unrecognized roles (explicit deny).
-    const permissions = PRODUCT_ROLE_PERMISSIONS[normalizeRole(ctx.user!.role)];
+    // Look up permissions for this role; throw explicitly if the role is not recognised.
+    const permissions = PRODUCT_ROLE_PERMISSIONS[ctx.user!.role as keyof typeof PRODUCT_ROLE_PERMISSIONS];
+    if (!permissions) {
+      throw ApiErrorFactory.forbidden(`Role '${ctx.user!.role}' is not authorised for product operations`);
+    }
 
     // Fetch product with related data
     const { data: product, error } = await ctx.supabase
@@ -85,9 +86,11 @@ export const PUT = createHttpHandler(
 
     const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
-    // Get user permissions based on their tenant role, normalizing any legacy role aliases.
-    // normalizeRole throws for unrecognized roles (explicit deny).
-    const permissions = PRODUCT_ROLE_PERMISSIONS[normalizeRole(ctx.user!.role)];
+    // Look up permissions for this role; throw explicitly if the role is not recognised.
+    const permissions = PRODUCT_ROLE_PERMISSIONS[ctx.user!.role as keyof typeof PRODUCT_ROLE_PERMISSIONS];
+    if (!permissions) {
+      throw ApiErrorFactory.forbidden(`Role '${ctx.user!.role}' is not authorised for product operations`);
+    }
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase
@@ -236,7 +239,7 @@ export const PUT = createHttpHandler(
     };
   },
   'PUT',
-  { auth: true, roles: ['admin', 'manager', 'product_manager'] }
+  { auth: true, roles: ['superadmin', 'owner', 'manager'] }
 );
 
 /**
@@ -314,5 +317,5 @@ export const DELETE = createHttpHandler(
     }
   },
   'DELETE',
-  { auth: true, roles: ['admin', 'manager', 'product_manager'] }
+  { auth: true, roles: ['superadmin', 'owner', 'manager'] }
 );
