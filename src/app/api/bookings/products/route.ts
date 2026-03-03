@@ -191,19 +191,6 @@ export const POST = createHttpHandler(
         .single();
 
       if (product?.track_inventory) {
-        // Fetch current inventory levels
-        let invFetchQuery = ctx.supabase
-          .from('product_inventory')
-          .select('current_stock, available_stock')
-          .eq('product_id', productItem.product_id)
-          .eq('tenant_id', tenantId);
-        if (productItem.variant_id) {
-          invFetchQuery = invFetchQuery.eq('variant_id', productItem.variant_id);
-        } else {
-          invFetchQuery = invFetchQuery.is('variant_id', null);
-        }
-        const { data: currentInv } = await invFetchQuery.single();
-
         // Create inventory movement record
         const { error: movementError } = await ctx.supabase
           .from('inventory_movements')
@@ -223,9 +210,27 @@ export const POST = createHttpHandler(
           console.error('Failed to log inventory movement:', movementError);
         }
 
-        // Update inventory stock levels using computed values
+        // Fetch current inventory with an availability guard to minimize the TOCTOU window.
+        // The gte filter here is a soft guard; the optimistic-lock equality conditions on
+        // the subsequent UPDATE are what enforce atomicity.
+        let invFetchQuery = ctx.supabase
+          .from('product_inventory')
+          .select('current_stock, available_stock')
+          .eq('product_id', productItem.product_id)
+          .eq('tenant_id', tenantId)
+          .gte('available_stock', productItem.quantity);
+        if (productItem.variant_id) {
+          invFetchQuery = invFetchQuery.eq('variant_id', productItem.variant_id);
+        } else {
+          invFetchQuery = invFetchQuery.is('variant_id', null);
+        }
+        const { data: currentInv } = await invFetchQuery.maybeSingle();
+
         if (currentInv) {
-          let invUpdateQuery = ctx.supabase
+          // Optimistic-lock update: equality conditions on the exact values read above
+          // ensure that if a concurrent request already modified the stock between the
+          // read and this write, 0 rows are matched and the update is safely skipped.
+          let guardedUpdateQuery = ctx.supabase
             .from('product_inventory')
             .update({
               current_stock: currentInv.current_stock - productItem.quantity,
@@ -233,18 +238,23 @@ export const POST = createHttpHandler(
               updated_at: new Date().toISOString()
             })
             .eq('product_id', productItem.product_id)
-            .eq('tenant_id', tenantId);
+            .eq('tenant_id', tenantId)
+            .eq('current_stock', currentInv.current_stock)
+            .eq('available_stock', currentInv.available_stock);
           if (productItem.variant_id) {
-            invUpdateQuery = invUpdateQuery.eq('variant_id', productItem.variant_id);
+            guardedUpdateQuery = guardedUpdateQuery.eq('variant_id', productItem.variant_id);
           } else {
-            invUpdateQuery = invUpdateQuery.is('variant_id', null);
+            guardedUpdateQuery = guardedUpdateQuery.is('variant_id', null);
           }
-          const { error: invUpdateError } = await invUpdateQuery;
+          const { data: updatedRows, error: invUpdateError } = await guardedUpdateQuery.select('product_id');
           if (invUpdateError) {
             console.error('Failed to update inventory stock levels:', invUpdateError);
+          } else if (!updatedRows || updatedRows.length === 0) {
+            // Another concurrent request modified the stock between our read and write
+            console.warn('Inventory update skipped due to concurrent modification for product:', productItem.product_id);
           }
         } else {
-          console.error('Inventory record not found for product:', productItem.product_id);
+          console.error('Inventory record not found or insufficient stock for product:', productItem.product_id);
         }
       }
     }

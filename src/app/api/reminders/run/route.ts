@@ -23,7 +23,7 @@ export const POST = createHttpHandler(
     
     const { data: rows, error } = await ctx.supabase
       .from('reminders')
-      .select('id,tenant_id,reservation_id,method,raw,attempts')
+      .select('id,reservation_id,method,raw,attempts')
       .eq('tenant_id', tenantId)
       .lte('remind_at', now)
       .eq('status', 'pending')

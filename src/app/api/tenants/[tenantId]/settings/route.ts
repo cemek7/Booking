@@ -216,5 +216,5 @@ export const PATCH = createHttpHandler(
     return merged;
   },
   'PATCH',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager', 'superadmin'] }
 );
