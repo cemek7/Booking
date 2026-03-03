@@ -23,8 +23,11 @@ interface CreateProductBookingRequest {
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    // Extract tenant from header
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    // Derive tenant from authenticated user; only superadmin may override via header.
+    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
+    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
+      ? headerTenantId
+      : ctx.user!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.notFound('Tenant not found');
     }

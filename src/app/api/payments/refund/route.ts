@@ -12,7 +12,11 @@ export const POST = createHttpHandler(
   async (ctx) => {
     const body: RefundRequest = await ctx.request.json();
     const { transactionId, amount, reason } = body;
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    // Derive tenant from authenticated user; only superadmin may override via header.
+    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
+    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
+      ? headerTenantId
+      : ctx.user!.tenantId;
 
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });

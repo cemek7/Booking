@@ -94,7 +94,7 @@ export const POST = createHttpHandler(
       .eq('is_active', true);
 
     if (productsError) {
-      throw new Error(`Failed to fetch products: ${productsError.message}`);
+      throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch products: ${productsError.message}`));
     }
 
     // Combine recommendations with product details and sort by score

@@ -13,7 +13,7 @@ export const POST = createHttpHandler(
 
     // Log security action
     await securityService.logSecurityEvent({
-      user_id: ctx.user?.id || 'unknown',
+      user_id: ctx.user!.id,
       action: 'security_rules_evaluation',
       resource_type: 'security_rules',
       success: true,

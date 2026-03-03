@@ -8,20 +8,25 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
  * revenue sum (from completed transactions), tips total, utilization rate,
  * average service duration, and avg customer rating from customer_feedback —
  * all scoped to the requested window (?days=N, default 30).
- * Uses X-Tenant-ID header (preferred) or tenant_id query param as fallback.
+ * Tenant is derived from the authenticated user's context; X-Tenant-ID header
+ * may only override for superadmin roles.
  */
 export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || url.searchParams.get('tenant_id');
+    // Derive tenant from authenticated user; only superadmin may override via header.
+    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
+    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
+      ? headerTenantId
+      : ctx.user!.tenantId;
 
     if (!tenantId) {
       throw ApiErrorFactory.badRequest('tenant_id required');
     }
 
     // Role-based access: staff members can only see their own metrics
-    const userRole = ctx.user?.role;
-    const userId = ctx.user?.id;
+    const userRole = ctx.user!.role;
+    const userId = ctx.user!.id;
     const isStaffOnly = userRole === 'staff';
 
     const daysParam = parseInt(url.searchParams.get('days') || '30', 10);
