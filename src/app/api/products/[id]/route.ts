@@ -1,7 +1,6 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { UpdateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
-import { getUserRole } from '@/lib/auth/role-utils';
 
 interface RouteParams {
   params: { id: string };
@@ -28,9 +27,9 @@ export const GET = createHttpHandler(
 
     const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
-    // Get user permissions
-    const userRole = await getUserRole(ctx.user!.id);
-    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
+    // Get user permissions based on their tenant role
+    const userRole = ctx.user!.role;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole] ?? PRODUCT_ROLE_PERMISSIONS['staff'];
 
     // Fetch product with related data
     const { data: product, error } = await ctx.supabase
@@ -85,9 +84,9 @@ export const PUT = createHttpHandler(
 
     const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
-    // Get user permissions
-    const userRole = await getUserRole(ctx.user!.id);
-    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
+    // Get user permissions based on their tenant role
+    const userRole = ctx.user!.role;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole] ?? PRODUCT_ROLE_PERMISSIONS['staff'];
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase

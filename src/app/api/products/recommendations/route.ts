@@ -1,4 +1,5 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 import { Product } from '@/types/product-catalogue';
 
@@ -34,17 +35,25 @@ const RecommendationRequestSchema = z.object({
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    const tenantId = ctx.user!.tenantId;
     
     if (!tenantId) {
-      throw new Error('Tenant ID is required');
+      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    }
+
+    // Reject if caller provides a mismatched X-Tenant-ID header
+    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
+    if (headerTenantId && headerTenantId !== tenantId && ctx.user?.role !== 'superadmin') {
+      throw ApiErrorFactory.forbidden('Tenant ID mismatch');
     }
 
     const body = await ctx.request.json();
     const bodyValidation = RecommendationRequestSchema.safeParse(body);
 
     if (!bodyValidation.success) {
-      throw new Error(`Invalid request body: ${JSON.stringify(bodyValidation.error.issues)}`);
+      throw ApiErrorFactory.validationError(
+        Object.fromEntries(bodyValidation.error.issues.map(i => [i.path.join('.') || '_', i.message]))
+      );
     }
 
     const {

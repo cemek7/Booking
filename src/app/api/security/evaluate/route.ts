@@ -24,7 +24,11 @@ export const POST = createHttpHandler(
     // Evaluate security rules
     const result = await securityService.evaluateSecurityRules();
 
-    return { ...result, success: true,
+    if (!result.success) {
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Security rules evaluation failed'));
+    }
+
+    return { ...result,
       timestamp: new Date().toISOString(),
     };
   },

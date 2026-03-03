@@ -585,7 +585,8 @@ export class DialogBookingBridge {
     }
 
     // Extract time: "3pm", "3:30pm", "15:00", "3 pm", "3:30 pm"
-    const timeRegex = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\b(\d{1,2}):(\d{2})\b/i;
+    // Hours constrained to 1-12 for 12h format, 0-23 for 24h format; minutes constrained to 00-59
+    const timeRegex = /\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/i;
     const match = message.match(timeRegex);
     if (!match) return {};
 

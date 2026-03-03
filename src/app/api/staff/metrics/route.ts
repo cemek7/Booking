@@ -62,6 +62,9 @@ export const GET = createHttpHandler(
     ]);
 
     if (staffResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch staff'));
+    if (reservationsResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservations'));
+    if (revenueResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch revenue'));
+    if (feedbackResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch feedback'));
 
     const staff = (staffResult.data || []) as Array<{ user_id: string; role: string }>;
 

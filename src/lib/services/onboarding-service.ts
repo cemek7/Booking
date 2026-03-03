@@ -77,7 +77,10 @@ export async function createTenant(
       category: service.category,
       is_active: true,
     }));
-    await supabase.from('services').insert(serviceRows);
+    const { error: servicesError } = await supabase.from('services').insert(serviceRows);
+    if (servicesError) {
+      throw new Error(`Failed to seed services: ${servicesError.message}`);
+    }
   }
 
   // Seed staff + default Monday–Friday 9-17 availability slots for each staff member

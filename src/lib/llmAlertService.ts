@@ -272,7 +272,7 @@ class LLMAlertService {
           await this.saveInAppAlert(alert);
           break;
         default:
-          console.warn(`Unknown notification channel: ${channel}`);
+          throw new Error(`Unknown notification channel: ${channel}`);
       }
     });
 

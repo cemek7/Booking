@@ -99,13 +99,19 @@ export const POST = createHttpHandler(
 
       // Check inventory availability
       if (product.track_inventory) {
-        const { data: inventory } = await ctx.supabase
+        let inventoryQuery = ctx.supabase
           .from('product_inventory')
-          .select('available_stock')
+          .select('available_stock, current_stock')
           .eq('product_id', productItem.product_id)
-          .eq('variant_id', productItem.variant_id || null)
-          .eq('tenant_id', tenantId)
-          .single();
+          .eq('tenant_id', tenantId);
+
+        if (productItem.variant_id) {
+          inventoryQuery = inventoryQuery.eq('variant_id', productItem.variant_id);
+        } else {
+          inventoryQuery = inventoryQuery.is('variant_id', null);
+        }
+
+        const { data: inventory } = await inventoryQuery.maybeSingle();
 
         if (inventory && inventory.available_stock < productItem.quantity) {
           const productName = product.name;
@@ -185,8 +191,21 @@ export const POST = createHttpHandler(
         .single();
 
       if (product?.track_inventory) {
+        // Fetch current inventory levels
+        let invFetchQuery = ctx.supabase
+          .from('product_inventory')
+          .select('current_stock, available_stock')
+          .eq('product_id', productItem.product_id)
+          .eq('tenant_id', tenantId);
+        if (productItem.variant_id) {
+          invFetchQuery = invFetchQuery.eq('variant_id', productItem.variant_id);
+        } else {
+          invFetchQuery = invFetchQuery.is('variant_id', null);
+        }
+        const { data: currentInv } = await invFetchQuery.single();
+
         // Create inventory movement record
-        await ctx.supabase
+        const { error: movementError } = await ctx.supabase
           .from('inventory_movements')
           .insert({
             tenant_id: tenantId,
@@ -200,17 +219,33 @@ export const POST = createHttpHandler(
             performed_by: ctx.user!.id
           });
 
-        // Update inventory stock levels
-        await ctx.supabase
-          .from('product_inventory')
-          .update({
-            current_stock: ctx.supabase.raw(`current_stock - ${productItem.quantity}`),
-            available_stock: ctx.supabase.raw(`available_stock - ${productItem.quantity}`),
-            updated_at: new Date().toISOString()
-          })
-          .eq('product_id', productItem.product_id)
-          .eq('variant_id', productItem.variant_id || null)
-          .eq('tenant_id', tenantId);
+        if (movementError) {
+          console.error('Failed to log inventory movement:', movementError);
+        }
+
+        // Update inventory stock levels using computed values
+        if (currentInv) {
+          let invUpdateQuery = ctx.supabase
+            .from('product_inventory')
+            .update({
+              current_stock: currentInv.current_stock - productItem.quantity,
+              available_stock: currentInv.available_stock - productItem.quantity,
+              updated_at: new Date().toISOString()
+            })
+            .eq('product_id', productItem.product_id)
+            .eq('tenant_id', tenantId);
+          if (productItem.variant_id) {
+            invUpdateQuery = invUpdateQuery.eq('variant_id', productItem.variant_id);
+          } else {
+            invUpdateQuery = invUpdateQuery.is('variant_id', null);
+          }
+          const { error: invUpdateError } = await invUpdateQuery;
+          if (invUpdateError) {
+            console.error('Failed to update inventory stock levels:', invUpdateError);
+          }
+        } else {
+          console.error('Inventory record not found for product:', productItem.product_id);
+        }
       }
     }
 

@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { createBrowserClient, createServerClient } from '@supabase/ssr';
 import { 
   UnifiedPermissionChecker,
@@ -58,7 +58,7 @@ export async function unifiedAuth(
 ): Promise<UnifiedAuthResult> {
   try {
     // Step 1: Get authenticated user session
-    const supabase = createServerSupabaseClient();
+    const supabase = getSupabaseRouteHandlerClient();
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError || !session?.user) {

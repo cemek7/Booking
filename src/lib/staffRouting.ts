@@ -7,7 +7,7 @@ interface StaffUser { user_id: string; role: string; preferred?: boolean | null;
 
 // Fetch staff list for tenant (optionally location scoped later)
 async function fetchStaff(supabase: SupabaseClient, tenantId: string): Promise<StaffUser[]> {
-  const { data, error } = await supabase.from('tenant_users').select('user_id, role').eq('tenant_id', tenantId).eq('role', 'staff');
+  const { data, error } = await supabase.from('tenant_users').select('user_id, role').eq('tenant_id', tenantId).eq('role', 'staff').order('user_id');
   if (error || !Array.isArray(data)) return [];
   return data as StaffUser[];
 }
@@ -25,8 +25,11 @@ export async function pickRoundRobinStaff(supabase: SupabaseClient, tenantId: st
     const { data: kv } = await supabase.from('platform_settings_kv').select('value').eq('key', key).maybeSingle();
     const lastIdx = kv && kv.value && typeof kv.value.idx === 'number' ? kv.value.idx : -1;
     const nextIdx = (lastIdx + 1) % staff.length;
-    // upsert
-    await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
+    // upsert - ignore errors to avoid disrupting routing on KV failures
+    const { error: upsertError } = await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
+    if (upsertError) {
+      console.error('Round-robin KV upsert failed:', upsertError);
+    }
     return staff[nextIdx].user_id;
   } catch {
     // fallback random

@@ -27,6 +27,7 @@ export interface PHIAccessContext {
   ipAddress: string;
   userAgent: string;
   sessionId: string;
+  sessionCreatedAt: string;
   requestPath: string;
   method: string;
 }
@@ -128,11 +129,15 @@ export class HIPAAMiddleware {
         return null;
       }
       
-      // Verify session and get user info
+      // Verify session and get user info along with session created_at
       const { data: { user }, error } = await this.supabase.auth.getUser(sessionToken);
       if (error || !user) {
         return null;
       }
+
+      // Use user.created_at as a proxy for session age (account creation is an approximation;
+      // for strict session timeout, replace with the actual session's created_at from the auth provider)
+      const sessionCreatedAt = user.created_at || new Date().toISOString();
       
       // Get user's tenant and role
       const { data: userTenantRole } = await this.supabase
@@ -152,6 +157,7 @@ export class HIPAAMiddleware {
         ipAddress: this.getClientIP(request),
         userAgent: request.headers.get('user-agent') || '',
         sessionId: sessionToken,
+        sessionCreatedAt,
         requestPath: new URL(request.url).pathname,
         method: request.method
       };
@@ -198,7 +204,7 @@ export class HIPAAMiddleware {
     }
     
     // Check session timeout
-    const sessionAge = Date.now() - new Date(context.sessionId).getTime();
+    const sessionAge = Date.now() - new Date(context.sessionCreatedAt).getTime();
     if (sessionAge > this.config.sessionTimeout) {
       return {
         allowed: false,
@@ -389,12 +395,14 @@ export class HIPAAMiddleware {
   }
   
   private async getTodayAccessCount(userId: string, tenantId: string): Promise<number> {
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
     const { count } = await this.supabase
       .from('phi_access_logs')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
       .eq('tenant_id', tenantId)
-      .gte('accessed_at', new Date().toDateString());
+      .gte('accessed_at', todayMidnight.toISOString());
     
     return count || 0;
   }

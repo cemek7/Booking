@@ -99,6 +99,11 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
+    // Ensure non-superadmin users can only access their own tenant's settings
+    if (ctx.user!.role !== 'superadmin' && ctx.user!.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access to this tenant is not allowed');
+    }
+
     const { data, error } = await ctx.supabase
       .from('tenants')
       .select('settings, metadata, timezone')
@@ -137,6 +142,11 @@ export const PATCH = createHttpHandler(
     const tenantId = ctx.params!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    }
+
+    // Ensure non-superadmin users can only modify their own tenant's settings
+    if (ctx.user!.role !== 'superadmin' && ctx.user!.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access to this tenant is not allowed');
     }
 
     const patch = await parseJsonBody<Record<string, unknown>>(ctx.request);
