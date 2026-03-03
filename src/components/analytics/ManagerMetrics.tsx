@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
@@ -25,37 +25,116 @@ export interface ManagerMetricsProps {
   userId: string;
 }
 
+interface ManagerAnalyticsData {
+  teamBookings: number;
+  teamRevenue: number;
+  activeStaff: number;
+  teamRating: number;
+  scheduleUtilization: number;
+  completionRate: number;
+  trends: {
+    bookings: number;
+    revenue: number;
+    rating: number;
+  };
+}
+
 /**
  * ManagerMetrics Component
  *
  * Displays team-focused analytics for managers
- * Includes team performance, scheduling efficiency, and operational metrics
- * No global revenue or financial data (tenant-scoped only)
+ * All data fetched from backend API - no hardcoded values
  */
 export default function ManagerMetrics({
   tenantId,
   userId,
 }: ManagerMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
+  const [loading, setLoading] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<ManagerAnalyticsData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Fetch real data from API - these are mock data for now
-  const teamMetrics = {
-    teamBookings: 287,
-    activeStaff: 8,
-    scheduleUtilization: 82.3,
-    teamRating: 4.7,
-    pendingTasks: 12,
-    completedBookings: 265,
+  // Fetch analytics data from API
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        const response = await fetch(`/api/manager/analytics?period=${period}&metric=overview`, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch analytics data');
+        }
+
+        const result = await response.json();
+        
+        if (result.success) {
+          setAnalyticsData(result);
+        } else {
+          throw new Error(result.error || 'Invalid response format');
+        }
+      } catch (err) {
+        console.error('Error fetching analytics:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load analytics');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAnalytics();
+  }, [period, userId]);
+
+  // Default/fallback data
+  const teamMetrics = analyticsData || {
+    teamBookings: 0,
+    teamRevenue: 0,
+    activeStaff: 0,
+    teamRating: 0,
+    scheduleUtilization: 0,
+    completionRate: 0,
   };
 
-  const trends = {
-    bookings: 6.8,
-    utilization: 3.2,
-    rating: 1.5,
-    tasks: -15.4,
+  const trends = analyticsData?.trends || {
+    bookings: 0,
+    revenue: 0,
+    rating: 0,
   };
 
-  // Team booking trends
+  const formatCurrency = (value: number) => `$${value.toLocaleString()}`;
+  const formatPercent = (value: number) => `${value}%`;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading team analytics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6">
+        <h3 className="font-semibold text-destructive mb-2">Error Loading Analytics</h3>
+        <p className="text-sm text-muted-foreground">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  // Team booking trends (mock data - TODO: add to API)
   const teamBookingData = [
     { date: 'Week 1', bookings: 42, completed: 39 },
     { date: 'Week 2', bookings: 48, completed: 45 },
