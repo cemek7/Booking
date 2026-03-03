@@ -113,7 +113,9 @@ export const POST = createHttpHandler(
 
         const { data: inventory } = await inventoryQuery.maybeSingle();
 
-        if (inventory && inventory.available_stock < productItem.quantity) {
+        // Treat a missing inventory row as zero available stock for tracked items.
+        const availableStock = inventory?.available_stock ?? 0;
+        if (availableStock < productItem.quantity) {
           const productName = product.name;
           const variantName = productItem.variant_id ? 
             (await ctx.supabase.from('product_variants').select('name').eq('id', productItem.variant_id).single())?.data?.name : 
@@ -121,7 +123,7 @@ export const POST = createHttpHandler(
           const fullName = variantName ? `${productName} - ${variantName}` : productName;
           
           throw ApiErrorFactory.conflict(
-            `Insufficient stock for ${fullName}. Available: ${inventory.available_stock}, Requested: ${productItem.quantity}`
+            `Insufficient stock for ${fullName}. Available: ${availableStock}, Requested: ${productItem.quantity}`
           );
         }
       }

@@ -79,7 +79,8 @@ export async function createTenant(
     }));
     const { error: servicesError } = await supabase.from('services').insert(serviceRows);
     if (servicesError) {
-      throw new Error(`Failed to seed services: ${servicesError.message}`);
+      console.error('Failed to seed services:', servicesError);
+      throw new Error('Failed to seed services');
     }
   }
 
