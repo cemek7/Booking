@@ -27,6 +27,7 @@ export interface PHIAccessContext {
   ipAddress: string;
   userAgent: string;
   sessionId: string;
+  sessionCreatedAt: string;
   requestPath: string;
   method: string;
 }
@@ -133,6 +134,31 @@ export class HIPAAMiddleware {
       if (error || !user) {
         return null;
       }
+
+      // Retrieve the current auth session to derive a proper session start time
+      const { data: { session }, error: sessionError } = await this.supabase.auth.getSession();
+      if (sessionError || !session) {
+        return null;
+      }
+
+      let sessionCreatedAt: string;
+      // Prefer computing session start from expires_at and expires_in when available.
+      // expires_in is present in the Supabase Session payload but may not be typed in
+      // all SDK versions, so we check for it safely.
+      const rawExpiresIn = (session as Record<string, unknown>)['expires_in'];
+      const sessionExpiresIn = typeof rawExpiresIn === 'number' ? rawExpiresIn : null;
+      if (session.expires_at && sessionExpiresIn !== null) {
+        const sessionStartMs = (session.expires_at - sessionExpiresIn) * 1000;
+        sessionCreatedAt = new Date(sessionStartMs).toISOString();
+      } else if (session.expires_at) {
+        // Fallback: approximate start time using expires_at minus configured session timeout
+        const expiresAtMs = session.expires_at * 1000;
+        const sessionStartMs = expiresAtMs - this.config.sessionTimeout;
+        sessionCreatedAt = new Date(sessionStartMs).toISOString();
+      } else {
+        // Last-resort fallback: treat session as just-started (no timeout)
+        sessionCreatedAt = new Date().toISOString();
+      }
       
       // Get user's tenant and role
       const { data: userTenantRole } = await this.supabase
@@ -152,6 +178,7 @@ export class HIPAAMiddleware {
         ipAddress: this.getClientIP(request),
         userAgent: request.headers.get('user-agent') || '',
         sessionId: sessionToken,
+        sessionCreatedAt,
         requestPath: new URL(request.url).pathname,
         method: request.method
       };
@@ -198,7 +225,7 @@ export class HIPAAMiddleware {
     }
     
     // Check session timeout
-    const sessionAge = Date.now() - new Date(context.sessionId).getTime();
+    const sessionAge = Date.now() - new Date(context.sessionCreatedAt).getTime();
     if (sessionAge > this.config.sessionTimeout) {
       return {
         allowed: false,
@@ -389,12 +416,14 @@ export class HIPAAMiddleware {
   }
   
   private async getTodayAccessCount(userId: string, tenantId: string): Promise<number> {
+    // Use UTC midnight to match the UTC timestamps stored in phi_access_logs.accessed_at
+    const todayUtcMidnight = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
     const { count } = await this.supabase
       .from('phi_access_logs')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
       .eq('tenant_id', tenantId)
-      .gte('accessed_at', new Date().toDateString());
+      .gte('accessed_at', todayUtcMidnight.toISOString());
     
     return count || 0;
   }

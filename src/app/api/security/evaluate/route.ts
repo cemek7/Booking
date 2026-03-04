@@ -13,7 +13,7 @@ export const POST = createHttpHandler(
 
     // Log security action
     await securityService.logSecurityEvent({
-      user_id: ctx.user?.id || 'unknown',
+      user_id: ctx.user!.id,
       action: 'security_rules_evaluation',
       resource_type: 'security_rules',
       success: true,
@@ -24,7 +24,11 @@ export const POST = createHttpHandler(
     // Evaluate security rules
     const result = await securityService.evaluateSecurityRules();
 
-    return { ...result, success: true,
+    if (!result.success) {
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Security rules evaluation failed'));
+    }
+
+    return { ...result,
       timestamp: new Date().toISOString(),
     };
   },

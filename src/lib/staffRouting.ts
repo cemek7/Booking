@@ -7,10 +7,14 @@ interface StaffUser { user_id: string; role: string; preferred?: boolean | null;
 
 // Fetch staff list for tenant (optionally location scoped later)
 async function fetchStaff(supabase: SupabaseClient, tenantId: string): Promise<StaffUser[]> {
-  const { data, error } = await supabase.from('tenant_users').select('user_id, role').eq('tenant_id', tenantId).eq('role', 'staff');
+  const { data, error } = await supabase.from('tenant_users').select('user_id, role').eq('tenant_id', tenantId).eq('role', 'staff').order('user_id');
   if (error || !Array.isArray(data)) return [];
   return data as StaffUser[];
 }
+
+// Module-level in-memory fallback for the round-robin index, keyed by tenant.
+// Used when the KV upsert fails so routing advances even if the KV store is unavailable.
+const inMemoryRRIndex: Map<string, number> = new Map();
 
 // Round-robin: persistent pointer stored in platform_settings_kv table with fallback to random.
 // NOTE: The read-then-write is not atomic. Under concurrent load two requests may read the same
@@ -23,10 +27,16 @@ export async function pickRoundRobinStaff(supabase: SupabaseClient, tenantId: st
   try {
     const key = `rr_staff_${tenantId}`;
     const { data: kv } = await supabase.from('platform_settings_kv').select('value').eq('key', key).maybeSingle();
-    const lastIdx = kv && kv.value && typeof kv.value.idx === 'number' ? kv.value.idx : -1;
+    // Use KV value if available, otherwise fall back to the in-memory counter.
+    const persistedIdx = kv && kv.value && typeof kv.value.idx === 'number' ? kv.value.idx : null;
+    const lastIdx = persistedIdx !== null ? persistedIdx : (inMemoryRRIndex.get(key) ?? -1);
     const nextIdx = (lastIdx + 1) % staff.length;
-    // upsert
-    await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
+    // Always advance the in-memory index so routing progresses even if KV is down.
+    inMemoryRRIndex.set(key, nextIdx);
+    const { error: upsertError } = await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
+    if (upsertError) {
+      console.error(`Round-robin KV upsert failed for key=${key} nextIdx=${nextIdx}:`, upsertError);
+    }
     return staff[nextIdx].user_id;
   } catch {
     // fallback random

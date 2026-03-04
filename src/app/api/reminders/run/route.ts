@@ -14,7 +14,8 @@ import EvolutionClient from '@/lib/evolutionClient';
 export const POST = createHttpHandler(
   async (ctx) => {
     const now = new Date().toISOString();
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    // Derive tenant from authenticated user; reject any header override
+    const tenantId = ctx.user!.tenantId;
 
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
@@ -22,7 +23,7 @@ export const POST = createHttpHandler(
     
     const { data: rows, error } = await ctx.supabase
       .from('reminders')
-      .select('id,tenant_id,reservation_id,method,raw,attempts')
+      .select('id,reservation_id,method,raw,attempts')
       .eq('tenant_id', tenantId)
       .lte('remind_at', now)
       .eq('status', 'pending')
@@ -38,28 +39,35 @@ export const POST = createHttpHandler(
 
     for (const r of rows) {
       try {
-        const { id, tenant_id: tenantId, raw, attempts } = r;
+        const { id, raw, attempts } = r;
         const toNumber = raw?.to || raw?.phone || null;
         const message = raw?.message || 'Reminder: you have an upcoming booking.';
 
-        if (toNumber) {
-          const sent = await EvolutionClient.sendWhatsAppMessage(tenantId, toNumber, message);
+        if (!toNumber) {
+          // Mark as failed when no phone number is available
+          await ctx.supabase
+            .from('reminders')
+            .update({ status: 'failed', attempts: (attempts || 0) + 1 })
+            .eq('id', id);
+          continue;
+        }
 
-          if (sent.success) {
-            const { error: updateError } = await ctx.supabase
-              .from('reminders')
-              .update({ status: 'sent' })
-              .eq('id', id);
+        const sent = await EvolutionClient.sendWhatsAppMessage(tenantId, toNumber, message);
 
-            if (!updateError) {
-              processed += 1;
-            }
-          } else {
-            const { error: updateError } = await ctx.supabase
-              .from('reminders')
-              .update({ attempts: (attempts || 0) + 1 })
-              .eq('id', id);
+        if (sent.success) {
+          const { error: updateError } = await ctx.supabase
+            .from('reminders')
+            .update({ status: 'sent' })
+            .eq('id', id);
+
+          if (!updateError) {
+            processed += 1;
           }
+        } else {
+          await ctx.supabase
+            .from('reminders')
+            .update({ attempts: (attempts || 0) + 1 })
+            .eq('id', id);
         }
       } catch (err) {
         // Continue processing other reminders
@@ -70,5 +78,5 @@ export const POST = createHttpHandler(
     return { processed };
   },
   'POST',
-  { auth: true }
+  { auth: true, roles: ['owner', 'manager', 'superadmin'] }
 );

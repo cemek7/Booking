@@ -23,8 +23,11 @@ interface CreateProductBookingRequest {
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    // Extract tenant from header
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    // Derive tenant from authenticated user; only superadmin may override via header.
+    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
+    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
+      ? headerTenantId
+      : ctx.user!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.notFound('Tenant not found');
     }
@@ -99,15 +102,23 @@ export const POST = createHttpHandler(
 
       // Check inventory availability
       if (product.track_inventory) {
-        const { data: inventory } = await ctx.supabase
+        let inventoryQuery = ctx.supabase
           .from('product_inventory')
-          .select('available_stock')
+          .select('available_stock, current_stock')
           .eq('product_id', productItem.product_id)
-          .eq('variant_id', productItem.variant_id || null)
-          .eq('tenant_id', tenantId)
-          .single();
+          .eq('tenant_id', tenantId);
 
-        if (inventory && inventory.available_stock < productItem.quantity) {
+        if (productItem.variant_id) {
+          inventoryQuery = inventoryQuery.eq('variant_id', productItem.variant_id);
+        } else {
+          inventoryQuery = inventoryQuery.is('variant_id', null);
+        }
+
+        const { data: inventory } = await inventoryQuery.maybeSingle();
+
+        // Treat a missing inventory row as zero available stock for tracked items.
+        const availableStock = inventory?.available_stock ?? 0;
+        if (availableStock < productItem.quantity) {
           const productName = product.name;
           const variantName = productItem.variant_id ? 
             (await ctx.supabase.from('product_variants').select('name').eq('id', productItem.variant_id).single())?.data?.name : 
@@ -115,7 +126,7 @@ export const POST = createHttpHandler(
           const fullName = variantName ? `${productName} - ${variantName}` : productName;
           
           throw ApiErrorFactory.conflict(
-            `Insufficient stock for ${fullName}. Available: ${inventory.available_stock}, Requested: ${productItem.quantity}`
+            `Insufficient stock for ${fullName}. Available: ${availableStock}, Requested: ${productItem.quantity}`
           );
         }
       }
@@ -186,7 +197,7 @@ export const POST = createHttpHandler(
 
       if (product?.track_inventory) {
         // Create inventory movement record
-        await ctx.supabase
+        const { error: movementError } = await ctx.supabase
           .from('inventory_movements')
           .insert({
             tenant_id: tenantId,
@@ -200,17 +211,65 @@ export const POST = createHttpHandler(
             performed_by: ctx.user!.id
           });
 
-        // Update inventory stock levels
-        await ctx.supabase
+        if (movementError) {
+          // Roll back booking before surfacing the error
+          const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+          if (rbErr) console.error('Booking rollback failed:', rbErr);
+          throw ApiErrorFactory.internalServerError(new Error('Failed to log inventory movement'));
+        }
+
+        // Fetch current inventory with an availability guard to minimize the TOCTOU window.
+        // The gte filter here is a soft guard; the optimistic-lock equality conditions on
+        // the subsequent UPDATE are what enforce atomicity.
+        let invFetchQuery = ctx.supabase
           .from('product_inventory')
-          .update({
-            current_stock: ctx.supabase.raw(`current_stock - ${productItem.quantity}`),
-            available_stock: ctx.supabase.raw(`available_stock - ${productItem.quantity}`),
-            updated_at: new Date().toISOString()
-          })
+          .select('current_stock, available_stock')
           .eq('product_id', productItem.product_id)
-          .eq('variant_id', productItem.variant_id || null)
-          .eq('tenant_id', tenantId);
+          .eq('tenant_id', tenantId)
+          .gte('available_stock', productItem.quantity);
+        if (productItem.variant_id) {
+          invFetchQuery = invFetchQuery.eq('variant_id', productItem.variant_id);
+        } else {
+          invFetchQuery = invFetchQuery.is('variant_id', null);
+        }
+        const { data: currentInv } = await invFetchQuery.maybeSingle();
+
+        if (currentInv) {
+          // Optimistic-lock update: equality conditions on the exact values read above
+          // ensure that if a concurrent request already modified the stock between the
+          // read and this write, 0 rows are matched and the update is safely skipped.
+          let guardedUpdateQuery = ctx.supabase
+            .from('product_inventory')
+            .update({
+              current_stock: currentInv.current_stock - productItem.quantity,
+              available_stock: currentInv.available_stock - productItem.quantity,
+              updated_at: new Date().toISOString()
+            })
+            .eq('product_id', productItem.product_id)
+            .eq('tenant_id', tenantId)
+            .eq('current_stock', currentInv.current_stock)
+            .eq('available_stock', currentInv.available_stock);
+          if (productItem.variant_id) {
+            guardedUpdateQuery = guardedUpdateQuery.eq('variant_id', productItem.variant_id);
+          } else {
+            guardedUpdateQuery = guardedUpdateQuery.is('variant_id', null);
+          }
+          const { data: updatedRows, error: invUpdateError } = await guardedUpdateQuery.select('product_id');
+          if (invUpdateError) {
+            const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+            if (rbErr) console.error('Booking rollback failed:', rbErr);
+            throw ApiErrorFactory.internalServerError(new Error('Failed to update inventory stock levels'));
+          } else if (!updatedRows || updatedRows.length === 0) {
+            // Another concurrent request modified the stock between our read and write
+            const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+            if (rbErr) console.error('Booking rollback failed:', rbErr);
+            throw ApiErrorFactory.conflict(`Inventory conflict for product ${productItem.product_id}: concurrent modification detected`);
+          }
+        } else {
+          const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
+          if (rbErr) console.error('Booking rollback failed:', rbErr);
+          throw ApiErrorFactory.internalServerError(new Error(`Inventory record not found for product ${productItem.product_id}`));
+        }
       }
     }
 

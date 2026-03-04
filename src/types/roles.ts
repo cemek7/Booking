@@ -21,7 +21,8 @@ export function normalizeRole(role: string): Role {
   const legacyMap: Record<string, Role> = {
     'admin': 'superadmin',
     'tenant_admin': 'owner',
-    'receptionist': 'staff'
+    'receptionist': 'staff',
+    'product_manager': 'manager'
   };
   
   const normalized = legacyMap[role] || role;

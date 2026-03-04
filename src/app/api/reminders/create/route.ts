@@ -14,7 +14,8 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 export const POST = createHttpHandler(
   async (ctx) => {
     const { reservation_id } = await ctx.request.json();
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    // Derive tenant from authenticated user; reject any header override
+    const tenantId = ctx.user!.tenantId;
 
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
@@ -22,11 +23,12 @@ export const POST = createHttpHandler(
 
     if (!reservation_id) throw ApiErrorFactory.badRequest('reservation_id required');
 
-    // Fetch reservation details
+    // Fetch reservation details scoped to the user's tenant
     const { data: reservation, error: reservationError } = await ctx.supabase
       .from('reservations')
       .select('id,start_at,phone,customer_name')
       .eq('id', reservation_id)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
 
     if (reservationError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservation'));
