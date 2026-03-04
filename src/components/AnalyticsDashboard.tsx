@@ -17,7 +17,7 @@ import {
   Lock
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { getUnifiedAnalyticsAccess, validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
+import { getUnifiedAnalyticsAccess, validateAnalyticsRequest, getAnalyticsScope } from '@/lib/unified-analytics-permissions';
 import { Role } from '@/types/roles';
 import type { BookingTrendData, StaffPerformanceData, DashboardMetric } from '@/types/analytics-api';
 
@@ -53,7 +53,12 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   // Role-based analytics access control using unified permission system
   const analyticsAccess = getUnifiedAnalyticsAccess(userRole);
-  const tenantValidation = validateAnalyticsRequest(userRole, 'tenant', tenantId, userId);
+  // Validate at the role's natural scope (manager → 'team', owner → 'tenant', etc.)
+  // so that managers are not incorrectly blocked by a tenant-level scope check.
+  const roleScope = getAnalyticsScope(userRole);
+  const validationScope: 'personal' | 'team' | 'tenant' | 'global' =
+    roleScope === 'none' ? 'personal' : roleScope;
+  const tenantValidation = validateAnalyticsRequest(userRole, validationScope, tenantId, userId);
 
   // Define what this role can view
   const canViewRevenue = analyticsAccess.permissions.canViewGlobalData || analyticsAccess.permissions.canViewTenantData;
@@ -329,12 +334,12 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                     <YAxis />
                     <Tooltip 
                       labelFormatter={(value: unknown) => new Date(value as string).toLocaleDateString()}
-                      formatter={(value: any, name: any) => {
+                      formatter={(value: number | string | ReadonlyArray<number | string> | undefined, name: number | string | undefined) => {
                         const numValue = typeof value === 'number' ? value : 0;
-                        const nameStr = name || 'value';
+                        const nameStr = String(name || 'value');
                         return [
                           nameStr === 'revenue' ? formatValue(numValue, 'currency') : numValue,
-                          // @ts-ignore - Recharts formatter types
+                          // @ts-expect-error - Recharts formatter types
                           nameStr.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
                         ];
                       }}
@@ -381,16 +386,16 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                     <XAxis dataKey="staff_name" />
                     <YAxis />
                     <Tooltip 
-                      formatter={(value: any, name: any) => {
+                      formatter={(value: number | string | ReadonlyArray<number | string> | undefined, name: number | string | undefined) => {
                         const numValue = typeof value === 'number' ? value : 0;
-                        const nameStr = (name || 'value') as string;
+                        const nameStr = String(name || 'value');
                         return [
                           nameStr.includes('revenue') || nameStr.includes('tips') 
                             ? formatValue(numValue, 'currency')
                             : nameStr.includes('rate') 
                             ? `${numValue}%`
                             : numValue,
-                          // @ts-ignore - Recharts formatter types
+                          // @ts-expect-error - Recharts formatter types
                           nameStr.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
                         ];
                       }}
