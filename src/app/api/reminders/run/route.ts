@@ -45,10 +45,13 @@ export const POST = createHttpHandler(
 
         if (!toNumber) {
           // Mark as failed when no phone number is available
-          await ctx.supabase
+          const { error: failedUpdateError } = await ctx.supabase
             .from('reminders')
             .update({ status: 'failed', attempts: (attempts || 0) + 1 })
             .eq('id', id);
+          if (failedUpdateError) {
+            console.error(`Failed to mark reminder ${id} as failed:`, failedUpdateError);
+          }
           continue;
         }
 
@@ -64,10 +67,18 @@ export const POST = createHttpHandler(
             processed += 1;
           }
         } else {
-          await ctx.supabase
+          const MAX_ATTEMPTS = 5;
+          const newAttempts = (attempts || 0) + 1;
+          const { error: retryUpdateError } = await ctx.supabase
             .from('reminders')
-            .update({ attempts: (attempts || 0) + 1 })
+            .update({
+              attempts: newAttempts,
+              status: newAttempts >= MAX_ATTEMPTS ? 'failed' : 'pending',
+            })
             .eq('id', id);
+          if (retryUpdateError) {
+            console.error(`Failed to update attempts for reminder ${id}:`, retryUpdateError);
+          }
         }
       } catch (err) {
         // Continue processing other reminders

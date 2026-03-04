@@ -33,6 +33,7 @@ export const POST = createHttpHandler(
 
     if (reservationError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservation'));
     if (!reservation) throw ApiErrorFactory.notFound('Reservation not found');
+    if (!reservation.phone) throw ApiErrorFactory.badRequest('Reservation missing phone number for reminder');
     if (typeof reservation.start_at !== 'string') {
       throw ApiErrorFactory.internalServerError(new Error('Invalid reservation start time'));
     }
