@@ -22,7 +22,10 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
-    if (!transactionId) {
+    const normalizedTransactionId =
+      typeof transactionId === 'string' ? transactionId.trim() : '';
+
+    if (!normalizedTransactionId) {
       throw ApiErrorFactory.validationError({ transactionId: 'Transaction ID is required' });
     }
 
@@ -30,7 +33,7 @@ export const POST = createHttpHandler(
     const paymentService = new PaymentService(ctx.supabase);
     const result = await paymentService.processRefund({
       tenantId: tenantId,
-      transactionId,
+      transactionId: normalizedTransactionId,
       amount,
       reason,
     });

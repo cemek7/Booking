@@ -232,7 +232,7 @@ class LLMAlertService {
         isCritical ||
         (alertType === 'budget_warning' && config.budget_alerts) ||
         (alertType === 'quota_warning' && config.quota_alerts) ||
-        alertType === 'daily_report'
+        (alertType === 'daily_report' && config.daily_reports)
       )
     ) {
       channels.push('email');
@@ -244,7 +244,7 @@ class LLMAlertService {
     
     if (
       config.whatsapp_notifications &&
-      (isCritical || alertType === 'daily_report') &&
+      (isCritical || (alertType === 'daily_report' && config.daily_reports)) &&
       config.notification_phone
     ) {
       channels.push('whatsapp');
@@ -288,21 +288,27 @@ class LLMAlertService {
 
     const supabase = this.supabase;
     if (allSucceeded) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('llm_alert_notifications')
         .update({
           status: 'sent',
           sent_at: new Date().toISOString(),
         })
         .eq('id', alert.id);
+      if (updateError) {
+        console.error('Failed to persist sent status:', updateError);
+      }
     } else {
-      await supabase
+      const { error: updateError } = await supabase
         .from('llm_alert_notifications')
         .update({
           status: 'failed',
           retry_count: alert.retry_count + 1,
         })
         .eq('id', alert.id);
+      if (updateError) {
+        console.error('Failed to persist failed status:', updateError);
+      }
     }
   }
 

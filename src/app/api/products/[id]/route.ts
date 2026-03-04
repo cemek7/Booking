@@ -201,7 +201,7 @@ export const PUT = createHttpHandler(
         
         if (quantityChange !== 0) {
           // Log inventory movement
-          await ctx.supabase
+          const { error: movementError } = await ctx.supabase
             .from('inventory_movements')
             .insert({
               tenant_id: existingProduct.tenant_id,
@@ -213,6 +213,10 @@ export const PUT = createHttpHandler(
               reason: 'Manual adjustment via product update',
               performed_by: ctx.user!.id,
             });
+
+          if (movementError) {
+            console.error('Failed to log inventory movement:', movementError);
+          }
         }
         
         updateData.stock_quantity = body.stock_quantity;
@@ -262,20 +266,21 @@ export const PUT = createHttpHandler(
  */
 export const DELETE = createHttpHandler(
   async (ctx) => {
-    const id = ctx.request.url.split('/').pop();
+    const url = new URL(ctx.request.url);
+    const id = url.pathname.split('/').pop();
     if (!id) throw ApiErrorFactory.badRequest('Product ID required');
 
-    // Get user's tenant(s)
+    // Get user's tenant(s) including per-tenant role
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
-      .select('tenant_id')
+      .select('tenant_id, role')
       .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase
@@ -289,8 +294,20 @@ export const DELETE = createHttpHandler(
       throw ApiErrorFactory.notFound('Product not found');
     }
 
+    // Resolve per-tenant role and check delete permission
+    const tenantMembership = tenantUsers.find(
+      (tu: { tenant_id: string; role: string }) => tu.tenant_id === existingProduct.tenant_id
+    );
+    if (!tenantMembership) {
+      throw ApiErrorFactory.forbidden('No access to the product tenant');
+    }
+    const perTenantRole = tenantMembership.role as keyof typeof PRODUCT_ROLE_PERMISSIONS;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[perTenantRole];
+    if (!permissions || !permissions.canDelete) {
+      throw ApiErrorFactory.forbidden('Not authorised to delete products');
+    }
+
     // Check for URL parameter to determine if this should be a hard delete
-    const url = new URL(ctx.request.url);
     const forceDelete = url.searchParams.get('force') === 'true';
 
     if (forceDelete) {
