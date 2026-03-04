@@ -196,7 +196,8 @@ export default function PieChart({
               height={36}
               wrapperStyle={{ fontSize: '12px' }}
               formatter={(value, entry: LegendPayload) => {
-                const percentage = total > 0 ? ((((entry.payload as { value?: number } | undefined)?.value ?? 0) / total) * 100).toFixed(1) : 0;
+                const payloadValue = (entry.payload as { value?: number } | undefined)?.value ?? 0;
+                const percentage = total > 0 ? ((payloadValue / total) * 100).toFixed(1) : 0;
                 return `${value} (${percentage}%)`;
               }}
             />

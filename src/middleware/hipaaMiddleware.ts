@@ -33,6 +33,21 @@ export interface PHIAccessContext {
 }
 
 /**
+ * Structured details payload for security incidents
+ */
+interface SecurityIncidentDetails {
+  tenant_id?: string;
+  user_id?: string;
+  activity_type?: string;
+  details?: unknown;
+  error?: string;
+  context?: string;
+  request_url?: string;
+  ip_address?: string;
+  user_agent?: string;
+}
+
+/**
  * HIPAA Compliance Middleware for automatic PHI access logging
  */
 export class HIPAAMiddleware {
@@ -449,9 +464,8 @@ export class HIPAAMiddleware {
     return data ? [...new Set(data.map(record => record.ip_address))] : [];
   }
   
-  private async logSecurityIncident(type: string, details: unknown): Promise<void> {
+  private async logSecurityIncident(type: string, details: SecurityIncidentDetails): Promise<void> {
     try {
-      const record = details as Record<string, unknown>;
       await this.supabase
         .from('security_incidents')
         .insert({
@@ -459,7 +473,7 @@ export class HIPAAMiddleware {
           severity: 'medium',
           description: `Automated detection: ${type}`,
           details: JSON.stringify(details),
-          tenant_id: (record.tenant_id as string | undefined) || 'system'
+          tenant_id: details.tenant_id || 'system'
         });
     } catch (error) {
       console.error('Error logging security incident:', error);
