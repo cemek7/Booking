@@ -21,6 +21,13 @@ import { getUnifiedAnalyticsAccess, validateAnalyticsRequest, getAnalyticsScope 
 import { Role } from '@/types/roles';
 import type { BookingTrendData, StaffPerformanceData, DashboardMetric } from '@/types/analytics-api';
 
+// Recharts tooltip formatter parameter types (avoids repeating the union inline)
+type TooltipValue = number | string | ReadonlyArray<number | string> | undefined;
+type TooltipName = number | string | undefined;
+
+// The validated scope values accepted by validateAnalyticsRequest (excludes 'none')
+type ValidatedScope = 'personal' | 'team' | 'tenant' | 'global';
+
 export type { BookingTrendData, StaffPerformanceData };
 /** @deprecated Use DashboardMetric from '@/types/analytics-api' instead */
 export type AnalyticsMetric = DashboardMetric;
@@ -56,7 +63,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   // Validate at the role's natural scope (manager → 'team', owner → 'tenant', etc.)
   // so that managers are not incorrectly blocked by a tenant-level scope check.
   const roleScope = getAnalyticsScope(userRole);
-  const validationScope: 'personal' | 'team' | 'tenant' | 'global' =
+  const validationScope: ValidatedScope =
     roleScope === 'none' ? 'personal' : roleScope;
   const tenantValidation = validateAnalyticsRequest(userRole, validationScope, tenantId, userId);
 
@@ -334,7 +341,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                     <YAxis />
                     <Tooltip 
                       labelFormatter={(value: unknown) => new Date(value as string).toLocaleDateString()}
-                      formatter={(value: number | string | ReadonlyArray<number | string> | undefined, name: number | string | undefined) => {
+                      formatter={(value: TooltipValue, name: TooltipName) => {
                         const numValue = typeof value === 'number' ? value : 0;
                         const nameStr = String(name || 'value');
                         return [
@@ -386,7 +393,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                     <XAxis dataKey="staff_name" />
                     <YAxis />
                     <Tooltip 
-                      formatter={(value: number | string | ReadonlyArray<number | string> | undefined, name: number | string | undefined) => {
+                      formatter={(value: TooltipValue, name: TooltipName) => {
                         const numValue = typeof value === 'number' ? value : 0;
                         const nameStr = String(name || 'value');
                         return [
