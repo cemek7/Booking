@@ -1,10 +1,11 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ManagerMetrics from '@/components/analytics/ManagerMetrics';
+import { authFetch } from '@/lib/auth/auth-api-client';
 
-// Mock authFetch to return role-appropriate data
+// Mock authFetch to return role-appropriate, team-scoped data
 jest.mock('@/lib/auth/auth-api-client', () => ({
   authFetch: jest.fn().mockImplementation((url: string) => {
     if (url.includes('metric=overview')) {
@@ -21,31 +22,48 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
         },
       });
     }
+    if (url.includes('metric=bookings')) {
+      return Promise.resolve({
+        status: 200,
+        data: {
+          bookingsByStatus: { completed: 30, confirmed: 5, pending: 3, cancelled: 2, noShow: 2 },
+          bookingTrends: [
+            { date: '2024-01-01', bookings: 5, completed: 4, cancelled: 1 },
+            { date: '2024-01-02', bookings: 8, completed: 7, cancelled: 1 },
+            { date: '2024-01-03', bookings: 6, completed: 6, cancelled: 0 },
+          ],
+          peakHours: [{ hour: '10:00', bookings: 8 }, { hour: '14:00', bookings: 6 }],
+          cancellationReasons: [],
+        },
+      });
+    }
     return Promise.resolve({ status: 200, data: {} });
   }),
 }));
 
-// Mock all chart components
+const mockAuthFetch = authFetch as jest.Mock;
+
+// Mock all chart components — capture data prop for assertion in team-scope tests
 jest.mock('@/components/analytics/charts/TrendChart', () => {
-  return function MockTrendChart({ title }: any) {
-    return <div data-testid="trend-chart">{title}</div>;
+  return function MockTrendChart({ title, data }: { title: string; data: unknown[] }) {
+    return <div data-testid="trend-chart" data-item-count={data?.length ?? 0}>{title}</div>;
   };
 });
 
 jest.mock('@/components/analytics/charts/BarChart', () => {
-  return function MockBarChart({ title }: any) {
+  return function MockBarChart({ title }: { title: string }) {
     return <div data-testid="bar-chart">{title}</div>;
   };
 });
 
 jest.mock('@/components/analytics/charts/PieChart', () => {
-  return function MockPieChart({ title }: any) {
+  return function MockPieChart({ title }: { title: string }) {
     return <div data-testid="pie-chart">{title}</div>;
   };
 });
 
 jest.mock('@/components/analytics/charts/AreaChart', () => {
-  return function MockAreaChart({ title }: any) {
+  return function MockAreaChart({ title }: { title: string }) {
     return <div data-testid="area-chart">{title}</div>;
   };
 });
@@ -147,6 +165,36 @@ describe('ManagerMetrics', () => {
       renderWithQueryClient(<ManagerMetrics {...defaultProps} />);
       await waitFor(() => expect(screen.getByText('Schedule Utilization')).toBeInTheDocument());
       expect(screen.getByText('Completion Rate')).toBeInTheDocument();
+    });
+  });
+
+  describe('Data Scoping', () => {
+    beforeEach(() => {
+      mockAuthFetch.mockClear();
+    });
+
+    it('should NOT call the tenant-wide /api/analytics/trends endpoint', async () => {
+      renderWithQueryClient(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Bookings')).toBeInTheDocument());
+      const allCalls = mockAuthFetch.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(allCalls.some((url: string) => url.includes('/api/analytics/trends'))).toBe(false);
+    });
+
+    it('should call the team-scoped /api/manager/analytics?metric=bookings endpoint', async () => {
+      renderWithQueryClient(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => expect(screen.getByText('Team Bookings')).toBeInTheDocument());
+      const allCalls = mockAuthFetch.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(allCalls.some((url: string) => url.includes('/api/manager/analytics') && url.includes('metric=bookings'))).toBe(true);
+    });
+
+    it('should render team booking trend chart with data from bookings endpoint', async () => {
+      renderWithQueryClient(<ManagerMetrics {...defaultProps} />);
+      await waitFor(() => {
+        const chart = screen.getByText('Team Booking Trend');
+        expect(chart).toBeInTheDocument();
+        // The chart receives 3 data points from the mock bookingTrends
+        expect(chart.closest('[data-testid="trend-chart"]')?.getAttribute('data-item-count')).toBe('3');
+      });
     });
   });
 

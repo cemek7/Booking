@@ -33,6 +33,21 @@ export interface PHIAccessContext {
 }
 
 /**
+ * Structured details payload for security incidents
+ */
+interface SecurityIncidentDetails {
+  tenant_id?: string;
+  user_id?: string;
+  activity_type?: string;
+  details?: unknown;
+  error?: string;
+  context?: string;
+  request_url?: string;
+  ip_address?: string;
+  user_agent?: string;
+}
+
+/**
  * HIPAA Compliance Middleware for automatic PHI access logging
  */
 export class HIPAAMiddleware {
@@ -90,7 +105,7 @@ export class HIPAAMiddleware {
       // Check for suspicious activity
       const suspiciousActivity = await this.detectSuspiciousActivity(context);
       if (suspiciousActivity.detected) {
-        await this.handleSuspiciousActivity(context, suspiciousActivity as { type: string; details: any });
+        await this.handleSuspiciousActivity(context, suspiciousActivity);
       }
       
       observability.recordBusinessMetric('phi_request_processed_total', 1, {
@@ -291,11 +306,9 @@ export class HIPAAMiddleware {
   /**
    * Detect suspicious access patterns
    */
-  private async detectSuspiciousActivity(context: PHIAccessContext): Promise<{
-    detected: boolean;
-    type?: string;
-    details?: any;
-  }> {
+  private async detectSuspiciousActivity(context: PHIAccessContext): Promise<
+    { detected: false } | { detected: true; type: string; details: unknown }
+  > {
     // Check for rapid sequential access
     const recentAccess = await this.getRecentAccess(context.userId, 5 * 60 * 1000); // Last 5 minutes
     if (recentAccess.length > 20) {
@@ -335,7 +348,7 @@ export class HIPAAMiddleware {
    */
   private async handleSuspiciousActivity(
     context: PHIAccessContext,
-    activity: { type: string; details: any }
+    activity: { type: string; details: unknown }
   ): Promise<void> {
     // Log security incident
     await this.logSecurityIncident('SUSPICIOUS_ACTIVITY', {
@@ -428,7 +441,7 @@ export class HIPAAMiddleware {
     return count || 0;
   }
   
-  private async getRecentAccess(userId: string, timeWindowMs: number): Promise<any[]> {
+  private async getRecentAccess(userId: string, timeWindowMs: number): Promise<Array<{ accessed_at: string }>> {
     const { data } = await this.supabase
       .from('phi_access_logs')
       .select('accessed_at')
@@ -449,7 +462,7 @@ export class HIPAAMiddleware {
     return data ? [...new Set(data.map(record => record.ip_address))] : [];
   }
   
-  private async logSecurityIncident(type: string, details: any): Promise<void> {
+  private async logSecurityIncident(type: string, details: SecurityIncidentDetails): Promise<void> {
     try {
       await this.supabase
         .from('security_incidents')
@@ -465,7 +478,7 @@ export class HIPAAMiddleware {
     }
   }
   
-  private async sendSecurityAlert(context: PHIAccessContext, activity: any): Promise<void> {
+  private async sendSecurityAlert(context: PHIAccessContext, activity: { type: string; details: unknown }): Promise<void> {
     // Implementation for sending alerts to administrators
     console.log('Security Alert:', {
       user_id: context.userId,

@@ -147,8 +147,8 @@ export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
 
       <PerformanceTable
         data={sortedStaffMetrics}
-        title="Team Performance Breakdown"
-        description="All staff members — selected period"
+        title="Performance Breakdown"
+        description="Staff metrics — selected period"
         columns={[
           { key: 'user_id', label: 'Staff ID', sortable: true, formatValue: (v) => String(v).slice(0, 8) },
           { key: 'completed', label: 'Completed', sortable: true, align: 'right' },

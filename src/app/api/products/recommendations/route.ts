@@ -2,6 +2,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 import { Product } from '@/types/product-catalogue';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * AI-powered product recommendations
@@ -118,7 +119,7 @@ export const POST = createHttpHandler(
 );
 
 async function generateRecommendations(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   context: string,
   options: {
@@ -228,7 +229,7 @@ async function generateRecommendations(
 }
 
 async function addServiceBasedRecommendations(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   serviceIds: string[],
   scores: Map<string, RecommendationScore>
@@ -286,7 +287,7 @@ async function addServiceBasedRecommendations(
 }
 
 async function addProductAffinityRecommendations(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   productIds: string[],
   scores: Map<string, RecommendationScore>
@@ -332,7 +333,7 @@ async function addProductAffinityRecommendations(
 }
 
 async function addCustomerHistoryRecommendations(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   customerId: string,
   scores: Map<string, RecommendationScore>

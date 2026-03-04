@@ -88,7 +88,7 @@ describe('StaffMetrics', () => {
 
     it('should render the team performance table', () => {
       render(<StaffMetrics {...defaultProps} />);
-      expect(screen.getByText('Team Performance Breakdown')).toBeInTheDocument();
+      expect(screen.getByText('Performance Breakdown')).toBeInTheDocument();
     });
   });
 
