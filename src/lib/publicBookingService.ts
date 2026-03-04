@@ -8,9 +8,10 @@
  * - Business hours are stored in the tenant's local timezone
  */
 
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
+import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 
 const SLOT_INTERVAL_MINUTES = 30;
 
@@ -255,32 +256,95 @@ export async function createPublicBooking(
 
   const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
 
-  // Create booking
-  const { data: booking, error: bookingErr } = await supabase
-    .from('reservations')
-    .insert({
-      tenant_id: tenantId,
-      customer_id: customer.id,
-      service_id: payload.service_id,
-      staff_id: payload.staff_id || null,
-      start_at: startTime.toISOString(),
-      end_at: endTime.toISOString(),
-      status: 'pending',
-      notes: payload.notes,
-      source: 'public_booking',
-      metadata: {
-        booking_source: 'public_storefront',
-        timestamp: new Date().toISOString(),
-      },
-    })
-    .select('id')
-    .single();
+  // Use DoubleBookingPrevention service for transactionally safe conflict detection
+  // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint
+  // operating with anon role which would otherwise fail on RLS policies.
+  // SECURITY NOTE: The admin client bypasses ALL RLS policies, but DoubleBookingPrevention
+  // is designed to only access reservation_locks and reservations tables. Future: consider
+  // creating a more restricted service role or using function-level RLS bypass.
+  const adminClient = createSupabaseAdminClient();
+  const bookingPrevention = new DoubleBookingPrevention(adminClient);
+  
+  // Acquire slot lock to prevent race conditions
+  const lockResult = await bookingPrevention.acquireSlotLock({
+    tenantId,
+    startAt: startTime.toISOString(),
+    endAt: endTime.toISOString(),
+    resourceId: payload.staff_id,
+    lockDurationMinutes: 2, // Short lock for public booking
+  });
 
-  if (bookingErr || !booking) {
-    throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
+  if (!lockResult.success) {
+    if (lockResult.isConflict) {
+      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+    }
+    throw ApiErrorFactory.internalServerError(new Error(lockResult.error || 'Failed to acquire booking lock'));
   }
 
-  return booking;
+  try {
+    // Perform comprehensive conflict check with proper overlap detection.
+    // 
+    // BUSINESS LOGIC: Conflict scope behavior
+    // - When staff_id IS provided: Checks conflicts only for that specific staff member,
+    //   allowing multiple staff to be booked simultaneously.
+    // 
+    // - When staff_id IS NOT provided: Checks conflicts only with OTHER unassigned bookings
+    //   (where staff_id IS NULL). This allows unassigned bookings even when some staff members
+    //   are busy, since the booking can later be assigned to any available staff member.
+    //   This is more permissive than a tenant-wide check and appropriate for multi-staff systems.
+    const conflictCheck = await bookingPrevention.checkBookingConflicts({
+      tenantId,
+      startAt: startTime.toISOString(),
+      endAt: endTime.toISOString(),
+      resourceIds: payload.staff_id ? [payload.staff_id] : undefined,
+      checkUnassignedOnly: !payload.staff_id, // Only check unassigned when no staff specified
+    });
+
+    if (conflictCheck.hasConflict) {
+      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
+    }
+
+    // Create booking atomically after conflict check passes
+    const { data: booking, error: bookingErr } = await supabase
+      .from('reservations')
+      .insert({
+        tenant_id: tenantId,
+        customer_id: customer.id,
+        service_id: payload.service_id,
+        staff_id: payload.staff_id || null,
+        start_at: startTime.toISOString(),
+        end_at: endTime.toISOString(),
+        status: 'pending',
+        notes: payload.notes,
+        source: 'public_booking',
+        metadata: {
+          booking_source: 'public_storefront',
+          timestamp: new Date().toISOString(),
+        },
+      })
+      .select('id')
+      .single();
+
+    if (bookingErr || !booking) {
+      throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
+    }
+
+    return booking;
+  } finally {
+    // Always release the lock, even if an error occurs
+    // Wrap in try/catch to prevent lock release errors from masking the original exception
+    if (lockResult.lockId) {
+      try {
+        await bookingPrevention.releaseSlotLock(lockResult.lockId);
+      } catch (releaseError) {
+        // Log the release error but don't throw to preserve the original error
+        console.error('Failed to release slot lock:', {
+          lockId: lockResult.lockId,
+          error: releaseError instanceof Error ? releaseError.message : String(releaseError)
+        });
+      }
+    }
+  }
 }
 
 /**

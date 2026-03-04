@@ -9,27 +9,63 @@ type RedisClient = any;
 type RedisErrorKind = 'instantiation' | 'connection';
 type RedisError = Error & { redisErrorKind?: RedisErrorKind };
 
+/**
+ * Module-level state for Redis client singleton.
+ * 
+ * State Invariant: If connectError is non-null, then client MUST be null.
+ * This invariant is maintained by ensureClient() which sets client=null when
+ * connection fails (line 101). This ensures we never have a client instance
+ * in an error state.
+ * 
+ * Valid states:
+ * 1. Uninitialized: client=null, connectError=null, connectPromise=null
+ * 2. IORedis (sync): client!=null, connectError=null, connectPromise=null
+ * 3. node-redis (connecting): client!=null, connectError=null, connectPromise!=null
+ * 4. node-redis (connected): client!=null, connectError=null, connectPromise=null
+ * 5. Failed: client=null, connectError!=null, connectPromise=null
+ */
 let client: RedisClient | null = null;
 let connectPromise: Promise<void> | null = null;
 let connectError: RedisError | null = null;
+let initializationPromise: Promise<RedisClient> | null = null;
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause?: unknown): RedisError {
-  const error = (cause ? new Error(message, { cause }) : new Error(message)) as RedisError;
+  const error = new Error(message, cause != null ? { cause } : undefined) as RedisError;
   error.redisErrorKind = redisErrorKind;
   return error;
 }
 
 export function isRedisFeatureEnabled() {
   const flag = process.env.REDIS_ENABLED;
-  if (typeof flag === 'string') {
-    return ENABLED_VALUES.has(flag.toLowerCase());
+  const hasRedisUrl = Boolean(process.env.REDIS_URL);
+  
+  // If REDIS_ENABLED is explicitly set (non-empty string), it takes precedence
+  if (typeof flag === 'string' && flag.trim() !== '') {
+    const isExplicitlyEnabled = ENABLED_VALUES.has(flag.trim().toLowerCase());
+    // If explicitly enabled, also require REDIS_URL to prevent runtime failures
+    if (isExplicitlyEnabled) {
+      return hasRedisUrl;
+    }
+    // If explicitly disabled (e.g., "false", "0"), respect that regardless of REDIS_URL
+    return false;
   }
 
-  return Boolean(process.env.REDIS_URL);
+  // If REDIS_ENABLED is empty/unset, fall back to REDIS_URL presence
+  return hasRedisUrl;
 }
 
+/**
+ * Checks if a Redis client package (ioredis or redis) is installed.
+ * 
+ * NOTE: This function uses require.resolve, a Node.js CJS API.
+ * It is intended for server-side use only (Node.js runtime, not edge runtime).
+ * The try-catch blocks provide runtime safety, but this code may behave
+ * unpredictably in certain bundler contexts or edge runtime environments.
+ * 
+ * @returns {boolean} true if either ioredis or redis package is available
+ */
 export function hasInstalledRedisClient() {
   return isModuleAvailable('ioredis') || isModuleAvailable('redis');
 }
@@ -111,34 +147,118 @@ function ensureClient() {
   const url = process.env.REDIS_URL;
   if (!url) throw new Error('REDIS_URL not configured');
 
-  // Attempt ioredis
-  if (isModuleAvailable('ioredis')) {
-    return createIORedisClient(url);
-  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const IORedis = require('ioredis');
+    try {
+      connectPromise = null;
+      connectError = null;
+      client = new IORedis(url);
+      return client;
+    } catch (instantiationError) {
+      throw createRedisError(
+        `ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
+        'instantiation',
+        instantiationError
+      );
+    }
+  } catch (requireError) {
+    if ((requireError as RedisError).redisErrorKind === 'instantiation') {
+      throw requireError;
+    }
 
-  // Attempt node-redis
-  if (isModuleAvailable('redis')) {
-    return createNodeRedisClient(url);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const redis = require('redis');
+      try {
+        connectPromise = null;
+        connectError = null;
+        client = redis.createClient({ url });
+
+        if (typeof client.connect === 'function') {
+          connectPromise = Promise.resolve(client.connect())
+            .then(() => {
+              connectError = null;
+              connectPromise = null;
+            })
+            .catch((error: unknown) => {
+              const wrappedError = createRedisError(
+                `node-redis connect failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                'connection',
+                error
+              );
+              connectError = wrappedError;
+              client = null;
+              connectPromise = null;
+              defaultLogger.error('Redis connect failed', { error: wrappedError.message });
+              throw wrappedError;
+            });
+        }
+
+        return client;
+      } catch (instantiationError) {
+        throw createRedisError(
+          `node-redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
+          'instantiation',
+          instantiationError
+        );
+      }
+    } catch (nodeRedisError) {
+      if ((nodeRedisError as RedisError).redisErrorKind === 'instantiation') {
+        throw nodeRedisError;
+      }
+
+      throw new Error('Neither ioredis nor redis client library is installed');
+    }
   }
 
   throw new Error('Redis client not installed (ioredis or redis)');
 }
 
 async function ensureReadyClient() {
-  ensureClient();
-
-  if (connectPromise) {
-    await connectPromise;
+  // If we're already initializing, wait for that initialization to complete
+  if (initializationPromise) {
+    return initializationPromise;
   }
 
-  if (connectError) {
-    throw connectError;
+  // If we have a client, check if it's ready
+  // Note: We don't check !connectError here because the state invariant
+  // guarantees that if connectError is set, client will be null.
+  // See module-level documentation for details on state management.
+  if (client) {
+    if (connectPromise) {
+      await connectPromise;
+    }
+    if (connectError) {
+      throw connectError;
+    }
+    return client;
   }
 
-  if (!client) {
-    throw new Error('Redis client unavailable after connection failure');
-  }
-  return client;
+  // Start initialization and store the promise so concurrent callers can await it
+  initializationPromise = (async () => {
+    try {
+      ensureClient();
+
+      if (connectPromise) {
+        await connectPromise;
+      }
+
+      if (connectError) {
+        throw connectError;
+      }
+
+      if (!client) {
+        throw new Error('Redis client unavailable after connection');
+      }
+
+      return client;
+    } finally {
+      initializationPromise = null;
+    }
+  })();
+
+  return initializationPromise;
 }
 
 export async function lpushRecent(chatId: string, messageObj: object, maxLen = 200) {

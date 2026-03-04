@@ -154,6 +154,10 @@ export function createApiHandler(
           params,
         });
 
+        if (result instanceof NextResponse) {
+          return result;
+        }
+
         // Return response
         return NextResponse.json(result, { status: 200 });
       } else {
@@ -164,6 +168,10 @@ export function createApiHandler(
           supabase,
           params,
         });
+
+        if (result instanceof NextResponse) {
+          return result;
+        }
 
         return NextResponse.json(result, { status: 200 });
       }

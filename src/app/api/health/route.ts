@@ -1,5 +1,5 @@
+import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { hasInstalledRedisClient, isRedisConfigured, isRedisFeatureEnabled, pingRedis } from '@/lib/redis';
 
 // --- Configuration ---
@@ -16,6 +16,8 @@ const {
   EVOLUTION_INSTANCE_NAME,
   AWS_ACCESS_KEY_ID,
   AWS_S3_BUCKET,
+  NEXT_PUBLIC_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY,
 } = process.env;
 
 const SERVICE_TIMEOUT = 10000; // 10 seconds
@@ -57,11 +59,20 @@ interface HealthCheckResult {
 
 async function checkSupabaseHealth(): Promise<HealthStatus> {
   const checkStart = Date.now();
+
+  if (!NEXT_PUBLIC_SUPABASE_URL || !NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return {
+      status: 'unhealthy',
+      last_check: new Date().toISOString(),
+      error: 'Supabase configuration missing',
+    };
+  }
+
   try {
     const response = await fetch(
-      `${process.env.SUPABASE_URL}/rest/v1/?${new URLSearchParams({ limit: '1' })}`,
+      `${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/?${new URLSearchParams({ limit: '1' })}`,
       {
-        headers: { 'apikey': process.env.SUPABASE_ANON_KEY || '' },
+        headers: { apikey: NEXT_PUBLIC_SUPABASE_ANON_KEY },
         signal: AbortSignal.timeout(SERVICE_TIMEOUT),
       }
     );
@@ -134,7 +145,7 @@ async function checkRedisHealth(): Promise<HealthStatus> {
   }
 
   if (!hasInstalledRedisClient()) {
-    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis client library not installed' };
+    return { status: 'degraded', last_check: new Date().toISOString(), error: 'Redis configured but client library not installed' };
   }
   try {
     await Promise.race([
@@ -160,10 +171,11 @@ async function checkRedisHealth(): Promise<HealthStatus> {
  * Returns detailed service health status
  */
 export const GET = createHttpHandler(
-  async (ctx) => {
+  async () => {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
+    // Run service checks in parallel to reduce worst-case response time
     const [database, ai_services, whatsapp_evolution, storage, redis] = await Promise.all([
       checkSupabaseHealth(),
       checkAIServicesHealth(),
@@ -202,11 +214,11 @@ export const GET = createHttpHandler(
       },
     };
 
-    return { 
-      ...healthCheck,
-      _httpStatus: overallStatus === 'healthy' ? 200 : 503
-    };
+    // Return NextResponse with custom status code for unhealthy state
+    return NextResponse.json(healthCheck, {
+      status: overallStatus === 'healthy' ? 200 : 503,
+    });
   },
   'GET',
-  { auth: false } // Public endpoint, no auth required
+  { auth: false }
 );

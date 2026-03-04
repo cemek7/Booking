@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { verifyStripeSignature } from '@/lib/webhooks/validation';
@@ -22,13 +23,13 @@ export const POST = createHttpHandler(
 
     if (!webhookSecret) {
       console.error('[api/payments/stripe] STRIPE_WEBHOOK_SECRET not configured');
-      return { error: 'Webhook not configured' };
+      return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
 
     // Verify signature (prevents forged webhooks)
     if (!verifyStripeSignature(rawBody, signature, webhookSecret)) {
       console.warn('🚨 [api/payments/stripe] SECURITY: Invalid Stripe webhook signature rejected');
-      return { error: 'Invalid signature', code: 'INVALID_SIGNATURE' };
+      return NextResponse.json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' }, { status: 400 });
     }
 
     // ✅ Signature verified - safe to process
@@ -37,7 +38,7 @@ export const POST = createHttpHandler(
       event = JSON.parse(rawBody);
     } catch (error) {
       console.error('[api/payments/stripe] Failed to parse webhook body:', error);
-      return { error: 'Invalid JSON' };
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
     // Map to transactions table
