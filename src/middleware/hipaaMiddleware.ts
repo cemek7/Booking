@@ -105,7 +105,7 @@ export class HIPAAMiddleware {
       // Check for suspicious activity
       const suspiciousActivity = await this.detectSuspiciousActivity(context);
       if (suspiciousActivity.detected) {
-        await this.handleSuspiciousActivity(context, suspiciousActivity as { type: string; details: unknown });
+        await this.handleSuspiciousActivity(context, suspiciousActivity);
       }
       
       observability.recordBusinessMetric('phi_request_processed_total', 1, {
@@ -306,11 +306,9 @@ export class HIPAAMiddleware {
   /**
    * Detect suspicious access patterns
    */
-  private async detectSuspiciousActivity(context: PHIAccessContext): Promise<{
-    detected: boolean;
-    type?: string;
-    details?: unknown;
-  }> {
+  private async detectSuspiciousActivity(context: PHIAccessContext): Promise<
+    { detected: false } | { detected: true; type: string; details: unknown }
+  > {
     // Check for rapid sequential access
     const recentAccess = await this.getRecentAccess(context.userId, 5 * 60 * 1000); // Last 5 minutes
     if (recentAccess.length > 20) {

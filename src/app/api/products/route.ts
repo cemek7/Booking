@@ -3,6 +3,17 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { Product, ProductListQuery, CreateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/auth/role-utils';
 
+/** Columns that may be used for ORDER BY on the products table */
+const ALLOWED_SORT_COLUMNS = new Set([
+  'created_at', 'updated_at', 'name', 'price_cents',
+  'stock_quantity', 'upsell_priority', 'brand', 'sku',
+] as const);
+
+/** Accepted values for the `status` filter */
+const ALLOWED_STATUS_VALUES = new Set([
+  'all', 'active', 'inactive', 'featured', 'low_stock', 'out_of_stock',
+] as const);
+
 /**
  * GET /api/products
  * List products with filtering, search, and pagination
@@ -24,6 +35,16 @@ export const GET = createHttpHandler(
       include_variants: url.searchParams.get('include_variants') === 'true',
       include_stock_info: url.searchParams.get('include_stock_info') === 'true',
     };
+
+    // Validate sort column against allowlist to prevent arbitrary column injection
+    if (query.sort && !ALLOWED_SORT_COLUMNS.has(query.sort as never)) {
+      throw ApiErrorFactory.validationError({ sort: `Invalid sort column. Allowed values: ${[...ALLOWED_SORT_COLUMNS].join(', ')}` });
+    }
+
+    // Validate status against allowlist
+    if (query.status && !ALLOWED_STATUS_VALUES.has(query.status as never)) {
+      throw ApiErrorFactory.validationError({ status: `Invalid status. Allowed values: ${[...ALLOWED_STATUS_VALUES].join(', ')}` });
+    }
 
     // Get user's tenant(s)
     const { data: tenantUsers } = await ctx.supabase

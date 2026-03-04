@@ -10,7 +10,7 @@ export interface TableColumn<T> {
   key: keyof T | string;
   label: string;
   sortable?: boolean;
-  formatValue?: (value: unknown, row: T) => React.ReactNode;
+  formatValue?: (value: T[keyof T], row: T) => React.ReactNode;
   align?: 'left' | 'center' | 'right';
   width?: string;
 }
