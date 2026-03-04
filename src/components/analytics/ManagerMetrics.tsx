@@ -13,7 +13,7 @@ import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
 import { Users, Calendar, Clock, TrendingUp, DollarSign, Star } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
-import type { ManagerOverviewMetrics, StaffPerformanceData, BookingTrendData } from '@/types/analytics-api';
+import type { ManagerOverviewMetrics, StaffPerformanceData } from '@/types/analytics-api';
 import type { ManagerRevenueData, ManagerBookingData } from '@/lib/services/manager-analytics-service';
 import { PERIOD_TO_STAFF_PERIOD } from './shared/analytics-constants';
 
@@ -46,18 +46,6 @@ export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps
         { headers }
       );
       return res.status === 200 ? res.data ?? null : null;
-    },
-    enabled: !!tenantId,
-  });
-
-  const { data: trends = [], isLoading: trendsLoading } = useQuery({
-    queryKey: ['managerTrends', tenantId, period],
-    queryFn: async () => {
-      const res = await authFetch<{ trends?: BookingTrendData[] }>(
-        `/api/analytics/trends?days=30`,
-        { headers: { 'X-Tenant-ID': tenantId } }
-      );
-      return res.status === 200 ? res.data?.trends ?? [] : [];
     },
     enabled: !!tenantId,
   });
@@ -107,9 +95,13 @@ export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps
     enabled: !!tenantId,
   });
 
-  const loading = overviewLoading || trendsLoading || teamLoading || revenueLoading || bookingLoading;
+  const loading = overviewLoading || teamLoading || revenueLoading || bookingLoading;
 
-  const hasData = Boolean(overview) || trends.length > 0 || staffPerformance.length > 0;
+  // Derive team-scoped booking trend from the already-fetched bookingData
+  // (bookingTrends is scoped to the manager's team via getManagedStaffIds)
+  const trendData = (bookingData?.bookingTrends || []).map((t) => ({ ...t, value: t.bookings }));
+
+  const hasData = Boolean(overview) || trendData.length > 0 || staffPerformance.length > 0;
   const formatCurrency = (value: number | string) => `$${Number(value || 0).toLocaleString()}`;
 
   const bookingStatusData = bookingData?.bookingsByStatus
@@ -153,7 +145,7 @@ export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps
 
       {/* Booking & Revenue Trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <TrendChart data={trends} dataKey="bookings" title="Team Booking Trend" description="Bookings over time" color="#3b82f6" showTrend />
+        <TrendChart data={trendData} dataKey="bookings" title="Team Booking Trend" description="Team bookings over time" color="#3b82f6" showTrend />
         <AreaChart
           data={revenue?.trends || []}
           dataKeys={['revenue']}

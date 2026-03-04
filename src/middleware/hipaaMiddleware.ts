@@ -90,7 +90,7 @@ export class HIPAAMiddleware {
       // Check for suspicious activity
       const suspiciousActivity = await this.detectSuspiciousActivity(context);
       if (suspiciousActivity.detected) {
-        await this.handleSuspiciousActivity(context, suspiciousActivity as { type: string; details: any });
+        await this.handleSuspiciousActivity(context, suspiciousActivity as { type: string; details: unknown });
       }
       
       observability.recordBusinessMetric('phi_request_processed_total', 1, {
@@ -294,7 +294,7 @@ export class HIPAAMiddleware {
   private async detectSuspiciousActivity(context: PHIAccessContext): Promise<{
     detected: boolean;
     type?: string;
-    details?: any;
+    details?: unknown;
   }> {
     // Check for rapid sequential access
     const recentAccess = await this.getRecentAccess(context.userId, 5 * 60 * 1000); // Last 5 minutes
@@ -335,7 +335,7 @@ export class HIPAAMiddleware {
    */
   private async handleSuspiciousActivity(
     context: PHIAccessContext,
-    activity: { type: string; details: any }
+    activity: { type: string; details: unknown }
   ): Promise<void> {
     // Log security incident
     await this.logSecurityIncident('SUSPICIOUS_ACTIVITY', {
@@ -428,7 +428,7 @@ export class HIPAAMiddleware {
     return count || 0;
   }
   
-  private async getRecentAccess(userId: string, timeWindowMs: number): Promise<any[]> {
+  private async getRecentAccess(userId: string, timeWindowMs: number): Promise<Array<{ accessed_at: string }>> {
     const { data } = await this.supabase
       .from('phi_access_logs')
       .select('accessed_at')
@@ -449,8 +449,9 @@ export class HIPAAMiddleware {
     return data ? [...new Set(data.map(record => record.ip_address))] : [];
   }
   
-  private async logSecurityIncident(type: string, details: any): Promise<void> {
+  private async logSecurityIncident(type: string, details: unknown): Promise<void> {
     try {
+      const record = details as Record<string, unknown>;
       await this.supabase
         .from('security_incidents')
         .insert({
@@ -458,14 +459,14 @@ export class HIPAAMiddleware {
           severity: 'medium',
           description: `Automated detection: ${type}`,
           details: JSON.stringify(details),
-          tenant_id: details.tenant_id || 'system'
+          tenant_id: (record.tenant_id as string | undefined) || 'system'
         });
     } catch (error) {
       console.error('Error logging security incident:', error);
     }
   }
   
-  private async sendSecurityAlert(context: PHIAccessContext, activity: any): Promise<void> {
+  private async sendSecurityAlert(context: PHIAccessContext, activity: { type: string; details: unknown }): Promise<void> {
     // Implementation for sending alerts to administrators
     console.log('Security Alert:', {
       user_id: context.userId,

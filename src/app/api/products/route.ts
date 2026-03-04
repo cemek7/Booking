@@ -12,12 +12,12 @@ export const GET = createHttpHandler(
     const url = new URL(ctx.request.url);
     const query: ProductListQuery = {
       category_id: url.searchParams.get('category_id') || undefined,
-      status: (url.searchParams.get('status') as any) || 'all',
+      status: (url.searchParams.get('status') as string | undefined) || 'all',
       search: url.searchParams.get('search') || undefined,
       tags: url.searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
       price_min: url.searchParams.get('price_min') ? parseInt(url.searchParams.get('price_min')!) : undefined,
       price_max: url.searchParams.get('price_max') ? parseInt(url.searchParams.get('price_max')!) : undefined,
-      sort: (url.searchParams.get('sort') as any) || 'created_at',
+      sort: (url.searchParams.get('sort') as string | undefined) || 'created_at',
       order: (url.searchParams.get('order') as 'asc' | 'desc') || 'desc',
       page: parseInt(url.searchParams.get('page') || '1'),
       limit: Math.min(parseInt(url.searchParams.get('limit') || '20'), 100),

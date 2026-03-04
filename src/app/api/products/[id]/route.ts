@@ -157,7 +157,7 @@ export const PUT = createHttpHandler(
     }
 
     // Prepare update data (only include provided fields)
-    const updateData: Partial<any> = {
+    const updateData: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     };
 

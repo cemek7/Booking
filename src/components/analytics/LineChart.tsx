@@ -2,7 +2,7 @@ import React from 'react';
 import GlassCard from '@/components/ui/GlassCard';
 
 interface LineChartProps {
-  data: any; // Replace 'any' with a more specific type if possible
+  data: unknown; // Replace with a more specific type if possible
 }
 
 const LineChart: React.FC<LineChartProps> = ({ data }) => {

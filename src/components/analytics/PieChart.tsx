@@ -2,7 +2,7 @@ import React from 'react';
 import GlassCard from '@/components/ui/GlassCard';
 
 type PieChartProps = {
-  data: any[];
+  data: unknown[];
 };
 
 function PieChart({ data }: PieChartProps) {

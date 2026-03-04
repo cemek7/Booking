@@ -10,6 +10,7 @@ import {
   Legend,
   TooltipProps,
 } from 'recharts';
+import type { LegendPayload } from 'recharts/types/component/DefaultLegendContent';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export interface PieDataPoint {
@@ -194,8 +195,8 @@ export default function PieChart({
               verticalAlign="bottom"
               height={36}
               wrapperStyle={{ fontSize: '12px' }}
-              formatter={(value, entry: any) => {
-                const percentage = total > 0 ? ((entry.value / total) * 100).toFixed(1) : 0;
+              formatter={(value, entry: LegendPayload) => {
+                const percentage = total > 0 ? ((((entry.payload as { value?: number } | undefined)?.value ?? 0) / total) * 100).toFixed(1) : 0;
                 return `${value} (${percentage}%)`;
               }}
             />

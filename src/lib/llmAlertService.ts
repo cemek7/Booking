@@ -24,7 +24,7 @@ export interface AlertNotification {
   message: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   channels: ('email' | 'sms' | 'whatsapp' | 'in_app')[];
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   sent_at?: string;
   status: 'pending' | 'sent' | 'failed' | 'retry';
   retry_count: number;
@@ -45,7 +45,7 @@ class LLMAlertService {
       limit: number;
       percentage: number;
       metric: 'tokens' | 'cost' | 'requests';
-      [key: string]: any;
+      [key: string]: unknown;
     }
   ): Promise<void> {
     try {
@@ -158,7 +158,10 @@ class LLMAlertService {
   /**
    * Generate alert content based on type and data
    */
-  private generateAlertContent(alertType: AlertNotification['alert_type'], data: any) {
+  private generateAlertContent(
+    alertType: AlertNotification['alert_type'],
+    data: { currentUsage: number; limit: number; percentage: number; metric: string; [key: string]: unknown }
+  ) {
     const { currentUsage, limit, percentage, metric } = data;
     
     switch (alertType) {
