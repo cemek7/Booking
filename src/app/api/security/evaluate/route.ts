@@ -2,13 +2,19 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import SecurityAutomationService from '@/lib/securityAutomation';
 
+const assertSecurityAdminRole = (ctx: { user?: { role?: string } }) => {
+  if (!ctx.user || !['owner', 'superadmin'].includes(ctx.user.role || '')) {
+    throw ApiErrorFactory.forbidden('Insufficient role for security evaluation');
+  }
+};
+
 /**
  * POST /api/security/evaluate
  * Evaluate security rules - Requires owner/superadmin auth
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    // Auth check handled by handler (owner/superadmin required)
+    assertSecurityAdminRole(ctx);
     const securityService = new SecurityAutomationService(ctx.supabase);
 
     // Log security action
@@ -42,7 +48,7 @@ export const POST = createHttpHandler(
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    // Auth check handled by handler (owner/superadmin required)
+    assertSecurityAdminRole(ctx);
     const securityService = new SecurityAutomationService(ctx.supabase);
 
     // Generate compliance report

@@ -49,13 +49,13 @@ export const GET = createHttpHandler(
       staffQuery,
       ctx.supabase
         .from('reservations')
-        .select('raw, status, start_at, end_at')
+        .select('raw, status, start_at, end_at, staff_id')
         .eq('tenant_id', tenantId)
         .eq('status', 'completed')
         .gte('created_at', since),
       ctx.supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, metadata, staff_id')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', since),
@@ -66,10 +66,10 @@ export const GET = createHttpHandler(
         .gte('created_at', since),
     ]);
 
-    if (staffResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch staff'));
-    if (reservationsResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservations'));
-    if (revenueResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch revenue'));
-    if (feedbackResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch feedback'));
+    if (staffResult.error) throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch staff: ${staffResult.error.message}`));
+    if (reservationsResult.error) throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch reservations: ${reservationsResult.error.message}`));
+    if (revenueResult.error) throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch revenue: ${revenueResult.error.message}`));
+    if (feedbackResult.error) throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch feedback: ${feedbackResult.error.message}`));
 
     const staff = (staffResult.data || []) as Array<{ user_id: string; role: string }>;
 

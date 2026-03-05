@@ -444,9 +444,13 @@ export async function getTeamAnalytics(
 ): Promise<ManagerTeamData> {
   const { startDate, endDate } = dateRange;
 
-  // Authorize staffId: owners/superadmins can use any staffId; managers must own the staffId; staff cannot query others
-  if (staffId && user.role === 'staff') {
-    throw ApiErrorFactory.forbidden('Staff role cannot query other staff analytics');
+  // Authorize staffId: owners/superadmins can use any staffId; managers must own the staffId; staff can only see themselves
+  if (user.role === 'staff') {
+    if (staffId && staffId !== user.id) {
+      throw ApiErrorFactory.forbidden('Staff role cannot query other staff analytics');
+    }
+    // Force staff to see only their own metrics regardless of staffId
+    staffId = user.id;
   }
   const managedIds = await getManagedStaffIds(supabase, user);
   if (staffId) {

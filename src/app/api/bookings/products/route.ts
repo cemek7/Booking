@@ -157,7 +157,7 @@ export const POST = createHttpHandler(
 
     if (bookingError) {
       console.error('Error creating booking:', bookingError);
-      throw ApiErrorFactory.internalServerError(new Error('Failed to create booking'));
+      throw ApiErrorFactory.internalServerError(new Error(`Failed to create booking: ${bookingError.message}`));
     }
 
     // Create booking items
@@ -184,7 +184,7 @@ export const POST = createHttpHandler(
         .delete()
         .eq('id', booking.id);
       
-      throw ApiErrorFactory.internalServerError(new Error('Failed to create booking items'));
+      throw ApiErrorFactory.internalServerError(new Error(`Failed to create booking items: ${itemsError.message}`));
     }
 
     // Update inventory for products that track inventory
@@ -362,7 +362,7 @@ export const GET = createHttpHandler(
 
     if (error) {
       console.error('Error fetching product bookings:', error);
-      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch bookings'));
+      throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch bookings: ${error.message}`));
     }
 
     return {

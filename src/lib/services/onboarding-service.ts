@@ -141,15 +141,17 @@ export async function createTenant(
     }
   } catch (seedError) {
     // Compensating cleanup: remove all rows inserted for this tenant so we leave no partial state
-    const cleanupResults = await Promise.all([
-      supabase.from('staff_schedules').delete().eq('tenant_id', tenant.id),
-      supabase.from('services').delete().eq('tenant_id', tenant.id),
-      supabase.from('tenant_users').delete().eq('tenant_id', tenant.id),
-      supabase.from('tenants').delete().eq('id', tenant.id),
-    ]);
-    cleanupResults.forEach(({ error }) => {
+    // Delete in reverse dependency order: staff_schedules (refs tenant_users) → services → tenant_users → tenants
+    const cleanupSteps = [
+      () => supabase.from('staff_schedules').delete().eq('tenant_id', tenant.id),
+      () => supabase.from('services').delete().eq('tenant_id', tenant.id),
+      () => supabase.from('tenant_users').delete().eq('tenant_id', tenant.id),
+      () => supabase.from('tenants').delete().eq('id', tenant.id),
+    ];
+    for (const step of cleanupSteps) {
+      const { error } = await step();
       if (error) console.error('Tenant compensating cleanup error:', error);
-    });
+    }
     throw seedError;
   }
 
