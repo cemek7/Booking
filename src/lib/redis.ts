@@ -67,21 +67,21 @@ export function isRedisFeatureEnabled() {
  * @returns {boolean} true if either ioredis or redis package is available
  */
 export function hasInstalledRedisClient() {
-  try {
-    require.resolve('ioredis');
-    return true;
-  } catch {
-    try {
-      require.resolve('redis');
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return isModuleAvailable('ioredis') || isModuleAvailable('redis');
 }
 
 export function isRedisConfigured() {
   return Boolean(process.env.REDIS_URL);
+}
+
+function isModuleAvailable(moduleName: string): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require.resolve(moduleName);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function ensureClient() {
