@@ -1,280 +1,158 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useEffect, useMemo, useState } from 'react';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
 import DateRangePicker, { TimePeriod } from './shared/DateRangePicker';
-import TrendChart from './charts/TrendChart';
 import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
-import AreaChart from './charts/AreaChart';
 import PerformanceTable from './shared/PerformanceTable';
-import {
-  Building2,
-  Users,
-  DollarSign,
-  Activity,
-  TrendingUp,
-  Globe,
-  Download,
-} from 'lucide-react';
+import DataUnavailableState from './shared/DataUnavailableState';
+import { Building2, Users, DollarSign, Activity, Calendar, UserCheck } from 'lucide-react';
+import { authFetch } from '@/lib/auth/auth-api-client';
+import { PERIOD_DAYS } from './shared/analytics-constants';
+import type { AdminTenantMetric } from '@/types/analytics-api';
 
-/**
- * SuperAdminMetrics Component
- *
- * Displays platform-wide analytics across all tenants
- * Includes tenant growth, usage stats, revenue metrics, and tenant rankings
- */
 export default function SuperAdminMetrics() {
   const [period, setPeriod] = useState<TimePeriod>('month');
+  const [loading, setLoading] = useState(true);
+  const [tenantMetrics, setTenantMetrics] = useState<AdminTenantMetric[]>([]);
 
-  // TODO: Fetch real data from API - these are mock data for now
-  const platformMetrics = {
-    totalTenants: 47,
-    activeTenants: 42,
-    totalUsers: 1247,
-    totalRevenue: 158420,
-    platformUptime: 99.8,
-  };
+  useEffect(() => {
+    let cancelled = false;
 
-  const trends = {
-    tenants: 8.3,
-    users: 12.7,
-    revenue: 15.2,
-    uptime: 0.1,
-  };
+    const load = async () => {
+      setLoading(true);
+      try {
+        const days = PERIOD_DAYS[period];
+        const response = await authFetch<{ metrics?: AdminTenantMetric[] }>(`/api/admin/metrics?days=${days}`);
+        if (cancelled) return;
+        setTenantMetrics(response.status === 200 ? response.data?.metrics || [] : []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
 
-  // Tenant growth over time
-  const tenantGrowthData = [
-    { date: 'Jan', tenants: 32, active: 28 },
-    { date: 'Feb', tenants: 35, active: 31 },
-    { date: 'Mar', tenants: 38, active: 34 },
-    { date: 'Apr', tenants: 41, active: 37 },
-    { date: 'May', tenants: 44, active: 40 },
-    { date: 'Jun', tenants: 47, active: 42 },
-  ];
+    load();
 
-  // Platform revenue trends
-  const revenueData = [
-    { date: 'Jan', revenue: 112000, subscriptions: 28000, bookings: 84000 },
-    { date: 'Feb', revenue: 118000, subscriptions: 29000, bookings: 89000 },
-    { date: 'Mar', revenue: 125000, subscriptions: 31000, bookings: 94000 },
-    { date: 'Apr', revenue: 138000, subscriptions: 33000, bookings: 105000 },
-    { date: 'May', revenue: 145000, subscriptions: 35000, bookings: 110000 },
-    { date: 'Jun', revenue: 158000, subscriptions: 37000, bookings: 121000 },
-  ];
+    return () => {
+      cancelled = true;
+    };
+  }, [period]);
 
-  // Tenant tier distribution
-  const tenantTierData = [
-    { name: 'Starter', value: 18, color: '#3b82f6' },
-    { name: 'Professional', value: 22, color: '#10b981' },
-    { name: 'Enterprise', value: 7, color: '#f59e0b' },
-  ];
+  const totals = useMemo(() => {
+    const totalTenants = tenantMetrics.length;
+    const totalCalls = tenantMetrics.reduce((sum, row) => sum + row.call_count, 0);
+    const totalTokens = tenantMetrics.reduce((sum, row) => sum + row.total_tokens, 0);
+    const totalUsersEstimate = tenantMetrics.reduce((sum, row) => sum + (row.user_count || 0), 0);
+    const totalRevenueEstimate = tenantMetrics.reduce((sum, row) => sum + (row.revenue_estimate || 0), 0);
+    const totalReservations = tenantMetrics.reduce((sum, row) => sum + (row.reservation_count || 0), 0);
+    const totalActiveStaff = tenantMetrics.reduce((sum, row) => sum + (row.active_staff_count || 0), 0);
+    return {
+      totalTenants,
+      totalCalls,
+      totalTokens,
+      totalUsersEstimate,
+      totalRevenueEstimate,
+      totalReservations,
+      totalActiveStaff,
+    };
+  }, [tenantMetrics]);
 
-  // Industry breakdown
-  const industryData = [
-    { name: 'Healthcare', tenants: 12 },
-    { name: 'Beauty & Wellness', tenants: 15 },
-    { name: 'Professional Services', tenants: 8 },
-    { name: 'Education', tenants: 7 },
-    { name: 'Fitness', tenants: 5 },
-  ];
-
-  // Top performing tenants
-  const topTenants = [
-    {
-      name: 'Wellness Spa Network',
-      bookings: 1847,
-      revenue: 94350,
-      growth: 23.5,
-      status: 'active',
-    },
-    {
-      name: 'ProHealth Clinics',
-      bookings: 1623,
-      revenue: 87200,
-      growth: 18.2,
-      status: 'active',
-    },
-    {
-      name: 'FitLife Studios',
-      bookings: 1402,
-      revenue: 71100,
-      growth: 15.7,
-      status: 'active',
-    },
-    {
-      name: 'Beauty Hub Collective',
-      bookings: 1287,
-      revenue: 64350,
-      growth: 12.3,
-      status: 'active',
-    },
-    {
-      name: 'TechRepair Services',
-      bookings: 1156,
-      revenue: 58800,
-      growth: 9.8,
-      status: 'active',
-    },
-  ];
-
-  const exportPlatformReport = () => {
-    // TODO: Implement CSV export
-    console.log('Exporting platform report...');
-  };
-
-  const formatCurrency = (value: number) => `$${(value / 1000).toFixed(0)}k`;
-  const formatPercent = (value: number) => `${value.toFixed(1)}%`;
+  if (!loading && tenantMetrics.length === 0) {
+    return (
+      <DataUnavailableState
+        title="Platform analytics"
+        description="Data not available. Backend analytics data was not returned for this view."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Date Range Picker */}
       <div className="flex items-center justify-between">
-        <DateRangePicker
-          period={period}
-          onPeriodChange={setPeriod}
-          compact
-          className="w-64"
-        />
+        <DateRangePicker period={period} onPeriodChange={setPeriod} compact className="w-64" />
       </div>
 
-      {/* Platform KPIs */}
+      {/* Top KPI row */}
       <StatsGrid columns={4}>
-        <MetricCard
-          label="Total Tenants"
-          value={platformMetrics.totalTenants}
-          trend={trends.tenants}
-          trendLabel="vs last month"
-          icon={Building2}
-          colorScheme="info"
-        />
-        <MetricCard
-          label="Platform Users"
-          value={platformMetrics.totalUsers}
-          trend={trends.users}
-          trendLabel="vs last month"
-          icon={Users}
-          colorScheme="success"
-        />
-        <MetricCard
-          label="Platform Revenue"
-          value={platformMetrics.totalRevenue}
-          trend={trends.revenue}
-          trendLabel="vs last month"
-          icon={DollarSign}
-          formatValue={formatCurrency}
-          colorScheme="success"
-        />
-        <MetricCard
-          label="Platform Uptime"
-          value={`${platformMetrics.platformUptime}%`}
-          trend={trends.uptime}
-          trendLabel="vs last month"
-          icon={Activity}
-          colorScheme="default"
-        />
+        <MetricCard label="Total Tenants" value={totals.totalTenants} icon={Building2} colorScheme="info" loading={loading} />
+        <MetricCard label="Total Users (Estimate)" value={totals.totalUsersEstimate} icon={Users} colorScheme="success" loading={loading} />
+        <MetricCard label="Total Revenue (Estimate)" value={totals.totalRevenueEstimate} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
+        <MetricCard label="Data Freshness" value="30d window" icon={Activity} colorScheme="default" loading={loading} />
       </StatsGrid>
 
-      {/* Tenant Growth & Revenue Trends */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <TrendChart
-          data={tenantGrowthData}
-          dataKey="tenants"
-          title="Tenant Growth"
-          description="New tenant acquisitions over time"
-          color="#3b82f6"
-          showTrend
-        />
-        <AreaChart
-          data={revenueData}
-          dataKeys={['revenue']}
-          title="Platform Revenue"
-          description="Total revenue across all tenants"
-          colors={['#10b981']}
-          formatValue={formatCurrency}
-        />
-      </div>
+      {/* Second KPI row: bookings & staff */}
+      <StatsGrid columns={3}>
+        <MetricCard label="Total Reservations (30d)" value={totals.totalReservations} icon={Calendar} colorScheme="info" loading={loading} />
+        <MetricCard label="Active Staff (Platform)" value={totals.totalActiveStaff} icon={UserCheck} colorScheme="default" loading={loading} />
+        <MetricCard label="Total API Calls (30d)" value={totals.totalCalls} icon={Activity} colorScheme="default" loading={loading} />
+      </StatsGrid>
 
-      {/* Tenant Distribution & Industry Breakdown */}
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <BarChart
+          data={tenantMetrics.map((row) => ({
+            tenant: row.tenant_name || row.tenant_id.slice(0, 16),
+            reservations: row.reservation_count || 0,
+            completed: row.completed_reservations || 0,
+          }))}
+          dataKeys={['reservations', 'completed']}
+          xAxisKey="tenant"
+          title="Reservations by Tenant (30d)"
+          description="Total and completed reservations per tenant"
+          colors={['#3b82f6', '#10b981']}
+        />
         <PieChart
-          data={tenantTierData}
-          title="Tenant Tier Distribution"
-          description="Breakdown by subscription plan"
+          data={tenantMetrics.map((row) => ({
+            name: row.tenant_name || row.tenant_id.slice(0, 16),
+            value: row.revenue_estimate || 0,
+          }))}
+          title="Revenue Distribution by Tenant"
+          description="Revenue estimate share per tenant"
           showPercentage
           innerRadius={60}
         />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <BarChart
-          data={industryData}
-          dataKeys={['tenants']}
-          xAxisKey="name"
-          title="Tenants by Industry"
-          description="Industry vertical distribution"
+          data={tenantMetrics.map((row) => ({
+            tenant: row.tenant_name || row.tenant_id.slice(0, 16),
+            calls: row.call_count,
+          }))}
+          dataKeys={['calls']}
+          xAxisKey="tenant"
+          title="API Call Count by Tenant (30d)"
+          description="LLM/API usage per tenant"
           colors={['#8b5cf6']}
+        />
+        <PieChart
+          data={tenantMetrics.map((row) => ({
+            name: row.tenant_name || row.tenant_id.slice(0, 16),
+            value: row.total_tokens,
+          }))}
+          title="Token Usage Distribution"
+          description="Token usage share by tenant"
+          showPercentage
+          innerRadius={60}
         />
       </div>
 
-      {/* Revenue Breakdown */}
-      <AreaChart
-        data={revenueData}
-        dataKeys={['subscriptions', 'bookings']}
-        title="Revenue Sources"
-        description="Subscription fees vs booking commissions"
-        colors={['#f59e0b', '#3b82f6']}
-        stacked
-        formatValue={formatCurrency}
-      />
-
-      {/* Top Performing Tenants */}
+      {/* Full per-tenant breakdown table */}
       <PerformanceTable
-        data={topTenants}
+        data={tenantMetrics}
+        title="Tenant Platform Metrics"
+        description="Full per-tenant breakdown (last 30 days)"
         columns={[
-          {
-            key: 'name',
-            label: 'Tenant Name',
-            sortable: true,
-            width: '30%',
-          },
-          {
-            key: 'bookings',
-            label: 'Total Bookings',
-            sortable: true,
-            align: 'right',
-            formatValue: (value) => value.toLocaleString(),
-          },
-          {
-            key: 'revenue',
-            label: 'Revenue',
-            sortable: true,
-            align: 'right',
-            formatValue: (value) => `$${value.toLocaleString()}`,
-          },
-          {
-            key: 'growth',
-            label: 'Growth',
-            sortable: true,
-            align: 'right',
-            formatValue: (value) => (
-              <span className="text-green-600 font-semibold">+{value}%</span>
-            ),
-          },
-          {
-            key: 'status',
-            label: 'Status',
-            align: 'center',
-            formatValue: (value) => (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                {value}
-              </span>
-            ),
-          },
+          { key: 'tenant_name', label: 'Tenant', sortable: true, formatValue: (v, row) => (row as AdminTenantMetric).tenant_name || (row as AdminTenantMetric).tenant_id },
+          { key: 'user_count', label: 'Users', sortable: true, align: 'right' },
+          { key: 'active_staff_count', label: 'Staff', sortable: true, align: 'right' },
+          { key: 'reservation_count', label: 'Reservations', sortable: true, align: 'right' },
+          { key: 'completed_reservations', label: 'Completed', sortable: true, align: 'right' },
+          { key: 'revenue_estimate', label: 'Revenue', sortable: true, align: 'right', formatValue: (value) => `$${Number(value || 0).toLocaleString()}` },
+          { key: 'call_count', label: 'API Calls', sortable: true, align: 'right' },
         ]}
-        title="Top Performing Tenants"
-        description="Highest revenue-generating tenants this period"
-        onExport={exportPlatformReport}
-        exportLabel="Export Platform Report"
       />
     </div>
   );

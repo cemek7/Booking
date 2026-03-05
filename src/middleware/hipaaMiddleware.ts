@@ -27,8 +27,24 @@ export interface PHIAccessContext {
   ipAddress: string;
   userAgent: string;
   sessionId: string;
+  sessionCreatedAt: string;
   requestPath: string;
   method: string;
+}
+
+/**
+ * Structured details payload for security incidents
+ */
+interface SecurityIncidentDetails {
+  tenant_id?: string;
+  user_id?: string;
+  activity_type?: string;
+  details?: unknown;
+  error?: string;
+  context?: string;
+  request_url?: string;
+  ip_address?: string;
+  user_agent?: string;
 }
 
 /**
@@ -106,7 +122,7 @@ export class HIPAAMiddleware {
       
       // Log security incident
       await this.logSecurityIncident('MIDDLEWARE_ERROR', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
         request_url: request.url,
         ip_address: this.getClientIP(request)
       });
@@ -133,6 +149,31 @@ export class HIPAAMiddleware {
       if (error || !user) {
         return null;
       }
+
+      // Retrieve the current auth session to derive a proper session start time
+      const { data: { session }, error: sessionError } = await this.supabase.auth.getSession();
+      if (sessionError || !session) {
+        return null;
+      }
+
+      let sessionCreatedAt: string;
+      // Prefer computing session start from expires_at and expires_in when available.
+      // expires_in is present in the Supabase Session payload but may not be typed in
+      // all SDK versions, so we check for it safely.
+      const rawExpiresIn = (session as Record<string, unknown>)['expires_in'];
+      const sessionExpiresIn = typeof rawExpiresIn === 'number' ? rawExpiresIn : null;
+      if (session.expires_at && sessionExpiresIn !== null) {
+        const sessionStartMs = (session.expires_at - sessionExpiresIn) * 1000;
+        sessionCreatedAt = new Date(sessionStartMs).toISOString();
+      } else if (session.expires_at) {
+        // Fallback: approximate start time using expires_at minus configured session timeout
+        const expiresAtMs = session.expires_at * 1000;
+        const sessionStartMs = expiresAtMs - this.config.sessionTimeout;
+        sessionCreatedAt = new Date(sessionStartMs).toISOString();
+      } else {
+        // Last-resort fallback: treat session as just-started (no timeout)
+        sessionCreatedAt = new Date().toISOString();
+      }
       
       // Get user's tenant and role
       const { data: userTenantRole } = await this.supabase
@@ -152,6 +193,7 @@ export class HIPAAMiddleware {
         ipAddress: this.getClientIP(request),
         userAgent: request.headers.get('user-agent') || '',
         sessionId: sessionToken,
+        sessionCreatedAt,
         requestPath: new URL(request.url).pathname,
         method: request.method
       };
@@ -198,7 +240,7 @@ export class HIPAAMiddleware {
     }
     
     // Check session timeout
-    const sessionAge = Date.now() - new Date(context.sessionId).getTime();
+    const sessionAge = Date.now() - new Date(context.sessionCreatedAt).getTime();
     if (sessionAge > this.config.sessionTimeout) {
       return {
         allowed: false,
@@ -255,7 +297,7 @@ export class HIPAAMiddleware {
       console.error('Error logging PHI access:', error);
       // Don't block request for logging errors, but track them
       await this.logSecurityIncident('PHI_LOGGING_ERROR', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
         context: JSON.stringify(context)
       });
     }
@@ -264,11 +306,9 @@ export class HIPAAMiddleware {
   /**
    * Detect suspicious access patterns
    */
-  private async detectSuspiciousActivity(context: PHIAccessContext): Promise<{
-    detected: boolean;
-    type?: string;
-    details?: any;
-  }> {
+  private async detectSuspiciousActivity(context: PHIAccessContext): Promise<
+    { detected: false } | { detected: true; type: string; details: unknown }
+  > {
     // Check for rapid sequential access
     const recentAccess = await this.getRecentAccess(context.userId, 5 * 60 * 1000); // Last 5 minutes
     if (recentAccess.length > 20) {
@@ -308,7 +348,7 @@ export class HIPAAMiddleware {
    */
   private async handleSuspiciousActivity(
     context: PHIAccessContext,
-    activity: { type: string; details: any }
+    activity: { type: string; details: unknown }
   ): Promise<void> {
     // Log security incident
     await this.logSecurityIncident('SUSPICIOUS_ACTIVITY', {
@@ -389,17 +429,19 @@ export class HIPAAMiddleware {
   }
   
   private async getTodayAccessCount(userId: string, tenantId: string): Promise<number> {
+    // Use UTC midnight to match the UTC timestamps stored in phi_access_logs.accessed_at
+    const todayUtcMidnight = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
     const { count } = await this.supabase
       .from('phi_access_logs')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
       .eq('tenant_id', tenantId)
-      .gte('accessed_at', new Date().toDateString());
+      .gte('accessed_at', todayUtcMidnight.toISOString());
     
     return count || 0;
   }
   
-  private async getRecentAccess(userId: string, timeWindowMs: number): Promise<any[]> {
+  private async getRecentAccess(userId: string, timeWindowMs: number): Promise<Array<{ accessed_at: string }>> {
     const { data } = await this.supabase
       .from('phi_access_logs')
       .select('accessed_at')
@@ -420,7 +462,7 @@ export class HIPAAMiddleware {
     return data ? [...new Set(data.map(record => record.ip_address))] : [];
   }
   
-  private async logSecurityIncident(type: string, details: any): Promise<void> {
+  private async logSecurityIncident(type: string, details: SecurityIncidentDetails): Promise<void> {
     try {
       await this.supabase
         .from('security_incidents')
@@ -436,7 +478,7 @@ export class HIPAAMiddleware {
     }
   }
   
-  private async sendSecurityAlert(context: PHIAccessContext, activity: any): Promise<void> {
+  private async sendSecurityAlert(context: PHIAccessContext, activity: { type: string; details: unknown }): Promise<void> {
     // Implementation for sending alerts to administrators
     console.log('Security Alert:', {
       user_id: context.userId,

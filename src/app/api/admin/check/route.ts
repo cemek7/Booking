@@ -24,7 +24,7 @@ export const POST = createHttpHandler(
       .eq('email', email)
       .maybeSingle();
 
-    if (adminErr) throw ApiErrorFactory.internal('Failed to check admin status');
+    if (adminErr) throw ApiErrorFactory.internalServerError(new Error('Failed to check admin status'));
 
     if (adminRow) {
       return { found: { admin: true, email: adminRow.email } };
@@ -38,7 +38,7 @@ export const POST = createHttpHandler(
       .limit(1)
       .maybeSingle();
 
-    if (tuErr) throw ApiErrorFactory.internal('Failed to check tenant membership');
+    if (tuErr) throw ApiErrorFactory.internalServerError(new Error('Failed to check tenant membership'));
 
     if (tu) {
       return { found: { 

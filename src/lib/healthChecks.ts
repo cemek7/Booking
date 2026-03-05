@@ -1,5 +1,6 @@
 import { getAppConfig, isIntegrationEnabled } from './configManager';
 import { checkFeatureRequirements } from './featureFlags';
+import { createSupabaseAdminClient } from './supabase/server';
 
 export interface HealthCheck {
   name: string;
@@ -39,11 +40,30 @@ export async function checkSupabase(): Promise<HealthCheck> {
       };
     }
     
-    // TODO: Add actual connection test when needed
+    // Perform a lightweight real DB ping
+    try {
+      const supabase = createSupabaseAdminClient();
+      const { error } = await supabase.from('tenants').select('id').limit(1);
+      if (error) {
+        return {
+          name: 'Supabase',
+          status: 'error',
+          message: `Supabase query failed: ${error.message}`,
+          lastChecked: new Date()
+        };
+      }
+    } catch (pingErr) {
+      return {
+        name: 'Supabase',
+        status: 'error',
+        message: pingErr instanceof Error ? pingErr.message : 'Supabase ping failed',
+        lastChecked: new Date()
+      };
+    }
     return {
       name: 'Supabase',
       status: 'healthy',
-      message: 'Supabase configuration valid',
+      message: 'Supabase connection verified',
       lastChecked: new Date()
     };
   } catch (error) {
@@ -116,11 +136,35 @@ export async function checkEvolutionAPI(): Promise<HealthCheck> {
       };
     }
     
-    // TODO: Add actual API connection test
+    // Perform a real HTTP health check to the Evolution API
+    const apiUrl = process.env.EVOLUTION_API_URL;
+    if (apiUrl) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`${apiUrl}/health`, { signal: controller.signal }).catch(() => null);
+        clearTimeout(timeout);
+        if (!res || !res.ok) {
+          return {
+            name: 'Evolution API',
+            status: 'warning',
+            message: res ? `Evolution API returned HTTP ${res.status}` : 'Evolution API unreachable',
+            lastChecked: new Date()
+          };
+        }
+      } catch {
+        return {
+          name: 'Evolution API',
+          status: 'warning',
+          message: 'Evolution API health check timed out',
+          lastChecked: new Date()
+        };
+      }
+    }
     return {
       name: 'Evolution API',
       status: 'healthy',
-      message: 'Evolution API configuration valid',
+      message: 'Evolution API connection verified',
       lastChecked: new Date()
     };
   } catch (error) {

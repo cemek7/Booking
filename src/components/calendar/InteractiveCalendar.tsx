@@ -1,25 +1,24 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Calendar, momentLocalizer, View, ToolbarProps } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import StaffSidebar from './StaffSidebar';
 import AppointmentModal from './AppointmentModal';
 import CreateAppointmentModal from './CreateAppointmentModal';
+import { authFetch } from '@/lib/auth/auth-api-client';
+import type { CalendarEvent } from '@/types/calendar';
 
 // Setup the localizer by providing the moment Object
 const localizer = momentLocalizer(moment);
 
-// Define the structure of a calendar event
-interface CalendarEvent {
-  id: number;
-  title: string;
-  start: Date;
-  end: Date;
-  resourceId: number;
-  // Add any other properties you need for an event
-}
+// Palette for auto-assigning colors to staff
+const STAFF_COLORS = [
+  '#3174ad', '#2ca02c', '#d62728', '#9467bd',
+  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
+];
 
 // Define the structure for a resource (e.g., a staff member)
 interface Resource {
@@ -64,57 +63,78 @@ const CustomToolbar: React.FC<ToolbarProps> = ({ label, onNavigate, onView }) =>
 };
 
 const InteractiveCalendar: React.FC = () => {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [resources, setResources] = useState<Resource[]>([]);
   const [view, setView] = useState<View>('month');
   const [date, setDate] = useState(new Date());
-  const [selectedStaff, setSelectedStaff] = useState<number[]>([]);
+  // null means "all staff selected" (default); array means explicit user selection
+  const [selectedStaff, setSelectedStaff] = useState<number[] | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [slotInfo, setSlotInfo] = useState<SlotInfo | null>(null);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
 
-  // Placeholder data - we will replace this with data fetched from the API
-  const placeholderEvents: CalendarEvent[] = [
-    {
-      id: 1,
-      title: 'Meeting with Client',
-      start: new Date(2025, 11, 12, 10, 0),
-      end: new Date(2025, 11, 12, 11, 0),
-      resourceId: 1,
+  const { data: staffData, isLoading: staffLoading } = useQuery({
+    queryKey: ['calendar-staff'],
+    queryFn: async () => {
+      const res = await authFetch<{ staff: Array<{ id: string; name: string; email: string }> }>('/api/staff');
+      return res.status === 200 ? (res.data?.staff ?? []) : [];
     },
-    {
-      id: 2,
-      title: 'Project Deadline',
-      start: new Date(2025, 11, 15, 14, 0),
-      end: new Date(2025, 11, 15, 15, 30),
-      resourceId: 2,
-    },
-    {
-      id: 3,
-      title: 'Team Sync',
-      start: new Date(2025, 11, 15, 9, 0),
-      end: new Date(2025, 11, 15, 9, 30),
-      resourceId: 1,
-    },
-  ];
+  });
 
-  const placeholderResources: Resource[] = [
-    { resourceId: 1, resourceTitle: 'Alice', color: '#3174ad' },
-    { resourceId: 2, resourceTitle: 'Bob', color: '#2ca02c' },
-  ];
+  const { data: reservationsData, isLoading: reservationsLoading } = useQuery({
+    queryKey: ['calendar-reservations'],
+    queryFn: async () => {
+      const res = await authFetch<{ data: Array<{ id: string; title?: string; service_id?: string; staff_id?: string; start_at: string; end_at: string; status?: string }> }>('/api/reservations');
+      return res.status === 200 ? (res.data?.data ?? []) : [];
+    },
+  });
 
-  React.useEffect(() => {
-    // In a real application, you would fetch your events and resources here
-    setEvents(placeholderEvents);
-    setResources(placeholderResources);
-    // By default, select all staff
-    setSelectedStaff(placeholderResources.map(r => r.resourceId));
-  }, []);
+  const resources: Resource[] = useMemo(() => (staffData ?? []).map((s, idx) => ({
+    resourceId: idx + 1,
+    resourceTitle: s.name || s.email || s.id,
+    color: STAFF_COLORS[idx % STAFF_COLORS.length],
+  })), [staffData]);
+
+  const staffIdToResourceId = useMemo(
+    () => new Map((staffData ?? []).map((s, idx) => [s.id, idx + 1])),
+    [staffData]
+  );
+
+  // When null (default), show all resources; otherwise respect the explicit selection,
+  // filtering out any IDs that no longer exist after a refetch.
+  const effectiveSelectedStaff = useMemo(() => {
+    if (selectedStaff === null) return resources.map(r => r.resourceId);
+    const validIds = new Set(resources.map(r => r.resourceId));
+    return selectedStaff.filter(id => validIds.has(id));
+  }, [selectedStaff, resources]);
+
+  // Derive builtEvents from reservations query data
+  const builtEvents: CalendarEvent[] = useMemo(() => {
+    return (reservationsData ?? [])
+      .filter(r => r.start_at && r.end_at)
+      .map((r) => {
+        const resourceId = staffIdToResourceId.get(r.staff_id ?? '');
+        return {
+          id: r.id,
+          title: r.title ?? r.service_id ?? 'Booking',
+          start: new Date(r.start_at),
+          end: new Date(r.end_at),
+          resourceId: resourceId ?? 0,
+        };
+      });
+  }, [reservationsData, staffIdToResourceId]);
+
+  // Merge query-derived events with locally created events
+  const allEvents = useMemo(() => {
+    const localIds = new Set(builtEvents.map(e => e.id));
+    return [...builtEvents, ...events.filter(e => !localIds.has(e.id))];
+  }, [builtEvents, events]);
+
+  const loading = staffLoading || reservationsLoading;
 
   const handleStaffSelectionChange = (selectedIds: number[]) => {
     setSelectedStaff(selectedIds);
   };
 
-  const filteredResources = resources.filter(r => selectedStaff.includes(r.resourceId));
+  const filteredResources = resources.filter(r => effectiveSelectedStaff.includes(r.resourceId));
 
   const eventPropGetter = (event: CalendarEvent) => {
     const resource = resources.find(r => r.resourceId === event.resourceId);
@@ -142,21 +162,29 @@ const InteractiveCalendar: React.FC = () => {
   };
 
   const handleCreateEvent = (newEvent: Omit<CalendarEvent, 'id'>) => {
-    const id = Math.max(...events.map(e => e.id)) + 1;
-    setEvents([...events, { ...newEvent, id }]);
+    const id = `local-${Date.now()}`;
+    setEvents(prev => [...prev, { ...newEvent, id }]);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500">
+        Loading schedule…
+      </div>
+    );
+  }
 
   return (
     <div className="flex" style={{ height: '100vh' }}>
       <StaffSidebar
         staff={resources}
-        selectedStaff={selectedStaff}
+        selectedStaff={effectiveSelectedStaff}
         onSelectionChange={handleStaffSelectionChange}
       />
       <div className="flex-grow">
         <Calendar
           localizer={localizer}
-          events={events}
+          events={allEvents}
           resources={view === 'day' ? filteredResources : undefined}
           startAccessor="start"
           endAccessor="end"

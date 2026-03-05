@@ -566,9 +566,52 @@ export class DialogBookingBridge {
     endTime?: string;
     formatted?: string;
   } {
-    // Placeholder for time extraction logic
-    // In production, implement proper date/time parsing
-    return {};
+    const msg = message.toLowerCase();
+    const now = new Date();
+
+    // Resolve the date part
+    let baseDate = new Date(now);
+    let explicitDayMatch = -1;
+    if (msg.includes('tomorrow')) {
+      baseDate.setDate(baseDate.getDate() + 1);
+    } else {
+      // e.g. "monday", "tuesday" etc.
+      const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+      explicitDayMatch = days.findIndex(d => msg.includes(d));
+      if (explicitDayMatch !== -1) {
+        const diff = (explicitDayMatch - now.getDay() + 7) % 7 || 7;
+        baseDate.setDate(baseDate.getDate() + diff);
+      }
+    }
+
+    // Extract time: "3pm", "3:30pm", "15:00", "3 pm", "3:30 pm"
+    // Hours constrained to 1-12 for 12h format, 0-23 for 24h format; minutes constrained to 00-59
+    const timeRegex = /\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/i;
+    const match = message.match(timeRegex);
+    if (!match) return {};
+
+    let hours = parseInt(match[1] ?? match[4] ?? '0', 10);
+    const minutes = parseInt(match[2] ?? match[5] ?? '0', 10);
+    const meridiem = (match[3] ?? '').toLowerCase();
+    if (meridiem === 'pm' && hours < 12) hours += 12;
+    if (meridiem === 'am' && hours === 12) hours = 0;
+
+    baseDate.setHours(hours, minutes, 0, 0);
+
+    // Advance past datetimes so we never book in the past
+    if (baseDate <= now) {
+      if (explicitDayMatch !== -1) {
+        baseDate.setDate(baseDate.getDate() + 7);
+      } else {
+        baseDate.setDate(baseDate.getDate() + 1);
+      }
+    }
+
+    const startTime = baseDate.toISOString();
+    const endDate = new Date(baseDate.getTime() + 60 * 60 * 1000); // default 1h duration
+    const endTime = endDate.toISOString();
+    const formatted = baseDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return { startTime, endTime, formatted };
   }
 
   private async getAvailableServices(tenantId: string): Promise<Array<{ id: string; name: string }>> {

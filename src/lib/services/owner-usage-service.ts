@@ -4,16 +4,61 @@ import { z } from 'zod';
 
 const TenantIdSchema = z.string().uuid();
 
+interface LlmCallRow {
+  tenant_id: string;
+  action: string | null;
+  usage: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; cost?: number } | null;
+  created_at: string;
+}
+
 interface UsageData {
-  currentMonthUsage: any;
-  lastMonthUsage: any;
+  currentMonthUsage: {
+    openrouter_calls: number;
+    total_tokens: number;
+    cost_usd: string;
+    intent_detection_calls: number;
+    paraphraser_calls: number;
+    conversation_processing: number;
+  };
+  lastMonthUsage: {
+    openrouter_calls: number;
+    total_tokens: number;
+    cost_usd: string;
+    intent_detection_calls: number;
+    paraphraser_calls: number;
+    conversation_processing: number;
+  };
   plan: string;
-  limits: any;
-  usagePercentages: any;
-  aiConversion: any;
-  dailyUsage: any;
-  topUsers: any;
-  costBreakdown: any;
+  limits: { monthly_tokens: number; monthly_calls: number; monthly_cost_limit: number };
+  usagePercentages: { tokenUsagePercent: number; callUsagePercent: number; costUsagePercent: number };
+  aiConversion: { aiAssistedBookings: number; totalBookings: number; aiConversionRate: number };
+  dailyUsage: Array<{ date: string; calls: number; tokens: number }>;
+  topUsers: Array<{ user_id: string; name: string; calls: number; tokens: number }>;
+  costBreakdown: { intent_detection: string; paraphrasing: string; conversation_processing: string; other: string };
+}
+
+function aggregateLlmRows(rows: LlmCallRow[]) {
+  let totalTokens = 0;
+  let costUsd = 0;
+  let intentCalls = 0;
+  let paraphraserCalls = 0;
+  let convProcessing = 0;
+  for (const r of rows) {
+    totalTokens += r.usage?.total_tokens || 0;
+    costUsd += r.usage?.cost || 0;
+    const action = (r.action || '').toLowerCase();
+    if (action.includes('intent')) intentCalls++;
+    else if (action.includes('paraphras')) paraphraserCalls++;
+    else if (action.includes('convers') || action.includes('chat')) convProcessing++;
+  }
+  return {
+    openrouter_calls: rows.length,
+    total_tokens: totalTokens,
+    cost_usd: costUsd.toFixed(4),
+    intent_detection_calls: intentCalls,
+    paraphraser_calls: paraphraserCalls,
+    conversation_processing: convProcessing,
+  };
 }
 
 export async function getOwnerUsage(
@@ -26,124 +71,130 @@ export async function getOwnerUsage(
   }
 
   try {
-    // Get current date ranges for reporting
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    // Mock LLM usage data
-    const currentMonthUsage = {
-      openrouter_calls: Math.floor(Math.random() * 5000) + 1000,
-      total_tokens: Math.floor(Math.random() * 100000) + 20000,
-      cost_usd: (Math.random() * 50 + 10).toFixed(2),
-      intent_detection_calls: Math.floor(Math.random() * 3000) + 500,
-      paraphraser_calls: Math.floor(Math.random() * 2000) + 300,
-      conversation_processing: Math.floor(Math.random() * 1500) + 200,
-    };
+    // Fetch all data in parallel
+    const [
+      tenantResult,
+      currentLlmResult,
+      lastLlmResult,
+      dailyLlmResult,
+      reservationsResult,
+    ] = await Promise.all([
+      supabase
+        .from('tenants')
+        .select('plan, status, settings')
+        .eq('id', validatedTenantId.data)
+        .single(),
+      supabase
+        .from('llm_calls')
+        .select('tenant_id, action, usage, created_at')
+        .eq('tenant_id', validatedTenantId.data)
+        .gte('created_at', startOfMonth.toISOString()),
+      supabase
+        .from('llm_calls')
+        .select('tenant_id, action, usage, created_at')
+        .eq('tenant_id', validatedTenantId.data)
+        .gte('created_at', startOfLastMonth.toISOString())
+        .lte('created_at', endOfLastMonth.toISOString()),
+      supabase
+        .from('llm_calls')
+        .select('action, usage, created_at')
+        .eq('tenant_id', validatedTenantId.data)
+        .gte('created_at', sevenDaysAgo.toISOString()),
+      supabase
+        .from('reservations')
+        .select('id, status, raw')
+        .eq('tenant_id', validatedTenantId.data)
+        .gte('created_at', startOfMonth.toISOString()),
+    ]);
 
-    const lastMonthUsage = {
-      openrouter_calls: Math.floor(Math.random() * 4000) + 800,
-      total_tokens: Math.floor(Math.random() * 80000) + 15000,
-      cost_usd: (Math.random() * 40 + 8).toFixed(2),
-      intent_detection_calls: Math.floor(Math.random() * 2500) + 400,
-      paraphraser_calls: Math.floor(Math.random() * 1800) + 250,
-      conversation_processing: Math.floor(Math.random() * 1200) + 150,
-    };
+    if (tenantResult.error) throw new AppError(500, 'Failed to fetch tenant info', tenantResult.error);
+    if (currentLlmResult.error) throw new AppError(500, 'Failed to fetch current LLM usage', currentLlmResult.error);
+    if (lastLlmResult.error) throw new AppError(500, 'Failed to fetch last month LLM usage', lastLlmResult.error);
+    if (dailyLlmResult.error) throw new AppError(500, 'Failed to fetch daily LLM usage', dailyLlmResult.error);
+    if (reservationsResult.error) throw new AppError(500, 'Failed to fetch reservations', reservationsResult.error);
 
-    // Get tenant plan and limits
-    const { data: tenant, error: tenantError } = await supabase
-      .from('tenants')
-      .select('plan, status')
-      .eq('id', validatedTenantId.data)
-      .single();
+    const tenant = tenantResult.data;
 
-    if (tenantError) {
-      throw new AppError(500, 'Failed to fetch tenant info', tenantError);
-    }
+    // Aggregate current & last month LLM usage from real data
+    const currentMonthUsage = aggregateLlmRows((currentLlmResult.data || []) as LlmCallRow[]);
+    const lastMonthUsage = aggregateLlmRows((lastLlmResult.data || []) as LlmCallRow[]);
 
-    // Define plan limits
+    // Plan limits
     const planLimits = {
-      free: {
-        monthly_tokens: 10000,
-        monthly_calls: 1000,
-        monthly_cost_limit: 5,
-      },
-      premium: {
-        monthly_tokens: 500000,
-        monthly_calls: 20000,
-        monthly_cost_limit: 200,
-      },
+      free:    { monthly_tokens: 10000,  monthly_calls: 1000,  monthly_cost_limit: 5   },
+      premium: { monthly_tokens: 500000, monthly_calls: 20000, monthly_cost_limit: 200 },
     };
+    const limits = planLimits[tenant.plan as keyof typeof planLimits] || planLimits.free;
 
-    const limits =
-      planLimits[tenant.plan as keyof typeof planLimits] || planLimits.free;
-
-    // Calculate usage percentages
     const usagePercentages = {
-      tokenUsagePercent:
-        (currentMonthUsage.total_tokens / limits.monthly_tokens) * 100,
-      callUsagePercent:
-        (currentMonthUsage.openrouter_calls / limits.monthly_calls) * 100,
-      costUsagePercent:
-        (parseFloat(currentMonthUsage.cost_usd) / limits.monthly_cost_limit) *
-        100,
+      tokenUsagePercent: (currentMonthUsage.total_tokens / limits.monthly_tokens) * 100,
+      callUsagePercent:  (currentMonthUsage.openrouter_calls / limits.monthly_calls) * 100,
+      costUsagePercent:  (parseFloat(currentMonthUsage.cost_usd) / limits.monthly_cost_limit) * 100,
     };
 
-    // Get recent bookings for conversion tracking
-    const { data: recentBookings, error: bookingsError } = await supabase
-      .from('bookings')
-      .select('id, status, created_at, ai_assisted')
-      .eq('tenant_id', validatedTenantId.data)
-      .gte('created_at', startOfMonth.toISOString())
-      .order('created_at', { ascending: false })
-      .limit(100);
+    // AI conversion: reservations where raw.ai_assisted is true (or status was triggered by AI)
+    const reservations = reservationsResult.data || [];
+    const aiAssistedCount = reservations.filter(r => {
+      const raw = r.raw as Record<string, unknown> | null;
+      return raw?.ai_assisted === true || raw?.source === 'ai' || raw?.channel === 'whatsapp';
+    }).length;
+    const totalBookings = reservations.length;
+    const aiConversionRate = totalBookings > 0 ? (aiAssistedCount / totalBookings) * 100 : 0;
 
-    if (bookingsError) {
-      console.warn(
-        'Failed to fetch booking data for analytics:',
-        bookingsError
-      );
+    // Daily usage for last 7 days from real llm_calls
+    const dailyMap: Record<string, { calls: number; tokens: number }> = {};
+    for (const r of (dailyLlmResult.data || []) as LlmCallRow[]) {
+      const day = r.created_at.split('T')[0];
+      if (!dailyMap[day]) dailyMap[day] = { calls: 0, tokens: 0 };
+      dailyMap[day].calls++;
+      dailyMap[day].tokens += r.usage?.total_tokens || 0;
     }
-
-    // Calculate AI conversion metrics
-    const aiAssistedBookings =
-      recentBookings?.filter(b => b.ai_assisted) || [];
-    const totalBookings = recentBookings?.length || 0;
-    const aiConversionRate =
-      totalBookings > 0 ? (aiAssistedBookings.length / totalBookings) * 100 : 0;
-
-    // Mock daily usage trends (last 7 days)
     const dailyUsage = Array.from({ length: 7 }, (_, i) => {
-      const date = new Date();
-      date.setDate(now.getDate() - i);
-      return {
-        date: date.toISOString().split('T')[0],
-        calls: Math.floor(Math.random() * 500) + 50,
-        tokens: Math.floor(Math.random() * 10000) + 1000,
-      };
-    }).reverse();
+      const d = new Date(now);
+      d.setDate(now.getDate() - (6 - i));
+      const key = d.toISOString().split('T')[0];
+      return { date: key, calls: dailyMap[key]?.calls || 0, tokens: dailyMap[key]?.tokens || 0 };
+    });
 
-    // Mock top users by usage
-    const topUsers = [
-      {
-        user_id: 'mock-user-1',
-        name: 'Alice',
-        calls: Math.floor(Math.random() * 500),
-        tokens: Math.floor(Math.random() * 20000),
-      },
-      {
-        user_id: 'mock-user-2',
-        name: 'Bob',
-        calls: Math.floor(Math.random() * 400),
-        tokens: Math.floor(Math.random() * 15000),
-      },
-    ];
+    // Top features by LLM call volume (group by action since llm_calls has no user_id)
+    const featureMap: Record<string, { calls: number; tokens: number }> = {};
+    for (const r of (currentLlmResult.data || []) as LlmCallRow[]) {
+      const feature = r.action || 'general';
+      if (!featureMap[feature]) featureMap[feature] = { calls: 0, tokens: 0 };
+      featureMap[feature].calls++;
+      featureMap[feature].tokens += r.usage?.total_tokens || 0;
+    }
+    const topFeatures = Object.entries(featureMap)
+      .sort((a, b) => b[1].calls - a[1].calls)
+      .slice(0, 5)
+      .map(([action, stats]) => ({
+        user_id: action,
+        name: action,
+        calls: stats.calls,
+        tokens: stats.tokens,
+      }));
 
-    // Mock cost breakdown by feature
+    // Cost breakdown derived from real action-grouped costs
+    const costByAction: Record<string, number> = {};
+    for (const r of (currentLlmResult.data || []) as LlmCallRow[]) {
+      const action = (r.action || 'other').toLowerCase();
+      const category = action.includes('intent') ? 'intent_detection'
+        : action.includes('paraphras') ? 'paraphrasing'
+        : action.includes('convers') || action.includes('chat') ? 'conversation_processing'
+        : 'other';
+      costByAction[category] = (costByAction[category] || 0) + (r.usage?.cost || 0);
+    }
     const costBreakdown = {
-      intent_detection: (parseFloat(currentMonthUsage.cost_usd) * 0.4).toFixed(2),
-      paraphrasing: (parseFloat(currentMonthUsage.cost_usd) * 0.3).toFixed(2),
-      conversation_processing: (parseFloat(currentMonthUsage.cost_usd) * 0.2).toFixed(2),
-      other: (parseFloat(currentMonthUsage.cost_usd) * 0.1).toFixed(2),
+      intent_detection:        (costByAction['intent_detection']        || 0).toFixed(4),
+      paraphrasing:            (costByAction['paraphrasing']            || 0).toFixed(4),
+      conversation_processing: (costByAction['conversation_processing'] || 0).toFixed(4),
+      other:                   (costByAction['other']                   || 0).toFixed(4),
     };
 
     return {
@@ -152,13 +203,9 @@ export async function getOwnerUsage(
       plan: tenant.plan,
       limits,
       usagePercentages,
-      aiConversion: {
-        aiAssistedBookings: aiAssistedBookings.length,
-        totalBookings,
-        aiConversionRate,
-      },
+      aiConversion: { aiAssistedBookings: aiAssistedCount, totalBookings, aiConversionRate },
       dailyUsage,
-      topUsers,
+      topUsers: topFeatures,
       costBreakdown,
     };
   } catch (error) {

@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { SupabaseClient } from '@supabase/supabase-js';
 import scheduler from './scheduler';
 
 export type RoutingStrategy = 'round_robin' | 'preferred' | 'skill_based';
@@ -7,22 +7,36 @@ interface StaffUser { user_id: string; role: string; preferred?: boolean | null;
 
 // Fetch staff list for tenant (optionally location scoped later)
 async function fetchStaff(supabase: SupabaseClient, tenantId: string): Promise<StaffUser[]> {
-  const { data, error } = await supabase.from('tenant_users').select('user_id, role').eq('tenant_id', tenantId).eq('role', 'staff');
+  const { data, error } = await supabase.from('tenant_users').select('user_id, role').eq('tenant_id', tenantId).eq('role', 'staff').order('user_id');
   if (error || !Array.isArray(data)) return [];
   return data as StaffUser[];
 }
 
-// Round-robin: naive persistent pointer stored in kv table (platform_settings_kv) or fallback memory-less choice.
+// Module-level in-memory fallback for the round-robin index, keyed by tenant.
+// Used when the KV upsert fails so routing advances even if the KV store is unavailable.
+const inMemoryRRIndex: Map<string, number> = new Map();
+
+// Round-robin: persistent pointer stored in platform_settings_kv table with fallback to random.
+// NOTE: The read-then-write is not atomic. Under concurrent load two requests may read the same
+// index and assign the same staff member, causing a minor load-imbalance. The fallback already
+// handles the total-failure case. Upgrading to a true atomic counter (e.g. Postgres advisory
+// lock or a "SELECT … FOR UPDATE" CTE) should be considered when fairness is critical.
 export async function pickRoundRobinStaff(supabase: SupabaseClient, tenantId: string): Promise<string | null> {
   const staff = await fetchStaff(supabase, tenantId);
   if (!staff.length) return null;
   try {
     const key = `rr_staff_${tenantId}`;
     const { data: kv } = await supabase.from('platform_settings_kv').select('value').eq('key', key).maybeSingle();
-    const lastIdx = kv && kv.value && typeof kv.value.idx === 'number' ? kv.value.idx : -1;
+    // Use KV value if available, otherwise fall back to the in-memory counter.
+    const persistedIdx = kv && kv.value && typeof kv.value.idx === 'number' ? kv.value.idx : null;
+    const lastIdx = persistedIdx !== null ? persistedIdx : (inMemoryRRIndex.get(key) ?? -1);
     const nextIdx = (lastIdx + 1) % staff.length;
-    // upsert
-    await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
+    // Always advance the in-memory index so routing progresses even if KV is down.
+    inMemoryRRIndex.set(key, nextIdx);
+    const { error: upsertError } = await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
+    if (upsertError) {
+      console.error(`Round-robin KV upsert failed for key=${key} nextIdx=${nextIdx}:`, upsertError);
+    }
     return staff[nextIdx].user_id;
   } catch {
     // fallback random
@@ -38,7 +52,8 @@ export async function pickPreferredStaff(supabase: SupabaseClient, tenantId: str
   return free[0].user_id;
 }
 
-// Skill-based: placeholder - would check a staff_skills table. Currently falls back to preferred logic.
+// Skill-based: queries the staff_skills table for staff with the required skill, then intersects with free staff.
+// Falls back to preferred logic if no skilled staff are available or skill is not specified.
 export async function pickSkillBasedStaff(
   supabase: SupabaseClient,
   tenantId: string,

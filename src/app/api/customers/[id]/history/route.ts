@@ -42,19 +42,19 @@ export const GET = createHttpHandler(
       .eq('tenant_id', customer.tenant_id)
       .eq('customer_id', customer.id);
 
-    if (reservationsError) throw reservationsError;
+    if (reservationsError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservations'));
 
     let lifetimeSpend = 0;
     if (allReservations.length > 0) {
-      const reservationIds = allReservations.map(r => r.id);
+      const reservationIds = allReservations.map((r: { id: string }) => r.id);
       const { data: services, error: servicesError } = await ctx.supabase
         .from('reservation_services')
         .select('quantity, services(price)')
         .in('reservation_id', reservationIds);
       
-      if (servicesError) throw servicesError;
+      if (servicesError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch services'));
 
-      lifetimeSpend = services.reduce((total, item) => {
+      lifetimeSpend = services.reduce((total: number, item: { quantity?: number; services?: { price?: number } | null }) => {
         const price = item.services?.price ?? 0;
         const quantity = item.quantity ?? 1;
         return total + (price * quantity);
@@ -70,9 +70,9 @@ export const GET = createHttpHandler(
       .order('start_at', { ascending: false })
       .limit(5);
 
-    if (recentError) throw recentError;
+    if (recentError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch recent reservations'));
 
-    const recentWithTotals = await Promise.all(recentReservations.map(async (res) => {
+    const recentWithTotals = await Promise.all(recentReservations.map(async (res: { id: string; start_at: string; status: string }) => {
       const { data: services, error } = await ctx.supabase
         .from('reservation_services')
         .select('quantity, services(price)')
@@ -83,7 +83,7 @@ export const GET = createHttpHandler(
         return { ...res, total: 0 };
       }
 
-      const total = services.reduce((acc, item) => {
+      const total = services.reduce((acc: number, item: { quantity?: number; services?: { price?: number } | null }) => {
         const price = item.services?.price ?? 0;
         const quantity = item.quantity ?? 1;
         return acc + (price * quantity);

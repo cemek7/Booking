@@ -1,5 +1,5 @@
-import { createHttpHandler } from '../../../../lib/create-http-handler';
-import MachineLearningService from '../../../../lib/machineLearningService';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import MachineLearningService from '@/lib/machineLearningService';
 import { z } from 'zod';
 
 const PredictionTypeSchema = z.enum(['scheduling', 'demand', 'anomalies', 'pricing', 'insights']);
@@ -55,12 +55,13 @@ export const GET = createHttpHandler(
     switch (type) {
       case 'scheduling': {
         const { date, service_id, staff_id } = SchedulingQuerySchema.parse(query);
-        result = await mlService.getSchedulingPredictions(tenantId, date, service_id, staff_id);
+        result = await mlService.getSchedulingPredictions(tenantId, date ?? new Date().toISOString().split('T')[0], service_id, staff_id);
         break;
       }
       case 'demand': {
         const { start_date, end_date, service_id } = DemandQuerySchema.parse(query);
-        result = await mlService.getDemandForecast(tenantId, start_date, end_date, service_id);
+        const today = new Date().toISOString().split('T')[0];
+        result = await mlService.getDemandForecast(tenantId, start_date ?? today, end_date ?? today, service_id);
         break;
       }
       case 'anomalies': {
@@ -91,21 +92,3 @@ export const GET = createHttpHandler(
   'GET',
   { auth: true, roles: ['manager', 'owner'] }
 );
-      // The service already provides a structured error
-      return NextResponse.json({ error: result.error || 'Prediction failed' }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      type,
-      data: result.data,
-      usage: result.usage,
-      generated_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    span.recordException(error as Error);
-    return handleApiError(error, 'Failed to retrieve ML prediction');
-  } finally {
-    span.end();
-  }
-}

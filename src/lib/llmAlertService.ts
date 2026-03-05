@@ -1,4 +1,7 @@
-import { createClient } from '@/lib/supabase/client';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { sendEmail } from '@/lib/integrations/email-service';
+import { sendSMS } from '@/lib/integrations/sms-service';
+import { sendWhatsApp } from '@/lib/integrations/whatsapp-service';
 
 export interface NotificationConfig {
   tenant_id: string;
@@ -21,7 +24,7 @@ export interface AlertNotification {
   message: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   channels: ('email' | 'sms' | 'whatsapp' | 'in_app')[];
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   sent_at?: string;
   status: 'pending' | 'sent' | 'failed' | 'retry';
   retry_count: number;
@@ -29,7 +32,7 @@ export interface AlertNotification {
 }
 
 class LLMAlertService {
-  private supabase = createClient();
+  private get supabase() { return createSupabaseAdminClient(); }
 
   /**
    * Send alert notification for LLM usage violations
@@ -42,7 +45,7 @@ class LLMAlertService {
       limit: number;
       percentage: number;
       metric: 'tokens' | 'cost' | 'requests';
-      [key: string]: any;
+      [key: string]: unknown;
     }
   ): Promise<void> {
     try {
@@ -155,7 +158,10 @@ class LLMAlertService {
   /**
    * Generate alert content based on type and data
    */
-  private generateAlertContent(alertType: AlertNotification['alert_type'], data: any) {
+  private generateAlertContent(
+    alertType: AlertNotification['alert_type'],
+    data: { currentUsage: number; limit: number; percentage: number; metric: string; [key: string]: unknown }
+  ) {
     const { currentUsage, limit, percentage, metric } = data;
     
     switch (alertType) {
@@ -222,73 +228,82 @@ class LLMAlertService {
     // Critical alerts go to all enabled channels
     const isCritical = alertType.includes('exceeded');
     
-    if (config.email_notifications && (isCritical || config.budget_alerts || config.quota_alerts)) {
+    if (
+      config.email_notifications &&
+      config.notification_email &&
+      (
+        isCritical ||
+        (alertType === 'budget_warning' && config.budget_alerts) ||
+        (alertType === 'quota_warning' && config.quota_alerts) ||
+        alertType === 'daily_report'
+      )
+    ) {
       channels.push('email');
     }
     
-    if (config.sms_notifications && isCritical) {
+    if (config.sms_notifications && isCritical && config.notification_phone) {
       channels.push('sms');
     }
     
-    if (config.whatsapp_notifications && (isCritical || alertType === 'daily_report')) {
+    if (
+      config.whatsapp_notifications &&
+      (isCritical || alertType === 'daily_report') &&
+      config.notification_phone
+    ) {
       channels.push('whatsapp');
     }
 
     return channels;
   }
 
-  /**
-   * Deliver alert through configured channels
-   */
   private async deliverAlert(
     alert: AlertNotification,
     config: NotificationConfig
   ): Promise<void> {
     const deliveryPromises = alert.channels.map(async (channel) => {
-      try {
-        switch (channel) {
-          case 'email':
-            await this.sendEmailAlert(alert, config);
-            break;
-          case 'sms':
-            await this.sendSMSAlert(alert, config);
-            break;
-          case 'whatsapp':
-            await this.sendWhatsAppAlert(alert, config);
-            break;
-          case 'in_app':
-            await this.saveInAppAlert(alert);
-            break;
-          default:
-            console.warn(`Unknown notification channel: ${channel}`);
-        }
-      } catch (error) {
-        console.error(`Failed to send ${channel} alert:`, error);
-        throw error;
+      switch (channel) {
+        case 'email':
+          await this.sendEmailAlert(alert, config);
+          break;
+        case 'sms':
+          await this.sendSMSAlert(alert, config);
+          break;
+        case 'whatsapp':
+          await this.sendWhatsAppAlert(alert, config);
+          break;
+        case 'in_app':
+          await this.saveInAppAlert(alert);
+          break;
+        default:
+          throw new Error(`Unknown notification channel: ${channel}`);
       }
     });
 
-    try {
-      await Promise.allSettled(deliveryPromises);
-      
-      // Update alert status
-      await this.supabase
+    const results = await Promise.allSettled(deliveryPromises);
+    const allSucceeded = results.every(r => r.status === 'fulfilled');
+
+    if (!allSucceeded) {
+      const rejectedReasons = results
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map(r => r.reason);
+      console.error('Some alert channels failed:', rejectedReasons);
+    }
+
+    const supabase = this.supabase;
+    if (allSucceeded) {
+      await supabase
         .from('llm_alert_notifications')
-        .update({ 
-          status: 'sent', 
-          sent_at: new Date().toISOString() 
+        .update({
+          status: 'sent',
+          sent_at: new Date().toISOString(),
         })
         .eq('id', alert.id);
-
-    } catch (error) {
-      console.error('Failed to deliver alerts:', error);
-      
-      // Update alert status to failed and increment retry count
-      await this.supabase
+    } else {
+      await supabase
         .from('llm_alert_notifications')
-        .update({ 
-          status: 'failed', 
-          retry_count: alert.retry_count + 1 
+        .update({
+          status: 'failed',
+          retry_count: alert.retry_count + 1,
         })
         .eq('id', alert.id);
     }
@@ -304,30 +319,17 @@ class LLMAlertService {
     if (!config.notification_email) {
       throw new Error('No email address configured for notifications');
     }
-
-    // TODO: Integrate with your email service (SendGrid, AWS SES, etc.)
-    // For now, we'll log the email that would be sent
-    console.log('EMAIL ALERT:', {
+    await sendEmail({
       to: config.notification_email,
       subject: `[BOOKA] ${alert.title}`,
-      body: `
-        ${alert.title}
-        
-        ${alert.message}
-        
-        Severity: ${alert.severity.toUpperCase()}
-        Time: ${new Date().toLocaleString()}
-        
-        Tenant ID: ${alert.tenant_id}
-        
-        ---
-        Manage your notification settings: https://app.booka.com/settings/notifications
-      `,
-      data: alert.data
+      html: `<p><strong>${alert.title}</strong></p>
+<p>${alert.message}</p>
+<p><strong>Severity:</strong> ${alert.severity.toUpperCase()}<br/>
+<strong>Time:</strong> ${new Date().toLocaleString()}<br/>
+<strong>Tenant ID:</strong> ${alert.tenant_id}</p>
+<p><a href="https://app.booka.com/settings/notifications">Manage notification settings</a></p>`,
+      text: `${alert.title}\n\n${alert.message}\n\nSeverity: ${alert.severity.toUpperCase()}\nTenant: ${alert.tenant_id}`,
     });
-
-    // Simulate email sending delay
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   /**
@@ -340,15 +342,10 @@ class LLMAlertService {
     if (!config.notification_phone) {
       throw new Error('No phone number configured for SMS notifications');
     }
-
-    // TODO: Integrate with SMS service (Twilio, AWS SNS, etc.)
-    console.log('SMS ALERT:', {
+    await sendSMS({
       to: config.notification_phone,
-      message: `BOOKA: ${alert.title} - ${alert.message.substring(0, 100)}...`,
-      data: alert.data
+      body: `BOOKA [${alert.severity.toUpperCase()}]: ${alert.title} — ${alert.message.substring(0, 120)}`,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   /**
@@ -361,15 +358,10 @@ class LLMAlertService {
     if (!config.notification_phone) {
       throw new Error('No phone number configured for WhatsApp notifications');
     }
-
-    // TODO: Integrate with WhatsApp Business API
-    console.log('WHATSAPP ALERT:', {
-      to: config.notification_phone,
-      message: `🚨 *${alert.title}*\n\n${alert.message}\n\n_Severity: ${alert.severity}_`,
-      data: alert.data
+    await sendWhatsApp({
+      number: config.notification_phone,
+      text: `🚨 *${alert.title}*\n\n${alert.message}\n\n_Severity: ${alert.severity}_`,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   /**

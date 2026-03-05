@@ -13,7 +13,7 @@ export const POST = createHttpHandler(
 
     // Log security action
     await securityService.logSecurityEvent({
-      user_id: ctx.user?.id || 'unknown',
+      user_id: ctx.user!.id,
       action: 'security_rules_evaluation',
       resource_type: 'security_rules',
       success: true,
@@ -24,9 +24,11 @@ export const POST = createHttpHandler(
     // Evaluate security rules
     const result = await securityService.evaluateSecurityRules();
 
-    return {
-      success: true,
-      ...result,
+    if (!result.success) {
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Security rules evaluation failed'));
+    }
+
+    return { ...result,
       timestamp: new Date().toISOString(),
     };
   },
@@ -47,10 +49,7 @@ export const GET = createHttpHandler(
     const result = await securityService.generateComplianceReport();
     
     if (!result.success) {
-      throw ApiErrorFactory.internalError(
-        result.error || 'Failed to generate compliance report',
-        'COMPLIANCE_REPORT_FAILED'
-      );
+      throw ApiErrorFactory.internalServerError(new Error(result.error || 'Failed to generate compliance report'));
     }
 
     return {

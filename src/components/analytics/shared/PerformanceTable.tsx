@@ -10,7 +10,7 @@ export interface TableColumn<T> {
   key: keyof T | string;
   label: string;
   sortable?: boolean;
-  formatValue?: (value: any, row: T) => React.ReactNode;
+  formatValue?: (value: T[keyof T], row: T) => React.ReactNode;
   align?: 'left' | 'center' | 'right';
   width?: string;
 }
@@ -48,6 +48,7 @@ type SortDirection = 'asc' | 'desc' | null;
  * />
  * ```
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default function PerformanceTable<T extends Record<string, any>>({
   data,
   columns,

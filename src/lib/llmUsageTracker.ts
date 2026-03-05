@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/client';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { sendLLMUsageAlert } from '@/lib/llmAlertService';
 
 export interface LLMUsageRecord {
@@ -43,7 +43,7 @@ export interface LLMUsageAlert {
 }
 
 class LLMUsageTracker {
-  private supabase = createClient();
+  private get supabase() { return createSupabaseAdminClient(); }
 
   /**
    * Record LLM usage for a tenant

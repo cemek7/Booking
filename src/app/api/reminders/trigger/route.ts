@@ -31,7 +31,7 @@ export const POST = createHttpHandler(
       .order('remind_at', { ascending: true })
       .limit(limit);
 
-    if (error) throw ApiErrorFactory.internal('Failed to fetch reminders');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reminders'));
 
     return { data: data ?? [] };
   },

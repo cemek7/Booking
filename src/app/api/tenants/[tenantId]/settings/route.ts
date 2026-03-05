@@ -10,7 +10,7 @@ const SettingsSchemaBase = z.object({
   brandingColor: z.string().regex(/^#?[0-9a-fA-F]{3,8}$/).optional(),
   tone: z.string().min(1).optional(),
   styleGuidelines: z.string().min(1).optional(),
-  voiceParameters: z.record(z.any()).optional(),
+  voiceParameters: z.record(z.string(), z.any()).optional(),
   samplePhrases: z.array(z.string().min(1)).optional(),
   brandTagline: z.string().optional(),
   greeting: z.string().optional(),
@@ -42,7 +42,7 @@ const SettingsSchemaBase = z.object({
   defaultCurrency: z.string().length(3).optional(),
   depositPercent: z.number().min(0).max(100).optional(),
   cancellationPolicy: z.string().optional(),
-  businessHours: z.record(z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() })).optional(),
+  businessHours: z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() })).optional(),
   staffAssignmentStrategy: z.enum(['round_robin','preferred','skill_based']).optional(),
   allowOverbooking: z.boolean().optional(),
   reminderLead: z.number().int().min(0).optional(),
@@ -94,9 +94,14 @@ const SettingsSchema = SettingsSchemaBase.superRefine((val, ctx) => {
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.params.tenantId;
+    const tenantId = ctx.params!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    }
+
+    // Ensure non-superadmin users can only access their own tenant's settings
+    if (ctx.user!.role !== 'superadmin' && ctx.user!.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access to this tenant is not allowed');
     }
 
     const { data, error } = await ctx.supabase
@@ -134,9 +139,14 @@ export const GET = createHttpHandler(
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.params.tenantId;
+    const tenantId = ctx.params!.tenantId;
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    }
+
+    // Ensure non-superadmin users can only modify their own tenant's settings
+    if (ctx.user!.role !== 'superadmin' && ctx.user!.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access to this tenant is not allowed');
     }
 
     const patch = await parseJsonBody<Record<string, unknown>>(ctx.request);
@@ -206,5 +216,5 @@ export const PATCH = createHttpHandler(
     return merged;
   },
   'PATCH',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager', 'superadmin'] }
 );

@@ -63,7 +63,7 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.externalServiceError('Stripe secret not configured');
       }
       try {
-        const stripe = new Stripe(stripeSecret, { apiVersion: '2023-10-16' });
+        const stripe = new Stripe(stripeSecret, { apiVersion: '2025-12-15.clover' });
         const event = stripe.webhooks.constructEvent(rawText, stripeSigHeader, stripeSecret);
         // Event validated successfully
       } catch (e) {

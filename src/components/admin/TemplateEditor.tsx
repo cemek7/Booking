@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 
 import { generateAITemplate, TemplateGenerationRequest } from '@/lib/aiTemplateGenerator';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 interface TemplateVariable {
   name: string;
@@ -135,6 +136,40 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [tone, setTone] = useState<TemplateGenerationRequest['tone']>('professional');
+  const [tenantVertical, setTenantVertical] = useState<TemplateGenerationRequest['vertical']>('general');
+  const [authCtx, setAuthCtx] = useState<{ tenantId?: string; userId?: string }>({});
+
+  // Fetch tenant vertical + current user from auth on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const userId = session.user.id;
+        // Get tenantId from user metadata or tenant_users table
+        const { data: tuRow } = await supabase
+          .from('tenant_users')
+          .select('tenant_id, tenants(industry)')
+          .eq('user_id', userId)
+          .limit(1)
+          .single();
+        const tenantId = (tuRow as any)?.tenant_id as string | undefined;
+        const industry = (tuRow as any)?.tenants?.industry as string | undefined;
+        setAuthCtx({ tenantId, userId });
+        if (industry) {
+          const verticalMap: Record<string, TemplateGenerationRequest['vertical']> = {
+            beauty: 'beauty', hospitality: 'hospitality',
+            medicine: 'medicine', medical: 'medicine', health: 'medicine',
+          };
+          setTenantVertical(verticalMap[industry.toLowerCase()] ?? 'general');
+        }
+      } catch {
+        // fallback to defaults
+      }
+    })();
+  }, []);
 
   // Initialize preview data with sample values
   useEffect(() => {
@@ -287,16 +322,15 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
     try {
       const request: TemplateGenerationRequest = {
         category: template.category as any,
-        vertical: 'general', // TODO: Get from tenant settings
+        vertical: tenantVertical,
         language: template.language,
-        tone: 'professional', // TODO: Make this configurable
+        tone,
         description: template.description || undefined,
         includeEmojis: true,
         length: 'medium'
       };
 
-      // TODO: Get tenant ID and user ID from auth context
-      const generated = await generateAITemplate(request);
+      const generated = await generateAITemplate(request, authCtx.tenantId, authCtx.userId);
       
       setTemplate(prev => ({
         ...prev,
@@ -394,6 +428,25 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
                   <SelectItem value="fr">🇫🇷 Français</SelectItem>
                   <SelectItem value="de">🇩🇪 Deutsch</SelectItem>
                   <SelectItem value="pt">🇵🇹 Português</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="tone">AI Tone</Label>
+              <Select
+                value={tone}
+                onValueChange={(value) => setTone(value as TemplateGenerationRequest['tone'])}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="professional">Professional</SelectItem>
+                  <SelectItem value="friendly">Friendly</SelectItem>
+                  <SelectItem value="casual">Casual</SelectItem>
+                  <SelectItem value="warm">Warm</SelectItem>
+                  <SelectItem value="formal">Formal</SelectItem>
                 </SelectContent>
               </Select>
             </div>

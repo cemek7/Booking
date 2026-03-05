@@ -5,9 +5,9 @@
  * All domain-specific types import from this file to ensure consistency.
  * 
  * CONSOLIDATION NOTES:
- * - Role type: Canonical definition (staff | manager | owner | superadmin)
+ * - Role type: Canonical definition lives in roles.ts, re-exported here
  * - Permission types: Unified from permissions.ts and enhanced-permissions.ts
- * - Auth types: Consolidated from unified-auth.ts and enhanced-auth-types.ts
+ * - Auth types: Consolidated from unified-auth.ts (see src/types/auth.ts)
  * - User types: Merged and standardized
  * 
  * IMPORTS: Replace all scattered imports with "from '@/types'"
@@ -15,19 +15,13 @@
  */
 
 // ============================================================================
-// CORE ROLE TYPES (CANONICAL)
+// CORE ROLE TYPES (CANONICAL SOURCE: src/types/roles.ts)
 // ============================================================================
 
-/**
- * Standard role type used throughout the system.
- * Single source of truth - replaces all duplicated Role definitions
- */
-export type Role = 'staff' | 'manager' | 'owner' | 'superadmin';
-
-/**
- * Alias for backward compatibility
- */
-export type UserRole = Role;
+// Import locally for use within this file, then re-export so consumers can use either
+// `import { Role } from '@/types'` or `import { Role } from '@/types/roles'`.
+import type { Role, UserRole } from './roles';
+export type { Role, UserRole };
 
 /**
  * Role level in hierarchy (0=highest, 3=lowest)

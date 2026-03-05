@@ -213,7 +213,7 @@ export function createApiHandler(
  */
 export function createHttpHandler(
   handler: RouteHandler,
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'GET',
   options: RouteHandlerOptions = {}
 ) {
   return createApiHandler(handler, { ...options, methods: [method] });

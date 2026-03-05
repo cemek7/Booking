@@ -1,6 +1,7 @@
+import { headers } from 'next/headers';
 import { getSupabaseServerComponentClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import type { Role } from './unified-auth-orchestrator';
+import type { Role } from '@/types/roles';
 import { UnifiedAuthOrchestrator } from './unified-auth-orchestrator';
 
 // PHASE 2D: Import canonical auth types from consolidated location
@@ -32,7 +33,7 @@ export async function requireAuth(
 
   const role = tenantUserData.role as Role;
   const orchestrator = UnifiedAuthOrchestrator.getInstance();
-  const effectiveRoles = orchestrator.getEffectiveRoles(role);
+  const effectiveRoles = orchestrator.getEffectiveRoles(role as any) as Role[];
 
   if (allowedRoles?.length) {
     const hasAccess = requireExact
@@ -46,7 +47,7 @@ export async function requireAuth(
     email: session.user.email || '',
     role,
     tenantId: tenantUserData.tenant_id,
-    permissions: orchestrator.getPermissionsForRole(role),
+    permissions: orchestrator.getPermissionsForRole(role as any),
     effectiveRoles,
     is_active: true,
     created_at: session.user.created_at,

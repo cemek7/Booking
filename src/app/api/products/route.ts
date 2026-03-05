@@ -3,6 +3,17 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { Product, ProductListQuery, CreateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/auth/role-utils';
 
+/** Columns that may be used for ORDER BY on the products table */
+const ALLOWED_SORT_COLUMNS = new Set([
+  'created_at', 'updated_at', 'name', 'price_cents',
+  'stock_quantity', 'upsell_priority', 'brand', 'sku',
+] as const);
+
+/** Accepted values for the `status` filter */
+const ALLOWED_STATUS_VALUES = new Set([
+  'all', 'active', 'inactive', 'featured', 'low_stock', 'out_of_stock',
+] as const);
+
 /**
  * GET /api/products
  * List products with filtering, search, and pagination
@@ -12,12 +23,12 @@ export const GET = createHttpHandler(
     const url = new URL(ctx.request.url);
     const query: ProductListQuery = {
       category_id: url.searchParams.get('category_id') || undefined,
-      status: (url.searchParams.get('status') as any) || 'all',
+      status: (url.searchParams.get('status') as string | undefined) || 'all',
       search: url.searchParams.get('search') || undefined,
       tags: url.searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
       price_min: url.searchParams.get('price_min') ? parseInt(url.searchParams.get('price_min')!) : undefined,
       price_max: url.searchParams.get('price_max') ? parseInt(url.searchParams.get('price_max')!) : undefined,
-      sort: (url.searchParams.get('sort') as any) || 'created_at',
+      sort: (url.searchParams.get('sort') as string | undefined) || 'created_at',
       order: (url.searchParams.get('order') as 'asc' | 'desc') || 'desc',
       page: parseInt(url.searchParams.get('page') || '1'),
       limit: Math.min(parseInt(url.searchParams.get('limit') || '20'), 100),
@@ -25,20 +36,30 @@ export const GET = createHttpHandler(
       include_stock_info: url.searchParams.get('include_stock_info') === 'true',
     };
 
+    // Validate sort column against allowlist to prevent arbitrary column injection
+    if (query.sort && !ALLOWED_SORT_COLUMNS.has(query.sort as never)) {
+      throw ApiErrorFactory.validationError({ sort: `Invalid sort column. Allowed values: ${[...ALLOWED_SORT_COLUMNS].join(', ')}` });
+    }
+
+    // Validate status against allowlist
+    if (query.status && !ALLOWED_STATUS_VALUES.has(query.status as never)) {
+      throw ApiErrorFactory.validationError({ status: `Invalid status. Allowed values: ${[...ALLOWED_STATUS_VALUES].join(', ')}` });
+    }
+
     // Get user's tenant(s)
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
+    const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
     // Build base query
@@ -116,11 +137,11 @@ export const GET = createHttpHandler(
     const { data: products, error, count } = await queryBuilder;
 
     if (error) {
-      throw ApiErrorFactory.internal('Failed to fetch products');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch products'));
     }
 
     // Filter out cost prices if user doesn't have permission
-    const sanitizedProducts = products?.map(product => {
+    const sanitizedProducts = products?.map((product: Record<string, unknown>) => {
       if (!permissions.can_view_cost_prices) {
         const { cost_price_cents, ...productWithoutCost } = product;
         return productWithoutCost;
@@ -164,7 +185,7 @@ export const POST = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id)
+      .eq('user_id', ctx.user!.id)
       .limit(1)
       .single();
 
@@ -242,7 +263,7 @@ export const POST = createHttpHandler(
       if (error.code === '23505') {
         throw ApiErrorFactory.conflict('SKU already exists');
       }
-      throw ApiErrorFactory.internal('Failed to create product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create product'));
     }
 
     // Log inventory movement if tracking inventory
@@ -257,7 +278,7 @@ export const POST = createHttpHandler(
           previous_quantity: 0,
           new_quantity: productData.stock_quantity,
           reason: 'Initial stock',
-          performed_by: ctx.user.id,
+          performed_by: ctx.user!.id,
         });
     }
 

@@ -1,7 +1,6 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { UpdateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
-import { getUserRole } from '@/lib/auth/role-utils';
 
 interface RouteParams {
   params: { id: string };
@@ -16,23 +15,19 @@ export const GET = createHttpHandler(
     const id = ctx.request.url.split('/').pop();
     if (!id) throw ApiErrorFactory.badRequest('Product ID required');
 
-    // Get user's tenant(s)
+    // Get user's tenant membership including per-tenant role
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
-      .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .select('tenant_id, role')
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
-    // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
-    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
-
-    // Fetch product with related data
+    // Fetch product first to determine its tenant
     const { data: product, error } = await ctx.supabase
       .from('products')
       .select(`
@@ -49,7 +44,20 @@ export const GET = createHttpHandler(
       if (error.code === 'PGRST116') {
         throw ApiErrorFactory.notFound('Product not found');
       }
-      throw ApiErrorFactory.internal('Failed to fetch product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch product'));
+    }
+
+    // Resolve the per-tenant role for the product's actual tenant
+    const tenantMembership = tenantUsers.find(
+      (tu: { tenant_id: string; role: string }) => tu.tenant_id === product.tenant_id
+    );
+    if (!tenantMembership) {
+      throw ApiErrorFactory.forbidden('No access to the product tenant');
+    }
+    const perTenantRole = tenantMembership.role as keyof typeof PRODUCT_ROLE_PERMISSIONS;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[perTenantRole];
+    if (!permissions) {
+      throw ApiErrorFactory.forbidden(`Role '${perTenantRole}' is not authorised for product operations`);
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -73,21 +81,17 @@ export const PUT = createHttpHandler(
     const id = ctx.request.url.split('/').pop();
     if (!id) throw ApiErrorFactory.badRequest('Product ID required');
 
-    // Get user's tenant(s)
+    // Get user's tenant membership including per-tenant role
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
-      .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .select('tenant_id, role')
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
-
-    // Get user permissions
-    const userRole = await getUserRole(ctx.user.id);
-    const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase
@@ -99,6 +103,19 @@ export const PUT = createHttpHandler(
 
     if (!existingProduct) {
       throw ApiErrorFactory.notFound('Product not found');
+    }
+
+    // Resolve the per-tenant role for the product's actual tenant and get permissions.
+    const tenantMembership = tenantUsers.find(
+      (tu: { tenant_id: string; role: string }) => tu.tenant_id === existingProduct.tenant_id
+    );
+    if (!tenantMembership) {
+      throw ApiErrorFactory.forbidden('No access to the product tenant');
+    }
+    const perTenantRole = tenantMembership.role as keyof typeof PRODUCT_ROLE_PERMISSIONS;
+    const permissions = PRODUCT_ROLE_PERMISSIONS[perTenantRole];
+    if (!permissions) {
+      throw ApiErrorFactory.forbidden(`Role '${perTenantRole}' is not authorised for product operations`);
     }
 
     const body: UpdateProductRequest = await ctx.request.json();
@@ -140,7 +157,7 @@ export const PUT = createHttpHandler(
     }
 
     // Prepare update data (only include provided fields)
-    const updateData: Partial<any> = {
+    const updateData: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     };
 
@@ -194,7 +211,7 @@ export const PUT = createHttpHandler(
               previous_quantity: existingProduct.stock_quantity,
               new_quantity: body.stock_quantity,
               reason: 'Manual adjustment via product update',
-              performed_by: ctx.user.id,
+              performed_by: ctx.user!.id,
             });
         }
         
@@ -218,7 +235,7 @@ export const PUT = createHttpHandler(
       if (error.code === '23505') {
         throw ApiErrorFactory.conflict('SKU already exists');
       }
-      throw ApiErrorFactory.internal('Failed to update product');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to update product'));
     }
 
     // Filter out cost prices if user doesn't have permission
@@ -236,7 +253,7 @@ export const PUT = createHttpHandler(
     };
   },
   'PUT',
-  { auth: true, roles: ['admin', 'manager', 'product_manager'] }
+  { auth: true, roles: ['superadmin', 'owner', 'manager'] }
 );
 
 /**
@@ -252,13 +269,13 @@ export const DELETE = createHttpHandler(
     const { data: tenantUsers } = await ctx.supabase
       .from('tenant_users')
       .select('tenant_id')
-      .eq('user_id', ctx.user.id);
+      .eq('user_id', ctx.user!.id);
 
     if (!tenantUsers || tenantUsers.length === 0) {
       throw ApiErrorFactory.forbidden('No tenant access');
     }
 
-    const tenantIds = tenantUsers.map(tu => tu.tenant_id);
+    const tenantIds = tenantUsers.map((tu: { tenant_id: string }) => tu.tenant_id);
 
     // Verify product exists and user has access
     const { data: existingProduct } = await ctx.supabase
@@ -284,7 +301,7 @@ export const DELETE = createHttpHandler(
         .eq('id', id);
 
       if (error) {
-        throw ApiErrorFactory.internal('Failed to delete product');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to delete product'));
       }
 
       return { 
@@ -304,7 +321,7 @@ export const DELETE = createHttpHandler(
         .single();
 
       if (error) {
-        throw ApiErrorFactory.internal('Failed to deactivate product');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to deactivate product'));
       }
 
       return { 
@@ -314,5 +331,5 @@ export const DELETE = createHttpHandler(
     }
   },
   'DELETE',
-  { auth: true, roles: ['admin', 'manager', 'product_manager'] }
+  { auth: true, roles: ['superadmin', 'owner', 'manager'] }
 );

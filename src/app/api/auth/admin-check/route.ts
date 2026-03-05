@@ -34,7 +34,7 @@ export const POST = createHttpHandler(
 
       if (adminErr) {
         console.error('[auth/admin-check] admin query failed:', adminErr);
-        throw ApiErrorFactory.internalServerError('Failed to check admin status');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to check admin status'));
       }
 
       if (adminRow) {
@@ -56,7 +56,7 @@ export const POST = createHttpHandler(
 
       if (tuErr) {
         console.error('[auth/admin-check] tenant_users query failed:', tuErr);
-        throw ApiErrorFactory.internalServerError('Failed to check tenant membership');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to check tenant membership'));
       }
 
       if (tenantUser) {
@@ -77,7 +77,7 @@ export const POST = createHttpHandler(
         throw error;
       }
       console.error('[auth/admin-check] unexpected error:', error);
-      throw ApiErrorFactory.internalServerError('Failed to check admin status');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to check admin status'));
     }
   },
   'POST',

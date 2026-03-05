@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
 import DateRangePicker, { TimePeriod } from './shared/DateRangePicker';
@@ -10,16 +10,11 @@ import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
 import AreaChart from './charts/AreaChart';
 import PerformanceTable from './shared/PerformanceTable';
-import {
-  DollarSign,
-  Calendar,
-  Users,
-  TrendingUp,
-  Award,
-  Target,
-  Clock,
-  Star,
-} from 'lucide-react';
+import DataUnavailableState from './shared/DataUnavailableState';
+import { DollarSign, Calendar, Users, Star, AlertTriangle, TrendingDown, BarChart2 } from 'lucide-react';
+import { authFetch } from '@/lib/auth/auth-api-client';
+import type { DashboardMetric, BookingTrendData, StaffPerformanceData } from '@/types/analytics-api';
+import { PERIOD_TO_STAFF_PERIOD, PERIOD_DAYS } from './shared/analytics-constants';
 
 export interface OwnerMetricsProps {
   tenantId: string;
@@ -47,393 +42,258 @@ interface AnalyticsData {
   staffPerformanceData: Array<{ name: string; bookings: number; rating: number }>;
 }
 
-/**
- * OwnerMetrics Component
- *
- * Displays comprehensive business analytics for tenant owners
- * All data is fetched from the backend API - no hardcoded values
- */
 export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
-  const [loading, setLoading] = useState(true);
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  // Fetch analytics data from API
-  useEffect(() => {
-    const fetchAnalytics = async () => {
-      setLoading(true);
-      setError(null);
-      
-      try {
-        const response = await fetch(`/api/owner/analytics?period=${period}`, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
+  const { data: metrics = [], isLoading: metricsLoading } = useQuery({
+    queryKey: ['ownerMetrics', tenantId, period],
+    queryFn: async () => {
+      const res = await authFetch<{ metrics?: DashboardMetric[] }>(
+        `/api/analytics/dashboard?period=${period === 'year' || period === 'custom' ? 'quarter' : period}`,
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.metrics || [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch analytics data');
-        }
+  const { data: trends = [], isLoading: trendsLoading } = useQuery({
+    queryKey: ['ownerTrends', tenantId, period],
+    queryFn: async () => {
+      const days = PERIOD_DAYS[period];
+      const res = await authFetch<{ trends?: BookingTrendData[] }>(`/api/analytics/trends?days=${days}`, {
+        headers: { 'X-Tenant-ID': tenantId },
+      });
+      return res.status === 200 ? res.data?.trends || [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-        const result = await response.json();
-        
-        if (result.success && result.data) {
-          setAnalyticsData(result.data);
-        } else {
-          throw new Error(result.error || 'Invalid response format');
-        }
-      } catch (err) {
-        console.error('Error fetching analytics:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load analytics');
-      } finally {
-        setLoading(false);
-      }
-    };
+  const { data: staffPerformance = [], isLoading: staffLoading } = useQuery({
+    queryKey: ['ownerStaff', tenantId, period],
+    queryFn: async () => {
+      const res = await authFetch<{ performance?: StaffPerformanceData[] }>(
+        `/api/analytics/staff?period=${PERIOD_TO_STAFF_PERIOD[period]}`,
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.performance || [] : [];
+    },
+    enabled: !!tenantId,
+  });
 
-    fetchAnalytics();
-  }, [period, tenantId]);
+  const loading = metricsLoading || trendsLoading || staffLoading;
+  const hasData = metrics.length > 0 || trends.length > 0 || staffPerformance.length > 0;
 
-  // Default/fallback data while loading or on error
-  const businessMetrics = analyticsData?.businessMetrics || {
-    totalRevenue: 0,
-    totalBookings: 0,
-    activeCustomers: 0,
-    averageRating: 0,
-    staffCount: 0,
-    utilizationRate: 0,
-  };
+  // Revenue forecast (predictive analytics)
+  const { data: forecastData } = useQuery({
+    queryKey: ['ownerForecast', tenantId],
+    queryFn: async () => {
+      const res = await authFetch<{ forecast?: { forecast?: { next_month?: number; growth_rate?: number } } }>(
+        '/api/analytics/forecast?horizon=monthly',
+        { headers: { 'X-Tenant-ID': tenantId } }
+      );
+      return res.status === 200 ? res.data?.forecast?.forecast ?? null : null;
+    },
+    enabled: !!tenantId,
+    staleTime: 1000 * 60 * 30, // forecast is expensive — cache 30 min
+  });
 
-  const trends = analyticsData?.trends || {
-    revenue: 0,
-    bookings: 0,
-    customers: 0,
-    rating: 0,
-  };
+  const metricById = useMemo(() => {
+    const map = new Map<string, DashboardMetric>();
+    for (const metric of metrics) map.set(metric.id, metric);
+    return map;
+  }, [metrics]);
 
-  // Revenue over time - from API or default
-  const revenueData = analyticsData?.revenueData || [];
+  const totalRevenue = metricById.get('total_revenue')?.value || 0;
+  const totalBookings = metricById.get('total_bookings')?.value || 0;
+  const activeCustomers = metricById.get('new_customers')?.value || 0;
+  const cancellationRate = metricById.get('cancellation_rate')?.value || 0;
+  const noShowRate = metricById.get('no_show_rate')?.value || 0;
+  const avgBookingValue = metricById.get('avg_booking_value')?.value || 0;
+  const staffUtilization = metricById.get('staff_utilization')?.value || 0;
 
-  // Booking status distribution - from API or default
-  const bookingStatusData = analyticsData?.bookingStatus || [];
+  const averageRating = staffPerformance.length
+    ? staffPerformance.reduce((sum, row) => sum + (row.customer_rating || 0), 0) / staffPerformance.length
+    : 0;
 
-  // Service performance - from API or default
-  const servicePerformanceData = analyticsData?.servicePerformanceData || [];
+  const formatCurrency = (value: number | string) => `$${Number(value).toLocaleString()}`;
 
-  // Customer acquisition trends - from API or default
-  const customerAcquisitionData = analyticsData?.customerAcquisitionData || [];
+  const bookingStatusData = useMemo(() => {
+    const totalBookingsCount = trends.reduce((sum, row) => sum + (row.bookings || 0), 0);
+    const totalCancellations = trends.reduce((sum, row) => sum + (row.cancellations || 0), 0);
+    const totalNoShows = trends.reduce((sum, row) => sum + (row.no_shows || 0), 0);
+    const completed = Math.max(totalBookingsCount - totalCancellations - totalNoShows, 0);
 
-  // Staff performance ranking - from API or default
-  const staffPerformance = analyticsData?.staffPerformanceData || [];
+    return [
+      { name: 'Completed', value: completed, color: '#10b981' },
+      { name: 'Cancelled', value: totalCancellations, color: '#ef4444' },
+      { name: 'No Show', value: totalNoShows, color: '#f59e0b' },
+    ].filter((item) => item.value > 0);
+  }, [trends]);
 
-  // Peak hours analysis - kept as default for now (would need separate endpoint)
-  const peakHoursData = [
-    { hour: '9 AM', bookings: 12 },
-    { hour: '10 AM', bookings: 24 },
-    { hour: '11 AM', bookings: 35 },
-    { hour: '12 PM', bookings: 42 },
-    { hour: '1 PM', bookings: 38 },
-    { hour: '2 PM', bookings: 45 },
-    { hour: '3 PM', bookings: 48 },
-    { hour: '4 PM', bookings: 41 },
-    { hour: '5 PM', bookings: 36 },
-    { hour: '6 PM', bookings: 28 },
-  ];
-
-  const exportBusinessReport = () => {
-    // TODO: Implement CSV export
-    console.log('Exporting business report...');
-  };
-
-  const formatCurrency = (value: number) => `$${value.toLocaleString()}`;
-  const formatPercent = (value: number) => `${value}%`;
-
-  if (loading) {
+  if (!loading && !hasData) {
     return (
-      <div className="flex items-center justify-center p-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading analytics data...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6">
-        <h3 className="font-semibold text-destructive mb-2">Error Loading Analytics</h3>
-        <p className="text-sm text-muted-foreground">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
-        >
-          Retry
-        </button>
-      </div>
+      <DataUnavailableState
+        title="Owner analytics"
+        description="Data not available. Backend analytics data was not returned for this view."
+      />
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Date Range Picker */}
       <div className="flex items-center justify-between">
-        <DateRangePicker
-          period={period}
-          onPeriodChange={setPeriod}
-          compact
-          className="w-64"
-        />
+        <DateRangePicker period={period} onPeriodChange={setPeriod} compact className="w-64" />
       </div>
 
-      {/* Business KPIs */}
+      {/* Primary KPIs */}
       <StatsGrid columns={4}>
         <MetricCard
           label="Total Revenue"
-          value={businessMetrics.totalRevenue}
-          trend={trends.revenue}
-          trendLabel="vs last period"
+          value={totalRevenue}
+          trend={metricById.get('total_revenue')?.trend}
           icon={DollarSign}
           formatValue={formatCurrency}
           colorScheme="success"
+          loading={loading}
         />
         <MetricCard
           label="Total Bookings"
-          value={businessMetrics.totalBookings}
-          trend={trends.bookings}
-          trendLabel="vs last period"
+          value={totalBookings}
+          trend={metricById.get('total_bookings')?.trend}
           icon={Calendar}
           colorScheme="info"
+          loading={loading}
         />
         <MetricCard
-          label="Active Customers"
-          value={businessMetrics.activeCustomers}
-          trend={trends.customers}
-          trendLabel="vs last period"
+          label="New Customers"
+          value={activeCustomers}
+          trend={metricById.get('new_customers')?.trend}
           icon={Users}
-          colorScheme="default"
+          loading={loading}
         />
         <MetricCard
           label="Average Rating"
-          value={businessMetrics.averageRating}
-          trend={trends.rating}
-          trendLabel="vs last period"
+          value={Number(averageRating.toFixed(1))}
           icon={Star}
           colorScheme="warning"
+          loading={loading}
         />
       </StatsGrid>
 
+      {/* Operational KPIs */}
+      <StatsGrid columns={3}>
+        <MetricCard
+          label="Cancellation Rate"
+          value={`${Number(cancellationRate || 0).toFixed(1)}%`}
+          trend={metricById.get('cancellation_rate')?.trend}
+          icon={AlertTriangle}
+          colorScheme="default"
+          loading={loading}
+        />
+        <MetricCard
+          label="No-Show Rate"
+          value={`${Number(noShowRate || 0).toFixed(1)}%`}
+          trend={metricById.get('no_show_rate')?.trend}
+          icon={TrendingDown}
+          colorScheme="default"
+          loading={loading}
+        />
+        <MetricCard
+          label="Avg Booking Value"
+          value={avgBookingValue}
+          trend={metricById.get('avg_booking_value')?.trend}
+          icon={BarChart2}
+          formatValue={formatCurrency}
+          colorScheme="info"
+          loading={loading}
+        />
+      </StatsGrid>
+
+      {/* Revenue Forecast (predictive analytics) */}
+      {forecastData && (
+        <StatsGrid columns={2}>
+          <MetricCard
+            label="Forecasted Next Month Revenue"
+            value={forecastData.next_month ?? 0}
+            formatValue={formatCurrency}
+            icon={TrendingDown}
+            colorScheme="success"
+            loading={false}
+          />
+          <MetricCard
+            label="Predicted Growth Rate"
+            value={`${Number((forecastData.growth_rate ?? 0) * 100).toFixed(1)}%`}
+            icon={BarChart2}
+            colorScheme={((forecastData.growth_rate ?? 0) >= 0) ? 'success' : 'default'}
+            loading={false}
+          />
+        </StatsGrid>
+      )}
+
       {/* Revenue & Booking Trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <AreaChart
-          data={revenueData}
-          dataKeys={['revenue']}
-          title="Revenue Trend"
-          description="Weekly revenue performance"
-          colors={['#10b981']}
-          formatValue={formatCurrency}
-        />
-        <TrendChart
-          data={revenueData}
-          dataKey="bookings"
-          title="Booking Trend"
-          description="Weekly booking volume"
-          color="#3b82f6"
-          showTrend
-        />
+        <AreaChart data={trends} dataKeys={['revenue']} title="Revenue Trend" description="Revenue over time" colors={['#10b981']} formatValue={(v) => formatCurrency(v)} />
+        <TrendChart data={trends} dataKey="bookings" title="Booking Trend" description="Bookings over time" color="#3b82f6" showTrend />
       </div>
 
-      {/* Booking Status & Service Performance */}
+      {/* Status Breakdown & Cancellation Trend */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <PieChart
           data={bookingStatusData}
           title="Booking Status Breakdown"
-          description="Current booking statuses"
+          description="Completed vs Cancelled vs No-Show"
           showPercentage
           innerRadius={50}
         />
         <BarChart
-          data={servicePerformanceData}
-          dataKeys={['bookings']}
-          xAxisKey="name"
-          title="Top Services by Bookings"
-          description="Most popular services this period"
-          colors={['#8b5cf6']}
+          data={trends.map((entry) => ({
+            date: entry.date,
+            cancellations: entry.cancellations || 0,
+            no_shows: entry.no_shows || 0,
+          }))}
+          dataKeys={['cancellations', 'no_shows']}
+          xAxisKey="date"
+          title="Cancellations & No-Shows Over Time"
+          description="Daily cancellation and no-show counts"
+          colors={['#ef4444', '#f59e0b']}
         />
       </div>
 
-      {/* Customer Acquisition */}
-      <AreaChart
-        data={customerAcquisitionData}
-        dataKeys={['new', 'returning']}
-        title="Customer Acquisition & Retention"
-        description="New vs returning customers over time"
-        colors={['#3b82f6', '#10b981']}
-        stacked={false}
-      />
-
-      {/* Peak Hours Analysis */}
-      <BarChart
-        data={peakHoursData}
-        dataKeys={['bookings']}
-        xAxisKey="hour"
-        title="Peak Booking Hours"
-        description="Busiest times of day for bookings"
-        colors={['#f59e0b']}
-      />
+      {/* Staff utilization summary */}
+      <StatsGrid columns={2}>
+        <MetricCard
+          label="Staff Utilization"
+          value={`${Number(staffUtilization || 0).toFixed(1)}%`}
+          trend={metricById.get('staff_utilization')?.trend}
+          icon={BarChart2}
+          colorScheme="success"
+          loading={loading}
+        />
+        <MetricCard
+          label="Revenue per Booking"
+          value={totalBookings > 0 ? totalRevenue / totalBookings : 0}
+          icon={DollarSign}
+          formatValue={formatCurrency}
+          colorScheme="success"
+          loading={loading}
+        />
+      </StatsGrid>
 
       {/* Staff Performance Table */}
       <PerformanceTable
         data={staffPerformance}
+        title="Staff Performance"
+        description="Individual staff performance for the period"
         columns={[
-          {
-            key: 'name',
-            label: 'Staff Member',
-            sortable: true,
-            width: '40%',
-          },
-          {
-            key: 'bookings',
-            label: 'Bookings',
-            sortable: true,
-            align: 'right',
-          },
-          {
-            key: 'rating',
-            label: 'Rating',
-            sortable: true,
-            align: 'center',
-            formatValue: (value) => (
-              <div className="flex items-center justify-center gap-1">
-                <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                <span className="font-semibold">{value > 0 ? value : 'N/A'}</span>
-              </div>
-            ),
-          },
+          { key: 'staff_name', label: 'Staff Member', sortable: true },
+          { key: 'bookings_count', label: 'Bookings', sortable: true, align: 'right' },
+          { key: 'revenue_total', label: 'Revenue', sortable: true, align: 'right', formatValue: (value) => formatCurrency(value) },
+          { key: 'customer_rating', label: 'Rating', sortable: true, align: 'right', formatValue: (value) => Number(value || 0).toFixed(1) },
+          { key: 'utilization_rate', label: 'Utilization', sortable: true, align: 'right', formatValue: (value) => `${Number(value || 0).toFixed(1)}%` },
+          { key: 'tips_total', label: 'Tips', sortable: true, align: 'right', formatValue: (value) => formatCurrency(value) },
         ]}
-        title="Staff Performance Rankings"
-        description="Top performing staff members this period (from database reviews)"
-        onExport={exportBusinessReport}
-        exportLabel="Export Business Report"
       />
-
-      {/* Additional Business Insights */}
-      {/* TODO: These metrics need to be added to the API endpoint:
-          - Booking Conversion Rate (from analytics_events funnel)
-          - Customer Retention Rate (from retention cohorts calculation)
-          - Cancellation Rate (from reservations.status = 'cancelled')
-          - Avg Service Time (from reservations.metadata or duration calculation)
-          - No-Show Rate (from reservations.status = 'no_show')
-          - 5-Star Reviews % (from reviews table)
-          - Repeat Customers % (from customer booking history)
-          - Response Time (from messages or support system)
-      */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Target className="h-4 w-4" />
-              Conversion Metrics
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Booking Conversion
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  73.2%
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Customer Retention
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  82.5%
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Cancellation Rate
-                </span>
-                <span className="text-sm font-semibold text-amber-600">
-                  1.9%
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Operational Efficiency
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Avg Service Time
-                </span>
-                <span className="text-sm font-semibold">42 min</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Staff Utilization
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  {businessMetrics.utilizationRate}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  No-Show Rate
-                </span>
-                <span className="text-sm font-semibold">3.2%</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Award className="h-4 w-4" />
-              Customer Satisfaction
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  5-Star Reviews
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  78%
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Repeat Customers
-                </span>
-                <span className="text-sm font-semibold">64%</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Referral Rate
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  12.5%
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
     </div>
   );
 }

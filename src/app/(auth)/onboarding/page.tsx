@@ -56,6 +56,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('basics');
   const [name, setName] = useState('');
+  const [industry, setIndustry] = useState('');
   const [timezone, setTimezone] = useState('');
   const [description, setDescription] = useState('');
   const [businessType, setBusinessType] = useState('');

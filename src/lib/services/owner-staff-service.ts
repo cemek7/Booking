@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { UserRole } from '../../../../types';
+import type { UserRole } from '@/types';
 
 export async function getStaffData(supabase: SupabaseClient, tenantId: string) {
   // Implementation to be filled

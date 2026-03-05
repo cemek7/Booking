@@ -47,7 +47,7 @@ export const GET = createHttpHandler(
     });
 
     if (!queryValidation.success) {
-      throw ApiErrorFactory.badRequest('Invalid query parameters', queryValidation.error.issues);
+      throw ApiErrorFactory.badRequest('Invalid query parameters');
     }
 
     const { start, end, staff_id } = queryValidation.data;
@@ -68,7 +68,7 @@ export const GET = createHttpHandler(
 
     if (error) {
       console.error('Failed to fetch bookings:', error);
-      throw ApiErrorFactory.internalServerError('Failed to fetch bookings');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch bookings'));
     }
 
     const bookings: Booking[] = (data || []).map((row: any) => ({
@@ -102,7 +102,7 @@ export const POST = createHttpHandler(
     const bodyValidation = CreateBookingBodySchema.safeParse(body);
 
     if (!bodyValidation.success) {
-      throw ApiErrorFactory.badRequest('Invalid request body', bodyValidation.error.issues);
+      throw ApiErrorFactory.badRequest('Invalid request body');
     }
 
     const { start_at, end_at, staff_id, ...bookingData } = bodyValidation.data;
@@ -120,7 +120,7 @@ export const POST = createHttpHandler(
 
       if (overlapErr) {
         console.error('Error checking for booking conflicts:', overlapErr);
-        throw ApiErrorFactory.internalServerError('Failed to check for conflicts');
+        throw ApiErrorFactory.internalServerError(new Error('Failed to check for conflicts'));
       }
       if (overlaps && overlaps.length > 0) {
         throw ApiErrorFactory.conflict('A conflicting booking already exists for this staff member at the selected time.');
@@ -144,7 +144,7 @@ export const POST = createHttpHandler(
 
     if (error) {
       console.error('Failed to create booking:', error);
-      throw ApiErrorFactory.internalServerError('Failed to create booking');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create booking'));
     }
 
     return inserted;

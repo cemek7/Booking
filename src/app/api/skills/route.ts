@@ -18,7 +18,7 @@ export const GET = createHttpHandler(
       .eq('tenant_id', tenantId)
       .order('name', { ascending: true });
     
-    if (error) throw ApiErrorFactory.internal('Failed to fetch skills');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch skills'));
     
     return { skills: data || [] };
   },
@@ -52,7 +52,7 @@ export const POST = createHttpHandler(
       .select()
       .maybeSingle();
     
-    if (error) throw ApiErrorFactory.internal('Failed to create skill');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to create skill'));
     
     return { skill: data };
   },

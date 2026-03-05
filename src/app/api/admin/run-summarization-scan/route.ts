@@ -11,7 +11,7 @@ export const POST = createHttpHandler(
       .limit(50);
 
     if (chatsErr) {
-      throw ApiErrorFactory.internal('Failed to query chats');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to query chats'));
     }
 
     type ChatRow = {

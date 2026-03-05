@@ -1,4 +1,4 @@
-import { createHttpHandler } from '@/lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 
 /**
  * Get popular product tags for search suggestions
@@ -13,7 +13,7 @@ export const GET = createHttpHandler(
     const { data: products, error } = await ctx.supabase
       .from('products')
       .select('tags')
-      .eq('tenant_id', ctx.user.tenantId)
+      .eq('tenant_id', ctx.user!.tenantId)
       .eq('is_active', true)
       .not('tags', 'is', null);
 

@@ -9,6 +9,9 @@ import { dialogManagerWhatsApp } from './dialogManagerExtension';
 import { EvolutionClient } from './evolutionClient';
 import { BookingEngine } from '@/lib/booking/engine';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
+import { AdvancedConversationAI } from '@/lib/ai/advancedConversationAI';
+import { loadTenantDocuments, queryTenant } from '@/lib/retrieval';
+import { SmartBookingRecommendations } from '@/lib/ai/smartBookingRecommendations';
 import { BookingNotificationService } from '@/lib/bookingNotifications';
 
 interface ConversationFlow {
@@ -26,6 +29,7 @@ type DialogStep =
   | 'staff_selection'
   | 'date_selection'
   | 'time_selection'
+  | 'email_collection'
   | 'confirm_booking'
   | 'payment'
   | 'completed'
@@ -36,6 +40,8 @@ class WhatsAppMessageHandler {
   private supabase = createServerSupabaseClient();
   private evolutionClient = new EvolutionClient();
   private bookingEngine = new BookingEngine();
+  private conversationAI = new AdvancedConversationAI();
+  private smartRecs = new SmartBookingRecommendations();
   private notificationService = new BookingNotificationService();
 
   /**
@@ -51,6 +57,9 @@ class WhatsAppMessageHandler {
     console.log(`\n🤖 Handling WhatsApp message for tenant ${tenantId}`);
 
     try {
+      // Ensure tenant knowledge articles are loaded for RAG before processing
+      await loadTenantDocuments(tenantId, this.supabase);
+
       // Get or create customer
       const customer = await dialogManagerWhatsApp.getOrCreateCustomer(
         tenantId,
@@ -71,6 +80,15 @@ class WhatsAppMessageHandler {
         currentStep: dialogState.current_step as DialogStep,
         bookingContext: dialogState.booking_context || {},
       };
+
+      // Maintain advanced AI conversation context and check for escalation
+      const aiContext = await this.conversationAI.maintainContext(tenantId, customerPhone, messageContent);
+      const multiTurnResult = await this.conversationAI.manageMultiTurnDialog(tenantId, customerPhone, messageContent, aiContext);
+
+      if (multiTurnResult.requires_human_escalation) {
+        await this.triggerHumanEscalation(tenantId, customerPhone, sessionId, dialogState, 'AI escalation triggered');
+        return '🙋 Let me connect you with a member of our team who can better assist you. Someone will respond shortly.';
+      }
 
       // Route based on intent
       let response: string;
@@ -138,13 +156,54 @@ class WhatsAppMessageHandler {
         return `I couldn't find a service called "${serviceEntity.value}". Please choose from available services.`;
       }
 
-      // Update context and advance
+      // Update context, fetch staff options, and advance
       bookingContext.service_id = serviceId;
       bookingContext.service_name = serviceEntity.value;
+
+      // Fetch staff with ratings for this service
+      const staffOptions = await this.getStaffOptions(tenantId, serviceId);
+      bookingContext.staff_options = staffOptions;
+      await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
+
+      if (staffOptions.length === 0) {
+        // No staff available — skip staff selection, go straight to date
+        await dialogManagerWhatsApp.advanceStep(sessionId, 'date_selection');
+        return await this.getDateSelectionMessage(tenantId, serviceId);
+      }
+
+      await dialogManagerWhatsApp.advanceStep(sessionId, 'staff_selection');
+      return this.formatStaffSelectionMessage(staffOptions);
+    }
+
+    if (currentStep === 'staff_selection') {
+      // Parse staff selection — accept number ("1", "2"), name match, or "any"
+      const trimmed = messageContent.trim().toLowerCase();
+      const staffList: Array<{ id: string; name: string; rating: number | null }> =
+        bookingContext.staff_options || [];
+
+      let selectedStaff: { id: string; name: string } | undefined;
+      if (trimmed === 'any' || trimmed === 'anyone') {
+        // Auto-assign — leave staff_id null (booking engine will pick)
+        selectedStaff = undefined;
+      } else {
+        const numChoice = parseInt(messageContent.trim(), 10);
+        if (!isNaN(numChoice) && numChoice >= 1 && numChoice <= staffList.length) {
+          selectedStaff = staffList[numChoice - 1];
+        } else if (staffList.length > 0) {
+          selectedStaff = staffList.find(s => s.name.toLowerCase().includes(trimmed));
+        }
+      }
+
+      if (selectedStaff === undefined && trimmed !== 'any' && trimmed !== 'anyone' && staffList.length > 0) {
+        return this.formatStaffSelectionMessage(staffList);
+      }
+
+      bookingContext.staff_id = selectedStaff?.id ?? null;
+      bookingContext.staff_name = selectedStaff?.name ?? 'Any available';
       await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
       await dialogManagerWhatsApp.advanceStep(sessionId, 'date_selection');
 
-      return await this.getDateSelectionMessage(tenantId, serviceId);
+      return await this.getDateSelectionMessage(tenantId, bookingContext.service_id);
     }
 
     if (currentStep === 'date_selection') {
@@ -169,6 +228,44 @@ class WhatsAppMessageHandler {
       }
 
       bookingContext.time = timeEntity.value;
+      await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
+
+      // Check if we already have the customer's email
+      const { data: customerRow } = await this.supabase
+        .from('customers')
+        .select('email')
+        .eq('id', customerId)
+        .maybeSingle();
+
+      if (customerRow?.email) {
+        // Email already on file — skip collection step
+        bookingContext.email = customerRow.email;
+        await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
+        await dialogManagerWhatsApp.advanceStep(sessionId, 'confirm_booking');
+        return await this.getConfirmationMessage(tenantId, bookingContext, flow.customerPhone);
+      }
+
+      // Ask for email before confirming
+      await dialogManagerWhatsApp.advanceStep(sessionId, 'email_collection');
+      return '📧 Please share your email address so we can send you a booking confirmation.';
+    }
+
+    if (currentStep === 'email_collection') {
+      // Validate email format
+      const emailMatch = messageContent.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      if (!emailMatch) {
+        return 'That doesn\'t look like a valid email address. Please send your email (e.g., name@example.com).';
+      }
+
+      const email = emailMatch[0].toLowerCase();
+      bookingContext.email = email;
+
+      // Persist email to customer record
+      await this.supabase
+        .from('customers')
+        .update({ email })
+        .eq('id', customerId);
+
       await dialogManagerWhatsApp.updateBookingContext(sessionId, bookingContext);
       await dialogManagerWhatsApp.advanceStep(sessionId, 'confirm_booking');
 
@@ -300,7 +397,7 @@ class WhatsAppMessageHandler {
   }
 
   /**
-   * Handle inquiry intent
+   * Handle inquiry intent — uses RAG against tenant knowledge articles
    */
   private async handleInquiryIntent(
     flow: ConversationFlow,
@@ -311,7 +408,17 @@ class WhatsAppMessageHandler {
 
     const lower = messageContent.toLowerCase();
 
-    // Handle service inquiries
+    // 1. RAG: search tenant knowledge articles first
+    const ragDocs = queryTenant(flow.tenantId, messageContent, 2);
+    if (ragDocs.length > 0 && ragDocs[0].text.length > 10) {
+      // Return the best-matching article content (trim to first 300 chars for WhatsApp)
+      const answer = ragDocs[0].text.length > 300
+        ? ragDocs[0].text.slice(0, 300) + '…'
+        : ragDocs[0].text;
+      return `${answer}\n\nIs there anything else I can help you with?`;
+    }
+
+    // 2. Keyword-based fallback routing
     if (lower.includes('service')) {
       return await this.getServiceSelectionMessage(flow.tenantId);
     }
@@ -489,12 +596,117 @@ class WhatsAppMessageHandler {
     return `Which service would you like to book?\n\n${serviceList}`;
   }
 
+  private async getStaffOptions(
+    tenantId: string,
+    serviceId: string,
+  ): Promise<Array<{ id: string; name: string; rating: number | null }>> {
+    try {
+      const staffList = await (this.smartRecs as any).getStaffForService(tenantId, serviceId);
+      if (!staffList || staffList.length === 0) return [];
+
+      const enriched: Array<{ id: string; name: string; rating: number | null }> = await Promise.all(
+        staffList.map(async (s: { id: string; name: string }) => {
+          const { data: fb } = await this.supabase
+            .from('customer_feedback')
+            .select('score')
+            .eq('tenant_id', tenantId)
+            .eq('staff_user_id', s.id);
+          const avg = fb && fb.length > 0
+            ? fb.reduce((sum: number, f: { score: number }) => sum + f.score, 0) / fb.length
+            : null;
+          return { id: s.id, name: s.name, rating: avg };
+        })
+      );
+
+      // Sort by rating descending (nulls last)
+      enriched.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+      return enriched;
+    } catch {
+      return [];
+    }
+  }
+
+  private formatStaffSelectionMessage(
+    staffOptions: Array<{ id: string; name: string; rating: number | null }>,
+  ): string {
+    if (staffOptions.length === 0) {
+      return `Who would you like to see? Type the staff name or "any" for next available.`;
+    }
+    const lines = staffOptions.map((s, i) => {
+      const stars = s.rating !== null ? ` ⭐ ${s.rating.toFixed(1)}` : '';
+      return `${i + 1}. ${s.name}${stars}`;
+    });
+    return `Who would you like to see?\n\n${lines.join('\n')}\n\nReply with a number or name.`;
+  }
+
   private async getDateSelectionMessage(tenantId: string, serviceId: string): Promise<string> {
     return `When would you like to book? You can say:\n📅 Tomorrow\n📅 Next Monday\n📅 2025-01-20\n\nOr type "available" to see open slots.`;
   }
 
   private async getTimeSelectionMessage(tenantId: string, serviceId: string, date: string): Promise<string> {
-    return `What time works best for you?\n\n⏰ Morning (9 AM - 12 PM)\n⏰ Afternoon (12 PM - 5 PM)\n⏰ Evening (5 PM - 9 PM)\n\nOr specify a time like "10:30 AM"`;
+    try {
+      // Parse the requested date — accept ISO dates or relative strings
+      const requestedDate = new Date(date);
+      const dayStart = isNaN(requestedDate.getTime())
+        ? new Date(new Date().setHours(8, 0, 0, 0))
+        : new Date(requestedDate.setHours(8, 0, 0, 0));
+      const dayEnd = new Date(dayStart.getTime() + 12 * 3_600_000); // 8am – 8pm
+
+      // 1. Try precomputed availability_slots first
+      const { data: slots } = await this.supabase
+        .from('availability_slots')
+        .select('start_time, end_time')
+        .gte('start_time', dayStart.toISOString())
+        .lte('start_time', dayEnd.toISOString())
+        .eq('is_available', true)
+        .order('start_time', { ascending: true })
+        .limit(8);
+
+      if (slots && slots.length > 0) {
+        const slotList = slots
+          .map((s: { start_time: string; end_time: string }, i: number) => {
+            const t = new Date(s.start_time);
+            return `${i + 1}. ${t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+          })
+          .join('\n');
+        return `Available times for ${dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}:\n\n${slotList}\n\nReply with a number or the time (e.g., "10:30 AM").`;
+      }
+
+      // 2. Fall back to checking reservations for free windows
+      const { data: existingBookings } = await this.supabase
+        .from('reservations')
+        .select('start_at, end_at')
+        .eq('tenant_id', tenantId)
+        .gte('start_at', dayStart.toISOString())
+        .lte('start_at', dayEnd.toISOString())
+        .not('status', 'in', '("cancelled","no_show")');
+
+      const booked = new Set<number>(
+        (existingBookings ?? []).map((b: { start_at: string }) =>
+          Math.floor(new Date(b.start_at).getTime() / (30 * 60_000))
+        )
+      );
+
+      const freeSlots: string[] = [];
+      for (let ts = dayStart.getTime(); ts < dayEnd.getTime() && freeSlots.length < 6; ts += 30 * 60_000) {
+        const bucket = Math.floor(ts / (30 * 60_000));
+        if (!booked.has(bucket)) {
+          freeSlots.push(
+            new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          );
+        }
+      }
+
+      if (freeSlots.length > 0) {
+        const list = freeSlots.map((t, i) => `${i + 1}. ${t}`).join('\n');
+        return `Available times for ${dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}:\n\n${list}\n\nReply with a number or the time (e.g., "10:30 AM").`;
+      }
+    } catch (err) {
+      console.warn('[messageHandler] getTimeSelectionMessage error:', err);
+    }
+
+    // Final fallback if no availability data at all
+    return `What time works best for you on ${date}?\n\n⏰ Morning (9 AM – 12 PM)\n⏰ Afternoon (12 PM – 5 PM)\n⏰ Evening (5 PM – 8 PM)\n\nOr type a specific time like "10:30 AM".`;
   }
 
   private async getConfirmationMessage(tenantId: string, context: Record<string, any>, phone: string): Promise<string> {
@@ -707,103 +919,43 @@ class WhatsAppMessageHandler {
     time?: string
   ): Promise<boolean> {
     try {
-      if (!date && !time) {
-        console.error('No date or time provided for rescheduling');
-        return false;
-      }
+      if (!date && !time) return false;
 
-      // Get existing booking details
-      const { data: existing, error: fetchErr } = await this.supabase
+      // Fetch current booking to derive existing date/time and service duration
+      const { data: booking } = await this.supabase
         .from('reservations')
-        .select('start_at, end_at, service_id, staff_id, tenant_id')
+        .select('start_at, service_id')
         .eq('id', bookingId)
-        .single();
+        .maybeSingle();
 
-      if (fetchErr || !existing) {
-        console.error('Failed to fetch existing booking:', fetchErr);
-        return false;
-      }
+      if (!booking) return false;
 
-      // Calculate new start and end times
-      let newStartTime: Date;
-      let newEndTime: Date;
+      const existingStart = new Date(booking.start_at as string);
+      const newDate = date ?? existingStart.toISOString().split('T')[0];
+      const newTime = time ?? existingStart.toTimeString().substring(0, 5);
 
-      if (date && time) {
-        // Both date and time provided
-        const bookingDate = this.parseDateToISO(date);
-        const bookingTime = this.parseTimeToFormat(time);
-        newStartTime = new Date(`${bookingDate}T${bookingTime}`);
-      } else if (date) {
-        // Only date provided, keep same time
-        const oldStartTime = new Date(existing.start_at);
-        const bookingDate = this.parseDateToISO(date);
-        newStartTime = new Date(`${bookingDate}T${oldStartTime.toTimeString().substring(0, 5)}`);
-      } else {
-        // Only time provided, keep same date
-        const oldStartTime = new Date(existing.start_at);
-        const bookingTime = this.parseTimeToFormat(time!);
-        const bookingDate = oldStartTime.toISOString().split('T')[0];
-        newStartTime = new Date(`${bookingDate}T${bookingTime}`);
-      }
+      const newStartAt = new Date(`${newDate}T${newTime}`);
+      if (isNaN(newStartAt.getTime())) return false;
 
-      // Calculate duration and new end time
-      const duration = new Date(existing.end_at).getTime() - new Date(existing.start_at).getTime();
-      newEndTime = new Date(newStartTime.getTime() + duration);
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('duration')
+        .eq('id', booking.service_id)
+        .maybeSingle();
 
-      // Check for conflicts using the same logic as booking creation
-      const { data: conflicts, error: conflictErr } = await this.supabase
-        .from('reservations')
-        .select('id')
-        .eq('tenant_id', existing.tenant_id)
-        .neq('id', bookingId) // Exclude current booking
-        .in('status', ['confirmed', 'pending'])
-        .lte('start_at', newEndTime.toISOString())
-        .gte('end_at', newStartTime.toISOString());
+      const durationMs = ((service?.duration as number) ?? 60) * 60_000;
+      const newEndAt = new Date(newStartAt.getTime() + durationMs);
 
-      if (conflictErr) {
-        console.error('Error checking conflicts:', conflictErr);
-        return false;
-      }
-
-      // If staff-specific booking, check staff conflicts only
-      if (existing.staff_id && conflicts && conflicts.length > 0) {
-        const staffConflicts = await this.supabase
-          .from('reservations')
-          .select('id')
-          .eq('staff_id', existing.staff_id)
-          .in('id', conflicts.map(c => c.id));
-
-        if (staffConflicts.data && staffConflicts.data.length > 0) {
-          console.log('Staff has conflict at requested time');
-          return false;
-        }
-      } else if (conflicts && conflicts.length > 0) {
-        console.log('Time slot conflict detected');
-        return false;
-      }
-
-      // Update the booking
-      const { error: updateErr } = await this.supabase
+      const { error } = await this.supabase
         .from('reservations')
         .update({
-          start_at: newStartTime.toISOString(),
-          end_at: newEndTime.toISOString(),
-          metadata: {
-            ...existing.metadata,
-            rescheduled: true,
-            rescheduled_at: new Date().toISOString(),
-            previous_start: existing.start_at,
-          },
+          start_at: newStartAt.toISOString(),
+          end_at: newEndAt.toISOString(),
+          status: 'confirmed',
         })
         .eq('id', bookingId);
 
-      if (updateErr) {
-        console.error('Error updating booking:', updateErr);
-        return false;
-      }
-
-      console.log('✅ Booking rescheduled successfully:', bookingId);
-      return true;
+      return !error;
     } catch (error) {
       console.error('Error rescheduling booking:', error);
       return false;
@@ -821,6 +973,43 @@ class WhatsAppMessageHandler {
     } catch (error) {
       console.error('Error cancelling booking:', error);
       return false;
+    }
+  }
+
+  /**
+   * Insert an escalation_queue row so a human agent can pick up this chat.
+   */
+  private async triggerHumanEscalation(
+    tenantId: string,
+    customerPhone: string,
+    sessionId: string,
+    dialogState: Record<string, any>,
+    reason: string
+  ): Promise<void> {
+    try {
+      // Snapshot the recent conversation history if stored on dialogState
+      const snapshot = Array.isArray(dialogState?.conversation_history)
+        ? dialogState.conversation_history.slice(-20)
+        : [];
+
+      const { error } = await this.supabase
+        .from('escalation_queue')
+        .insert({
+          tenant_id: tenantId,
+          customer_phone: customerPhone,
+          session_id: sessionId,
+          reason,
+          status: 'pending',
+          conversation_snapshot: snapshot,
+        });
+
+      if (error) {
+        console.error('[messageHandler] Failed to create escalation record:', error.message);
+      } else {
+        console.log(`[messageHandler] Escalation created for ${customerPhone} (tenant ${tenantId})`);
+      }
+    } catch (err) {
+      console.error('[messageHandler] triggerHumanEscalation error:', err);
     }
   }
 

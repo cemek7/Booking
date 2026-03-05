@@ -14,7 +14,8 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 export const POST = createHttpHandler(
   async (ctx) => {
     const { reservation_id } = await ctx.request.json();
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    // Derive tenant from authenticated user; reject any header override
+    const tenantId = ctx.user!.tenantId;
 
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
@@ -22,17 +23,18 @@ export const POST = createHttpHandler(
 
     if (!reservation_id) throw ApiErrorFactory.badRequest('reservation_id required');
 
-    // Fetch reservation details
+    // Fetch reservation details scoped to the user's tenant
     const { data: reservation, error: reservationError } = await ctx.supabase
       .from('reservations')
       .select('id,start_at,phone,customer_name')
       .eq('id', reservation_id)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
 
-    if (reservationError) throw ApiErrorFactory.internal('Failed to fetch reservation');
+    if (reservationError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservation'));
     if (!reservation) throw ApiErrorFactory.notFound('Reservation not found');
     if (typeof reservation.start_at !== 'string') {
-      throw ApiErrorFactory.internal('Invalid reservation start time');
+      throw ApiErrorFactory.internalServerError(new Error('Invalid reservation start time'));
     }
 
     // Calculate reminder times: 24 hours and 2 hours before start
@@ -66,16 +68,10 @@ export const POST = createHttpHandler(
     ];
 
     const { error } = await ctx.supabase.from('reminders').insert(reminders);
-    if (error) throw ApiErrorFactory.internal('Failed to create reminders');
+    if (error) throw ApiErrorFactory.internalServerError(new Error('Failed to create reminders'));
 
     return { created: reminders.length };
   },
   'POST',
   { auth: true }
 );
-    headers: {
-      Allow: 'POST, OPTIONS',
-      'Content-Type': 'application/json',
-    },
-  });
-}

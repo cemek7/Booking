@@ -9,19 +9,37 @@ import {
   exportAnalyticsData,
   saveDashboardConfig,
 } from '@/lib/services/manager-analytics-service';
-import { AppUser } from '../../../../types/types';
+import { AppUser } from '@/types/auth';
 
 // Mock Supabase client
-const createMockSupabase = () => ({
-  from: jest.fn().mockReturnThis(),
-  select: jest.fn().mockReturnThis(),
-  eq: jest.fn().mockReturnThis(),
-  in: jest.fn().mockReturnThis(),
-  gte: jest.fn().mockReturnThis(),
-  lte: jest.fn().mockReturnThis(),
-  single: jest.fn(),
-  upsert: jest.fn().mockReturnThis(),
-});
+const createMockSupabase = () => {
+  const defaultResolved = { data: [] as unknown[], error: null, count: null };
+  // Proper thenable so Promise.all can await unrecognised-table queries
+  const thenFn = (jest.fn() as jest.Mock<any>).mockImplementation(
+    (onfulfilled: (v: typeof defaultResolved) => unknown) =>
+      Promise.resolve(defaultResolved).then(onfulfilled)
+  );
+  return {
+    from: jest.fn().mockReturnThis(),
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
+    not: jest.fn().mockReturnThis(),
+    gte: jest.fn().mockReturnThis(),
+    lte: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    single: (jest.fn() as jest.Mock<any>).mockResolvedValue({ data: null, error: null }),
+    maybeSingle: (jest.fn() as jest.Mock<any>).mockResolvedValue({ data: null, error: null }),
+    upsert: jest.fn().mockReturnThis(),
+    then: thenFn,
+  };
+};
+
+// Helper: proper thenable that calls onfulfilled (resolve) so Promise.all and await work correctly.
+// jest.fn().mockResolvedValue() returns a Promise but never calls resolve, causing hangs.
+const mockThenable = (value: unknown) => (jest.fn() as jest.Mock<any>).mockImplementation(
+  (onfulfilled: (v: unknown) => unknown) => Promise.resolve(value).then(onfulfilled)
+);
 
 const mockManagerUser: AppUser = {
   id: 'manager-123',
@@ -104,7 +122,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [{ user_id: 'staff-1' }, { user_id: 'staff-2' }],
             }),
           };
@@ -115,6 +133,15 @@ describe('manager-analytics-service', () => {
 
     it('should calculate team bookings correctly', async () => {
       mockSupabase.from.mockImplementation((table: string) => {
+        if (table === 'tenant_users') {
+          return {
+            ...mockSupabase,
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            in: jest.fn().mockReturnThis(),
+            then: mockThenable({ data: [{ user_id: 'staff-1' }, { user_id: 'staff-2' }] }),
+          };
+        }
         if (table === 'reservations') {
           return {
             ...mockSupabase,
@@ -123,7 +150,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { id: '1', status: 'completed', metadata: {} },
                 { id: '2', status: 'completed', metadata: {} },
@@ -161,7 +188,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({ data: [] }),
+            then: mockThenable({ data: [] }),
           };
         }
         return mockSupabase;
@@ -194,26 +221,56 @@ describe('manager-analytics-service', () => {
       endDate: new Date('2024-01-31'),
     };
 
+    // Helper: build a transaction row with the joined reservation shape expected by the new
+    // single-source query (transactions → reservations → users / services).
+    const makeTx = (
+      id: string,
+      amount: number,
+      staffId: string,
+      serviceId: string,
+      staffName: string,
+      serviceName: string,
+      date: string
+    ) => ({
+      id,
+      amount,
+      created_at: `${date}T10:00:00Z`,
+      reservation_id: `res-${id}`,
+      reservations: {
+        id: `res-${id}`,
+        staff_id: staffId,
+        service_id: serviceId,
+        start_at: `${date}T09:00:00Z`,
+        users: { id: staffId, full_name: staffName },
+        services: { id: serviceId, name: serviceName },
+      },
+    });
+
+    // Helper: set up a mock that returns the given transaction rows for the transactions table
+    // and returns staff IDs [staff-1, staff-2] for the tenant_users lookup.
+    const makeRevenueMock = (transactionData: ReturnType<typeof makeTx>[]) => (table: string) => {
+      if (table === 'tenant_users') {
+        return {
+          ...mockSupabase,
+          then: mockThenable({ data: [{ user_id: 'staff-1' }, { user_id: 'staff-2' }] }),
+        };
+      }
+      if (table === 'transactions') {
+        return {
+          ...mockSupabase,
+          not: jest.fn().mockReturnThis(),
+          then: mockThenable({ data: transactionData }),
+        };
+      }
+      return mockSupabase;
+    };
+
     it('should calculate total revenue correctly', async () => {
-      mockSupabase.from.mockImplementation((table: string) => {
-        if (table === 'transactions') {
-          return {
-            ...mockSupabase,
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            gte: jest.fn().mockReturnThis(),
-            lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
-              data: [
-                { amount: 100 },
-                { amount: 150 },
-                { amount: 200 },
-              ],
-            }),
-          };
-        }
-        return mockSupabase;
-      });
+      mockSupabase.from.mockImplementation(makeRevenueMock([
+        makeTx('t1', 100, 'staff-1', 'svc-1', 'John', 'Haircut', '2024-01-10'),
+        makeTx('t2', 150, 'staff-1', 'svc-1', 'John', 'Haircut', '2024-01-11'),
+        makeTx('t3', 200, 'staff-2', 'svc-2', 'Jane', 'Massage', '2024-01-12'),
+      ]));
 
       const result = await getRevenueAnalytics(mockSupabase, mockManagerUser, dateRange);
 
@@ -221,33 +278,10 @@ describe('manager-analytics-service', () => {
     });
 
     it('should return revenue by staff', async () => {
-      mockSupabase.from.mockImplementation((table: string) => {
-        if (table === 'reservations') {
-          return {
-            ...mockSupabase,
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            in: jest.fn().mockReturnThis(),
-            gte: jest.fn().mockReturnThis(),
-            lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
-              data: [
-                {
-                  staff_id: 'staff-1',
-                  users: { full_name: 'John Doe' },
-                  metadata: { revenue: 100 },
-                },
-                {
-                  staff_id: 'staff-1',
-                  users: { full_name: 'John Doe' },
-                  metadata: { revenue: 150 },
-                },
-              ],
-            }),
-          };
-        }
-        return mockSupabase;
-      });
+      mockSupabase.from.mockImplementation(makeRevenueMock([
+        makeTx('t1', 100, 'staff-1', 'svc-1', 'John Doe', 'Haircut', '2024-01-10'),
+        makeTx('t2', 150, 'staff-1', 'svc-1', 'John Doe', 'Haircut', '2024-01-11'),
+      ]));
 
       const result = await getRevenueAnalytics(mockSupabase, mockManagerUser, dateRange);
 
@@ -257,33 +291,10 @@ describe('manager-analytics-service', () => {
     });
 
     it('should return revenue by service', async () => {
-      mockSupabase.from.mockImplementation((table: string) => {
-        if (table === 'reservations') {
-          return {
-            ...mockSupabase,
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            in: jest.fn().mockReturnThis(),
-            gte: jest.fn().mockReturnThis(),
-            lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
-              data: [
-                {
-                  service_id: 'service-1',
-                  services: { name: 'Haircut' },
-                  metadata: { revenue: 50 },
-                },
-                {
-                  service_id: 'service-1',
-                  services: { name: 'Haircut' },
-                  metadata: { revenue: 50 },
-                },
-              ],
-            }),
-          };
-        }
-        return mockSupabase;
-      });
+      mockSupabase.from.mockImplementation(makeRevenueMock([
+        makeTx('t1', 50, 'staff-1', 'service-1', 'John', 'Haircut', '2024-01-10'),
+        makeTx('t2', 50, 'staff-1', 'service-1', 'John', 'Haircut', '2024-01-11'),
+      ]));
 
       const result = await getRevenueAnalytics(mockSupabase, mockManagerUser, dateRange);
 
@@ -303,33 +314,10 @@ describe('manager-analytics-service', () => {
     });
 
     it('should sort revenue by staff in descending order', async () => {
-      mockSupabase.from.mockImplementation((table: string) => {
-        if (table === 'reservations') {
-          return {
-            ...mockSupabase,
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            in: jest.fn().mockReturnThis(),
-            gte: jest.fn().mockReturnThis(),
-            lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
-              data: [
-                {
-                  staff_id: 'staff-1',
-                  users: { full_name: 'John' },
-                  metadata: { revenue: 100 },
-                },
-                {
-                  staff_id: 'staff-2',
-                  users: { full_name: 'Jane' },
-                  metadata: { revenue: 200 },
-                },
-              ],
-            }),
-          };
-        }
-        return mockSupabase;
-      });
+      mockSupabase.from.mockImplementation(makeRevenueMock([
+        makeTx('t1', 100, 'staff-1', 'svc-1', 'John', 'Haircut', '2024-01-10'),
+        makeTx('t2', 200, 'staff-2', 'svc-2', 'Jane', 'Massage', '2024-01-11'),
+      ]));
 
       const result = await getRevenueAnalytics(mockSupabase, mockManagerUser, dateRange);
 
@@ -339,26 +327,10 @@ describe('manager-analytics-service', () => {
     });
 
     it('should limit top services to 10', async () => {
-      const services = Array.from({ length: 15 }, (_, i) => ({
-        service_id: `service-${i}`,
-        services: { name: `Service ${i}` },
-        metadata: { revenue: 10 + i },
-      }));
-
-      mockSupabase.from.mockImplementation((table: string) => {
-        if (table === 'reservations') {
-          return {
-            ...mockSupabase,
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            in: jest.fn().mockReturnThis(),
-            gte: jest.fn().mockReturnThis(),
-            lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({ data: services }),
-          };
-        }
-        return mockSupabase;
-      });
+      const txData = Array.from({ length: 15 }, (_, i) =>
+        makeTx(`t${i}`, 10 + i, 'staff-1', `service-${i}`, 'John', `Service ${i}`, '2024-01-10')
+      );
+      mockSupabase.from.mockImplementation(makeRevenueMock(txData));
 
       const result = await getRevenueAnalytics(mockSupabase, mockManagerUser, dateRange);
 
@@ -380,7 +352,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   user_id: 'staff-1',
@@ -440,7 +412,8 @@ describe('manager-analytics-service', () => {
               expect(values).toEqual([staffId]);
               return mockSupabase;
             }),
-            then: jest.fn().mockResolvedValue({ data: [] }),
+            // Return staff-1 so the authorization check in getManagedStaffIds passes
+            then: mockThenable({ data: [{ user_id: staffId }] }),
           };
         }
         return mockSupabase;
@@ -481,7 +454,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { status: 'completed' },
                 { status: 'completed' },
@@ -526,7 +499,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { start_at: '2024-01-15T09:00:00Z' },
                 { start_at: '2024-01-15T09:30:00Z' },
@@ -555,7 +528,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 { status: 'cancelled', metadata: { cancellation_reason: 'Client Request' } },
                 { status: 'cancelled', metadata: { cancellation_reason: 'Client Request' } },
@@ -584,7 +557,7 @@ describe('manager-analytics-service', () => {
             in: jest.fn().mockReturnThis(),
             gte: jest.fn().mockReturnThis(),
             lte: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [{ status: 'cancelled', metadata: {} }],
             }),
           };
@@ -685,7 +658,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   user_id: 'staff-1',
@@ -752,7 +725,7 @@ describe('manager-analytics-service', () => {
             select: jest.fn().mockReturnThis(),
             eq: jest.fn().mockReturnThis(),
             in: jest.fn().mockReturnThis(),
-            then: jest.fn().mockResolvedValue({
+            then: mockThenable({
               data: [
                 {
                   user_id: 'staff-1',

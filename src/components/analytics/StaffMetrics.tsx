@@ -1,24 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useEffect, useMemo, useState } from 'react';
 import MetricCard from './shared/MetricCard';
 import StatsGrid from './shared/StatsGrid';
 import DateRangePicker, { TimePeriod } from './shared/DateRangePicker';
-import TrendChart from './charts/TrendChart';
 import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
-import AreaChart from './charts/AreaChart';
-import {
-  Calendar,
-  DollarSign,
-  Star,
-  TrendingUp,
-  Award,
-  Clock,
-  Target,
-  Users,
-} from 'lucide-react';
+import PerformanceTable from './shared/PerformanceTable';
+import DataUnavailableState from './shared/DataUnavailableState';
+import { Calendar, DollarSign, Star, TrendingUp, Activity, Clock } from 'lucide-react';
+import { authFetch } from '@/lib/auth/auth-api-client';
+import type { StaffMemberMetric } from '@/types/analytics-api';
+import { PERIOD_DAYS } from './shared/analytics-constants';
 
 export interface StaffMetricsProps {
   userId: string;
@@ -41,440 +34,147 @@ interface StaffAnalyticsData {
   };
 }
 
-/**
- * StaffMetrics Component
- *
- * Displays personal performance analytics for staff members
- * All data fetched from backend API - staff can only see their own data
- */
 export default function StaffMetrics({ userId, tenantId }: StaffMetricsProps) {
   const [period, setPeriod] = useState<TimePeriod>('month');
   const [loading, setLoading] = useState(true);
-  const [analyticsData, setAnalyticsData] = useState<StaffAnalyticsData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [staffMetrics, setStaffMetrics] = useState<StaffMemberMetric[]>([]);
 
-  // Fetch analytics data from API
   useEffect(() => {
-    const fetchAnalytics = async () => {
+    let cancelled = false;
+
+    const load = async () => {
       setLoading(true);
-      setError(null);
-      
       try {
-        const response = await fetch(`/api/staff/analytics?period=${period}`, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
+        const metricsRes = await authFetch<{ metrics?: StaffMemberMetric[] }>(
+          `/api/staff/metrics?days=${PERIOD_DAYS[period]}`,
+          { headers: { 'X-Tenant-ID': tenantId } }
+        );
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch analytics data');
-        }
-
-        const result = await response.json();
-        
-        if (result.success && result.data) {
-          setAnalyticsData(result.data);
-        } else {
-          throw new Error(result.error || 'Invalid response format');
-        }
-      } catch (err) {
-        console.error('Error fetching analytics:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load analytics');
+        if (cancelled) return;
+        setStaffMetrics(metricsRes.status === 200 ? metricsRes.data?.metrics || [] : []);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    fetchAnalytics();
-  }, [period, userId]);
+    if (tenantId) {
+      load();
+    }
 
-  // Default/fallback data
-  const personalMetrics = analyticsData?.personalMetrics || {
-    myBookings: 0,
-    myEarnings: 0,
-    myRating: 0,
-    completionRate: 0,
-    repeatCustomers: 0,
-    hoursWorked: 0,
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, period]);
 
-  const trends = analyticsData?.trends || {
-    bookings: 0,
-    earnings: 0,
-    rating: 0,
-  };
+  const currentUserMetrics = useMemo(
+    () => staffMetrics.find((row) => row.user_id === userId) || null,
+    [staffMetrics, userId]
+  );
 
-  const formatCurrency = (value: number) => `$${value.toLocaleString()}`;
-  const formatPercent = (value: number) => `${value}%`;
+  const completionShare = useMemo(() => {
+    const total = Math.max(1, staffMetrics.reduce((sum, row) => sum + (row.completed || 0), 0));
+    const completed = currentUserMetrics?.completed || 0;
+    const percent = Math.min(100, (completed / total) * 100);
+    return `${percent.toFixed(1)}%`;
+  }, [staffMetrics, currentUserMetrics]);
 
-  if (loading) {
+  const sortedStaffMetrics = useMemo(
+    () => [...staffMetrics].sort((a, b) => b.completed - a.completed),
+    [staffMetrics]
+  );
+
+  const hasData = Boolean(currentUserMetrics) || staffMetrics.length > 0;
+
+  if (!loading && !hasData) {
     return (
-      <div className="flex items-center justify-center p-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading your performance data...</p>
-        </div>
-      </div>
+      <DataUnavailableState
+        title="Staff analytics"
+        description="Data not available. Backend analytics data was not returned for this view."
+      />
     );
   }
-
-  if (error) {
-    return (
-      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6">
-        <h3 className="font-semibold text-destructive mb-2">Error Loading Analytics</h3>
-        <p className="text-sm text-muted-foreground">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  // Personal booking trends (mock data - TODO: add to API)
-  const personalBookingData = [
-    { date: 'Week 1', bookings: 12, completed: 11 },
-    { date: 'Week 2', bookings: 14, completed: 13 },
-    { date: 'Week 3', bookings: 16, completed: 15 },
-    { date: 'Week 4', bookings: 13, completed: 13 },
-    { date: 'Week 5', bookings: 17, completed: 16 },
-    { date: 'Week 6', bookings: 15, completed: 15 },
-  ];
-
-  // Personal earnings over time
-  const earningsData = [
-    { date: 'Week 1', earnings: 1260 },
-    { date: 'Week 2', earnings: 1470 },
-    { date: 'Week 3', earnings: 1680 },
-    { date: 'Week 4', earnings: 1365 },
-    { date: 'Week 5', earnings: 1785 },
-    { date: 'Week 6', earnings: 1575 },
-  ];
-
-  // Service breakdown
-  const serviceBreakdownData = [
-    { name: 'Haircut & Styling', value: 32, color: '#3b82f6' },
-    { name: 'Massage Therapy', value: 24, color: '#10b981' },
-    { name: 'Nail Services', value: 18, color: '#f59e0b' },
-    { name: 'Facial Treatment', value: 13, color: '#8b5cf6' },
-  ];
-
-  // Customer ratings breakdown
-  const ratingsBreakdownData = [
-    { rating: '5 Stars', count: 68 },
-    { rating: '4 Stars', count: 15 },
-    { rating: '3 Stars', count: 3 },
-    { rating: '2 Stars', count: 1 },
-    { rating: '1 Star', count: 0 },
-  ];
-
-  // Daily schedule performance
-  const schedulePerformanceData = [
-    { day: 'Mon', scheduled: 14, completed: 13 },
-    { day: 'Tue', scheduled: 15, completed: 14 },
-    { day: 'Wed', scheduled: 16, completed: 16 },
-    { day: 'Thu', scheduled: 13, completed: 13 },
-    { day: 'Fri', scheduled: 17, completed: 16 },
-    { day: 'Sat', scheduled: 12, completed: 11 },
-  ];
-
-  // Peak performance hours
-  const peakHoursData = [
-    { hour: '9 AM', bookings: 4 },
-    { hour: '10 AM', bookings: 6 },
-    { hour: '11 AM', bookings: 8 },
-    { hour: '12 PM', bookings: 9 },
-    { hour: '1 PM', bookings: 7 },
-    { hour: '2 PM', bookings: 10 },
-    { hour: '3 PM', bookings: 11 },
-    { hour: '4 PM', bookings: 9 },
-    { hour: '5 PM', bookings: 7 },
-    { hour: '6 PM', bookings: 5 },
-  ];
-
-  // Customer feedback categories
-  const feedbackData = [
-    { category: 'Professionalism', score: 4.9 },
-    { category: 'Quality', score: 4.8 },
-    { category: 'Punctuality', score: 4.9 },
-    { category: 'Communication', score: 4.7 },
-    { category: 'Value', score: 4.6 },
-  ];
-
-  const formatCurrency = (value: number) => `$${value.toLocaleString()}`;
-  const formatPercent = (value: number) => `${value}%`;
 
   return (
     <div className="space-y-6">
-      {/* Date Range Picker */}
       <div className="flex items-center justify-between">
-        <DateRangePicker
-          period={period}
-          onPeriodChange={setPeriod}
-          compact
-          className="w-64"
-        />
+        <DateRangePicker period={period} onPeriodChange={setPeriod} compact className="w-64" />
       </div>
 
       {/* Personal KPIs */}
       <StatsGrid columns={4}>
+        <MetricCard label="My Completed Bookings" value={currentUserMetrics?.completed || 0} icon={Calendar} colorScheme="info" loading={loading} />
+        <MetricCard label="My Revenue" value={currentUserMetrics?.revenue || 0} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
+        <MetricCard label="My Tips" value={currentUserMetrics?.tips_total || 0} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
+        <MetricCard label="My Rating" value={currentUserMetrics?.rating ?? '—'} icon={Star} colorScheme="warning" loading={loading} />
+      </StatsGrid>
+
+      <StatsGrid columns={3}>
+        <MetricCard label="My Utilization" value={`${(currentUserMetrics?.utilization_rate || 0).toFixed(1)}%`} icon={Activity} colorScheme="info" loading={loading} />
+        <MetricCard label="Avg Service Time" value={currentUserMetrics?.avg_service_duration_min ? `${currentUserMetrics.avg_service_duration_min.toFixed(0)}m` : '—'} icon={Clock} colorScheme="default" loading={loading} />
         <MetricCard
-          label="My Bookings"
-          value={personalMetrics.myBookings}
-          trend={trends.bookings}
-          trendLabel="vs last period"
-          icon={Calendar}
-          colorScheme="info"
-        />
-        <MetricCard
-          label="My Earnings"
-          value={personalMetrics.myEarnings}
-          trend={trends.earnings}
-          trendLabel="vs last period"
-          icon={DollarSign}
-          formatValue={formatCurrency}
-          colorScheme="success"
-        />
-        <MetricCard
-          label="My Rating"
-          value={personalMetrics.myRating}
-          trend={trends.rating}
-          trendLabel="vs last period"
-          icon={Star}
-          colorScheme="warning"
-        />
-        <MetricCard
-          label="Completion Rate"
-          value={`${personalMetrics.completionRate}%`}
-          trend={trends.completionRate}
-          trendLabel="vs last period"
+          label="Completion Share"
+          value={completionShare}
           icon={TrendingUp}
-          colorScheme="success"
+          colorScheme="default"
+          loading={loading}
         />
       </StatsGrid>
 
-      {/* Booking Performance & Earnings */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <AreaChart
-          data={personalBookingData}
-          dataKeys={['bookings', 'completed']}
-          title="My Booking Performance"
-          description="Weekly booking and completion trends"
-          colors={['#3b82f6', '#10b981']}
-          stacked={false}
-        />
-        <TrendChart
-          data={earningsData}
-          dataKey="earnings"
-          title="My Earnings Trend"
-          description="Weekly earnings performance"
-          color="#10b981"
-          showTrend
-          formatValue={formatCurrency}
-        />
-      </div>
-
-      {/* Service Breakdown & Ratings */}
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <PieChart
-          data={serviceBreakdownData}
-          title="My Service Distribution"
-          description="Services I perform most often"
+          data={[
+            { name: 'My Completed', value: currentUserMetrics?.completed || 0, color: '#10b981' },
+            { name: 'Others', value: Math.max(staffMetrics.reduce((sum, row) => sum + row.completed, 0) - (currentUserMetrics?.completed || 0), 0), color: '#93c5fd' },
+          ]}
+          title="My Completion Contribution"
+          description="My completed bookings vs team"
           showPercentage
-          innerRadius={60}
+          innerRadius={50}
         />
+
         <BarChart
-          data={ratingsBreakdownData}
-          dataKeys={['count']}
-          xAxisKey="rating"
-          title="Customer Ratings Breakdown"
-          description="Distribution of ratings received"
-          colors={['#f59e0b']}
+          data={sortedStaffMetrics.slice(0, 10).map((row) => ({
+            user: row.user_id.slice(0, 8),
+            completed: row.completed,
+          }))}
+          dataKeys={['completed']}
+          xAxisKey="user"
+          title="Completed Bookings by Staff"
+          description="Top staff completion counts (30d)"
+          colors={['#10b981']}
         />
       </div>
 
-      {/* Schedule Performance */}
+      {/* Staff Utilization Comparison */}
       <BarChart
-        data={schedulePerformanceData}
-        dataKeys={['scheduled', 'completed']}
-        xAxisKey="day"
-        title="Weekly Schedule Performance"
-        description="Scheduled vs completed appointments by day"
-        colors={['#3b82f6', '#10b981']}
+        data={sortedStaffMetrics.slice(0, 10).map((row) => ({
+          user: row.user_id.slice(0, 8),
+          utilization: row.utilization_rate || 0,
+          revenue: row.revenue || 0,
+          tips: row.tips_total || 0,
+        }))}
+        dataKeys={['utilization', 'revenue', 'tips']}
+        xAxisKey="user"
+        title="Staff Utilization, Revenue & Tips (Top 10)"
+        description="Utilization %, revenue, and tips per staff member"
+        colors={['#6366f1', '#f59e0b', '#10b981']}
       />
 
-      {/* Peak Performance Hours */}
-      <BarChart
-        data={peakHoursData}
-        dataKeys={['bookings']}
-        xAxisKey="hour"
-        title="My Peak Performance Hours"
-        description="Most productive times of day"
-        colors={['#8b5cf6']}
+      <PerformanceTable
+        data={sortedStaffMetrics}
+        title="Performance Breakdown"
+        description="Staff metrics — selected period"
+        columns={[
+          { key: 'user_id', label: 'Staff ID', sortable: true, formatValue: (v) => String(v).slice(0, 8) },
+          { key: 'completed', label: 'Completed', sortable: true, align: 'right' },
+          { key: 'revenue', label: 'Revenue', sortable: true, align: 'right', formatValue: (v) => `$${Number(v || 0).toLocaleString()}` },
+          { key: 'tips_total', label: 'Tips', sortable: true, align: 'right', formatValue: (v) => `$${Number(v || 0).toLocaleString()}` },
+          { key: 'utilization_rate', label: 'Utilization', sortable: true, align: 'right', formatValue: (v) => `${Number(v || 0).toFixed(1)}%` },
+          { key: 'avg_service_duration_min', label: 'Avg Time', sortable: true, align: 'right', formatValue: (v) => v ? `${Number(v).toFixed(0)}m` : '—' },
+          { key: 'rating', label: 'Rating', sortable: true, align: 'right', formatValue: (v) => v != null ? Number(v).toFixed(1) : '—' },
+        ]}
       />
-
-      {/* Customer Feedback Scores */}
-      <BarChart
-        data={feedbackData}
-        dataKeys={['score']}
-        xAxisKey="category"
-        title="Customer Feedback by Category"
-        description="Average scores across feedback dimensions"
-        colors={['#10b981']}
-        horizontal
-      />
-
-      {/* Personal Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Award className="h-4 w-4" />
-              My Achievements
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Total Completed
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  {Math.floor(personalMetrics.myBookings * 0.954)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Repeat Customers
-                </span>
-                <span className="text-sm font-semibold text-blue-600">
-                  {personalMetrics.repeatCustomers}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  5-Star Reviews
-                </span>
-                <span className="text-sm font-semibold text-amber-600">
-                  68
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Time Management
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Hours Worked
-                </span>
-                <span className="text-sm font-semibold">
-                  {personalMetrics.hoursWorked}h
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Avg Per Booking
-                </span>
-                <span className="text-sm font-semibold">42 min</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  On-Time Rate
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  96.5%
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Target className="h-4 w-4" />
-              Goals & Progress
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Monthly Target
-                </span>
-                <span className="text-sm font-semibold text-blue-600">
-                  87/90
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Quality Score
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  A+
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Team Rank
-                </span>
-                <span className="text-sm font-semibold text-purple-600">
-                  #2 of 12
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Personal Stats Summary */}
-      <Card className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 border-blue-200 dark:border-blue-800">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Performance Summary
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-blue-600">
-                {personalMetrics.myBookings}
-              </p>
-              <p className="text-sm text-muted-foreground">Total Bookings</p>
-            </div>
-            <div className="text-center">
-              <p className="text-3xl font-bold text-green-600">
-                {formatCurrency(personalMetrics.myEarnings)}
-              </p>
-              <p className="text-sm text-muted-foreground">Total Earnings</p>
-            </div>
-            <div className="text-center">
-              <p className="text-3xl font-bold text-amber-600">
-                {personalMetrics.myRating} ⭐
-              </p>
-              <p className="text-sm text-muted-foreground">Average Rating</p>
-            </div>
-            <div className="text-center">
-              <p className="text-3xl font-bold text-purple-600">
-                {personalMetrics.completionRate}%
-              </p>
-              <p className="text-sm text-muted-foreground">Completion Rate</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

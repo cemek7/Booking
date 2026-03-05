@@ -10,7 +10,7 @@ const UpdateVariantSchema = z.object({
   weight_grams: z.number().int().positive().nullable().optional(),
   volume_ml: z.number().int().positive().nullable().optional(),
   is_active: z.boolean().optional(),
-  attributes: z.record(z.unknown()).optional(),
+  attributes: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**

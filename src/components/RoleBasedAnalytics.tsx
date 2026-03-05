@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { UserRole, RoleAnalyticsData } from '@/src/types/analytics';
+import { UserRole, RoleAnalyticsData } from '@/types/analytics';
 import { getUnifiedAnalyticsAccess, validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import Phase5Dashboard from '@/components/Phase5Dashboard';

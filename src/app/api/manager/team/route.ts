@@ -4,14 +4,14 @@
  * Provides manager-level team operations including staff management,
  * role assignments, and team coordination functionality
  */
-import { createHttpHandler } from '../../../../lib/create-http-handler';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getTeamData,
   inviteTeamMember,
   updateTeamMemberRole,
   setTeamMemberActiveStatus,
-} from '../../../../lib/services/manager-team-service';
+} from '@/lib/services/manager-team-service';
 
 const TeamActionSchema = z.enum([
   'invite-member',
@@ -42,7 +42,7 @@ const PostTeamBodySchema = z.object({
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const teamData = await getTeamData(ctx.supabase, ctx.user.tenantId);
+    const teamData = await getTeamData(ctx.supabase, ctx.user!.tenantId!);
     return { success: true, ...teamData };
   },
   'GET',
@@ -63,15 +63,15 @@ export const POST = createHttpHandler(
     switch (action) {
       case 'invite-member':
         const inviteData = InviteMemberSchema.parse(data);
-        result = await inviteTeamMember(ctx.supabase, ctx.user.tenantId, inviteData);
+        result = await inviteTeamMember(ctx.supabase, ctx.user!.tenantId!, inviteData);
         break;
       case 'update-role':
         const roleData = UpdateRoleSchema.parse(data);
-        result = await updateTeamMemberRole(ctx.supabase, ctx.user.tenantId, roleData.memberId, roleData.newRole);
+        result = await updateTeamMemberRole(ctx.supabase, ctx.user!.tenantId!, roleData.memberId, roleData.newRole);
         break;
       case 'set-active-status':
         const statusData = SetActiveStatusSchema.parse(data);
-        result = await setTeamMemberActiveStatus(ctx.supabase, ctx.user.tenantId, statusData.memberId, statusData.isActive);
+        result = await setTeamMemberActiveStatus(ctx.supabase, ctx.user!.tenantId!, statusData.memberId, statusData.isActive);
         break;
       default:
         throw new Error('Invalid team action');

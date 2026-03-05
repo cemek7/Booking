@@ -1,15 +1,63 @@
 /**
- * Simple retrieval stub: in-memory vector store replacement.
- * Accepts documents and performs cosine similarity over naive bag-of-words TF vectors.
- * Replace with Chroma/FAISS later. Runtime-safe (no external deps).
+ * Retrieval module: per-tenant in-memory TF-IDF vector store.
+ * Documents are loaded from the `tenant_knowledge_articles` table and cached
+ * per-tenant. Replace with Chroma/FAISS for production-scale deployments.
+ * Runtime-safe (no external deps).
  */
 
-export interface RetrievalDoc { id: string; text: string }
+import type { SupabaseClient } from '@supabase/supabase-js';
 
+export interface RetrievalDoc { id: string; text: string; category?: string }
+
+/** Per-tenant document stores */
+const tenantDocs = new Map<string, RetrievalDoc[]>();
+/** Shared global store (legacy — kept for backward-compat) */
 let docs: RetrievalDoc[] = [];
 
 export function addDocument(id: string, text: string) {
   docs.push({ id, text });
+}
+
+/**
+ * Load knowledge articles from the DB for a tenant and cache them so
+ * subsequent `queryTenant` calls are fast (no extra DB round-trips).
+ */
+export async function loadTenantDocuments(
+  tenantId: string,
+  supabase: SupabaseClient
+): Promise<void> {
+  try {
+    const { data, error } = await supabase
+      .from('tenant_knowledge_articles')
+      .select('id, title, content, category')
+      .eq('tenant_id', tenantId)
+      .eq('is_active', true);
+
+    if (error) {
+      console.warn('[retrieval] Failed to load tenant knowledge articles:', error.message);
+      return;
+    }
+
+    const articles: RetrievalDoc[] = (data ?? []).map((row: { id: string; title: string; content: string; category: string }) => ({
+      id: row.id,
+      // Concatenate title + content so both are searchable
+      text: `${row.title}: ${row.content}`,
+      category: row.category,
+    }));
+
+    tenantDocs.set(tenantId, articles);
+  } catch (err) {
+    console.warn('[retrieval] Unexpected error loading documents:', err);
+  }
+}
+
+/**
+ * Query per-tenant knowledge base. Falls back to the global store if the
+ * tenant has no loaded documents.
+ */
+export function queryTenant(tenantId: string, text: string, limit = 3): RetrievalDoc[] {
+  const store = tenantDocs.get(tenantId) ?? docs;
+  return _query(store, text, limit);
 }
 
 function tokenize(t: string) {
@@ -30,11 +78,15 @@ function cosine(a: Record<string, number>, b: Record<string, number>) {
   return denom === 0 ? 0 : dot / denom;
 }
 
-export function query(text: string, limit = 3): RetrievalDoc[] {
+function _query(store: RetrievalDoc[], text: string, limit: number): RetrievalDoc[] {
   const qtokens = tokenize(text);
   const qvec = buildVector(qtokens);
-  const scored = docs.map((d) => ({ d, score: cosine(qvec, buildVector(tokenize(d.text))) }));
+  const scored = store.map((d) => ({ d, score: cosine(qvec, buildVector(tokenize(d.text))) }));
   return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((s) => s.d);
 }
 
-export default { addDocument, query };
+export function query(text: string, limit = 3): RetrievalDoc[] {
+  return _query(docs, text, limit);
+}
+
+export default { addDocument, query, queryTenant, loadTenantDocuments };
