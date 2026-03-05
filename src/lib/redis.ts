@@ -84,63 +84,6 @@ function isModuleAvailable(moduleName: string): boolean {
   }
 }
 
-function resetConnectionState() {
-  connectPromise = null;
-  connectError = null;
-}
-
-function createIORedisClient(url: string): RedisClient {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const IORedis = require('ioredis');
-    resetConnectionState();
-    client = new IORedis(url);
-    return client;
-  } catch (instantiationError) {
-    throw createRedisError(
-      `ioredis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
-      'instantiation',
-      instantiationError
-    );
-  }
-}
-
-function createNodeRedisClient(url: string): RedisClient {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const redis = require('redis');
-    resetConnectionState();
-    client = redis.createClient({ url });
-
-    if (typeof client.connect === 'function') {
-      connectPromise = client.connect()
-        .then(() => {
-          connectError = null;
-        })
-        .catch((error: unknown) => {
-          const wrappedError = createRedisError(
-            `node-redis connect failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            'connection',
-            error
-          );
-          connectError = wrappedError;
-          client = null;
-          connectPromise = null;
-          defaultLogger.error('Redis connect failed', { error: wrappedError.message });
-          throw wrappedError;
-        });
-    }
-
-    return client;
-  } catch (instantiationError) {
-    throw createRedisError(
-      `node-redis instantiation failed: ${instantiationError instanceof Error ? instantiationError.message : 'Unknown error'}`,
-      'instantiation',
-      instantiationError
-    );
-  }
-}
-
 function ensureClient() {
   if (client) return client;
 
@@ -211,8 +154,6 @@ function ensureClient() {
       throw new Error('Neither ioredis nor redis client library is installed');
     }
   }
-
-  throw new Error('Redis client not installed (ioredis or redis)');
 }
 
 async function ensureReadyClient() {
