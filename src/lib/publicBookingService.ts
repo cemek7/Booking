@@ -27,7 +27,7 @@ function parseAvailabilityDate(date: string): Date {
     }
   }
 
-  throw ApiErrorFactory.badRequest('Invalid date format. Expected YYYY-MM-DD');
+  throw ApiErrorFactory.badRequest('Invalid date format');
 }
 
 /**
@@ -354,8 +354,7 @@ function generateTimeSlots(
   startTime: string,
   endTime: string,
   durationMinutes: number,
-  existingReservations: Array<{ start_at: string; end_at: string }>,
-  date: Date
+  existingReservations: Array<{ start_at: string; end_at: string }>
 ): TimeSlot[] {
   const slots: TimeSlot[] = [];
 
@@ -363,13 +362,13 @@ function generateTimeSlots(
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
 
-  let current = new Date(date);
+  let current = new Date(baseDate);
   current.setHours(startHour, startMin, 0, 0);
 
-  const dayEnd = new Date(date);
+  const dayEnd = new Date(baseDate);
   dayEnd.setHours(endHour, endMin, 0, 0);
 
-  // Generate time slots at configured interval
+  // Generate 30-minute intervals
   while (current < dayEnd) {
     const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
 
