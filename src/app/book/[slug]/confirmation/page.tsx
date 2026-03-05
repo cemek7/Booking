@@ -1,5 +1,5 @@
-import { Suspense } from 'react';
 import Link from 'next/link';
+import ReviewPrompt from '../components/ReviewPrompt';
 
 interface ConfirmationPageProps {
   params: {
@@ -69,6 +69,9 @@ export default function ConfirmationPage({
               Please save it for future reference.
             </p>
           </div>
+
+          {/* Review prompt */}
+          <ReviewPrompt slug={params.slug} reservationId={bookingId} />
 
           {/* Action Buttons */}
           <div className="space-y-3 pt-6 border-t">

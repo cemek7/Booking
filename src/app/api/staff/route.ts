@@ -1,5 +1,12 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { createHttpHandler, parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { z } from 'zod';
+
+const StaffSeedSchema = z.object({
+  name: z.string().optional(),
+  email: z.string().email().optional(),
+  role: z.enum(['owner', 'manager', 'staff']).optional(),
+});
 
 /**
  * GET /api/staff
@@ -35,4 +42,39 @@ export const GET = createHttpHandler(
   },
   'GET',
   { auth: true }
+);
+
+/**
+ * POST /api/staff
+ * Seed placeholder staff members for a tenant (used during onboarding).
+ * Creates tenant_users rows without a linked auth user account; the staff
+ * member will claim the row when they sign up via the invite link.
+ *
+ * Body: Array of { name?, email?, role? }
+ */
+export const POST = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user!.tenantId;
+    if (!tenantId) throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
+
+    const raw = await parseJsonBody(ctx.request);
+    const members = z.array(StaffSeedSchema).parse(raw);
+
+    if (members.length === 0) return { success: true, count: 0 };
+
+    const rows = members.map((m) => ({
+      tenant_id: tenantId,
+      name: m.name ?? null,
+      email: m.email ?? null,
+      role: m.role ?? 'staff',
+      status: 'active',
+    }));
+
+    const { error } = await ctx.supabase.from('tenant_users').insert(rows);
+    if (error) throw ApiErrorFactory.databaseError(error);
+
+    return { success: true, count: rows.length };
+  },
+  'POST',
+  { auth: true, roles: ['owner', 'manager'] }
 );

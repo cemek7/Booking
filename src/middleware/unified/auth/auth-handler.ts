@@ -154,6 +154,8 @@ export function isPublicPath(pathname: string): boolean {
     '/api/auth/signup',
     '/api/auth/verify',
     '/api/health',
+    '/book/',
+    '/reviews/',
   ];
 
   return publicPaths.some(path => pathname.startsWith(path));

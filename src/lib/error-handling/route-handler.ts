@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { type SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { 
@@ -30,7 +31,7 @@ export interface RouteContext {
     tenantId?: string;
     permissions?: string[];
   };
-  supabase: any;
+  supabase: SupabaseClient;
   params?: Record<string, string>;
 }
 
@@ -103,11 +104,10 @@ export function createApiHandler(
           return error.toResponse();
         }
 
-        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows).
-        // Default to true when undefined for backward compatibility.
-        const requireTenantMembership =
-          options.requireTenantMembership !== false;
-        
+        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows)
+        // Default to true when undefined for backward compatibility
+        const requireTenantMembership = options.requireTenantMembership !== false;
+
         let tenantUser: { tenant_id: string; role: string } | null = null;
 
         if (requireTenantMembership) {
@@ -119,6 +119,8 @@ export function createApiHandler(
             return error.toResponse();
           }
 
+          // Validate the header-based tenant scope against tenant_users
+          // Scope by user_id + tenant_id to avoid multi-tenant "multiple rows" errors
           const { data: tenantUserData, error: tenantUserError } = await supabase
             .from('tenant_users')
             .select('tenant_id, role')
@@ -126,17 +128,27 @@ export function createApiHandler(
             .eq('tenant_id', tenantId)
             .maybeSingle();
 
-          if (tenantUserError) {
-            const error = ApiErrorFactory.databaseError(new Error(tenantUserError.message));
-            return error.toResponse();
-          }
-
-          if (!tenantUserData) {
-            const error = ApiErrorFactory.forbidden('User is not assigned to a tenant');
+          if (tenantUserError || !tenantUserData) {
+            const error = ApiErrorFactory.forbidden('Access denied');
             return error.toResponse();
           }
 
           tenantUser = tenantUserData;
+        }
+
+        // Check role requirements (only when tenant membership is verified)
+        if (requireTenantMembership && options.roles && options.roles.length > 0) {
+          if (!tenantUser?.role || !options.roles.includes(tenantUser.role)) {
+            const error = ApiErrorFactory.insufficientPermissions(options.roles);
+            return error.toResponse();
+          }
+        }
+
+        // TODO: Permission enforcement is not yet implemented
+        // When implementing, fetch user permissions from database and check against options.permissions
+        // For now, if permissions are specified, log a warning
+        if (options.permissions && options.permissions.length > 0) {
+          console.warn('[route-handler] Permission checking requested but not yet implemented. Permissions:', options.permissions);
         }
 
         // Authorization is enforced server-side based on Supabase auth + tenant membership.

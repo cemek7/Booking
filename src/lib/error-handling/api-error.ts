@@ -179,6 +179,13 @@ export const ApiErrorFactory = {
       'Token has expired'
     ),
 
+  unauthorized: (message?: string) =>
+    new ApiError(
+      ErrorCodes.INVALID_TOKEN,
+      message || 'Unauthorized',
+      401
+    ),
+
   forbidden: (reason?: string) =>
     new ApiError(
       ErrorCodes.FORBIDDEN,
