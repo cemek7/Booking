@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+'use client';
+
+import { defaultLogger } from '@/lib/logger';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,33 +50,30 @@ import {
   PieChart as PieChartIcon,
   Activity,
   Sparkles,
-  Robot,
+  Bot as Robot,
   Lightbulb,
   ChevronDown,
   Filter
 } from 'lucide-react';
 
-import { SmartBookingRecommendations, CustomerProfile, ServiceRecommendation } from '@/lib/ai/smartBookingRecommendations';
-import { AdvancedConversationAI, ConversationContext, EmotionalState } from '@/lib/ai/advancedConversationAI';
-import { PredictiveAnalyticsEngine, RevenueMetrics, CustomerAnalytics, TenantBenchmark } from '@/lib/ai/predictiveAnalytics';
-import { AutomationWorkflows, AutomationRule, ContentGeneration } from '@/lib/ai/automationWorkflows';
+import type { AutomationRule } from '@/lib/ai/automationWorkflows';
+import type { RevenueMetrics, CustomerAnalytics, TenantBenchmark } from '@/lib/ai/predictiveAnalytics';
+import { getUnifiedAnalyticsAccess, validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
+import type { Role } from '@/types/roles';
 
 interface AIAnalyticsProps {
   tenantId: string;
+  userRole: Role;
+  userId?: string;
   timeframe?: 'daily' | 'weekly' | 'monthly' | 'quarterly';
 }
 
-const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe = 'monthly' }) => {
+const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, userId, timeframe = 'monthly' }) => {
+  // All hooks must be declared unconditionally before any early return
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [timeRange, setTimeRange] = useState(timeframe);
-  
-  // AI Engines
-  const [smartRecommendations] = useState(new SmartBookingRecommendations());
-  const [conversationAI] = useState(new AdvancedConversationAI());
-  const [predictiveEngine] = useState(new PredictiveAnalyticsEngine());
-  const [automationWorkflows] = useState(new AutomationWorkflows());
-  
+
   // Data states
   const [revenueMetrics, setRevenueMetrics] = useState<RevenueMetrics | null>(null);
   const [customerAnalytics, setCustomerAnalytics] = useState<CustomerAnalytics[]>([]);
@@ -82,31 +82,88 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
   const [aiInsights, setAiInsights] = useState<any[]>([]);
   const [conversationMetrics, setConversationMetrics] = useState<any>({});
   const [contentPerformance, setContentPerformance] = useState<any[]>([]);
+  const [verticalInsights, setVerticalInsights] = useState<any[]>([]);
 
+  // AI engines run server-side via /api/ai/predictions
   useEffect(() => {
     loadAIAnalytics();
   }, [tenantId, timeRange]);
 
+  // Derived memos — must also be unconditionally above the early return
+  const churnDistribution = useMemo(() => {
+    if (!customerAnalytics.length) return [];
+    const counts: Record<string, number> = { low: 0, medium: 0, high: 0 };
+    customerAnalytics.forEach((c) => {
+      const level = c.churn_analysis.churn_risk_level;
+      if (level === 'critical' || level === 'high') counts.high += 1;
+      else if (level === 'medium') counts.medium += 1;
+      else counts.low += 1;
+    });
+    return [
+      { name: 'Low Risk', value: counts.low, color: '#10b981' },
+      { name: 'Medium Risk', value: counts.medium, color: '#f59e0b' },
+      { name: 'High Risk', value: counts.high, color: '#ef4444' },
+    ].filter((d) => d.value > 0);
+  }, [customerAnalytics]);
+
+  const clvDistribution = useMemo(() => {
+    if (!customerAnalytics.length) return [];
+    const segments: Record<string, { count: number; total: number }> = {};
+    customerAnalytics.forEach((c) => {
+      const seg = c.lifetime_value.value_segment;
+      if (!segments[seg]) segments[seg] = { count: 0, total: 0 };
+      segments[seg].count += 1;
+      segments[seg].total += c.lifetime_value.current_clv;
+    });
+    return Object.entries(segments).map(([segment, data]) => ({
+      segment,
+      count: data.count,
+      avg_clv: data.count > 0 ? Math.round(data.total / data.count) : 0,
+    }));
+  }, [customerAnalytics]);
+
+  // Permission check after all hooks
+  const analyticsAccess = getUnifiedAnalyticsAccess(userRole);
+  const tenantValidation = validateAnalyticsRequest(userRole, 'tenant', tenantId, userId);
+
+  if (!analyticsAccess.permissions.canViewTenantData || !tenantValidation.allowed) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>AI Analytics Access Restricted</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            {tenantValidation.reason || 'You do not have permission to view AI analytics insights.'}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const loadAIAnalytics = async () => {
     setLoading(true);
     try {
-      // Load all AI analytics data in parallel
       const [
-        revenue,
-        customers,
-        benchmark,
-        insights,
+        predictionsRes,
         conversation,
-        content
+        content,
+        jobsRes,
+        beautyRes,
+        hospitalityRes,
+        medicineRes,
       ] = await Promise.all([
-        predictiveEngine.generateRevenueForecast(tenantId, 'monthly'),
-        predictiveEngine.analyzeCustomerLifetimeValue(tenantId),
-        predictiveEngine.generatePerformanceBenchmarks(tenantId),
-        predictiveEngine.generatePredictiveInsights(tenantId),
+        fetch(`/api/ai/predictions?timeRange=${timeRange}`, { headers: { 'X-Tenant-ID': tenantId } })
+          .then((r) => r.ok ? r.json() : {}),
         loadConversationMetrics(),
-        loadContentPerformance()
+        loadContentPerformance(),
+        fetch('/api/jobs').then((r) => r.ok ? r.json() : { stats: {} }),
+        fetch('/api/analytics/vertical?vertical=beauty').then((r) => r.ok ? r.json() : null),
+        fetch('/api/analytics/vertical?vertical=hospitality').then((r) => r.ok ? r.json() : null),
+        fetch('/api/analytics/vertical?vertical=medicine').then((r) => r.ok ? r.json() : null),
       ]);
 
+      const { revenue, customers, benchmark, insights } = predictionsRes as any;
       setRevenueMetrics(revenue);
       setCustomerAnalytics(Array.isArray(customers) ? customers : [customers]);
       setTenantBenchmark(benchmark);
@@ -114,36 +171,93 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
       setConversationMetrics(conversation);
       setContentPerformance(content);
 
+      // Map job stats to automation-rule-like summary cards
+      const stats = jobsRes?.stats ?? {};
+      const total = (stats.pending ?? 0) + (stats.processing ?? 0) + (stats.completed ?? 0) + (stats.failed ?? 0);
+      const successRate = total > 0 ? (stats.completed ?? 0) / total : 0;
+      if (total > 0) {
+        setAutomationRules([{
+          id: 'job-summary',
+          tenant_id: tenantId,
+          name: 'Background Jobs (last 24h)',
+          description: '',
+          trigger: { type: 'time_based', conditions: [] },
+          actions: [],
+          status: 'active',
+          success_rate: successRate,
+          last_executed: new Date().toISOString(),
+          next_execution: '',
+          created_at: '',
+        } as AutomationRule]);
+      }
+
+      // Build cross-vertical insights from real analytics data
+      const insights_list = [beautyRes, hospitalityRes, medicineRes]
+        .filter(Boolean)
+        .map((v: any) => ({
+          vertical: v.vertical,
+          analytics: v.analytics,
+        }));
+      setVerticalInsights(insights_list);
+
     } catch (error) {
-      console.error('Error loading AI analytics:', error);
+      defaultLogger.error('Error loading AI analytics:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const loadConversationMetrics = async () => {
-    // Mock conversation metrics
-    return {
-      total_conversations: 245,
-      avg_response_time: 1.2,
-      customer_satisfaction: 4.7,
-      escalation_rate: 0.05,
-      emotion_distribution: [
-        { emotion: 'satisfied', count: 120, percentage: 49 },
-        { emotion: 'happy', count: 85, percentage: 35 },
-        { emotion: 'confused', count: 25, percentage: 10 },
-        { emotion: 'frustrated', count: 15, percentage: 6 }
-      ]
-    };
+    try {
+      const [chatsRes, feedbackRes, escalationPendingRes, escalationResolvedRes] = await Promise.all([
+        fetch(`/api/chats?tenant_id=${tenantId}`),
+        fetch('/api/feedback?days=30'),
+        fetch('/api/escalation?status=pending'),
+        fetch('/api/escalation?status=resolved'),
+      ]);
+
+      const chats = chatsRes.ok ? await chatsRes.json() : [];
+      const feedback = feedbackRes.ok ? await feedbackRes.json() : { summary: {}, feedback: [] };
+      const pending = escalationPendingRes.ok ? await escalationPendingRes.json() : { escalations: [] };
+      const resolved = escalationResolvedRes.ok ? await escalationResolvedRes.json() : { escalations: [] };
+
+      const totalChats = Array.isArray(chats) ? chats.length : 0;
+      const totalEscalations = (pending.escalations?.length ?? 0) + (resolved.escalations?.length ?? 0);
+      const escalationRate = totalChats > 0 ? totalEscalations / totalChats : 0;
+
+      // Derive emotion distribution from feedback scores
+      const feedbackRows: { score: number }[] = feedback.feedback ?? [];
+      const scoreBuckets: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+      feedbackRows.forEach((f) => { if (f.score >= 1 && f.score <= 5) scoreBuckets[f.score]++; });
+      const totalFeedback = feedbackRows.length || 1;
+      const emotion_distribution = [
+        { emotion: 'happy', count: scoreBuckets[5], percentage: Math.round((scoreBuckets[5] / totalFeedback) * 100) },
+        { emotion: 'satisfied', count: scoreBuckets[4], percentage: Math.round((scoreBuckets[4] / totalFeedback) * 100) },
+        { emotion: 'neutral', count: scoreBuckets[3], percentage: Math.round((scoreBuckets[3] / totalFeedback) * 100) },
+        { emotion: 'confused', count: scoreBuckets[2], percentage: Math.round((scoreBuckets[2] / totalFeedback) * 100) },
+        { emotion: 'frustrated', count: scoreBuckets[1], percentage: Math.round((scoreBuckets[1] / totalFeedback) * 100) },
+      ].filter((e) => e.count > 0);
+
+      return {
+        total_conversations: totalChats,
+        customer_satisfaction: feedback.summary?.avg_score ?? null,
+        escalation_rate: escalationRate,
+        emotion_distribution,
+      };
+    } catch {
+      return {};
+    }
   };
 
   const loadContentPerformance = async () => {
-    // Mock content performance data
-    return [
-      { type: 'reminder', sent: 1200, opened: 1080, clicked: 324, converted: 162 },
-      { type: 'offer', sent: 450, opened: 360, clicked: 162, converted: 81 },
-      { type: 'follow_up', sent: 320, opened: 256, clicked: 96, converted: 38 }
-    ];
+    try {
+      const res = await fetch('/api/analytics/notifications?days=30');
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.content_performance ?? [];
+    } catch {
+      return [];
+    }
   };
 
   const formatCurrency = (value: number) => {
@@ -206,7 +320,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
           <p className="text-gray-600">Intelligent insights and automation performance</p>
         </div>
         <div className="flex items-center space-x-4">
-          <Select value={timeRange} onValueChange={setTimeRange}>
+          <Select value={timeRange} onValueChange={(v) => setTimeRange(v as typeof timeRange)}>
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>
@@ -275,9 +389,9 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {automationRules.length > 0 
+                  {automationRules.length > 0
                     ? `${(automationRules.reduce((sum, rule) => sum + rule.success_rate, 0) / automationRules.length * 100).toFixed(0)}%`
-                    : '85%'
+                    : '—'
                   }
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -492,31 +606,29 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
             <CardContent>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <PieChart>
-                      <Pie
-                        data={[
-                          { name: 'Low Risk', value: 60, color: '#10b981' },
-                          { name: 'Medium Risk', value: 25, color: '#f59e0b' },
-                          { name: 'High Risk', value: 15, color: '#ef4444' }
-                        ]}
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={80}
-                        dataKey="value"
-                      >
-                        {[
-                          { name: 'Low Risk', value: 60, color: '#10b981' },
-                          { name: 'Medium Risk', value: 25, color: '#f59e0b' },
-                          { name: 'High Risk', value: 15, color: '#ef4444' }
-                        ].map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  {churnDistribution.length === 0 ? (
+                    <div className="h-[200px] flex items-center justify-center text-sm text-gray-400">
+                      No customer data available
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={200}>
+                      <PieChart>
+                        <Pie
+                          data={churnDistribution}
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          dataKey="value"
+                        >
+                          {churnDistribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
 
                 <div className="space-y-4">
@@ -544,23 +656,24 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
               <CardTitle>Customer Lifetime Value Distribution</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={[
-                  { segment: 'VIP', count: 12, avg_clv: 2500 },
-                  { segment: 'High Value', count: 28, avg_clv: 1200 },
-                  { segment: 'Regular', count: 156, avg_clv: 450 },
-                  { segment: 'New', count: 89, avg_clv: 150 }
-                ]}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="segment" />
-                  <YAxis yAxisId="left" />
-                  <YAxis yAxisId="right" orientation="right" />
-                  <Tooltip />
-                  <Legend />
-                  <Bar yAxisId="left" dataKey="count" fill="#8b5cf6" name="Customer Count" />
-                  <Bar yAxisId="right" dataKey="avg_clv" fill="#06b6d4" name="Avg CLV" />
-                </BarChart>
-              </ResponsiveContainer>
+              {clvDistribution.length === 0 ? (
+                <div className="h-[300px] flex items-center justify-center text-sm text-gray-400">
+                  No customer data available
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={clvDistribution}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="segment" />
+                    <YAxis yAxisId="left" />
+                    <YAxis yAxisId="right" orientation="right" />
+                    <Tooltip />
+                    <Legend />
+                    <Bar yAxisId="left" dataKey="count" fill="#8b5cf6" name="Customer Count" />
+                    <Bar yAxisId="right" dataKey="avg_clv" fill="#06b6d4" name="Avg CLV" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -586,7 +699,9 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
                 <Clock className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{conversationMetrics.avg_response_time || 0}s</div>
+                <div className="text-2xl font-bold">
+                  {conversationMetrics.avg_response_time != null ? `${conversationMetrics.avg_response_time}s` : '—'}
+                </div>
                 <p className="text-xs text-muted-foreground">AI-powered responses</p>
               </CardContent>
             </Card>
@@ -671,22 +786,26 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
           {/* Content Performance */}
           <Card>
             <CardHeader>
-              <CardTitle>Automated Content Performance</CardTitle>
+              <CardTitle>Notification Performance</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={contentPerformance}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="type" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="sent" fill="#e5e7eb" name="Sent" />
-                  <Bar dataKey="opened" fill="#8b5cf6" name="Opened" />
-                  <Bar dataKey="clicked" fill="#06b6d4" name="Clicked" />
-                  <Bar dataKey="converted" fill="#10b981" name="Converted" />
-                </BarChart>
-              </ResponsiveContainer>
+              {contentPerformance.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-6">No notification data for the last 30 days.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={contentPerformance}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="type" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="sent" fill="#e5e7eb" name="Scheduled" />
+                    <Bar dataKey="executed" fill="#10b981" name="Executed" />
+                    <Bar dataKey="pending" fill="#8b5cf6" name="Pending" />
+                    <Bar dataKey="cancelled" fill="#ef4444" name="Cancelled" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
@@ -696,32 +815,33 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
               <CardTitle>Active Automation Rules</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {[
-                  { name: '24-Hour Reminder', status: 'active', success_rate: 0.89, executions: 145 },
-                  { name: 'Follow-up Sequence', status: 'active', success_rate: 0.67, executions: 89 },
-                  { name: 'Rebooking Automation', status: 'active', success_rate: 0.34, executions: 23 },
-                  { name: 'Feedback Collection', status: 'paused', success_rate: 0.45, executions: 0 }
-                ].map((rule, index) => (
-                  <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium">{rule.name}</span>
-                        <Badge variant={rule.status === 'active' ? 'default' : 'secondary'}>
-                          {rule.status}
-                        </Badge>
+              {automationRules.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-6">
+                  No automation rules configured.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {automationRules.map((rule, index) => (
+                    <div key={rule.id || index} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium">{rule.name}</span>
+                          <Badge variant={rule.status === 'active' ? 'default' : 'secondary'}>
+                            {rule.status}
+                          </Badge>
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          Last run: {rule.last_executed ? new Date(rule.last_executed).toLocaleDateString() : 'Never'}
+                        </div>
                       </div>
-                      <div className="text-sm text-gray-600">
-                        {rule.executions} executions this month
+                      <div className="text-right">
+                        <div className="font-bold">{formatPercentage(rule.success_rate)}</div>
+                        <div className="text-xs text-gray-600">Success rate</div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="font-bold">{formatPercentage(rule.success_rate)}</div>
-                      <div className="text-xs text-gray-600">Success rate</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -787,37 +907,35 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, timeframe 
           {/* Cross-Vertical Insights */}
           <Card>
             <CardHeader>
-              <CardTitle>Cross-Vertical Learning</CardTitle>
+              <CardTitle>Cross-Vertical Analytics</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div className="p-4 border rounded-lg bg-blue-50">
-                  <div className="flex items-start justify-between mb-2">
-                    <h4 className="font-medium">Weekend Booking Patterns</h4>
-                    <Badge className="bg-blue-100 text-blue-800">Beauty → Hospitality</Badge>
+                {verticalInsights.map((v) => (
+                  <div key={v.vertical} className="p-4 border rounded-lg">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-medium capitalize">{v.vertical}</h4>
+                    </div>
+                    {v.analytics?.metrics?.conversion_funnels?.length > 0 ? (
+                      <div className="space-y-2">
+                        {v.analytics.metrics.conversion_funnels.map((step: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between text-sm">
+                            <span className="text-gray-600 capitalize">{step.step}</span>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-gray-800 font-medium">{step.count}</span>
+                              <Badge variant="outline">{(step.conversion_rate * 100).toFixed(1)}%</Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">No funnel data yet for this vertical.</p>
+                    )}
                   </div>
-                  <p className="text-sm text-gray-600 mb-3">
-                    Beauty businesses show 40% higher weekend demand. This insight can be applied to hospitality.
-                  </p>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant="outline">Implementation: Easy</Badge>
-                    <Badge className="bg-green-100 text-green-800">80% Success Rate</Badge>
-                  </div>
-                </div>
-
-                <div className="p-4 border rounded-lg bg-purple-50">
-                  <div className="flex items-start justify-between mb-2">
-                    <h4 className="font-medium">Reminder Timing Optimization</h4>
-                    <Badge className="bg-purple-100 text-purple-800">Medicine → All</Badge>
-                  </div>
-                  <p className="text-sm text-gray-600 mb-3">
-                    Medical practices achieve 25% better response rates with 2-hour advance reminders.
-                  </p>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant="outline">Implementation: Medium</Badge>
-                    <Badge className="bg-green-100 text-green-800">65% Success Rate</Badge>
-                  </div>
-                </div>
+                ))}
+                {verticalInsights.length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-4">Loading vertical analytics…</p>
+                )}
               </div>
             </CardContent>
           </Card>

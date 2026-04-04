@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
@@ -12,10 +14,11 @@ import { toast } from '@/components/ui/toast';
 export default function RecommendationsPage() {
   const { tenant } = useTenant();
   const queryClient = useQueryClient();
-  const [selectedContext, setSelectedContext] = useState<'booking' | 'product_view' | 'general'>('general');
+  const [selectedContext, setSelectedContext] = useState<'booking' | 'product_view' | 'cart' | 'general'>('general');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [maxRecommendations, setMaxRecommendations] = useState(10);
   const [testCustomerId, setTestCustomerId] = useState('');
+  const [priorityMap, setPriorityMap] = useState<Record<string, number>>({});
 
   // Fetch user role for permissions
   const { data: userRole } = useQuery({
@@ -325,8 +328,7 @@ export default function RecommendationsPage() {
                     </THead>
                     <TBody>
                       {products.slice(0, 20).map((product: Product) => {
-                        const [newPriority, setNewPriority] = useState(product.upsell_priority);
-                        
+                        const newPriority = priorityMap[product.id] ?? product.upsell_priority ?? 0;
                         return (
                           <TR key={product.id}>
                             <TD>
@@ -337,8 +339,8 @@ export default function RecommendationsPage() {
                             </TD>
                             <TD>
                               <span className={`font-medium ${
-                                product.upsell_priority > 50 ? 'text-green-600' : 
-                                product.upsell_priority > 0 ? 'text-yellow-600' : 'text-gray-500'
+                                (product.upsell_priority ?? 0) > 50 ? 'text-green-600' :
+                                (product.upsell_priority ?? 0) > 0 ? 'text-yellow-600' : 'text-gray-500'
                               }`}>
                                 {product.upsell_priority}
                               </span>
@@ -349,16 +351,16 @@ export default function RecommendationsPage() {
                                 min="0"
                                 max="100"
                                 value={newPriority}
-                                onChange={(e) => setNewPriority(parseInt(e.target.value) || 0)}
+                                onChange={(e) => setPriorityMap(prev => ({ ...prev, [product.id]: parseInt(e.target.value) || 0 }))}
                                 className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-primary"
                               />
                             </TD>
                             <TD>
-                              {newPriority !== product.upsell_priority && (
+                              {newPriority !== (product.upsell_priority ?? 0) && (
                                 <Button
                                   size="sm"
                                   onClick={() => handleUpdateUpsellPriority(product.id, newPriority)}
-                                  disabled={updateUpsellMutation.isLoading}
+                                  disabled={updateUpsellMutation.isPending}
                                   className="bg-primary text-white"
                                 >
                                   Update
