@@ -234,7 +234,7 @@ async function validateWalkIn(
       .from('tenant_users')
       .select('id')
       .eq('tenant_id', tenantId)
-      .ilike('phone', `%${params.staff_name}%`)
+      .ilike('name', `%${params.staff_name}%`)
       .maybeSingle();
     staffId = staff?.id;
   }
@@ -278,7 +278,7 @@ async function validateWalkIn(
     .from('reservations')
     .select('start_at, end_at, customer_name')
     .eq('tenant_id', tenantId)
-    .eq('staff_id', staffId)
+    .eq('tenant_staff_id', staffId)
     .in('status', ['confirmed', 'pending'])
     .lt('start_at', walkInEnd.toISOString())
     .gt('end_at', now.toISOString())
@@ -305,6 +305,24 @@ async function validateWalkIn(
   return { valid: true };
 }
 
+async function resolveCustomerIdForNoShow(
+  tenantId: string,
+  reservationId: string | undefined,
+  fallbackCustomerId?: string
+): Promise<string | null> {
+  if (fallbackCustomerId) return fallbackCustomerId;
+  if (!reservationId) return null;
+
+  const { data } = await supabaseAdmin
+    .from('reservations')
+    .select('customer_id')
+    .eq('id', reservationId)
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+
+  return typeof data?.customer_id === 'string' ? data.customer_id : null;
+}
+
 // ─── Action executor ──────────────────────────────────────────────────────────
 
 /**
@@ -315,21 +333,21 @@ export async function executeAction(
   tenantId: string,
   aiResponse: AIResponse,
   context: { customerPhone?: string; tenantStaffId?: string; customerId?: string }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<{ success: boolean; data?: unknown; error?: string }> {
   const { action, params } = aiResponse;
 
   try {
     switch (action) {
       case 'create_booking': {
-        const result = await bookingEngine.createBooking(tenantId, {
+        const bookingInput = {
           service_id: params.service_id,
           staff_id: params.staff_id,
           start_at: params.start_at,
           customer_name: params.customer_name,
           customer_phone: context.customerPhone ?? '',
           notes: params.notes,
-        } as any, { skipPayment: true, sendConfirmation: false });
+        } as unknown as Parameters<typeof bookingEngine.createBooking>[1];
+        const result = await bookingEngine.createBooking(tenantId, bookingInput, { skipPayment: true, sendConfirmation: false });
         return { success: true, data: result };
       }
 
@@ -348,8 +366,26 @@ export async function executeAction(
           .update({ status: 'no_show' })
           .eq('id', params.reservation_id)
           .eq('tenant_id', tenantId);
-        if (!error && context.customerId) {
-          await supabaseAdmin.rpc('increment_no_show_count', { p_customer_id: context.customerId });
+        if (!error) {
+          const customerId = await resolveCustomerIdForNoShow(tenantId, params.reservation_id, context.customerId);
+          if (customerId) {
+            const { data: customerRow } = await supabaseAdmin
+              .from('customers')
+              .select('no_show_count')
+              .eq('id', customerId)
+              .maybeSingle();
+
+            const nextNoShowCount = Number((customerRow as { no_show_count?: number } | null)?.no_show_count ?? 0) + 1;
+            const riskScore = nextNoShowCount >= 3 ? 'high' : nextNoShowCount >= 1 ? 'medium' : 'low';
+
+            await supabaseAdmin
+              .from('customers')
+              .update({
+                no_show_count: nextNoShowCount,
+                risk_score: riskScore,
+              })
+              .eq('id', customerId);
+          }
         }
         return { success: !error, error: error?.message };
       }
@@ -427,7 +463,7 @@ export async function executeAction(
           .from('reservations')
           .insert({
             tenant_id: tenantId,
-            staff_id: staffId,
+            tenant_staff_id: staffId,
             service_id: serviceId ?? null,
             start_at: startAt,
             end_at: endAt,

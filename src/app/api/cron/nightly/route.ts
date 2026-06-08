@@ -14,6 +14,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendTelegramInfo, sendTelegramAlert } from '@/lib/monitoring/telegramAlert';
+import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+import type { WhatsAppProviderClient } from '@/lib/whatsapp/providers/types';
+import { siasOperations } from '@/lib/sias-operations';
+import { runDueSiasCampaigns } from '@/lib/siasCampaignRunner';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,6 +25,8 @@ const supabaseAdmin = createClient(
 );
 
 export const maxDuration = 300; // 5-minute budget for nightly job
+
+const WHATSAPP_SEND_CACHE = new Map<string, Promise<WhatsAppProviderClient | null>>();
 
 export async function GET(request: Request): Promise<NextResponse> {
   const authHeader = request.headers.get('authorization');
@@ -64,7 +70,17 @@ export async function GET(request: Request): Promise<NextResponse> {
     results.rebooking_nudge_error = msg;
   }
 
-  // ── Task 4: R2 backup (optional) ───────────────────────────────────────────
+  // ── Task 4: Execute due SIAS campaign jobs ────────────────────────────────
+  try {
+    const campaigns = await runDueCampaignsForAllTenants();
+    results.sias_campaigns = campaigns;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[cron/nightly] SIAS campaign execution failed', err);
+    results.sias_campaigns_error = msg;
+  }
+
+  // ── Task 5: R2 backup (optional) ───────────────────────────────────────────
   if (isR2Configured()) {
     try {
       const backedUp = await runR2Backup();
@@ -77,9 +93,53 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
+  // ── Task 6: Owner weekly digest ────────────────────────────────────────────
+  try {
+    const digests = await sendOwnerWeeklyDigest();
+    results.owner_weekly_digest = { sent: digests };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[cron/nightly] owner weekly digest failed', err);
+    results.owner_weekly_digest_error = msg;
+  }
+
+  // ── Task 7: At-risk clients alert ──────────────────────────────────────────
+  try {
+    const alerts = await sendAtRiskClientsAlert();
+    results.at_risk_clients_alert = { sent: alerts };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[cron/nightly] at-risk clients alert failed', err);
+    results.at_risk_clients_alert_error = msg;
+  }
+
   await sendTelegramInfo(`Nightly cron complete ✅\n${JSON.stringify(results, null, 2)}`);
 
   return NextResponse.json(results);
+}
+
+async function runDueCampaignsForAllTenants(): Promise<{ processed: number; delivered: number; failed: number; tenants: number }> {
+  const now = new Date().toISOString();
+  const { data: rows } = await supabaseAdmin
+    .from('sias_campaign_runs')
+    .select('tenant_id')
+    .in('status', ['pending', 'retry_scheduled'])
+    .lte('scheduled_for', now)
+    .limit(200);
+
+  const tenantIds = [...new Set((rows ?? []).map((row) => row.tenant_id).filter(Boolean))];
+  let processed = 0;
+  let delivered = 0;
+  let failed = 0;
+
+  for (const tenantId of tenantIds) {
+    const result = await runDueSiasCampaigns(supabaseAdmin, tenantId, 25);
+    processed += result.processed;
+    delivered += result.delivered;
+    failed += result.failed;
+  }
+
+  return { processed, delivered, failed, tenants: tenantIds.length };
 }
 
 // ─── Insights aggregation ─────────────────────────────────────────────────────
@@ -183,7 +243,7 @@ async function aggregateTenantDay(tenantId: string, date: string): Promise<void>
  * rebooking_interval_days value, send a "How are your [service] looking?" message
  * — unless we already sent one (tracked in customers.metadata).
  */
-async function sendRebookingFollowUps(): Promise<number> {
+export async function sendRebookingFollowUps(): Promise<number> {
   const now = new Date();
   const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const fourDaysAgo  = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000).toISOString();
@@ -210,21 +270,31 @@ async function sendRebookingFollowUps(): Promise<number> {
   let sent = 0;
 
   for (const res of reservations) {
-    const service = (res as any).services;
-    const tenant  = (res as any).tenants;
+    const reservation = res as {
+      id: string;
+      services?: { name?: string; rebooking_interval_days?: number | null } | null;
+      tenants?: { v2_enabled?: boolean; settings?: { ai_personality?: string } | null } | null;
+      customer_phone?: string | null;
+      customer_name?: string | null;
+      service_id?: string | null;
+      tenant_id: string;
+      start_at?: string;
+    };
+    const service = reservation.services;
+    const tenant = reservation.tenants;
 
     if (!tenant?.v2_enabled) continue;
     if (!service?.rebooking_interval_days) continue;
-    if (!res.customer_phone) continue;
+    if (!reservation.customer_phone) continue;
 
-    const serviceId = res.service_id as string;
+    const serviceId = reservation.service_id as string;
 
     // Check if follow-up was already sent for this customer + service
     const { data: customer } = await supabaseAdmin
       .from('customers')
       .select('id, metadata')
-      .eq('tenant_id', res.tenant_id)
-      .eq('phone', res.customer_phone)
+      .eq('tenant_id', reservation.tenant_id)
+      .eq('phone', reservation.customer_phone)
       .maybeSingle();
 
     if (!customer) continue;
@@ -238,39 +308,63 @@ async function sendRebookingFollowUps(): Promise<number> {
     const { count: newerCount } = await supabaseAdmin
       .from('reservations')
       .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', res.tenant_id)
-      .eq('customer_phone', res.customer_phone)
+      .eq('tenant_id', reservation.tenant_id)
+      .eq('customer_phone', reservation.customer_phone)
       .eq('service_id', serviceId)
-      .gt('start_at', (res as any).start_at ?? threeDaysAgo);
+      .gt('start_at', reservation.start_at ?? threeDaysAgo);
 
     if ((newerCount ?? 0) > 0) continue;
 
-    // Send message via Evolution API
-    const { data: waConfig } = await supabaseAdmin
-      .from('whatsapp_configs')
-      .select('instance_name, api_url, api_key')
-      .eq('tenant_id', res.tenant_id)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (!waConfig) continue;
+    // Send message via the configured WhatsApp provider
+    const client = await getTenantProviderClient(reservation.tenant_id);
+    if (!client) continue;
 
     const serviceName = service.name as string;
     const greeting = tenant.settings?.ai_personality?.includes('casual')
       ? `How are your ${serviceName} looking? 😊`
-      : `Hi${res.customer_name ? ` ${res.customer_name}` : ''}! How are you enjoying your ${serviceName}? 😊`;
+      : `Hi${reservation.customer_name ? ` ${reservation.customer_name}` : ''}! How are you enjoying your ${serviceName}? 😊`;
 
-    const sendUrl = `${waConfig.api_url}/message/sendText/${waConfig.instance_name}`;
-    const sendRes = await fetch(sendUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: waConfig.api_key },
-      body: JSON.stringify({ number: res.customer_phone, text: greeting }),
-    });
+    const sendRes = await client.sendTextMessage(reservation.customer_phone, greeting);
 
-    if (!sendRes.ok) {
-      console.warn('[cron/nightly] follow-up send failed', { tenant_id: res.tenant_id, phone: res.customer_phone });
+    if (!sendRes.success) {
+      console.warn('[cron/nightly] follow-up send failed', { tenant_id: reservation.tenant_id, phone: reservation.customer_phone });
+      await siasOperations.recordCampaignRun({
+        tenantId: reservation.tenant_id,
+        campaignType: 'reactivation',
+        action: 'send_reactivation',
+        targetPhone: reservation.customer_phone,
+        targetBookingId: reservation.id,
+        sourceEvent: 'cron.rebooking_followup',
+        status: 'retry_scheduled',
+        metadata: {
+          service_id: serviceId,
+          reason: 'follow_up',
+        },
+        attribution: {
+          signal: 'revenue_recovery',
+          source_event: 'cron.rebooking_followup',
+        },
+      });
       continue;
     }
+
+    await siasOperations.recordCampaignRun({
+      tenantId: reservation.tenant_id,
+      campaignType: 'reactivation',
+      action: 'send_reactivation',
+      targetPhone: reservation.customer_phone,
+      targetBookingId: reservation.id,
+      sourceEvent: 'cron.rebooking_followup',
+      status: 'sent',
+      metadata: {
+        service_id: serviceId,
+        reason: 'follow_up',
+      },
+      attribution: {
+        signal: 'revenue_recovery',
+        source_event: 'cron.rebooking_followup',
+      },
+    });
 
     // Mark as sent
     sentMap[serviceId] = now.toISOString();
@@ -292,7 +386,7 @@ async function sendRebookingFollowUps(): Promise<number> {
  * customer has no newer booking for the same service, send a rebooking nudge.
  * Throttled: won't re-send within rebooking_interval_days / 2 days.
  */
-async function sendRebookingNudges(): Promise<number> {
+export async function sendRebookingNudges(): Promise<number> {
   const now = new Date();
 
   // Find v2-enabled tenants with at least one service with rebooking enabled
@@ -316,14 +410,8 @@ async function sendRebookingNudges(): Promise<number> {
 
     if (!services?.length) continue;
 
-    const { data: waConfig } = await supabaseAdmin
-      .from('whatsapp_configs')
-      .select('instance_name, api_url, api_key')
-      .eq('tenant_id', tenant.id)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (!waConfig) continue;
+    const client = await getTenantProviderClient(tenant.id);
+    if (!client) continue;
 
     for (const service of services) {
       const intervalDays = service.rebooking_interval_days as number;
@@ -341,12 +429,12 @@ async function sendRebookingNudges(): Promise<number> {
       if (!reservations?.length) continue;
 
       // Deduplicate — take the most recent reservation per customer
-      const latestByPhone = new Map<string, (typeof reservations)[number]>();
+      const latestByPhone = new Map<string, (typeof reservations)[number] & { id: string }>();
       for (const r of reservations) {
         if (!r.customer_phone) continue;
         const existing = latestByPhone.get(r.customer_phone);
         if (!existing || r.start_at > existing.start_at) {
-          latestByPhone.set(r.customer_phone, r);
+          latestByPhone.set(r.customer_phone, r as (typeof reservations)[number] & { id: string });
         }
       }
 
@@ -387,19 +475,47 @@ async function sendRebookingNudges(): Promise<number> {
         const customerName = lastRes.customer_name ?? '';
         const nudge = `Hi${customerName ? ` ${customerName}` : ''}! Time for your next ${service.name}? 📅 Reply *BOOK* to get started.`;
 
-        const sendRes = await fetch(
-          `${waConfig.api_url}/message/sendText/${waConfig.instance_name}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', apikey: waConfig.api_key },
-            body: JSON.stringify({ number: phone, text: nudge }),
-          }
-        );
+        const sendRes = await client.sendTextMessage(phone, nudge);
 
-        if (!sendRes.ok) {
+        if (!sendRes.success) {
           console.warn('[cron/nightly] nudge send failed', { tenant_id: tenant.id, phone });
+          await siasOperations.recordCampaignRun({
+            tenantId: tenant.id,
+            campaignType: 'reactivation',
+            action: 'send_reactivation',
+            targetPhone: phone,
+            targetBookingId: lastRes.id,
+            sourceEvent: 'cron.rebooking_nudge',
+            status: 'retry_scheduled',
+            metadata: {
+              service_id: service.id,
+              interval_days: intervalDays,
+            },
+            attribution: {
+              signal: 'reactivation_lift',
+              source_event: 'cron.rebooking_nudge',
+            },
+          });
           continue;
         }
+
+        await siasOperations.recordCampaignRun({
+          tenantId: tenant.id,
+          campaignType: 'reactivation',
+          action: 'send_reactivation',
+          targetPhone: phone,
+          targetBookingId: lastRes.id,
+          sourceEvent: 'cron.rebooking_nudge',
+          status: 'sent',
+          metadata: {
+            service_id: service.id,
+            interval_days: intervalDays,
+          },
+          attribution: {
+            signal: 'reactivation_lift',
+            source_event: 'cron.rebooking_nudge',
+          },
+        });
 
         // Record nudge timestamp
         nudgeMap[service.id] = now.toISOString();
@@ -414,6 +530,257 @@ async function sendRebookingNudges(): Promise<number> {
   }
 
   return sent;
+}
+
+/**
+ * Task 5: Weekly owner digest
+ */
+export async function sendOwnerWeeklyDigest(): Promise<number> {
+  if (!isMondayInLagos()) return 0;
+
+  const now = new Date();
+  const endDate = new Date(now);
+  endDate.setDate(endDate.getDate() - 1);
+  const startDate = new Date(now);
+  startDate.setDate(startDate.getDate() - 7);
+  const startStr = startDate.toISOString().slice(0, 10);
+  const endStr = endDate.toISOString().slice(0, 10);
+
+  const { data: tenants } = await supabaseAdmin
+    .from('tenants')
+    .select('id, name, settings')
+    .eq('v2_enabled', true);
+
+  if (!tenants?.length) return 0;
+
+  let sent = 0;
+
+  for (const tenant of tenants) {
+    const ownerPhone = await getTenantOwnerPhone(tenant.id);
+    if (!ownerPhone) continue;
+
+    const { data: insights } = await supabaseAdmin
+      .from('insights_daily')
+      .select('total_bookings, completed, cancelled, no_shows, revenue, top_service_id')
+      .eq('tenant_id', tenant.id)
+      .gte('date', startStr)
+      .lte('date', endStr);
+
+    if (!insights?.length) continue;
+
+    const summary = insights.reduce(
+      (acc, row) => {
+        acc.totalBookings += Number(row.total_bookings ?? 0);
+        acc.completed += Number(row.completed ?? 0);
+        acc.cancelled += Number(row.cancelled ?? 0);
+        acc.noShows += Number(row.no_shows ?? 0);
+        acc.revenue += Number(row.revenue ?? 0);
+        const serviceId = row.top_service_id as string | null;
+        if (serviceId) {
+          acc.topServices.set(serviceId, (acc.topServices.get(serviceId) ?? 0) + 1);
+        }
+        return acc;
+      },
+      { totalBookings: 0, completed: 0, cancelled: 0, noShows: 0, revenue: 0, topServices: new Map<string, number>() }
+    );
+
+    if (summary.completed <= 0) continue;
+
+    const lostRevenue = await getNoShowRevenue(tenant.id, startStr, endStr);
+    const topServiceId = [...summary.topServices.entries()].sort(([, a], [, b]) => b - a)[0]?.[0] ?? null;
+    const topServiceName = topServiceId ? await getServiceName(tenant.id, topServiceId) : null;
+    const client = await getTenantProviderClient(tenant.id);
+    if (!client) continue;
+
+    const message =
+      `📊 *Your week at ${tenant.name ?? 'your business'}*\n\n` +
+      `✅ Bookings: ${summary.completed} completed\n` +
+      `❌ No-shows: ${summary.noShows}${lostRevenue > 0 ? ` (₦${lostRevenue.toLocaleString()} lost)` : ''}\n` +
+      `💰 Revenue: ₦${Math.round(summary.revenue).toLocaleString()}\n` +
+      `🔁 Top service: ${topServiceName ?? 'N/A'}\n\n` +
+      `Reply *INSIGHTS* for more details.`;
+
+    const result = await client.sendTextMessage(ownerPhone, message);
+    if (!result.success) continue;
+    sent++;
+  }
+
+  return sent;
+}
+
+/**
+ * Task 6: At-risk client re-engagement alert
+ */
+export async function sendAtRiskClientsAlert(): Promise<number> {
+  if (!isMondayInLagos()) return 0;
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 45);
+  const cutoffIso = cutoff.toISOString();
+
+  const { data: tenants } = await supabaseAdmin
+    .from('tenants')
+    .select('id, name')
+    .eq('v2_enabled', true);
+
+  if (!tenants?.length) return 0;
+
+  let sent = 0;
+
+  for (const tenant of tenants) {
+    const ownerPhone = await getTenantOwnerPhone(tenant.id);
+    if (!ownerPhone) continue;
+
+    const { data: completedReservations } = await supabaseAdmin
+      .from('reservations')
+      .select('customer_phone, customer_name, service_id, start_at')
+      .eq('tenant_id', tenant.id)
+      .eq('status', 'completed')
+      .lt('start_at', cutoffIso)
+      .not('customer_phone', 'is', null);
+
+    if (!completedReservations?.length) continue;
+
+    const { data: upcomingReservations } = await supabaseAdmin
+      .from('reservations')
+      .select('customer_phone')
+      .eq('tenant_id', tenant.id)
+      .gt('start_at', new Date().toISOString())
+      .not('customer_phone', 'is', null)
+      .not('status', 'in', '("cancelled","no_show")');
+
+    const upcomingPhones = new Set((upcomingReservations ?? []).map((row) => row.customer_phone as string));
+    const lastCompletedByPhone = new Map<string, { customer_name: string | null; service_id: string | null; start_at: string }>();
+
+    for (const reservation of completedReservations) {
+      const phone = reservation.customer_phone as string | null;
+      if (!phone || upcomingPhones.has(phone)) continue;
+
+      const existing = lastCompletedByPhone.get(phone);
+      if (!existing || reservation.start_at > existing.start_at) {
+        lastCompletedByPhone.set(phone, {
+          customer_name: (reservation.customer_name as string | null) ?? null,
+          service_id: (reservation.service_id as string | null) ?? null,
+          start_at: reservation.start_at as string,
+        });
+      }
+    }
+
+    const atRisk = [...lastCompletedByPhone.entries()]
+      .map(([phone, info]) => ({ phone, ...info }))
+      .filter((item) => item.start_at < cutoffIso)
+      .sort((a, b) => b.start_at.localeCompare(a.start_at))
+      .slice(0, 10);
+
+    if (!atRisk.length) continue;
+
+    const serviceIds = [...new Set(atRisk.map((item) => item.service_id).filter(Boolean) as string[])];
+    const serviceNameMap = await getServiceNameMap(serviceIds);
+    const client = await getTenantProviderClient(tenant.id);
+    if (!client) continue;
+
+    const lines = atRisk.map((item) => {
+      const visitDate = new Date(item.start_at).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+      });
+      const serviceName = item.service_id ? (serviceNameMap.get(item.service_id) ?? 'their service') : 'their service';
+      const customerName = item.customer_name ?? item.phone;
+      return `• ${customerName} — last visit: ${visitDate} (${serviceName})`;
+    });
+
+    const message =
+      `⚠️ *Clients to re-engage at ${tenant.name ?? 'your business'}*\n\n` +
+      `These regulars haven't been back in 45+ days:\n` +
+      `${lines.join('\n')}\n\n` +
+      `Reply *REACTIVATE* to send them a special offer.`;
+
+    const result = await client.sendTextMessage(ownerPhone, message);
+    if (!result.success) continue;
+    sent++;
+  }
+
+  return sent;
+}
+
+async function getTenantProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
+  const cached = WHATSAPP_SEND_CACHE.get(tenantId);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    return getTenantWhatsAppProviderClient(tenantId);
+  })();
+
+  WHATSAPP_SEND_CACHE.set(tenantId, promise);
+  return promise;
+}
+
+async function getTenantOwnerPhone(tenantId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from('tenant_users')
+    .select('phone')
+    .eq('tenant_id', tenantId)
+    .eq('role', 'owner')
+    .maybeSingle();
+
+  return typeof data?.phone === 'string' && data.phone.trim() ? data.phone : null;
+}
+
+async function getServiceNameMap(serviceIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!serviceIds.length) return map;
+
+  const { data } = await supabaseAdmin
+    .from('services')
+    .select('id, name')
+    .in('id', serviceIds);
+
+  for (const service of data ?? []) {
+    map.set(service.id as string, service.name as string);
+  }
+
+  return map;
+}
+
+async function getServiceName(tenantId: string, serviceId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from('services')
+    .select('name')
+    .eq('tenant_id', tenantId)
+    .eq('id', serviceId)
+    .maybeSingle();
+
+  return typeof data?.name === 'string' ? data.name : null;
+}
+
+async function getNoShowRevenue(tenantId: string, startDate: string, endDate: string): Promise<number> {
+  const { data: reservations } = await supabaseAdmin
+    .from('reservations')
+    .select('service_id, start_at')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'no_show')
+    .gte('start_at', `${startDate}T00:00:00`)
+    .lte('start_at', `${endDate}T23:59:59`)
+    .not('service_id', 'is', null);
+
+  if (!reservations?.length) return 0;
+
+  const serviceIds = [...new Set(reservations.map((row) => row.service_id as string))];
+  const { data: services } = await supabaseAdmin
+    .from('services')
+    .select('id, price_cents')
+    .in('id', serviceIds);
+
+  const priceMap = new Map<string, number>();
+  for (const service of services ?? []) {
+    priceMap.set(service.id as string, Number(service.price_cents ?? 0));
+  }
+
+  return reservations.reduce((sum, row) => sum + Math.round((priceMap.get(row.service_id as string) ?? 0) / 100), 0);
+}
+
+function isMondayInLagos(): boolean {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Lagos', weekday: 'long' }).format(new Date()) === 'Monday';
 }
 
 // ─── R2 backup ────────────────────────────────────────────────────────────────
@@ -450,8 +817,6 @@ async function uploadToR2(key: string, body: string): Promise<void> {
   const accountId = process.env.R2_ACCOUNT_ID!;
   const bucket = process.env.R2_BUCKET!;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID!;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY!;
-
   const url = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`;
 
   // Simple AWS S3-compatible PUT (R2 uses S3 API)

@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
@@ -15,13 +16,18 @@ const UpdateSettingsSchema = z.object({
 /**
  * GET /api/admin/tenant/[id]/settings
  * Retrieve tenant settings (name, timezone, LLM preferences).
- * Public endpoint - no auth required.
+ * Requires authentication; caller must belong to the requested tenant (or be a superadmin).
  */
 export const GET = createHttpHandler(
   async (ctx) => {
     const tenantId = ctx.params?.id;
     if (!tenantId) {
       throw ApiErrorFactory.validationError({ id: 'Tenant ID is required' });
+    }
+
+    // Verify the caller has access to this tenant
+    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+      throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
     const { data: row, error } = await ctx.supabase
@@ -37,7 +43,7 @@ export const GET = createHttpHandler(
     return { row: row ?? null };
   },
   'GET',
-  { auth: false }
+  { auth: true }
 );
 
 /**
