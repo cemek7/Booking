@@ -30,6 +30,9 @@ import { looksLikeShowcaseRequest, sendShowcasePack } from '@/lib/whatsapp/showc
 import { handleOwnerCommand } from './flows/ownerCommands';
 import { handleOnboarding } from './flows/ownerOnboarding';
 import { handleCustomerBooking } from './flows/customerBooking';
+import { detectOptOutKeyword, type OptOutSignal } from './optOut';
+import { brandCustomerText } from './outboundBranding';
+import type { ConvState } from './conversationState';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -80,6 +83,23 @@ export async function processMessageV2(
   if (!conv) {
     conv = await ensureConversation(externalId, tenantId, 'unknown', channel);
   }
+
+  // ── Opt-out keyword (customers only) ──────────────────────────────────────
+  const optSignal: OptOutSignal = detectOptOutKeyword(rawMessage);
+  if (optSignal && conv.role !== 'owner' && conv.role !== 'staff') {
+    await handleOptOutSignal(phone, tenantId, optSignal);
+    await markMessagesProcessed(batch.messageIds);
+    return true;
+  }
+
+  // ── Record inbound time AFTER capturing the prior value in `conv` ──────────
+  // `conv.last_inbound_at` (loaded above) is the value branding uses THIS turn;
+  // we update the DB to now() for the NEXT turn's session/drift checks.
+  await supabaseAdmin
+    .from('whatsapp_conversations')
+    .update({ last_inbound_at: new Date().toISOString() })
+    .eq('tenant_id', tenantId)
+    .eq('phone_number', phone);
 
   // ── 3. Route to appropriate flow handler ──────────────────────────────────
   // Owner onboarding is handled separately from the main pipeline
@@ -211,7 +231,7 @@ async function handleCustomerMessage(
 
   if (l1Match) {
     const reply = await handleCustomerBooking(externalId, tenantId, l1Match, conv!, message);
-    if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
+    if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv });
     await markMessagesProcessed(allMessageIds);
     return;
   }
@@ -232,15 +252,44 @@ async function handleCustomerMessage(
       tenantId,
       externalId,
       'Sorry, I didn\'t get that. Type *help* to see what I can do.',
-      channel
+      channel,
+      { brand: true, conv }
     );
     return;
   }
 
   const reply = await handleCustomerBooking(externalId, tenantId, aiReply, conv!, message);
-  if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
+  if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv });
 
   await markMessagesProcessed(allMessageIds);
+}
+
+// ─── Opt-out handler ──────────────────────────────────────────────────────────
+
+async function handleOptOutSignal(
+  phone: string,
+  tenantId: string,
+  signal: OptOutSignal
+): Promise<void> {
+  const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
+  if (!evolutionConfig) return;
+  const client = getProviderClient(evolutionConfig);
+
+  if (signal === 'stop') {
+    await supabaseAdmin
+      .from('whatsapp_conversations')
+      .update({ opted_out_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId)
+      .eq('phone_number', phone);
+    await client.sendTextMessage(phone, "You're unsubscribed from reminders. Reply START to resume.");
+  } else if (signal === 'start') {
+    await supabaseAdmin
+      .from('whatsapp_conversations')
+      .update({ opted_out_at: null })
+      .eq('tenant_id', tenantId)
+      .eq('phone_number', phone);
+    await client.sendTextMessage(phone, "You're resubscribed. 👍");
+  }
 }
 
 // ─── AI call with retry + quota ───────────────────────────────────────────────
@@ -629,7 +678,8 @@ async function sendReplyByChannel(
   tenantId: string,
   externalId: string,
   reply: string,
-  channel: ConvChannel
+  channel: ConvChannel,
+  opts?: { brand?: boolean; initiated?: boolean; conv?: ConvState | null }
 ): Promise<void> {
   if (!providerContext) {
     // No config — skip outbound (already warned in resolveProviderConfig)
@@ -637,7 +687,22 @@ async function sendReplyByChannel(
   }
 
   const { config, client } = providerContext;
-  const sendResult = await client.sendTextMessage(externalId, reply);
+
+  // Brand-identity layer applies to WhatsApp only — brandCustomerText resolves
+  // the conversation via whatsapp_conversations keyed by phone number.
+  let finalText = reply;
+  if (opts?.brand && channel === 'whatsapp') {
+    const branded = await brandCustomerText(tenantId, externalId, reply, {
+      initiated: opts.initiated ?? false,
+      conv: opts.conv
+        ? { last_inbound_at: opts.conv.last_inbound_at, opted_out_at: opts.conv.opted_out_at }
+        : undefined,
+    });
+    if (branded === null) return; // opted-out initiated send → skip silently
+    finalText = branded;
+  }
+
+  const sendResult = await client.sendTextMessage(externalId, finalText);
 
   if (!sendResult.success) {
     if (channel === 'instagram') {
@@ -665,7 +730,7 @@ async function sendReplyByChannel(
     chat_id: chat?.id ?? null,
     from_number: instanceName,
     to_number: externalId,
-    content: reply,
+    content: finalText,
     direction: 'outbound',
     message_type: 'text',
     channel,
@@ -680,9 +745,10 @@ async function sendReplyAndPersistOutbound(
   client: ReturnType<typeof getProviderClient>,
   tenantId: string,
   phone: string,
-  reply: string
+  reply: string,
+  opts?: { brand?: boolean; initiated?: boolean; conv?: ConvState | null }
 ): Promise<void> {
-  await sendReplyByChannel({ config: waConfig, client }, tenantId, phone, reply, 'whatsapp');
+  await sendReplyByChannel({ config: waConfig, client }, tenantId, phone, reply, 'whatsapp', opts);
 }
 
 async function isTenantActivated(tenantId: string): Promise<boolean> {
