@@ -12,6 +12,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import type { ConvChannel } from './conversationState';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,7 +29,7 @@ export type ResolvedIdentity = {
 const ROUTING_CODE_PATTERN = /\b([A-Z]{4}\d{2})\b/;
 
 export async function resolveIncoming(
-  channel: string,
+  channel: ConvChannel,
   externalId: string,
   messageText: string
 ): Promise<ResolvedIdentity> {

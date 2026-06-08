@@ -12,11 +12,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { normalizePidgin, matchRule } from '@/lib/ai/rulesEngine';
 import { isQuotaExceeded, recordAIUsage } from '@/lib/ai/quotaTracker';
-import { getConversation, ensureConversation, updateConversation, resetConversation } from './conversationState';
+import { getConversation, ensureConversation } from './conversationState';
 import { claimBatch } from './messageBatcher';
-import { validateAction, executeAction, AIResponse } from './actionValidator';
-import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { validateAction, AIResponse } from './actionValidator';
+import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getProviderClient } from '@/lib/whatsapp/providers';
+import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
 import { callGoogleAI } from '@/lib/google-ai';
+import { callOpenRouter } from '@/lib/openrouter';
+import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
+import { looksLikeShowcaseRequest, sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
 import { handleOwnerCommand } from './flows/ownerCommands';
 import { handleOnboarding } from './flows/ownerOnboarding';
 import { handleCustomerBooking } from './flows/customerBooking';
@@ -29,18 +34,38 @@ const supabaseAdmin = createClient(
 const FLASH_LITE_MODEL = 'gemini-2.0-flash-lite';
 const FLASH_MODEL = 'gemini-2.0-flash';
 const MAX_AI_RETRIES = 2;
+const OPENROUTER_V2_MODEL =
+  process.env.OPENROUTER_DEFAULT_MODEL ||
+  process.env.OPENROUTER_FALLBACK_MODEL ||
+  'meta-llama/llama-3.1-8b-instruct:free';
+const OPENROUTER_V2_FALLBACK_MODELS = (process.env.OPENROUTER_V2_FALLBACK_MODELS || '')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
+const V2_AI_PROVIDER = (process.env.WHATSAPP_V2_AI_PROVIDER || 'auto').toLowerCase();
+const V2_DISABLE_GOOGLE = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
+/**
+ * NOTE (Task 2 — Instagram wiring): The `phone` param is currently WhatsApp-only.
+ * Flow handlers (handleOwnerOrStaffMessage, handleCustomerMessage) call
+ * getConversation/ensureConversation with the implicit default channel='whatsapp'.
+ * Wiring Instagram to this pipeline requires:
+ *   1. Threading a `channel: ConvChannel` param through processMessageV2 and both
+ *      flow handlers so the correct conversation row is read/written.
+ *   2. Adding a `channel` column to whatsapp_message_queue (migration required)
+ *      so the cron worker can pass the originating channel into this function.
+ */
 export async function processMessageV2(
   phone: string,
   tenantId: string,
   message: string,
   messageId: string
-): Promise<void> {
+): Promise<boolean> {
   // ── 1. Check if more messages are still arriving ───────────────────────────
   const batch = await claimBatch(phone, tenantId);
-  if (!batch) return; // Still accumulating — skip this cycle
+  if (!batch) return false; // Still accumulating — skip this cycle
 
   const rawMessage = batch.combined;
   const normalized = normalizePidgin(rawMessage);
@@ -55,16 +80,17 @@ export async function processMessageV2(
   // Owner onboarding is handled separately from the main pipeline
   if (conv.current_flow === 'onboarding' || (conv.role === 'owner' && conv.current_flow === 'idle' && !await isTenantActivated(tenantId))) {
     await handleOnboarding(phone, tenantId, normalized, conv);
-    return;
+    return true;
   }
 
   if (conv.role === 'owner' || conv.role === 'staff') {
     await handleOwnerOrStaffMessage(phone, tenantId, normalized, conv, messageId, batch.messageIds);
-    return;
+    return true;
   }
 
   // Customer path
   await handleCustomerMessage(phone, tenantId, normalized, conv, messageId, batch.messageIds);
+  return true;
 }
 
 // ─── Owner / staff message handler ───────────────────────────────────────────
@@ -78,8 +104,10 @@ async function handleOwnerOrStaffMessage(
   allMessageIds: string[]
 ): Promise<void> {
   const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) return;
-  const client = createEvolutionClient(evolutionConfig);
+  if (!evolutionConfig) {
+    throw new Error(`Missing WhatsApp configuration for tenant ${tenantId}`);
+  }
+  const client = getProviderClient(evolutionConfig);
 
   // L1 check — yes/no/numbers for confirming AI-proposed actions
   const l1Match = matchRule(message, {
@@ -91,7 +119,7 @@ async function handleOwnerOrStaffMessage(
   if (l1Match) {
     const reply = await handleOwnerCommand(phone, tenantId, l1Match, conv!, message);
     if (reply) {
-      await client.sendTextMessage(phone, reply);
+      await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
       await markMessagesProcessed(allMessageIds);
     }
     return;
@@ -100,13 +128,19 @@ async function handleOwnerOrStaffMessage(
   // L2 for owner commands
   const aiReply = await callAIWithRetry(tenantId, message, conv!, 'owner', messageId);
   if (!aiReply) {
-    await client.sendTextMessage(phone, 'Sorry, I had trouble understanding that. Try again or type *help* for options.');
+    await sendReplyAndPersistOutbound(
+      evolutionConfig,
+      client,
+      tenantId,
+      phone,
+      'Sorry, I had trouble understanding that. Try again or type *help* for options.'
+    );
     return;
   }
 
   const reply = await handleOwnerCommand(phone, tenantId, aiReply, conv!, message);
   if (reply) {
-    await client.sendTextMessage(phone, reply);
+    await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
   }
 
   await markMessagesProcessed(allMessageIds);
@@ -123,8 +157,10 @@ async function handleCustomerMessage(
   allMessageIds: string[]
 ): Promise<void> {
   const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) return;
-  const client = createEvolutionClient(evolutionConfig);
+  if (!evolutionConfig) {
+    throw new Error(`Missing WhatsApp configuration for tenant ${tenantId}`);
+  }
+  const client = getProviderClient(evolutionConfig);
 
   // L1 check
   const l1Match = matchRule(message, {
@@ -135,20 +171,34 @@ async function handleCustomerMessage(
 
   if (l1Match) {
     const reply = await handleCustomerBooking(phone, tenantId, l1Match, conv!, message);
-    if (reply) await client.sendTextMessage(phone, reply);
+    if (reply) await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
     await markMessagesProcessed(allMessageIds);
     return;
+  }
+
+  if (looksLikeShowcaseRequest(message)) {
+    const showcase = await sendShowcasePack(tenantId, phone, undefined, message);
+    if (showcase.success) {
+      await markMessagesProcessed(allMessageIds);
+      return;
+    }
   }
 
   // L2
   const aiReply = await callAIWithRetry(tenantId, message, conv!, 'customer', messageId);
   if (!aiReply) {
-    await client.sendTextMessage(phone, 'Sorry, I didn\'t get that. Type *help* to see what I can do.');
+    await sendReplyAndPersistOutbound(
+      evolutionConfig,
+      client,
+      tenantId,
+      phone,
+      'Sorry, I didn\'t get that. Type *help* to see what I can do.'
+    );
     return;
   }
 
   const reply = await handleCustomerBooking(phone, tenantId, aiReply, conv!, message);
-  if (reply) await client.sendTextMessage(phone, reply);
+  if (reply) await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
 
   await markMessagesProcessed(allMessageIds);
 }
@@ -173,9 +223,27 @@ async function callAIWithRetry(
   for (let attempt = 0; attempt < MAX_AI_RETRIES; attempt++) {
     try {
       const prompt = await buildPrompt(tenantId, message, conv, userRole, null);
-      const result = await callGoogleAI(
-        [{ role: 'user', content: prompt }],
-        FLASH_LITE_MODEL
+      const result = await withTenantWalletSpend(
+        supabaseAdmin,
+        tenantId,
+        {
+          estimatedTokens: estimatePromptTokens(prompt.length),
+          provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
+          model: FLASH_LITE_MODEL,
+          requestId: `${messageId}:lite:${attempt}`,
+          description: 'WhatsApp v2 L2 AI call',
+          metadata: {
+            flow: 'whatsapp_v2',
+            stage: 'lite',
+            user_role: userRole,
+            message_id: messageId,
+            attempt,
+          },
+        },
+        () => callAIProviderWithFallback(
+          [{ role: 'user', content: prompt }],
+          FLASH_LITE_MODEL
+        )
       );
 
       const parsed = parseAIResponse(result.json);
@@ -187,7 +255,7 @@ async function callAIWithRetry(
         // Retry with error context
         if (attempt < MAX_AI_RETRIES - 1) {
           const retryPrompt = await buildPrompt(tenantId, message, conv, userRole, validation.retryContext ?? null);
-          const retryResult = await callGoogleAI([{ role: 'user', content: retryPrompt }], FLASH_LITE_MODEL);
+          const retryResult = await callAIProviderWithFallback([{ role: 'user', content: retryPrompt }], FLASH_LITE_MODEL);
           const retryParsed = parseAIResponse(retryResult.json);
           if (retryParsed) {
             const retryValidation = await validateAction(tenantId, retryParsed);
@@ -226,13 +294,92 @@ async function callFlash(
 ): Promise<AIResponse | null> {
   try {
     const prompt = await buildPrompt(tenantId, message, conv, userRole, null);
-    const result = await callGoogleAI([{ role: 'user', content: prompt }], FLASH_MODEL);
+    const result = await withTenantWalletSpend(
+      supabaseAdmin,
+      tenantId,
+      {
+        estimatedTokens: estimatePromptTokens(prompt.length),
+        provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
+        model: FLASH_MODEL,
+        requestId: `${messageId}:flash`,
+        description: 'WhatsApp v2 L3 AI call',
+        metadata: {
+          flow: 'whatsapp_v2',
+          stage: 'flash',
+          user_role: userRole,
+          message_id: messageId,
+        },
+      },
+      () => callAIProviderWithFallback([{ role: 'user', content: prompt }], FLASH_MODEL)
+    );
     const parsed = parseAIResponse(result.json);
     if (parsed) await recordUsage(result, messageId, 'flash');
     return parsed;
   } catch (err) {
     console.error('[pipeline] L3 Flash call failed', err);
     return null;
+  }
+}
+
+function isGoogleQuotaOrRateError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /429|quota|rate/i.test(msg);
+}
+
+function getOpenRouterModelChain(): string[] {
+  const defaults = [
+    OPENROUTER_V2_MODEL,
+    process.env.OPENROUTER_FALLBACK_MODEL || '',
+    'openai/gpt-4o-mini',
+  ];
+
+  return [...defaults, ...OPENROUTER_V2_FALLBACK_MODELS]
+    .map((m) => m.trim())
+    .filter(Boolean)
+    .filter((m, idx, arr) => arr.indexOf(m) === idx);
+}
+
+async function callOpenRouterWithModelChain(
+  messages: Array<{ role: string; content: string }>
+): Promise<{ json: unknown; usage: unknown }> {
+  const models = getOpenRouterModelChain();
+  let lastErr: unknown = null;
+
+  for (const model of models) {
+    try {
+      return await callOpenRouter(messages, model, 1);
+    } catch (err) {
+      lastErr = err;
+      console.warn('[pipeline] OpenRouter model attempt failed', { model, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  throw lastErr ?? new Error('All OpenRouter model attempts failed');
+}
+
+async function callAIProviderWithFallback(
+  messages: Array<{ role: string; content: string }>,
+  googleModel: string
+): Promise<{ json: unknown; usage: unknown }> {
+  if (V2_AI_PROVIDER === 'openrouter' || V2_DISABLE_GOOGLE) {
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error('WHATSAPP_V2_AI_PROVIDER=openrouter but OPENROUTER_API_KEY is not set');
+    }
+    return callOpenRouterWithModelChain(messages);
+  }
+
+  if (V2_AI_PROVIDER === 'google') {
+    return callGoogleAI(messages, googleModel);
+  }
+
+  try {
+    return await callGoogleAI(messages, googleModel);
+  } catch (err) {
+    // v2 historically used Gemini directly; when that quota/rate-limits,
+    // fall back to OpenRouter so tenant messaging does not stall.
+    if (!process.env.OPENROUTER_API_KEY) throw err;
+    if (!isGoogleQuotaOrRateError(err)) throw err;
+    return callOpenRouterWithModelChain(messages);
   }
 }
 
@@ -335,9 +482,11 @@ Rules:
 
 function parseAIResponse(raw: unknown): AIResponse | null {
   try {
+    type OpenAIChoice = { message?: { content?: string } };
+    type OpenAIResponse = { choices?: OpenAIChoice[] };
     const text = typeof raw === 'string'
       ? raw
-      : (raw as any)?.choices?.[0]?.message?.content as string;
+      : ((raw as OpenAIResponse | null)?.choices?.[0]?.message?.content ?? '');
 
     if (!text) return null;
 
@@ -368,6 +517,38 @@ async function markMessagesProcessed(messageIds: string[]): Promise<void> {
     .from('whatsapp_message_queue')
     .update({ status: 'completed', processed_at: new Date().toISOString() })
     .in('id', messageIds);
+}
+
+async function sendReplyAndPersistOutbound(
+  waConfig: EvolutionAPIConfig,
+  client: ReturnType<typeof getProviderClient>,
+  tenantId: string,
+  phone: string,
+  reply: string
+): Promise<void> {
+  const sendResult = await client.sendTextMessage(phone, reply);
+  if (!sendResult.success) {
+    throw new Error(`Outbound WhatsApp send failed (provider=${waConfig.provider ?? 'evolution'}, tenant=${tenantId}, to=${phone})`);
+  }
+
+  const { data: chat } = await supabaseAdmin
+    .from('chats')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('customer_phone', phone)
+    .maybeSingle();
+
+  await supabaseAdmin.from('messages').insert({
+    tenant_id: tenantId,
+    chat_id: chat?.id ?? null,
+    from_number: waConfig.instanceName,
+    to_number: phone,
+    content: reply,
+    direction: 'outbound',
+    message_type: 'text',
+    evolution_message_id: sendResult.messageId ?? null,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 async function isTenantActivated(tenantId: string): Promise<boolean> {

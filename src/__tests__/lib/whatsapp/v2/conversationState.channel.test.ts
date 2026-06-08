@@ -31,11 +31,15 @@ beforeEach(() => { responses.length = 0; upsertCalls.length = 0; });
 
 describe('ensureConversation channel-awareness', () => {
   it('writes an Instagram row keyed on (channel, external_id) with null phone', async () => {
-    pushDb({ id: 'c1', tenant_id: 't1', phone_number: null, external_id: 'IGSID_1', channel: 'instagram', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {} });
-    await ensureConversation('IGSID_1', 't1', 'customer', 'instagram');
+    // M2: capture the return value and assert it matches the DB row
+    const igRow = { id: 'c1', tenant_id: 't1', phone_number: null, external_id: 'IGSID_1', channel: 'instagram', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null };
+    pushDb(igRow);
+    const result = await ensureConversation('IGSID_1', 't1', 'customer', 'instagram');
     expect(upsertCalls).toHaveLength(1);
     expect(upsertCalls[0].values).toMatchObject({ channel: 'instagram', external_id: 'IGSID_1', phone_number: null, tenant_id: 't1' });
     expect(upsertCalls[0].opts).toMatchObject({ onConflict: 'tenant_id,channel,external_id' });
+    // M2: assert the returned row has the right channel and external_id
+    expect(result).toMatchObject({ channel: 'instagram', external_id: 'IGSID_1' });
   });
 
   it('defaults to WhatsApp: writes phone_number and conflicts on phone_number,tenant_id', async () => {
@@ -43,5 +47,20 @@ describe('ensureConversation channel-awareness', () => {
     await ensureConversation('+2348000000000', 't1', 'customer');
     expect(upsertCalls[0].values).toMatchObject({ channel: 'whatsapp', external_id: '+2348000000000', phone_number: '+2348000000000' });
     expect(upsertCalls[0].opts).toMatchObject({ onConflict: 'phone_number,tenant_id' });
+  });
+
+  // M1: conflict/fallback-read path — upsert single() returns {data:null} (ignoreDuplicates hit),
+  // then getConversation falls back to maybeSingle() which returns the existing row.
+  it('falls back to getConversation when upsert ignoreDuplicates returns null (conflict)', async () => {
+    // First response: single() called after upsert — simulates ignoreDuplicates conflict (no row returned)
+    pushDb(null);
+    // Second response: maybeSingle() called by getConversation fallback — returns existing row
+    const existingRow = { id: 'c3', tenant_id: 't1', phone_number: null, external_id: 'IGSID_2', channel: 'instagram', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null };
+    pushDb(existingRow);
+    const result = await ensureConversation('IGSID_2', 't1', 'customer', 'instagram');
+    // Should have attempted the upsert
+    expect(upsertCalls).toHaveLength(1);
+    // Should return the row fetched by the fallback getConversation
+    expect(result).toMatchObject({ channel: 'instagram', external_id: 'IGSID_2' });
   });
 });

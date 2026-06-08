@@ -18,13 +18,15 @@ const supabaseAdmin = createClient(
 
 export type ConvRole = 'owner' | 'staff' | 'customer' | 'unknown';
 export type ConvFlow = 'idle' | 'onboarding' | 'booking' | 'managing';
+export type ConvChannel = 'whatsapp' | 'instagram';
 
 export interface ConvState {
   id: string;
   tenant_id: string;
+  /** WhatsApp rows carry the E.164 phone here; Instagram rows are genuinely null. */
   phone_number: string | null;
-  external_id?: string;
-  channel?: string;
+  external_id: string;
+  channel: ConvChannel;
   role: ConvRole;
   current_flow: ConvFlow;
   flow_step: number;
@@ -34,6 +36,8 @@ export interface ConvState {
   opted_out_at: string | null;
 }
 
+/** Identity fields (channel, external_id, phone_number) are intentionally excluded —
+ *  updateConversation must never change a conversation's identity. */
 export type ConvStatePatch = Partial<
   Pick<ConvState, 'role' | 'current_flow' | 'flow_step' | 'flow_data'>
 >;
@@ -48,7 +52,7 @@ export type ConvStatePatch = Partial<
 export async function getConversation(
   externalId: string,
   tenantId: string,
-  channel: string = 'whatsapp'
+  channel: ConvChannel = 'whatsapp'
 ): Promise<ConvState | null> {
   const { data, error } = await supabaseAdmin
     .from('whatsapp_conversations')
@@ -80,7 +84,7 @@ export async function ensureConversation(
   externalId: string,
   tenantId: string,
   role: ConvRole = 'unknown',
-  channel: string = 'whatsapp'
+  channel: ConvChannel = 'whatsapp'
 ): Promise<ConvState> {
   const isWhatsApp = channel === 'whatsapp';
   const { data, error } = await supabaseAdmin
@@ -124,7 +128,7 @@ export async function updateConversation(
   externalId: string,
   tenantId: string,
   patch: ConvStatePatch,
-  channel: string = 'whatsapp'
+  channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const { error } = await supabaseAdmin
     .from('whatsapp_conversations')
@@ -149,7 +153,7 @@ export async function updateConversation(
 export async function resetConversation(
   externalId: string,
   tenantId: string,
-  channel: string = 'whatsapp'
+  channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   await updateConversation(externalId, tenantId, {
     current_flow: 'idle',
