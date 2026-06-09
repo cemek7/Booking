@@ -12,6 +12,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
+import { brandCustomerText } from './outboundBranding';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -108,7 +109,8 @@ export async function notifyWaitlist(
     const config = await getTenantWhatsAppConfig(tenantId);
     if (config) {
       const client = getProviderClient({ ...config, instanceName: instanceKey });
-      await client.sendTextMessage(conv.phone_number, message);
+      const branded = await brandCustomerText(tenantId, conv.phone_number, message, { initiated: true });
+      if (branded) await client.sendTextMessage(conv.phone_number, branded);
     }
 
     // Mark as notified (so we don't double-notify)
