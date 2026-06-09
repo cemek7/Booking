@@ -114,6 +114,29 @@ describe('claimBatch channel-awareness', () => {
     expect(selectChain.eqCalls.map(([col]) => col)).not.toContain('phone_number');
   });
 
+  it('UPDATE path uses channel=instagram + external_id (not phone_number) when channel="instagram"', async () => {
+    const oldTime = new Date(Date.now() - 5000).toISOString();
+    pushDb({
+      flow_data: {
+        pending_messages: [
+          { content: 'claim me', receivedAt: oldTime, messageId: 'msg-ig-upd' },
+        ],
+      },
+    });
+    pushDb(null); // UPDATE response
+
+    await claimBatch('IGSID_43', 'tenant-1', 'instagram');
+
+    // chains[1] is the UPDATE chain (second .from() call)
+    const updateChain = chains[1];
+    expect(updateChain).toBeDefined();
+    expect(updateChain.update).toHaveBeenCalledTimes(1);
+    expect(updateChain.eqCalls).toContainEqual(['channel', 'instagram']);
+    expect(updateChain.eqCalls).toContainEqual(['external_id', 'IGSID_43']);
+    // Must NOT use phone_number on the UPDATE path
+    expect(updateChain.eqCalls.map(([col]) => col)).not.toContain('phone_number');
+  });
+
   it('filters on channel=whatsapp + external_id when no channel arg (default)', async () => {
     const oldTime = new Date(Date.now() - 5000).toISOString();
     pushDb({
@@ -130,6 +153,28 @@ describe('claimBatch channel-awareness', () => {
     const selectChain = chains[0];
     expect(selectChain.eqCalls).toContainEqual(['channel', 'whatsapp']);
     expect(selectChain.eqCalls).toContainEqual(['external_id', '+2348000000000']);
+  });
+
+  it('UPDATE path uses channel=whatsapp + external_id (not phone_number) for default channel', async () => {
+    const oldTime = new Date(Date.now() - 5000).toISOString();
+    pushDb({
+      flow_data: {
+        pending_messages: [
+          { content: 'claim me wa', receivedAt: oldTime, messageId: 'msg-wa-upd' },
+        ],
+      },
+    });
+    pushDb(null); // UPDATE response
+
+    await claimBatch('+2348000000002', 'tenant-1');
+
+    // chains[1] is the UPDATE chain
+    const updateChain = chains[1];
+    expect(updateChain).toBeDefined();
+    expect(updateChain.update).toHaveBeenCalledTimes(1);
+    expect(updateChain.eqCalls).toContainEqual(['channel', 'whatsapp']);
+    expect(updateChain.eqCalls).toContainEqual(['external_id', '+2348000000002']);
+    expect(updateChain.eqCalls.map(([col]) => col)).not.toContain('phone_number');
   });
 
   it('returns null (still arriving) and does not write when gap < 2500ms', async () => {
@@ -188,6 +233,22 @@ describe('appendPendingMessage channel-awareness', () => {
     expect(selectChain.eqCalls.map(([col]) => col)).not.toContain('phone_number');
   });
 
+  it('UPDATE path uses channel=instagram + external_id (not phone_number) when channel="instagram"', async () => {
+    pushDb({ flow_data: { pending_messages: [] } }); // SELECT response
+    pushDb(null); // UPDATE response
+
+    await appendPendingMessage('IGSID_7', 'tenant-1', 'hi there', 'msg-99', 'instagram');
+
+    // chains[1] is the UPDATE chain (second .from() call)
+    const updateChain = chains[1];
+    expect(updateChain).toBeDefined();
+    expect(updateChain.update).toHaveBeenCalledTimes(1);
+    expect(updateChain.eqCalls).toContainEqual(['channel', 'instagram']);
+    expect(updateChain.eqCalls).toContainEqual(['external_id', 'IGSID_7']);
+    // Must NOT use phone_number on the UPDATE path
+    expect(updateChain.eqCalls.map(([col]) => col)).not.toContain('phone_number');
+  });
+
   it('defaults to WhatsApp channel on the SELECT when no channel arg', async () => {
     pushDb({ flow_data: { pending_messages: [] } });
     pushDb(null);
@@ -197,6 +258,21 @@ describe('appendPendingMessage channel-awareness', () => {
     const selectChain = chains[0];
     expect(selectChain.eqCalls).toContainEqual(['channel', 'whatsapp']);
     expect(selectChain.eqCalls).toContainEqual(['external_id', '+2348000000001']);
+  });
+
+  it('UPDATE path uses channel=whatsapp + external_id (not phone_number) for default channel', async () => {
+    pushDb({ flow_data: { pending_messages: [] } });
+    pushDb(null);
+
+    await appendPendingMessage('+2348000000001', 'tenant-2', 'book me', 'msg-100');
+
+    // chains[1] is the UPDATE chain
+    const updateChain = chains[1];
+    expect(updateChain).toBeDefined();
+    expect(updateChain.update).toHaveBeenCalledTimes(1);
+    expect(updateChain.eqCalls).toContainEqual(['channel', 'whatsapp']);
+    expect(updateChain.eqCalls).toContainEqual(['external_id', '+2348000000001']);
+    expect(updateChain.eqCalls.map(([col]) => col)).not.toContain('phone_number');
   });
 
   it('appends to existing pending_messages (does not overwrite them)', async () => {
