@@ -10,6 +10,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import type { ConvChannel } from './conversationState';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,12 +30,17 @@ const BATCH_GAP_MS = 2500; // messages still arriving if gap < this
 /**
  * Appends an incoming message to the pending_messages list in flow_data.
  * Called immediately when a webhook message arrives.
+ *
+ * The trailing `channel` param defaults to `'whatsapp'` so all existing callers
+ * are unaffected. When channel='instagram', the row is keyed on (channel, external_id)
+ * instead of phone_number (matching the conversationState key scheme from migration 078).
  */
 export async function appendPendingMessage(
-  phone: string,
+  externalId: string,
   tenantId: string,
   content: string,
-  messageId: string
+  messageId: string,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const newMessage: PendingMessage = {
     content,
@@ -47,7 +53,8 @@ export async function appendPendingMessage(
   const { data: current } = await supabaseAdmin
     .from('whatsapp_conversations')
     .select('flow_data')
-    .eq('phone_number', phone)
+    .eq('channel', channel)
+    .eq('external_id', externalId)
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
@@ -60,7 +67,8 @@ export async function appendPendingMessage(
     .update({
       flow_data: { ...existingData, pending_messages: pendingMessages },
     })
-    .eq('phone_number', phone)
+    .eq('channel', channel)
+    .eq('external_id', externalId)
     .eq('tenant_id', tenantId);
 }
 
@@ -73,15 +81,20 @@ export async function appendPendingMessage(
  *
  * Returns null if messages are still arriving (caller should skip this cycle).
  * Returns the concatenated message string if ready to process.
+ *
+ * The trailing `channel` param defaults to `'whatsapp'` so all existing callers
+ * are unaffected. Rows are keyed on (channel, external_id) matching migration 078.
  */
 export async function claimBatch(
-  phone: string,
-  tenantId: string
+  externalId: string,
+  tenantId: string,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<{ combined: string; messageIds: string[] } | null> {
   const { data } = await supabaseAdmin
     .from('whatsapp_conversations')
     .select('flow_data')
-    .eq('phone_number', phone)
+    .eq('channel', channel)
+    .eq('external_id', externalId)
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
@@ -110,7 +123,8 @@ export async function claimBatch(
     .update({
       flow_data: { ...flowData, pending_messages: [] },
     })
-    .eq('phone_number', phone)
+    .eq('channel', channel)
+    .eq('external_id', externalId)
     .eq('tenant_id', tenantId);
 
   return { combined, messageIds };

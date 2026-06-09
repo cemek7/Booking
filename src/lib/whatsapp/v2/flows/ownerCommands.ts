@@ -10,7 +10,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { executeAction, AIResponse } from '../actionValidator';
-import { updateConversation, ConvState } from '../conversationState';
+import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 
 const supabaseAdmin = createClient(
@@ -31,10 +31,14 @@ export async function handleOwnerCommand(
   conv: ConvState,
   rawMessage: string
 ): Promise<string> {
+  // Resolve the channel-aware conversation key.
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId: string = conv.external_id ?? phone;
+
   // ── L1 match ──────────────────────────────────────────────────────────────
   if ('confidence' in input && !('action' in input && typeof (input as AIResponse).reply === 'string')) {
     const rule = input as RuleMatch;
-    return handleRuleMatch(phone, tenantId, rule, conv);
+    return handleRuleMatch(convExternalId, tenantId, rule, conv, convChannel);
   }
 
   // ── AI response ───────────────────────────────────────────────────────────
@@ -42,7 +46,7 @@ export async function handleOwnerCommand(
 
   // Walk-in: execute immediately — no confirmation needed, customer is present
   if (aiResp.action === 'walk_in') {
-    const execResult = await executeAction(tenantId, aiResp, { customerPhone: phone });
+    const execResult = await executeAction(tenantId, aiResp, { customerPhone: convExternalId });
     if (!execResult.success) {
       return execResult.error ?? 'Could not record the walk-in. Please try again.';
     }
@@ -51,13 +55,13 @@ export async function handleOwnerCommand(
 
   // If AI wants confirmation before executing a write action, store pending action
   if (isWriteAction(aiResp.action) && conv.flow_data?.awaiting_confirmation !== true) {
-    await updateConversation(phone, tenantId, {
+    await updateConversation(convExternalId, tenantId, {
       flow_data: {
         ...conv.flow_data,
         pending_action: aiResp,
         awaiting_confirmation: true,
       },
-    });
+    }, convChannel);
     // Return the AI's confirmation message
     return aiResp.reply;
   }
@@ -69,14 +73,14 @@ export async function handleOwnerCommand(
   }
 
   // Write confirmed (this path: awaiting_confirmation=true, AI response is confirming)
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: phone });
-  await updateConversation(phone, tenantId, {
+  const execResult = await executeAction(tenantId, aiResp, { customerPhone: convExternalId });
+  await updateConversation(convExternalId, tenantId, {
     flow_data: {
       ...conv.flow_data,
       pending_action: null,
       awaiting_confirmation: false,
     },
-  });
+  }, convChannel);
 
   if (!execResult.success) {
     return `Something went wrong: ${execResult.error ?? 'unknown error'}. Please try again.`;
@@ -88,10 +92,11 @@ export async function handleOwnerCommand(
 // ─── L1 rule handler ──────────────────────────────────────────────────────────
 
 async function handleRuleMatch(
-  phone: string,
+  externalId: string,
   tenantId: string,
   rule: RuleMatch,
-  conv: ConvState
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
   switch (rule.action) {
     case 'greet':
@@ -105,10 +110,10 @@ async function handleRuleMatch(
       const pending = conv.flow_data?.pending_action as AIResponse | null;
       if (!pending) return 'What would you like to do?';
 
-      const result = await executeAction(tenantId, pending, { customerPhone: phone });
-      await updateConversation(phone, tenantId, {
+      const result = await executeAction(tenantId, pending, { customerPhone: externalId });
+      await updateConversation(externalId, tenantId, {
         flow_data: { ...conv.flow_data, pending_action: null, awaiting_confirmation: false },
-      });
+      }, channel);
 
       return result.success
         ? `Done! ${pending.reply}`
@@ -116,9 +121,9 @@ async function handleRuleMatch(
     }
 
     case 'negate': {
-      await updateConversation(phone, tenantId, {
+      await updateConversation(externalId, tenantId, {
         flow_data: { ...conv.flow_data, pending_action: null, awaiting_confirmation: false },
-      });
+      }, channel);
       return 'Ok, cancelled. What else can I help with?';
     }
 

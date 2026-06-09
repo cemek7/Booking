@@ -14,7 +14,7 @@
 import { createClient } from '@supabase/supabase-js';
 import PaymentService from '@/lib/paymentService';
 import { executeAction, AIResponse } from '../actionValidator';
-import { updateConversation, resetConversation, ConvState } from '../conversationState';
+import { updateConversation, resetConversation, ConvState, ConvChannel } from '../conversationState';
 import { getAvailableSlots, lockSlot, releaseLock } from '../slotEngine';
 import { addToWaitlist } from '../waitlist';
 import { defaultLogger } from '@/lib/logger';
@@ -36,9 +36,15 @@ export async function handleCustomerBooking(
 ): Promise<string> {
   void _rawMessage;
 
+  // Resolve the channel-aware conversation key from the conv object.
+  // This ensures updateConversation/resetConversation target the correct row
+  // regardless of whether the message arrived via WhatsApp or Instagram.
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId: string = conv.external_id ?? phone;
+
   // ── L1 match ──────────────────────────────────────────────────────────────
   if (!('reply' in input)) {
-    return handleCustomerRuleMatch(phone, tenantId, input as RuleMatch, conv);
+    return handleCustomerRuleMatch(convExternalId, tenantId, input as RuleMatch, conv, convChannel);
   }
 
   // ── AI response ───────────────────────────────────────────────────────────
@@ -46,13 +52,13 @@ export async function handleCustomerBooking(
 
   switch (aiResp.action) {
     case 'get_availability':
-      return handleGetAvailability(phone, tenantId, aiResp, conv);
+      return handleGetAvailability(convExternalId, tenantId, aiResp, conv, convChannel);
 
     case 'create_booking':
-      return handleCreateBooking(phone, tenantId, aiResp, conv);
+      return handleCreateBooking(convExternalId, tenantId, aiResp, conv, convChannel);
 
     case 'cancel_booking':
-      return handleCancelBooking(phone, tenantId, aiResp);
+      return handleCancelBooking(convExternalId, tenantId, aiResp, convChannel);
 
     case 'general_reply':
     case 'needs_info':
@@ -62,7 +68,7 @@ export async function handleCustomerBooking(
     default:
       // Update flow state if AI advanced the booking_in_progress
       if (aiResp.params?.booking_update) {
-        await updateConversation(phone, tenantId, {
+        await updateConversation(convExternalId, tenantId, {
           current_flow: 'booking',
           flow_data: {
             ...conv.flow_data,
@@ -72,7 +78,7 @@ export async function handleCustomerBooking(
             },
             awaiting_selection: aiResp.action === 'list_services' || aiResp.action === 'list_staff',
           },
-        });
+        }, convChannel);
       }
       return aiResp.reply;
   }
@@ -81,14 +87,15 @@ export async function handleCustomerBooking(
 // ─── L1 rule handler ──────────────────────────────────────────────────────────
 
 async function handleCustomerRuleMatch(
-  phone: string,
+  externalId: string,
   tenantId: string,
   rule: RuleMatch,
-  conv: ConvState
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
   switch (rule.action) {
     case 'greet':
-      return getCustomerGreeting(tenantId, phone);
+      return getCustomerGreeting(tenantId, externalId);
 
     case 'help':
       return getCustomerHelp(tenantId);
@@ -96,7 +103,7 @@ async function handleCustomerRuleMatch(
     case 'affirm': {
       // Confirm a pending booking
       if (conv.flow_data?.pending_confirmation) {
-        return confirmBooking(phone, tenantId, conv);
+        return confirmBooking(externalId, tenantId, conv, channel);
       }
       return 'What would you like to book today?';
     }
@@ -105,7 +112,7 @@ async function handleCustomerRuleMatch(
       // Cancel the current booking flow
       const lockId = conv.flow_data?.booking_in_progress?.slot_lock_id;
       if (lockId) await releaseLock(lockId);
-      await resetConversation(phone, tenantId);
+      await resetConversation(externalId, tenantId, channel);
       return 'No problem! Let me know if you\'d like to book another time.';
     }
 
@@ -115,7 +122,7 @@ async function handleCustomerRuleMatch(
       if (options && options[idx]) {
         const selected = options[idx];
         // Store selection in booking_in_progress and prompt for next needed info
-        await updateConversation(phone, tenantId, {
+        await updateConversation(externalId, tenantId, {
           current_flow: 'booking',
           flow_data: {
             ...conv.flow_data,
@@ -126,7 +133,7 @@ async function handleCustomerRuleMatch(
             },
             awaiting_selection: false,
           },
-        });
+        }, channel);
         return `Great choice — *${selected.name}*. When would you like to come in?`;
       }
       return 'Please choose one of the options listed.';
@@ -140,10 +147,11 @@ async function handleCustomerRuleMatch(
 // ─── Availability handler ─────────────────────────────────────────────────────
 
 async function handleGetAvailability(
-  phone: string,
+  externalId: string,
   tenantId: string,
   aiResp: AIResponse,
-  conv: ConvState
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
   const { service_id, tenant_staff_id, date } = aiResp.params;
 
@@ -155,7 +163,7 @@ async function handleGetAvailability(
   if (!available.length) {
     // Offer waitlist
     if (service_id && date) {
-      await addToWaitlist(phone, tenantId, { service_id, date, staff_id: tenant_staff_id });
+      await addToWaitlist(externalId, tenantId, { service_id, date, staff_id: tenant_staff_id });
     }
     const dateFormatted = new Date(date).toLocaleDateString('en-NG', {
       weekday: 'short', day: 'numeric', month: 'short',
@@ -167,7 +175,7 @@ async function handleGetAvailability(
   const slotLines = available.slice(0, 8).map((s, i) => `  ${i + 1}. ${formatTime(s.start)}`);
   const optionList = available.slice(0, 8).map((s) => ({ id: `${date}T${s.start}`, name: s.start }));
 
-  await updateConversation(phone, tenantId, {
+  await updateConversation(externalId, tenantId, {
     current_flow: 'booking',
     flow_data: {
       ...conv.flow_data,
@@ -180,7 +188,7 @@ async function handleGetAvailability(
       option_list: optionList,
       awaiting_selection: true,
     },
-  });
+  }, channel);
 
   const dateFormatted = new Date(date).toLocaleDateString('en-NG', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -192,11 +200,14 @@ async function handleGetAvailability(
 // ─── Create booking handler ───────────────────────────────────────────────────
 
 async function handleCreateBooking(
-  phone: string,
+  externalId: string,
   tenantId: string,
   aiResp: AIResponse,
-  conv: ConvState
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
+  // Alias for clarity — the externalId is used as phone for WA, IGSID for IG
+  const phone = externalId;
   const { service_id, tenant_staff_id, date, start_time, end_time, customer_name } = aiResp.params;
 
   if (!service_id || !date || !start_time) return aiResp.reply;
@@ -258,7 +269,7 @@ async function handleCreateBooking(
   }
 
   // Store pending confirmation
-  await updateConversation(phone, tenantId, {
+  await updateConversation(externalId, tenantId, {
     current_flow: 'booking',
     flow_step: 4,
     flow_data: {
@@ -286,7 +297,7 @@ async function handleCreateBooking(
       },
       awaiting_confirmation: true,
     },
-  });
+  }, channel);
 
   const depositNote = riskScore === 'high'
     ? '\n\n*A deposit is required for this booking.*'
@@ -300,10 +311,15 @@ async function handleCreateBooking(
 // ─── Confirm booking ──────────────────────────────────────────────────────────
 
 async function confirmBooking(
-  phone: string,
+  externalId: string,
   tenantId: string,
-  conv: ConvState
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
+  // For WA, phone === externalId; for IG, externalId is the IGSID.
+  // The customer record always uses the phone field for WA. For IG,
+  // we store the IGSID in the phone field as a fallback identifier.
+  const phone = externalId;
   const pending = conv.flow_data?.pending_confirmation;
   if (!pending) return 'No booking to confirm. What would you like to book?';
 
@@ -370,12 +386,12 @@ async function confirmBooking(
         .update({ status: 'cancelled' })
         .eq('id', reservation?.id);
       if (lock_id) await releaseLock(lock_id);
-      await resetConversation(phone, tenantId);
+      await resetConversation(externalId, tenantId, channel);
       return 'Sorry, we could not create your deposit link right now. Please try again.';
     }
 
     if (lock_id) await releaseLock(lock_id);
-    await resetConversation(phone, tenantId);
+    await resetConversation(externalId, tenantId, channel);
 
     return `Almost done! To secure your appointment, please pay the ₦${Math.round(depositAmountCents / 100).toLocaleString()} deposit: ${paymentResult.authorizationUrl}\n\nYour slot is held for 30 minutes.`;
   }
@@ -395,7 +411,7 @@ async function confirmBooking(
   await queueReminders(tenantId, startAt, phone, service_id);
 
   // Reset flow
-  await resetConversation(phone, tenantId);
+  await resetConversation(externalId, tenantId, channel);
 
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
@@ -412,18 +428,21 @@ async function confirmBooking(
 // ─── Cancel booking ───────────────────────────────────────────────────────────
 
 async function handleCancelBooking(
-  phone: string,
+  externalId: string,
   tenantId: string,
-  aiResp: AIResponse
+  aiResp: AIResponse,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: phone });
-  await resetConversation(phone, tenantId);
+  // For the cancel action, customerPhone is used to look up reservations.
+  // For IG, the IGSID is stored as the phone identifier in the customer record.
+  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
+  await resetConversation(externalId, tenantId, channel);
   return execResult.success ? aiResp.reply : `Couldn't cancel: ${execResult.error ?? 'unknown error'}`;
 }
 
 // ─── Greetings ────────────────────────────────────────────────────────────────
 
-async function getCustomerGreeting(tenantId: string, phone: string): Promise<string> {
+async function getCustomerGreeting(tenantId: string, externalId: string): Promise<string> {
   const { data: tenant } = await supabaseAdmin
     .from('tenants')
     .select('name, settings')
@@ -434,7 +453,7 @@ async function getCustomerGreeting(tenantId: string, phone: string): Promise<str
     .from('customers')
     .select('name, total_bookings')
     .eq('tenant_id', tenantId)
-    .eq('phone', phone)
+    .eq('phone', externalId)
     .maybeSingle();
 
   const salonName = tenant?.name ?? 'us';

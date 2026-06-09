@@ -13,11 +13,13 @@ import { createClient } from '@supabase/supabase-js';
 import { normalizePidgin, matchRule } from '@/lib/ai/rulesEngine';
 import { isQuotaExceeded, recordAIUsage } from '@/lib/ai/quotaTracker';
 import { getConversation, ensureConversation } from './conversationState';
+import type { ConvChannel } from './conversationState';
 import { claimBatch } from './messageBatcher';
 import { validateAction, AIResponse } from './actionValidator';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
+import type { ProviderConfig } from '@/lib/whatsapp/providers';
 import { callGoogleAI } from '@/lib/google-ai';
 import { callOpenRouter } from '@/lib/openrouter';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
@@ -48,66 +50,63 @@ const V2_DISABLE_GOOGLE = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 /**
- * NOTE (Task 2 — Instagram wiring): The `phone` param is currently WhatsApp-only.
- * Flow handlers (handleOwnerOrStaffMessage, handleCustomerMessage) call
- * getConversation/ensureConversation with the implicit default channel='whatsapp'.
- * Wiring Instagram to this pipeline requires:
- *   1. Threading a `channel: ConvChannel` param through processMessageV2 and both
- *      flow handlers so the correct conversation row is read/written.
- *   2. Adding a `channel` column to whatsapp_message_queue (migration required)
- *      so the cron worker can pass the originating channel into this function.
+ * Processes a single (possibly batched) inbound message through the v2 AI pipeline.
+ *
+ * The trailing `channel` param defaults to `'whatsapp'` so all existing callers
+ * are unaffected (byte-for-byte WhatsApp behaviour is preserved).
+ * When channel='instagram', the conversation is keyed on the Instagram Scoped ID
+ * (IGSID) rather than a phone number, and outbound replies are routed through
+ * the Instagram adapter (getTenantInstagramConfig + getProviderClient).
  */
 export async function processMessageV2(
-  phone: string,
+  externalId: string,
   tenantId: string,
   message: string,
-  messageId: string
+  messageId: string,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<boolean> {
   // ── 1. Check if more messages are still arriving ───────────────────────────
-  const batch = await claimBatch(phone, tenantId);
+  const batch = await claimBatch(externalId, tenantId, channel);
   if (!batch) return false; // Still accumulating — skip this cycle
 
   const rawMessage = batch.combined;
   const normalized = normalizePidgin(rawMessage);
 
   // ── 2. Load conversation state ─────────────────────────────────────────────
-  let conv = await getConversation(phone, tenantId);
+  let conv = await getConversation(externalId, tenantId, channel);
   if (!conv) {
-    conv = await ensureConversation(phone, tenantId);
+    conv = await ensureConversation(externalId, tenantId, 'unknown', channel);
   }
 
   // ── 3. Route to appropriate flow handler ──────────────────────────────────
   // Owner onboarding is handled separately from the main pipeline
   if (conv.current_flow === 'onboarding' || (conv.role === 'owner' && conv.current_flow === 'idle' && !await isTenantActivated(tenantId))) {
-    await handleOnboarding(phone, tenantId, normalized, conv);
+    await handleOnboarding(externalId, tenantId, normalized, conv);
     return true;
   }
 
   if (conv.role === 'owner' || conv.role === 'staff') {
-    await handleOwnerOrStaffMessage(phone, tenantId, normalized, conv, messageId, batch.messageIds);
+    await handleOwnerOrStaffMessage(externalId, tenantId, normalized, conv, messageId, batch.messageIds, channel);
     return true;
   }
 
   // Customer path
-  await handleCustomerMessage(phone, tenantId, normalized, conv, messageId, batch.messageIds);
+  await handleCustomerMessage(externalId, tenantId, normalized, conv, messageId, batch.messageIds, channel);
   return true;
 }
 
 // ─── Owner / staff message handler ───────────────────────────────────────────
 
 async function handleOwnerOrStaffMessage(
-  phone: string,
+  externalId: string,
   tenantId: string,
   message: string,
   conv: Awaited<ReturnType<typeof getConversation>> & object,
   messageId: string,
-  allMessageIds: string[]
+  allMessageIds: string[],
+  channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
-  const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) {
-    throw new Error(`Missing WhatsApp configuration for tenant ${tenantId}`);
-  }
-  const client = getProviderClient(evolutionConfig);
+  const providerConfig = await resolveProviderConfig(tenantId, channel);
 
   // L1 check — yes/no/numbers for confirming AI-proposed actions
   const l1Match = matchRule(message, {
@@ -117,9 +116,9 @@ async function handleOwnerOrStaffMessage(
   });
 
   if (l1Match) {
-    const reply = await handleOwnerCommand(phone, tenantId, l1Match, conv!, message);
+    const reply = await handleOwnerCommand(externalId, tenantId, l1Match, conv!, message);
     if (reply) {
-      await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
+      await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
       await markMessagesProcessed(allMessageIds);
     }
     return;
@@ -128,19 +127,19 @@ async function handleOwnerOrStaffMessage(
   // L2 for owner commands
   const aiReply = await callAIWithRetry(tenantId, message, conv!, 'owner', messageId);
   if (!aiReply) {
-    await sendReplyAndPersistOutbound(
-      evolutionConfig,
-      client,
+    await sendReplyByChannel(
+      providerConfig,
       tenantId,
-      phone,
-      'Sorry, I had trouble understanding that. Try again or type *help* for options.'
+      externalId,
+      'Sorry, I had trouble understanding that. Try again or type *help* for options.',
+      channel
     );
     return;
   }
 
-  const reply = await handleOwnerCommand(phone, tenantId, aiReply, conv!, message);
+  const reply = await handleOwnerCommand(externalId, tenantId, aiReply, conv!, message);
   if (reply) {
-    await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
+    await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
   }
 
   await markMessagesProcessed(allMessageIds);
@@ -149,18 +148,15 @@ async function handleOwnerOrStaffMessage(
 // ─── Customer message handler ─────────────────────────────────────────────────
 
 async function handleCustomerMessage(
-  phone: string,
+  externalId: string,
   tenantId: string,
   message: string,
   conv: Awaited<ReturnType<typeof getConversation>> & object,
   messageId: string,
-  allMessageIds: string[]
+  allMessageIds: string[],
+  channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
-  const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) {
-    throw new Error(`Missing WhatsApp configuration for tenant ${tenantId}`);
-  }
-  const client = getProviderClient(evolutionConfig);
+  const providerConfig = await resolveProviderConfig(tenantId, channel);
 
   // L1 check
   const l1Match = matchRule(message, {
@@ -170,14 +166,14 @@ async function handleCustomerMessage(
   });
 
   if (l1Match) {
-    const reply = await handleCustomerBooking(phone, tenantId, l1Match, conv!, message);
-    if (reply) await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
+    const reply = await handleCustomerBooking(externalId, tenantId, l1Match, conv!, message);
+    if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
     await markMessagesProcessed(allMessageIds);
     return;
   }
 
   if (looksLikeShowcaseRequest(message)) {
-    const showcase = await sendShowcasePack(tenantId, phone, undefined, message);
+    const showcase = await sendShowcasePack(tenantId, externalId, undefined, message);
     if (showcase.success) {
       await markMessagesProcessed(allMessageIds);
       return;
@@ -187,18 +183,18 @@ async function handleCustomerMessage(
   // L2
   const aiReply = await callAIWithRetry(tenantId, message, conv!, 'customer', messageId);
   if (!aiReply) {
-    await sendReplyAndPersistOutbound(
-      evolutionConfig,
-      client,
+    await sendReplyByChannel(
+      providerConfig,
       tenantId,
-      phone,
-      'Sorry, I didn\'t get that. Type *help* to see what I can do.'
+      externalId,
+      'Sorry, I didn\'t get that. Type *help* to see what I can do.',
+      channel
     );
     return;
   }
 
-  const reply = await handleCustomerBooking(phone, tenantId, aiReply, conv!, message);
-  if (reply) await sendReplyAndPersistOutbound(evolutionConfig, client, tenantId, phone, reply);
+  const reply = await handleCustomerBooking(externalId, tenantId, aiReply, conv!, message);
+  if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
 
   await markMessagesProcessed(allMessageIds);
 }
@@ -519,6 +515,122 @@ async function markMessagesProcessed(messageIds: string[]): Promise<void> {
     .in('id', messageIds);
 }
 
+/**
+ * Fetches the Instagram provider config for a tenant.
+ * Reads from `whatsapp_provider_secrets` (channel='instagram') — same table used
+ * for WhatsApp secrets.  Returns null if no IG config is stored yet.
+ *
+ * This is a stub for Phase 1 IG wiring: credential storage UI is a later phase.
+ * The stub must compile and be unit-testable; calling it with no DB row returns null
+ * and the send is skipped gracefully (logged, not thrown).
+ */
+export async function getTenantInstagramConfig(tenantId: string): Promise<ProviderConfig | null> {
+  const { data, error } = await supabaseAdmin
+    .from('whatsapp_provider_secrets')
+    .select('api_key, base_url, instance_name')
+    .eq('tenant_id', tenantId)
+    .eq('provider', 'instagram')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[pipeline] getTenantInstagramConfig error', error);
+    return null;
+  }
+  if (!data?.api_key || !data?.base_url || !data?.instance_name) {
+    return null;
+  }
+
+  return {
+    provider: 'instagram',
+    baseUrl: data.base_url as string,
+    apiKey: data.api_key as string,
+    instanceName: data.instance_name as string,
+  };
+}
+
+/**
+ * Resolves the correct provider config for the given channel.
+ * WhatsApp: uses getTenantWhatsAppConfig (existing path, unchanged).
+ * Instagram: uses getTenantInstagramConfig stub.
+ * Returns null if no config is found — callers must handle null gracefully.
+ */
+async function resolveProviderConfig(
+  tenantId: string,
+  channel: ConvChannel
+): Promise<{ config: EvolutionAPIConfig | ProviderConfig; client: ReturnType<typeof getProviderClient> } | null> {
+  if (channel === 'instagram') {
+    const igConfig = await getTenantInstagramConfig(tenantId);
+    if (!igConfig) {
+      console.warn(`[pipeline] No Instagram config for tenant ${tenantId} — outbound send will be skipped`);
+      return null;
+    }
+    return { config: igConfig, client: getProviderClient(igConfig) };
+  }
+
+  // Default: WhatsApp path (unchanged behaviour)
+  const waConfig = await getTenantWhatsAppConfig(tenantId);
+  if (!waConfig) {
+    throw new Error(`Missing WhatsApp configuration for tenant ${tenantId}`);
+  }
+  return { config: waConfig, client: getProviderClient(waConfig) };
+}
+
+/**
+ * Sends a reply via the correct channel adapter and persists an outbound message row.
+ * For Instagram: if no config is found, logs a warning and skips the send (no throw).
+ * For WhatsApp: preserves the existing throw-on-failure behaviour.
+ */
+async function sendReplyByChannel(
+  providerContext: { config: EvolutionAPIConfig | ProviderConfig; client: ReturnType<typeof getProviderClient> } | null,
+  tenantId: string,
+  externalId: string,
+  reply: string,
+  channel: ConvChannel
+): Promise<void> {
+  if (!providerContext) {
+    // No config — skip outbound (already warned in resolveProviderConfig)
+    return;
+  }
+
+  const { config, client } = providerContext;
+  const sendResult = await client.sendTextMessage(externalId, reply);
+
+  if (!sendResult.success) {
+    if (channel === 'instagram') {
+      // Instagram sends are best-effort for now — log and continue
+      console.error(`[pipeline] Outbound Instagram send failed (tenant=${tenantId}, to=${externalId})`);
+      return;
+    }
+    // WhatsApp: preserve original throw behaviour
+    const waConfig = config as EvolutionAPIConfig;
+    throw new Error(`Outbound WhatsApp send failed (provider=${waConfig.provider ?? 'evolution'}, tenant=${tenantId}, to=${externalId})`);
+  }
+
+  // Persist outbound message row (same for both channels)
+  const { data: chat } = await supabaseAdmin
+    .from('chats')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('customer_phone', externalId)
+    .maybeSingle();
+
+  const instanceName = (config as EvolutionAPIConfig).instanceName ?? (config as ProviderConfig).instanceName;
+
+  await supabaseAdmin.from('messages').insert({
+    tenant_id: tenantId,
+    chat_id: chat?.id ?? null,
+    from_number: instanceName,
+    to_number: externalId,
+    content: reply,
+    direction: 'outbound',
+    message_type: 'text',
+    channel,
+    evolution_message_id: sendResult.messageId ?? null,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** @deprecated Use sendReplyByChannel instead. Kept for any external callers. */
 async function sendReplyAndPersistOutbound(
   waConfig: EvolutionAPIConfig,
   client: ReturnType<typeof getProviderClient>,
@@ -526,29 +638,7 @@ async function sendReplyAndPersistOutbound(
   phone: string,
   reply: string
 ): Promise<void> {
-  const sendResult = await client.sendTextMessage(phone, reply);
-  if (!sendResult.success) {
-    throw new Error(`Outbound WhatsApp send failed (provider=${waConfig.provider ?? 'evolution'}, tenant=${tenantId}, to=${phone})`);
-  }
-
-  const { data: chat } = await supabaseAdmin
-    .from('chats')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('customer_phone', phone)
-    .maybeSingle();
-
-  await supabaseAdmin.from('messages').insert({
-    tenant_id: tenantId,
-    chat_id: chat?.id ?? null,
-    from_number: waConfig.instanceName,
-    to_number: phone,
-    content: reply,
-    direction: 'outbound',
-    message_type: 'text',
-    evolution_message_id: sendResult.messageId ?? null,
-    timestamp: new Date().toISOString(),
-  });
+  await sendReplyByChannel({ config: waConfig, client }, tenantId, phone, reply, 'whatsapp');
 }
 
 async function isTenantActivated(tenantId: string): Promise<boolean> {

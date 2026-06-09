@@ -17,7 +17,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { callGoogleAI } from '@/lib/google-ai';
-import { updateConversation, ConvState } from '../conversationState';
+import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import { generateRoutingCode } from '../identityResolver';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
@@ -253,11 +253,13 @@ Prices are in local currency (no currency symbol needed).`;
 
   await supabaseAdmin.from('services').insert(rows);
 
-  // Advance step
-  await updateConversation(phone, resolvedTenantId, {
+  // Advance step — use conv.external_id + conv.channel so the correct row is updated.
+  const convChannel2: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId2 = conv.external_id ?? phone;
+  await updateConversation(convExternalId2, resolvedTenantId, {
     flow_step: 2,
     flow_data: { ...conv.flow_data, onboarding_step: 3 },
-  });
+  }, convChannel2);
 
   const serviceLines = services.map((s) => `  • ${s.name} — ₦${s.price.toLocaleString()}`).join('\n');
   const { data: tenantData } = await supabaseAdmin.from('tenants').select('settings').eq('id', resolvedTenantId).single();
@@ -336,10 +338,12 @@ Phone is optional — only include if explicitly mentioned.`;
     }
   }
 
-  await updateConversation(phone, resolvedTenantId, {
+  const convChannel3: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId3 = conv.external_id ?? phone;
+  await updateConversation(convExternalId3, resolvedTenantId, {
     flow_step: 3,
     flow_data: { ...conv.flow_data, onboarding_step: 4 },
-  });
+  }, convChannel3);
 
   return `Perfect! What are your working hours?\n\nExamples:\n  "Mon–Fri 9am–7pm, Sat 8am–5pm, closed Sunday"\n  "Every day 8am to 8pm"\n  "Weekdays 10–6, weekends 9–4"`;
 }
@@ -423,11 +427,13 @@ Only include days that are open.`;
     .update({ routing_code: routingCode, v2_enabled: true })
     .eq('id', resolvedTenantId);
 
-  await updateConversation(phone, resolvedTenantId, {
+  const convChannel4: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId4 = conv.external_id ?? phone;
+  await updateConversation(convExternalId4, resolvedTenantId, {
     current_flow: 'managing',
     flow_step: 0,
     flow_data: { onboarding_step: 5 },
-  });
+  }, convChannel4);
 
   const waNumber = process.env.EVOLUTION_DEFAULT_PHONE ?? '2348000000000';
   const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
