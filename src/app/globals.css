@@ -1,26 +1,146 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f5ef;
+  --foreground: #10211a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-booka-sans);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: #f6f5ef;
+  --foreground: #10211a;
+  --font-booka-sans: "Avenir Next", var(--font-booka-sans-loaded), "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-booka-display: "Iowan Old Style", var(--font-booka-display-loaded), "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-booka-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --brand-ink: #10211a;
+  --brand-ink-soft: #274235;
+  --brand-moss: #4d6a59;
+  --brand-paper: #f6f5ef;
+  --brand-paper-strong: #ece7d8;
+  --brand-gold: #d4b368;
+  --brand-line: #d8d3c4;
+  --booka-green: #059669;
+  --booka-green-strong: #047857;
+  --booka-green-soft: #ecfdf5;
+  --booka-green-border: #a7f3d0;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-booka-sans), system-ui, sans-serif;
+  background-image:
+    radial-gradient(circle at top left, rgba(212, 179, 104, 0.14), transparent 24%),
+    radial-gradient(circle at top right, rgba(5, 150, 105, 0.05), transparent 24%),
+    linear-gradient(180deg, #f8f7f2 0%, #f3f0e6 100%);
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(34, 197, 94, 0.18);
+  color: #0f172a;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-booka-sans), system-ui, sans-serif;
+  letter-spacing: -0.04em;
+}
+
+.brand-theme {
+  --booka-ink: var(--brand-ink);
+}
+
+.brand-theme .bg-indigo-600,
+.brand-theme .hover\:bg-indigo-700:hover,
+.brand-theme .active\:bg-indigo-800:active,
+.brand-theme .bg-indigo-500,
+.brand-theme .border-indigo-600,
+.brand-theme .border-indigo-500,
+.brand-theme .text-indigo-600,
+.brand-theme .text-indigo-700,
+.brand-theme .ring-indigo-500,
+.brand-theme .shadow-indigo-100,
+.brand-theme .shadow-indigo-200 {
+  --tw-ring-color: rgba(5, 150, 105, 0.45);
+}
+
+.brand-theme .bg-indigo-600,
+.brand-theme .bg-indigo-500 {
+  background-color: var(--booka-green) !important;
+}
+
+.brand-theme .hover\:bg-indigo-700:hover,
+.brand-theme .active\:bg-indigo-800:active {
+  background-color: var(--booka-green-strong) !important;
+}
+
+.brand-theme .text-indigo-600,
+.brand-theme .text-indigo-700 {
+  color: var(--booka-green) !important;
+}
+
+.brand-theme .border-indigo-600,
+.brand-theme .border-indigo-500 {
+  border-color: var(--booka-green) !important;
+}
+
+.brand-theme .ring-indigo-500 {
+  --tw-ring-color: rgba(5, 150, 105, 0.5) !important;
+}
+
+.brand-theme .bg-indigo-50 {
+  background-color: var(--booka-green-soft) !important;
+}
+
+.brand-theme .border-indigo-200 {
+  border-color: var(--booka-green-border) !important;
+}
+
+.brand-theme .shadow-indigo-100,
+.brand-theme .shadow-indigo-200 {
+  --tw-shadow-color: rgba(5, 150, 105, 0.12) !important;
+}
+
+.brand-theme .bg-slate-50 {
+  background-color: #f8fbf9;
+}
+
+.brand-theme .border-slate-200 {
+  border-color: rgba(167, 243, 208, 0.55);
+}
+
+.brand-theme .text-slate-900,
+.brand-theme .text-slate-950 {
+  color: var(--booka-ink);
+}
+
+.brand-theme .text-slate-600,
+.brand-theme .text-slate-500 {
+  color: #567062;
+}
+
+.techclave-display {
+  font-family: var(--font-booka-display), serif;
+  letter-spacing: -0.05em;
+  line-height: 0.94;
+}
+
+.brand-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
 }
