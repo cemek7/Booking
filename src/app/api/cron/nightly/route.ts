@@ -18,6 +18,7 @@ import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/provid
 import type { WhatsAppProviderClient } from '@/lib/whatsapp/providers/types';
 import { siasOperations } from '@/lib/sias-operations';
 import { runDueSiasCampaigns } from '@/lib/siasCampaignRunner';
+import { brandCustomerText } from '@/lib/whatsapp/v2/outboundBranding';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -324,7 +325,14 @@ export async function sendRebookingFollowUps(): Promise<number> {
       ? `How are your ${serviceName} looking? 😊`
       : `Hi${reservation.customer_name ? ` ${reservation.customer_name}` : ''}! How are you enjoying your ${serviceName}? 😊`;
 
-    const sendRes = await client.sendTextMessage(reservation.customer_phone, greeting);
+    const branded = await brandCustomerText(
+      reservation.tenant_id,
+      reservation.customer_phone,
+      greeting,
+      { initiated: true }
+    );
+    if (!branded) continue; // customer opted out of reminders
+    const sendRes = await client.sendTextMessage(reservation.customer_phone, branded);
 
     if (!sendRes.success) {
       console.warn('[cron/nightly] follow-up send failed', { tenant_id: reservation.tenant_id, phone: reservation.customer_phone });
@@ -475,7 +483,9 @@ export async function sendRebookingNudges(): Promise<number> {
         const customerName = lastRes.customer_name ?? '';
         const nudge = `Hi${customerName ? ` ${customerName}` : ''}! Time for your next ${service.name}? 📅 Reply *BOOK* to get started.`;
 
-        const sendRes = await client.sendTextMessage(phone, nudge);
+        const branded = await brandCustomerText(tenant.id, phone, nudge, { initiated: true });
+        if (!branded) continue; // customer opted out of reminders
+        const sendRes = await client.sendTextMessage(phone, branded);
 
         if (!sendRes.success) {
           console.warn('[cron/nightly] nudge send failed', { tenant_id: tenant.id, phone });

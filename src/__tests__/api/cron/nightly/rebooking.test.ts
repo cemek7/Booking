@@ -46,6 +46,9 @@ function makeChain() {
 const mockClient = { from: jest.fn().mockImplementation(() => makeChain()) };
 
 jest.mock('@supabase/supabase-js', () => ({ createClient: jest.fn(() => mockClient) }));
+jest.mock('@/lib/whatsapp/v2/outboundBranding', () => ({
+  brandCustomerText: jest.fn(async (_tenantId: string, _phone: string, reply: string) => reply),
+}));
 jest.mock('@/lib/monitoring/telegramAlert', () => ({
   sendTelegramInfo:  jest.fn().mockResolvedValue(undefined),
   sendTelegramAlert: jest.fn().mockResolvedValue(undefined),
