@@ -53,6 +53,18 @@ jest.mock('@/lib/monitoring/telegramAlert', () => ({
   sendTelegramInfo:  jest.fn().mockResolvedValue(undefined),
   sendTelegramAlert: jest.fn().mockResolvedValue(undefined),
 }));
+// getTenantWhatsAppConfig (in evolutionClient) reads provider config via the
+// admin client — point it at the same mockClient so WA_CONFIG flows through the
+// shared response queue.
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: () => mockClient,
+  createServerSupabaseClient: () => mockClient,
+}));
+// SIAS campaign bookkeeping is fire-and-forget side effect — stub it so it does
+// not touch the response queue or require its own DB fixtures.
+jest.mock('@/lib/sias-operations', () => ({
+  siasOperations: { recordCampaignRun: jest.fn().mockResolvedValue(undefined) },
+}));
 jest.mock('next/server', () => ({
   NextResponse: { json: (data: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, body: data }) },
 }));
@@ -60,7 +72,7 @@ jest.mock('next/server', () => ({
 const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
-import { sendRebookingFollowUps, sendRebookingNudges } from '@/app/api/cron/nightly/route';
+import { sendRebookingFollowUps, sendRebookingNudges, __resetWhatsAppSendCache } from '@/app/api/cron/nightly/route';
 
 // ── Shared fixtures ────────────────────────────────────────────────────────
 
@@ -94,6 +106,7 @@ describe('sendRebookingFollowUps', () => {
   beforeEach(() => {
     responses.length = 0;
     mockFetch.mockReset();
+    __resetWhatsAppSendCache();
     jest.clearAllMocks();
   });
 
@@ -178,7 +191,7 @@ describe('sendRebookingFollowUps', () => {
     // Customer update (direct-await)
     pushDb(null);
 
-    mockFetch.mockResolvedValue({ ok: true });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ key: { id: 'msg_1' } }) });
 
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(1);
@@ -188,7 +201,8 @@ describe('sendRebookingFollowUps', () => {
       expect.stringContaining('sendText'),
       expect.objectContaining({
         method: 'POST',
-        body: expect.stringContaining('+2348012345678'),
+        // EvolutionClient.cleanPhoneNumber strips the leading '+'
+        body: expect.stringContaining('2348012345678'),
       })
     );
   });
@@ -202,6 +216,7 @@ describe('sendRebookingNudges', () => {
   beforeEach(() => {
     responses.length = 0;
     mockFetch.mockReset();
+    __resetWhatsAppSendCache();
     jest.clearAllMocks();
   });
 
@@ -287,7 +302,7 @@ describe('sendRebookingNudges', () => {
     // customer update (direct-await)
     pushDb(null);
 
-    mockFetch.mockResolvedValue({ ok: true });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ key: { id: 'msg_1' } }) });
 
     const sent = await sendRebookingNudges();
     expect(sent).toBe(1);

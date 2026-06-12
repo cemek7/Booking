@@ -713,6 +713,11 @@ export async function sendAtRiskClientsAlert(): Promise<number> {
   return sent;
 }
 
+/** Test-only: clear the per-tenant provider-client cache between cases. */
+export function __resetWhatsAppSendCache(): void {
+  WHATSAPP_SEND_CACHE.clear();
+}
+
 async function getTenantProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
   const cached = WHATSAPP_SEND_CACHE.get(tenantId);
   if (cached) return cached;
