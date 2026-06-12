@@ -3,6 +3,8 @@ import { Mulish, Fraunces } from "next/font/google";
 import "./globals.css";
 import AuthHashRedirect from "@/components/AuthHashRedirect";
 import { ToastContainer } from "@/components/ui/toast";
+import AnalyticsProvider from "@/components/analytics/AnalyticsProvider";
+import ConsentBanner from "@/components/consent/ConsentBanner";
 
 const brandSans = Mulish({
   subsets: ["latin"],
@@ -31,9 +33,12 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${brandSans.variable} ${brandDisplay.variable}`}>
       <body className="brand-theme antialiased">
-        <AuthHashRedirect />
-        <ToastContainer />
-        {children}
+        <AnalyticsProvider>
+          <AuthHashRedirect />
+          <ToastContainer />
+          {children}
+          <ConsentBanner />
+        </AnalyticsProvider>
       </body>
     </html>
   );
