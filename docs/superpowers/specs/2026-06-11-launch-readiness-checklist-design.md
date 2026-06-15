@@ -40,14 +40,14 @@
 
 ---
 
-## 3. Open decisions needed before/while executing (owner + counsel input)
+## 3. Decisions (RESOLVED 2026-06-15)
 
-These block or reshape sections below — answer early:
-
-1. **Merchant of Record (MoR):** For marketplace deposits, is *Boka* the MoR or is the *tenant*? Determines who owns refunds/chargebacks, tax/VAT collection, and whose name appears on the customer's statement. Paystack subaccount splits suggest tenant-as-merchant, but confirm with Paystack/Stripe contracts. **⚖️**
-2. **Healthcare in scope?** Can tenants be clinics/medical/wellness providers storing health data? If yes → BAA program, PHI encryption-at-rest review, 60-day breach notification, and a dedicated HIPAA/health-data track (Section 7). If no → delete `hipaaCompliance.ts` or clearly gate it off. **⚖️🛠️**
-3. **EU establishment / Art. 27 representative:** With EU users and no EU establishment, an EU (and UK) representative may be required. **⚖️**
-4. **Credit/wallet model legal nature:** Are AI credits prepaid services (preferred framing) vs. stored value / e-money (heavier regulation)? Confirm credits are non-refundable-for-cash service credits, with clear expiry rules. **⚖️**
+1. **Merchant of Record (MoR): TENANT is MoR.** Boka is a technology / payment facilitator only. Each tenant owns refunds, chargebacks, tax/VAT, and appears on the customer's statement. Paystack subaccount splits already reflect this.
+   - *Implications:* booking terms (4.2) and refund policy (4.9) must state Boka merely facilitates payment to the tenant and the **tenant** is responsible for fulfillment/refunds/disputes/taxes. Add a payment-facilitator clause to the **tenant** ToS. Boka's PCI scope stays **SAQ-A** (4.10). Still confirm this matches the Paystack/Stripe contractual terms. **⚖️**
+2. **Healthcare: NOT at launch (deferred, design-compatible).** No health data at launch. Keep `src/lib/compliance/hipaaCompliance.ts` clearly gated/disabled; **do not advertise health/HIPAA compliance**. Design the data model so the HIPAA track (Section 7) can be added later. No BAAs, no Art.9 special-category handling at launch. Revisit before onboarding any medical tenant.
+3. **EU Art. 27 representative: DEFER.** No active EU/UK marketing or material EU usage at launch. Design to GDPR/UK GDPR regardless; privacy policy notes no Art.27 representative is currently appointed and that this is monitored. **Appoint an EU (and UK) representative once EU/UK usage becomes material** — track as a trigger, not a launch blocker. **⚖️**
+4. **AI credits: PREPAID SERVICE CREDITS.** Credits are prepaid, **non-refundable-for-cash**, usable only for Boka AI usage, with a **defined expiry**. Framed to avoid stored-value / e-money regulation.
+   - *Implications:* wallet/subscription terms (4.8) and refund policy (4.9) must state credits are non-refundable for cash and state the expiry rule. Surface unit pricing + balance clearly in-product. **⚖️**
 
 ---
 
