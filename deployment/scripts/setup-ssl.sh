@@ -1,57 +1,81 @@
 #!/bin/bash
 
-# SSL/TLS Certificate Setup Script for Booka Production
-# Supports Let's Encrypt and self-signed certificates
+# SSL/TLS Certificate Setup for Booka — dockerized nginx (standalone ACME).
+#
+# The production nginx runs in a container that mounts ./deployment/nginx/ssl as
+# /etc/nginx/ssl (read-only) and reads booka.crt / booka.key. certbot's --nginx plugin
+# can't see a containerized nginx, so we issue with --standalone (certbot binds :80
+# directly while the nginx container is briefly stopped) and copy the result into the
+# mounted dir.
+#
+# Usage:
+#   DOMAIN=techclave.cloud EMAIL=you@techclave.cloud USE_LETSENCRYPT=true ./setup-ssl.sh
+#   DOMAIN=techclave.cloud ./setup-ssl.sh            # self-signed (local/testing)
 
-set -e
+set -euo pipefail
 
-# Configuration
 DOMAIN=${DOMAIN:-"booka.local"}
-EMAIL=${EMAIL:-"admin@booka.local"}
-CERT_DIR="/etc/nginx/ssl"
-LETSENCRYPT_DIR="/etc/letsencrypt"
+WWW_DOMAIN=${WWW_DOMAIN:-"www.${DOMAIN}"}
+EMAIL=${EMAIL:-"admin@${DOMAIN}"}
 USE_LETSENCRYPT=${USE_LETSENCRYPT:-"false"}
 
-echo "🔐 Setting up SSL/TLS certificates for Booka..."
+# Resolve the repo's mounted ssl dir relative to this script (deployment/nginx/ssl).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CERT_DIR=${CERT_DIR:-"$(cd "$SCRIPT_DIR/.." && pwd)/nginx/ssl"}
+LETSENCRYPT_DIR="/etc/letsencrypt"
 
-# Create SSL directory
-mkdir -p $CERT_DIR
+# Docker wiring (override if your file/container names differ).
+COMPOSE=${COMPOSE:-"docker compose -f $(cd "$SCRIPT_DIR/../.." && pwd)/deployment/docker-compose.production.yml"}
+NGINX_CONTAINER=${NGINX_CONTAINER:-"booka-nginx"}
+
+echo "🔐 Booka SSL setup — domain: $DOMAIN (+$WWW_DOMAIN), certs -> $CERT_DIR"
+mkdir -p "$CERT_DIR"
+
+reload_or_start_nginx() {
+  # Start nginx if stopped; reload if running.
+  if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CONTAINER}$"; then
+    docker exec "$NGINX_CONTAINER" nginx -s reload || true
+  else
+    $COMPOSE up -d nginx || true
+  fi
+}
 
 if [ "$USE_LETSENCRYPT" = "true" ]; then
-    echo "📜 Setting up Let's Encrypt certificate for domain: $DOMAIN"
-    
-    # Install certbot if not present
-    if ! command -v certbot &> /dev/null; then
-        echo "Installing certbot..."
-        apt-get update
-        apt-get install -y certbot python3-certbot-nginx
-    fi
-    
-    # Generate Let's Encrypt certificate
-    certbot --nginx \
-        --non-interactive \
-        --agree-tos \
-        --email $EMAIL \
-        --domains $DOMAIN \
-        --redirect
-    
-    # Copy certificates to nginx directory
-    cp $LETSENCRYPT_DIR/live/$DOMAIN/fullchain.pem $CERT_DIR/booka.crt
-    cp $LETSENCRYPT_DIR/live/$DOMAIN/privkey.pem $CERT_DIR/booka.key
-    
-    # Set up auto-renewal
-    echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
-    
-    echo "✅ Let's Encrypt certificate installed successfully"
-    
+  echo "📜 Let's Encrypt via standalone ACME (nginx container stopped during issuance)"
+
+  if ! command -v certbot &> /dev/null; then
+    echo "Installing certbot..."
+    apt-get update && apt-get install -y certbot
+  fi
+
+  # Free port 80 for the standalone challenge.
+  $COMPOSE stop nginx || true
+
+  certbot certonly --standalone \
+    --non-interactive --agree-tos \
+    --email "$EMAIL" \
+    -d "$DOMAIN" -d "$WWW_DOMAIN"
+
+  # certbot stores under the first -d domain.
+  cp "$LETSENCRYPT_DIR/live/$DOMAIN/fullchain.pem" "$CERT_DIR/booka.crt"
+  cp "$LETSENCRYPT_DIR/live/$DOMAIN/privkey.pem"  "$CERT_DIR/booka.key"
+
+  # Auto-renew: stop nginx for the standalone bind, copy renewed certs, restart nginx.
+  CRON_LINE="0 3 * * * certbot renew --standalone \
+--pre-hook '$COMPOSE stop nginx' \
+--deploy-hook 'cp $LETSENCRYPT_DIR/live/$DOMAIN/fullchain.pem $CERT_DIR/booka.crt && cp $LETSENCRYPT_DIR/live/$DOMAIN/privkey.pem $CERT_DIR/booka.key' \
+--post-hook '$COMPOSE up -d nginx' >> /var/log/certbot-renew.log 2>&1"
+  ( crontab -l 2>/dev/null | grep -v 'certbot renew' ; echo "$CRON_LINE" ) | crontab -
+
+  $COMPOSE up -d nginx
+  echo "✅ Let's Encrypt certificate installed; renewal cron added (03:00 daily)."
+
 else
-    echo "🔑 Generating self-signed certificate for domain: $DOMAIN"
-    
-    # Generate private key
-    openssl genrsa -out $CERT_DIR/booka.key 2048
-    
-    # Create certificate signing request configuration
-    cat > $CERT_DIR/csr.conf <<EOF
+  echo "🔑 Generating self-signed certificate (browsers will warn) — for local/testing"
+
+  openssl genrsa -out "$CERT_DIR/booka.key" 2048
+
+  cat > "$CERT_DIR/csr.conf" <<EOF
 [req]
 default_bits = 2048
 prompt = no
@@ -73,50 +97,30 @@ subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = $DOMAIN
-DNS.2 = www.$DOMAIN
+DNS.2 = $WWW_DOMAIN
 DNS.3 = localhost
 IP.1 = 127.0.0.1
 EOF
-    
-    # Generate certificate signing request
-    openssl req -new -key $CERT_DIR/booka.key -out $CERT_DIR/booka.csr -config $CERT_DIR/csr.conf
-    
-    # Generate self-signed certificate
-    openssl x509 -req \
-        -in $CERT_DIR/booka.csr \
-        -signkey $CERT_DIR/booka.key \
-        -out $CERT_DIR/booka.crt \
-        -days 365 \
-        -extensions v3_req \
-        -extfile $CERT_DIR/csr.conf
-    
-    # Clean up temporary files
-    rm $CERT_DIR/booka.csr $CERT_DIR/csr.conf
-    
-    echo "✅ Self-signed certificate generated successfully"
-    echo "⚠️  Note: Self-signed certificates will show warnings in browsers"
+
+  openssl req -new -key "$CERT_DIR/booka.key" -out "$CERT_DIR/booka.csr" -config "$CERT_DIR/csr.conf"
+  openssl x509 -req \
+    -in "$CERT_DIR/booka.csr" \
+    -signkey "$CERT_DIR/booka.key" \
+    -out "$CERT_DIR/booka.crt" \
+    -days 365 -extensions v3_req -extfile "$CERT_DIR/csr.conf"
+
+  rm -f "$CERT_DIR/booka.csr" "$CERT_DIR/csr.conf"
+  echo "✅ Self-signed certificate generated."
+  reload_or_start_nginx
 fi
 
-# Set proper permissions
-chmod 600 $CERT_DIR/booka.key
-chmod 644 $CERT_DIR/booka.crt
-chown root:root $CERT_DIR/booka.*
+chmod 600 "$CERT_DIR/booka.key"
+chmod 644 "$CERT_DIR/booka.crt"
 
-# Verify certificate
-echo "🔍 Certificate information:"
-openssl x509 -in $CERT_DIR/booka.crt -text -noout | grep -E "(Subject:|Not Before|Not After|DNS:)"
+echo "🔍 Certificate:"
+openssl x509 -in "$CERT_DIR/booka.crt" -text -noout | grep -E "(Subject:|Not Before|Not After|DNS:)"
 
-# Test nginx configuration
-echo "🧪 Testing nginx configuration..."
-nginx -t
-
-echo "🎉 SSL/TLS setup completed successfully!"
 echo ""
-echo "📋 Next steps:"
-echo "1. Update your DNS to point $DOMAIN to this server"
-echo "2. Restart nginx: systemctl restart nginx"
-echo "3. Test HTTPS access: https://$DOMAIN"
-
-if [ "$USE_LETSENCRYPT" = "true" ]; then
-    echo "4. Monitor certificate auto-renewal: certbot renew --dry-run"
-fi
+echo "🎉 Done. nginx reads /etc/nginx/ssl/booka.crt + booka.key (mounted from $CERT_DIR)."
+echo "📋 Next: ensure DNS for $DOMAIN points here, then: $COMPOSE up -d"
+echo "    Verify: https://$DOMAIN/api/health"
