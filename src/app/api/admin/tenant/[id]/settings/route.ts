@@ -3,9 +3,11 @@ import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { renameTenantBrand } from '@/lib/whatsapp/v2/tenantBrand';
 
 const UpdateSettingsSchema = z.object({
   name: z.string().trim().optional(),
+  display_name: z.string().trim().optional(),
   timezone: z.string().trim().optional(),
   preferred_llm_model: z.string().trim().optional(),
   llm_token_rate: z.union([z.number(), z.string(), z.null()]).optional(),
@@ -81,15 +83,27 @@ export const PUT = createHttpHandler(
         : Number(data.llm_token_rate);
     }
 
-    const { data: updated, error } = await ctx.supabase
-      .from('tenants')
-      .update(payload)
-      .eq('id', tenantId)
-      .select()
-      .maybeSingle();
+    // `display_name` is owned by renameTenantBrand (below), never `payload`.
+    let updated: unknown = null;
+    if (Object.keys(payload).length > 0) {
+      const { data: updatedRow, error } = await ctx.supabase
+        .from('tenants')
+        .update(payload)
+        .eq('id', tenantId)
+        .select()
+        .maybeSingle();
 
-    if (error) {
-      throw ApiErrorFactory.databaseError(error);
+      if (error) {
+        throw ApiErrorFactory.databaseError(error);
+      }
+      updated = updatedRow;
+    }
+
+    // Customer-facing rename goes through the brand helper so previous_names
+    // and renamed_at are recorded (drift "formerly" support). Do NOT route this
+    // through `payload` — that would skip the bookkeeping.
+    if (data.display_name !== undefined) {
+      await renameTenantBrand(tenantId, data.display_name);
     }
 
     return { success: true, row: updated ?? null };
