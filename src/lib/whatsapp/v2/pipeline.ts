@@ -15,6 +15,7 @@ import { isQuotaExceeded, recordAIUsage } from '@/lib/ai/quotaTracker';
 import { getConversation, ensureConversation, updateConversation } from './conversationState';
 import type { ConvChannel } from './conversationState';
 import { sendDisclosureIfNeeded } from './aiDisclosure';
+import { wantsHuman, createHumanHandoff } from './humanHandoff';
 import { claimBatch } from './messageBatcher';
 import { validateAction, AIResponse } from './actionValidator';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
@@ -171,6 +172,25 @@ async function handleCustomerMessage(
         conv!.flow_data = merged;
       },
     });
+  }
+
+  // Explicit "reach a human" request → create an escalation ticket and stop.
+  if (wantsHuman(message)) {
+    await createHumanHandoff(supabaseAdmin, {
+      tenantId,
+      customerPhone: externalId,
+      sessionId: conv!.id,
+      reason: 'customer requested human',
+    });
+    await sendReplyByChannel(
+      providerConfig,
+      tenantId,
+      externalId,
+      "Got it — I've passed this to a team member who'll get back to you shortly. 🙌",
+      channel,
+    );
+    await markMessagesProcessed(allMessageIds);
+    return;
   }
 
   // L1 check
