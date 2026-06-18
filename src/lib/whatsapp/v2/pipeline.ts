@@ -12,8 +12,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { normalizePidgin, matchRule } from '@/lib/ai/rulesEngine';
 import { isQuotaExceeded, recordAIUsage } from '@/lib/ai/quotaTracker';
-import { getConversation, ensureConversation } from './conversationState';
+import { getConversation, ensureConversation, updateConversation } from './conversationState';
 import type { ConvChannel } from './conversationState';
+import { sendDisclosureIfNeeded } from './aiDisclosure';
 import { claimBatch } from './messageBatcher';
 import { validateAction, AIResponse } from './actionValidator';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
@@ -157,6 +158,20 @@ async function handleCustomerMessage(
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const providerConfig = await resolveProviderConfig(tenantId, channel);
+
+  // First-contact AI disclosure (once per customer; flag persisted in flow_data).
+  // Guarded by providerConfig so we never mark "sent" when no channel is configured.
+  if (providerConfig) {
+    await sendDisclosureIfNeeded({
+      flowData: conv!.flow_data,
+      send: (text) => sendReplyByChannel(providerConfig, tenantId, externalId, text, channel),
+      persist: async (patch) => {
+        const merged = { ...(conv!.flow_data ?? {}), ...patch };
+        await updateConversation(externalId, tenantId, { flow_data: merged }, channel);
+        conv!.flow_data = merged;
+      },
+    });
+  }
 
   // L1 check
   const l1Match = matchRule(message, {

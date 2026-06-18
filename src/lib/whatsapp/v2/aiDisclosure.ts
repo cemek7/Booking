@@ -31,3 +31,22 @@ export function ensureDisclosure(
 
   return { text, flowDataPatch: { [FLAG]: new Date().toISOString() } };
 }
+
+/**
+ * Orchestrates the first-contact disclosure: if not yet sent, sends it via the
+ * injected `send` then persists the flag via `persist`. Send happens before
+ * persist so a failed send leaves the flag unset (the disclosure retries next
+ * message rather than being silently skipped). Returns whether it was sent.
+ */
+export async function sendDisclosureIfNeeded(args: {
+  flowData: Record<string, unknown> | null | undefined;
+  businessName?: string;
+  send: (text: string) => Promise<void>;
+  persist: (patch: Record<string, unknown>) => Promise<void>;
+}): Promise<boolean> {
+  const result = ensureDisclosure(args.flowData, { businessName: args.businessName });
+  if (!result) return false;
+  await args.send(result.text);
+  await args.persist(result.flowDataPatch);
+  return true;
+}
