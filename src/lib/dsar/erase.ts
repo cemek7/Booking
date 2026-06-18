@@ -76,7 +76,10 @@ export async function eraseCustomerData(
 
 async function runErase(admin: SupabaseClient, entry: PiiTable, ctx: EraseContext): Promise<void> {
   if (entry.onErase === 'anonymize') {
-    const patch = buildAnonymizedPatch(entry.piiColumns);
+    const patch: Record<string, unknown> = buildAnonymizedPatch(entry.piiColumns);
+    for (const column of entry.jsonbClearColumns ?? []) {
+      patch[column] = {};
+    }
     if (Object.keys(patch).length === 0) return;
     await applyLink(admin.from(entry.table).update(patch), entry.link, ctx);
   } else {

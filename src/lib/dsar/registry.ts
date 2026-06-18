@@ -26,8 +26,15 @@ export type PiiLink =
 export interface PiiTable {
   table: string;
   link: PiiLink;
-  /** Columns overwritten when anonymizing. Ignored when onErase === 'delete'. */
+  /** Scalar columns overwritten with a redaction token when anonymizing. Ignored when onErase === 'delete'. */
   piiColumns: string[];
+  /**
+   * JSONB columns that may hold embedded PII and are reset to `{}` when
+   * anonymizing (a simple column overwrite can't redact individual keys).
+   * Authoritative scalar columns on the same row are preserved. Ignored when
+   * onErase === 'delete'.
+   */
+  jsonbClearColumns?: string[];
   onErase: EraseAction;
   /** True once the link + PII columns are confirmed against the live schema. */
   verified: boolean;
@@ -38,21 +45,21 @@ export const CUSTOMER_PII_TABLES: PiiTable[] = [
   {
     table: 'reservations',
     link: { kind: 'customerId' },
-    // Verified against 0001_init.sql: scalar PII is customer_name + phone.
-    // NOTE: the `raw` JSONB column may also hold PII — JSONB scrubbing is a
-    // follow-up (cannot be done with a simple column overwrite).
+    // Verified against 0001_init.sql: scalar PII is customer_name + phone;
+    // the `raw` JSONB holds the original capture and may embed PII → cleared.
     piiColumns: ['customer_name', 'phone'],
+    jsonbClearColumns: ['raw'],
     onErase: 'anonymize',
     verified: true,
   },
   {
     table: 'transactions',
     link: { kind: 'reservationId' },
-    // Verified against 0001_init.sql: NO scalar PII column (provider/amount/etc.).
-    // The row is retained for accounting; anonymize is therefore a no-op here.
-    // NOTE: the `metadata` JSONB may hold processor-supplied PII (name/email) —
-    // JSONB scrubbing is a follow-up.
+    // Verified against 0001_init.sql: NO scalar PII column (amount/provider/
+    // status/currency are retained for accounting). The `metadata` JSONB may
+    // hold processor-supplied PII (name/email) → cleared.
     piiColumns: [],
+    jsonbClearColumns: ['metadata'],
     onErase: 'anonymize',
     verified: true,
   },

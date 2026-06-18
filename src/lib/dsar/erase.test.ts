@@ -47,8 +47,10 @@ describe('eraseCustomerData', () => {
     const report = await eraseCustomerData(admin, { tenantId: 't1', customerId: 'c1', dryRun: false });
 
     expect(report.dryRun).toBe(false);
-    // reservations anonymized (update), messages deleted
-    expect(ops).toContainEqual({ table: 'reservations', kind: 'update', payload: { customer_name: '[erased]', phone: '[erased]' } });
+    // reservations anonymized (scalar PII + raw JSONB cleared), messages deleted
+    expect(ops).toContainEqual({ table: 'reservations', kind: 'update', payload: { customer_name: '[erased]', phone: '[erased]', raw: {} } });
+    // transactions: no scalar PII, but metadata JSONB cleared (row otherwise kept)
+    expect(ops).toContainEqual({ table: 'transactions', kind: 'update', payload: { metadata: {} } });
     expect(ops.some((o) => o.table === 'messages' && o.kind === 'delete')).toBe(true);
     // anchor anonymized with a unique, non-null phone token
     const anchor = ops.find((o) => o.table === 'customers' && o.kind === 'update');
