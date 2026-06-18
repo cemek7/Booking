@@ -16,6 +16,7 @@ import { getConversation, ensureConversation, updateConversation } from './conve
 import type { ConvChannel } from './conversationState';
 import { sendDisclosureIfNeeded } from './aiDisclosure';
 import { wantsHuman, createHumanHandoff } from './humanHandoff';
+import { buildOptInProofPatch } from './optInProof';
 import { claimBatch } from './messageBatcher';
 import { validateAction, AIResponse } from './actionValidator';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
@@ -172,6 +173,14 @@ async function handleCustomerMessage(
         conv!.flow_data = merged;
       },
     });
+  }
+
+  // Record customer-initiated opt-in proof once per conversation (flow_data).
+  const optInPatch = buildOptInProofPatch(conv!.flow_data, channel);
+  if (optInPatch) {
+    const merged = { ...(conv!.flow_data ?? {}), ...optInPatch };
+    await updateConversation(externalId, tenantId, { flow_data: merged }, channel);
+    conv!.flow_data = merged;
   }
 
   // Explicit "reach a human" request → create an escalation ticket and stop.

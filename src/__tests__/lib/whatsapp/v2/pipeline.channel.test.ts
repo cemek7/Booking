@@ -32,6 +32,8 @@ const mockEnsureConversation = jest.fn();
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   getConversation: mockGetConversation,
   ensureConversation: mockEnsureConversation,
+  // Customer path now persists opt-in proof / disclosure flags via updateConversation.
+  updateConversation: jest.fn(async () => {}),
 }));
 
 // getTenantWhatsAppConfig spy — we assert this is NOT called on IG path
