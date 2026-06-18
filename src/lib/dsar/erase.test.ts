@@ -48,7 +48,7 @@ describe('eraseCustomerData', () => {
 
     expect(report.dryRun).toBe(false);
     // reservations anonymized (update), messages deleted
-    expect(ops).toContainEqual({ table: 'reservations', kind: 'update', payload: { customer_name: '[erased]', customer_phone: '[erased]' } });
+    expect(ops).toContainEqual({ table: 'reservations', kind: 'update', payload: { customer_name: '[erased]', phone: '[erased]' } });
     expect(ops.some((o) => o.table === 'messages' && o.kind === 'delete')).toBe(true);
     // anchor anonymized with a unique, non-null phone token
     const anchor = ops.find((o) => o.table === 'customers' && o.kind === 'update');

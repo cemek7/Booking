@@ -38,16 +38,23 @@ export const CUSTOMER_PII_TABLES: PiiTable[] = [
   {
     table: 'reservations',
     link: { kind: 'customerId' },
-    piiColumns: ['customer_name', 'customer_phone'],
+    // Verified against 0001_init.sql: scalar PII is customer_name + phone.
+    // NOTE: the `raw` JSONB column may also hold PII — JSONB scrubbing is a
+    // follow-up (cannot be done with a simple column overwrite).
+    piiColumns: ['customer_name', 'phone'],
     onErase: 'anonymize',
-    verified: false,
+    verified: true,
   },
   {
     table: 'transactions',
     link: { kind: 'reservationId' },
-    piiColumns: ['name'],
+    // Verified against 0001_init.sql: NO scalar PII column (provider/amount/etc.).
+    // The row is retained for accounting; anonymize is therefore a no-op here.
+    // NOTE: the `metadata` JSONB may hold processor-supplied PII (name/email) —
+    // JSONB scrubbing is a follow-up.
+    piiColumns: [],
     onErase: 'anonymize',
-    verified: false,
+    verified: true,
   },
 
   // Conversational / engagement data — hard delete.
@@ -88,10 +95,12 @@ export const CUSTOMER_PII_TABLES: PiiTable[] = [
   },
   {
     table: 'customer_feedback',
-    link: { kind: 'customerId' },
+    // Verified against 037_customer_feedback.sql: links via reservation_id
+    // (no customer_id/phone column).
+    link: { kind: 'reservationId' },
     piiColumns: [],
     onErase: 'delete',
-    verified: false,
+    verified: true,
   },
   {
     table: 'leads',
@@ -102,9 +111,11 @@ export const CUSTOMER_PII_TABLES: PiiTable[] = [
   },
   {
     table: 'whatsapp_media',
-    link: { kind: 'phone', columns: ['customer_phone'] },
+    // Verified against 057_whatsapp_missing_tables_and_columns.sql: phone column
+    // is phone_number; row (file_url/caption/etc.) is deleted wholesale.
+    link: { kind: 'phone', columns: ['phone_number'] },
     piiColumns: [],
     onErase: 'delete',
-    verified: false,
+    verified: true,
   },
 ];
