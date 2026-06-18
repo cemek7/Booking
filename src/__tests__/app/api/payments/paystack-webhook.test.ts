@@ -10,9 +10,9 @@ jest.mock('@/lib/supabase/server', () => ({
 jest.mock('@/lib/payments/lifecycle', () => ({ handlePaymentSuccess: jest.fn(async () => undefined) }));
 jest.mock('@/lib/eventbus/eventBus', () => ({ getEventBus: () => ({ publishEvent: jest.fn(async () => undefined) }) }));
 // PaymentService is instantiated in the route when a transaction is found.
-// Since our mock returns data: null for transactions, the PaymentService
-// constructor is never exercised — but mock it to prevent real HTTP calls.
+// __esModule: true is required so the default import resolves correctly.
 jest.mock('@/lib/paymentService', () => ({
+  __esModule: true,
   default: jest.fn().mockImplementation(() => ({
     getProvider: jest.fn(() => undefined),
   })),
@@ -46,6 +46,37 @@ const makeSupabase = (opts: { insertError?: { code: string } | null } = {}) => (
   }),
 });
 
+/**
+ * Supabase mock that returns a matching transaction row.
+ * The route issues these queries against `transactions`:
+ *   1. .select('id, status, provider, tenant_id').eq('provider_reference', ref).maybeSingle()
+ *      → returns the transaction row
+ *   2. .update({...}).eq('id', transaction.id)
+ *      → resolves { error: null }
+ */
+const makeSupabaseWithTransaction = () => ({
+  from: jest.fn((table: string) => {
+    if (table === 'webhook_events') return {
+      insert: () => ({ select: async () => ({ data: [{ id: 'evt1' }], error: null }) }),
+    };
+    if (table === 'transactions') {
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: { id: 'txn1', status: 'pending', provider: 'paystack', tenant_id: 'db_tenant' },
+            }),
+          }),
+        }),
+        update: () => ({
+          eq: () => Promise.resolve({ error: null }),
+        }),
+      };
+    }
+    return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+  }),
+});
+
 describe('Paystack webhook (auth:false)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -68,5 +99,15 @@ describe('Paystack webhook (auth:false)', () => {
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabase({ insertError: { code: '23505' } }));
     const res = await POST(signedWebhook({ provider: 'paystack', reference: 'r_dup', status: 'success' }) as unknown as NextRequest);
     expect(await res.json()).toMatchObject({ ok: true, replay: true });
+  });
+
+  // CRITICAL 2: derive tenantId from DB transaction, not payload
+  it('derives tenantId from the DB transaction, not the payload, and calls handlePaymentSuccess', async () => {
+    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabaseWithTransaction());
+    const body = { provider: 'paystack', reference: 'r_ok', status: 'success', metadata: { tenant_id: 'attacker_tenant' } };
+    const res = await POST(signedWebhook(body) as unknown as NextRequest);
+    expect(res.status).toBe(200);
+    const { handlePaymentSuccess } = jest.requireMock('@/lib/payments/lifecycle');
+    expect(handlePaymentSuccess).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'db_tenant' }));
   });
 });

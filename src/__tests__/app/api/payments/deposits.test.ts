@@ -7,14 +7,17 @@ jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: jest.fn(),
 }));
 jest.mock('@/lib/supabase/bearer-client', () => ({ createSupabaseBearerClient: jest.fn() }));
+// Hoist the initializePayment spy so we can assert on it after the happy-path POST.
+const mockInitializePayment = jest.fn(async () => ({
+  success: true,
+  transactionId: 'txn_1',
+  authorizationUrl: 'https://pay/redirect',
+}));
+
 jest.mock('@/lib/paymentService', () => ({
   __esModule: true,
   default: jest.fn().mockImplementation(() => ({
-    initializePayment: jest.fn(async () => ({
-      success: true,
-      transactionId: 'txn_1',
-      authorizationUrl: 'https://pay/redirect',
-    })),
+    initializePayment: mockInitializePayment,
   })),
 }));
 jest.mock('@/lib/monitoring/alerting', () => ({
@@ -32,6 +35,7 @@ jest.mock('@/lib/logger/api-logger', () => ({
 
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
+import PaymentService from '@/lib/paymentService';
 import { POST } from '@/app/api/payments/deposits/route';
 
 // ─── Admin client mock ────────────────────────────────────────────────────────
@@ -134,6 +138,14 @@ describe('deposit init (auth:true)', () => {
       transactionId: 'txn_1',
       authorizationUrl: 'https://pay/redirect',
     });
+
+    // CRITICAL 1: assert initializePayment was called with the correct args
+    expect(mockInitializePayment).toHaveBeenCalledWith(expect.objectContaining({
+      reservationId: 'res_1',
+      amount: 10000,
+      email: 'salon@test.com',
+      tenantId: 'ten_1',
+    }));
   });
 
   it('is idempotent — returns the existing deposit instead of creating a new one', async () => {
@@ -148,7 +160,7 @@ describe('deposit init (auth:true)', () => {
     );
 
     const res = await POST(req(body) as unknown as NextRequest);
-    expect(await res.json()).toMatchObject({ duplicate: true, transactionId: 'txn_old' });
+    expect(await res.json()).toMatchObject({ duplicate: true, transactionId: 'txn_old', authorizationUrl: 'https://old' });
   });
 
   it('refuses a deposit for a cancelled reservation (4xx)', async () => {

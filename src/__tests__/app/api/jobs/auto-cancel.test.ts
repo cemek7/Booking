@@ -143,7 +143,7 @@ describe('auto-cancel-unconfirmed job (auth:false, cron-secret)', () => {
   });
 
   // ── Security gate ──────────────────────────────────────────────────────────
-  it('rejects a request with a missing cron secret (4xx)', async () => {
+  it('rejects a request with a missing cron secret (401)', async () => {
     const sb = makeSupabase();
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(sb);
 
@@ -154,15 +154,17 @@ describe('auto-cancel-unconfirmed job (auth:false, cron-secret)', () => {
       }) as unknown as NextRequest,
     );
 
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    // ApiErrorFactory.missingAuthorization() → MISSING_AUTHORIZATION → 401
+    expect(res.status).toBe(401);
   });
 
-  it('rejects a request with an incorrect cron secret (4xx)', async () => {
+  it('rejects a request with an incorrect cron secret (401)', async () => {
     const sb = makeSupabase();
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(sb);
 
     const res = await POST(cronRequest('wrong-secret') as unknown as NextRequest);
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    // ApiErrorFactory.missingAuthorization() → MISSING_AUTHORIZATION → 401
+    expect(res.status).toBe(401);
   });
 
   // ── Happy path: stale reservation is swept to `cancelled` ─────────────────

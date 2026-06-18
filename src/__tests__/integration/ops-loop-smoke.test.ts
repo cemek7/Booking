@@ -432,8 +432,10 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
         }),
       ).resolves.toBeUndefined();
 
-      // The reservation update must have been attempted
+      // The reservation update must have been attempted with status: 'confirmed'
+      // (handlePaymentSuccess writes { status: 'confirmed', updated_at: ... })
       expect(updateFn).toHaveBeenCalledTimes(1);
+      expect(updateFn).toHaveBeenCalledWith(expect.objectContaining({ status: 'confirmed' }));
     });
   });
 
