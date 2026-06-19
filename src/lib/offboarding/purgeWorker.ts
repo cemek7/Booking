@@ -3,11 +3,14 @@ import { runTeardownTask, type OffboardingTaskRow } from './teardownTasks';
 import { writeAuditLog } from '@/lib/audit/log';
 
 // Operational/PII tables deleted in Phase 1. Names verified against the codebase
-// schema (static audit). Order is children-first where FK constraints require it.
-// NOTE: deletes ignore per-table errors, so a not-yet-existing table is harmless.
+// schema (static audit). These tables FK-cascade on tenant delete, but Phase 1
+// intentionally KEEPS the tenant row, so each must be purged explicitly here.
+// Order is children-first where FK constraints require it. NOTE: deletes ignore
+// per-table errors, so a not-yet-existing table is harmless.
 const OPERATIONAL_TABLES = [
   'messages', 'chats', 'whatsapp_conversations', 'reservations', 'customers',
-  'staff', 'services', 'leads', 'whatsapp_configurations',
+  'staff', 'services', 'leads', 'faqs', 'tenant_knowledge_articles', 'reviews',
+  'whatsapp_configurations',
 ] as const;
 
 export async function runDueTeardownTasks(admin: SupabaseClient): Promise<number> {
