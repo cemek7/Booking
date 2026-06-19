@@ -52,10 +52,11 @@ async function refundWalletCash(admin: SupabaseClient, tenantId: string): Promis
 }
 
 async function closePaystackSubaccount(admin: SupabaseClient, tenantId: string): Promise<TaskResult> {
-  // The Paystack subaccount code is persisted on the tenant row
-  // (tenants.paystack_subaccount_code — written by /api/payments/subaccounts).
-  const { data: row } = await admin.from('tenants').select('paystack_subaccount_code').eq('id', tenantId).maybeSingle();
-  const code = (row as { paystack_subaccount_code?: string } | null)?.paystack_subaccount_code;
+  // The Paystack subaccount code lives in tenants.metadata JSONB
+  // (metadata.paystack_subaccount_code) — written by /api/payments/subaccounts
+  // and read by the deposits flow. It is NOT a top-level column.
+  const { data: row } = await admin.from('tenants').select('metadata').eq('id', tenantId).maybeSingle();
+  const code = (row as { metadata?: { paystack_subaccount_code?: string } | null } | null)?.metadata?.paystack_subaccount_code;
   if (!code) return { status: 'skipped' };
   return { status: 'done', payload: { closed_subaccount: code } };
 }
