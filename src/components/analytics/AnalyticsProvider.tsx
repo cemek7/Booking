@@ -1,10 +1,11 @@
 // src/components/analytics/AnalyticsProvider.tsx
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import posthog from 'posthog-js';
 import { PostHogProvider } from 'posthog-js/react';
 import { hasAnalyticsConsent, onConsentChange } from '@/lib/consent/consentStore';
+import PostHogPageview from './PostHogPageview';
 
 export default function AnalyticsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -16,6 +17,13 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
       opt_out_capturing_by_default: true,
       capture_pageview: false,
       persistence: 'localStorage+cookie',
+      // Session replay must never leak PII: mask all text + inputs in the
+      // browser before anything is sent. Replay still only runs after consent
+      // (opt_out_capturing_by_default), so this is defence-in-depth.
+      session_recording: {
+        maskAllInputs: true,
+        maskTextSelector: '*',
+      },
     });
 
     const sync = () => {
@@ -26,5 +34,13 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
     return onConsentChange(sync);
   }, []);
 
-  return <PostHogProvider client={posthog}>{children}</PostHogProvider>;
+  return (
+    <PostHogProvider client={posthog}>
+      {/* useSearchParams requires a Suspense boundary in the App Router. */}
+      <Suspense fallback={null}>
+        <PostHogPageview />
+      </Suspense>
+      {children}
+    </PostHogProvider>
+  );
 }

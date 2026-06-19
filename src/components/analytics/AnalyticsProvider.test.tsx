@@ -6,13 +6,19 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 const initMock = jest.fn();
 const optInMock = jest.fn();
 const optOutMock = jest.fn();
+const captureMock = jest.fn();
 jest.mock('posthog-js', () => ({
   __esModule: true,
-  default: { init: initMock, opt_in_capturing: optInMock, opt_out_capturing: optOutMock },
+  default: { init: initMock, opt_in_capturing: optInMock, opt_out_capturing: optOutMock, capture: captureMock },
 }));
 jest.mock('posthog-js/react', () => ({
   __esModule: true,
   PostHogProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+// AnalyticsProvider now renders PostHogPageview, which reads the router.
+jest.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 import AnalyticsProvider from '@/components/analytics/AnalyticsProvider';
@@ -48,6 +54,8 @@ describe('AnalyticsProvider', () => {
     const [, options] = initMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(options.opt_out_capturing_by_default).toBe(true);
     expect(options.capture_pageview).toBe(false);
+    // Session replay masks all text + inputs (PII never leaves the browser).
+    expect(options.session_recording).toEqual({ maskAllInputs: true, maskTextSelector: '*' });
     expect(optOutMock).toHaveBeenCalled();
     expect(optInMock).not.toHaveBeenCalled();
   });
