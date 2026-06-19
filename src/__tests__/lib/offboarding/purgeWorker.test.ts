@@ -43,9 +43,13 @@ describe('runOperationalPurge', () => {
     pushDb([{ task_type: 'revoke_whatsapp', status: 'done' }, { task_type: 'export_data', status: 'done' }]);
     const n = await runOperationalPurge(admin);
     expect(n).toBe(1);
-    expect(deletes).toEqual(expect.arrayContaining(['customers', 'reservations', 'messages', 'chats', 'services', 'staff']));
+    expect(deletes).toEqual(expect.arrayContaining([
+      'customers', 'reservations', 'messages', 'chats', 'services',
+      'faqs', 'reviews', 'staff_schedules',
+    ]));
     expect(deletes).not.toContain('transactions');
     expect(deletes).not.toContain('tenants');
+    expect(deletes).not.toContain('audit_logs');
     expect(updates.at(-1)).toEqual(expect.objectContaining({ lifecycle_state: 'purged' }));
   });
 });

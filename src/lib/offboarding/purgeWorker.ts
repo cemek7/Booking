@@ -2,15 +2,43 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runTeardownTask, type OffboardingTaskRow } from './teardownTasks';
 import { writeAuditLog } from '@/lib/audit/log';
 
-// Operational/PII tables deleted in Phase 1. Names verified against the codebase
-// schema (static audit). These tables FK-cascade on tenant delete, but Phase 1
-// intentionally KEEPS the tenant row, so each must be purged explicitly here.
-// Order is children-first where FK constraints require it. NOTE: deletes ignore
-// per-table errors, so a not-yet-existing table is harmless.
+// Operational/PII tables deleted in Phase 1 (verified against the live schema).
+// These FK-cascade on tenant delete, but Phase 1 intentionally KEEPS the tenant
+// row, so each is purged explicitly. Ordered CHILDREN-FIRST so FK references are
+// cleared before their parents. Deletes ignore per-table errors, so a table that
+// only exists after a pending migration is harmless. EXCLUDES financial/compliance
+// data (transactions, *_ledger, ai_wallets, audit_logs, offboarding_tasks) and
+// membership (tenant_users) — those are handled by Phase 2 / retention.
 const OPERATIONAL_TABLES = [
-  'messages', 'chats', 'whatsapp_conversations', 'reservations', 'customers',
-  'staff', 'services', 'leads', 'faqs', 'tenant_knowledge_articles', 'reviews',
-  'whatsapp_configurations',
+  // Reservation/review/feedback children
+  'reservation_services', 'reservation_logs', 'reviews', 'customer_feedback',
+  // Analytics / ML / ratings (tenant-scoped derived data)
+  'staff_ratings', 'service_ratings', 'customer_analytics', 'ml_predictions',
+  'anomaly_detections', 'revenue_optimizations', 'module_feature_usage',
+  'analytics_events', 'analytics_metrics_cache', 'performance_metrics',
+  'bi_dashboards', 'ml_models', 'insights_daily', 'reservation_trends',
+  // Staff operational
+  'staff_skills', 'staff_services', 'staff_schedules', 'schedule_overrides',
+  'availability_slots', 'slot_locks',
+  // Messaging / conversations
+  'whatsapp_media', 'whatsapp_message_queue', 'whatsapp_sessions',
+  'whatsapp_connection_logs', 'whatsapp_connection_metrics', 'messages',
+  'dialog_sessions', 'chats', 'whatsapp_conversations', 'whatsapp_connections',
+  // Support
+  'support_messages', 'support_assignments', 'support_tickets',
+  // Notifications / reminders
+  'booking_notifications', 'scheduled_notifications', 'notifications', 'reminders',
+  // Marketing / SIAS / escalation
+  'sias_outcome_attributions', 'sias_campaign_runs', 'sias_operational_memory',
+  'escalation_queue',
+  // Content (FAQ / knowledge / showcase / skills)
+  'faqs', 'tenant_knowledge_articles', 'whatsapp_showcase_pack_items',
+  'whatsapp_showcase_packs', 'skills',
+  // Core entities
+  'reservations', 'bookings', 'customers', 'services', 'leads', 'tasks',
+  // Per-tenant config + provider secrets
+  'whatsapp_provider_secrets', 'whatsapp_configurations',
+  'tenant_reminder_settings', 'tenant_tone_profiles', 'tenant_modules',
 ] as const;
 
 export async function runDueTeardownTasks(admin: SupabaseClient): Promise<number> {
