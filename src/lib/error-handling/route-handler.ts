@@ -24,6 +24,19 @@ import { createApiLogger } from '@/lib/logger/api-logger';
 import { getAlertService } from '@/lib/monitoring/alerting';
 
 /**
+ * Lifecycle access gate — pure predicate (no I/O).
+ *
+ * Returns true when the request should be allowed through.
+ * Non-active tenants are blocked except on allowlisted route suffixes
+ * (data-export and reactivation) so users can still recover their data.
+ */
+const LIFECYCLE_ALLOWLIST = ['/export', '/reactivate'];
+export function isLifecycleAccessible(lifecycleState: string, pathname: string): boolean {
+  if (lifecycleState === 'active') return true;
+  return LIFECYCLE_ALLOWLIST.some((suffix) => pathname.includes(suffix));
+}
+
+/**
  * Route handler context
  */
 export interface RouteContext {
@@ -205,6 +218,32 @@ export function createApiHandler(
           if (denied.length > 0) {
             const error = ApiErrorFactory.insufficientPermissions(options.permissions);
             return error.toResponse();
+          }
+        }
+
+        // Lifecycle access gate — fail-open: any lookup error allows the request through.
+        // Only runs when the route is authenticated AND a tenant context is present.
+        if (options.auth !== false && tenantUser?.tenant_id) {
+          try {
+            const admin = createSupabaseAdminClient();
+            const { data: tenantRow } = await admin
+              .from('tenants')
+              .select('lifecycle_state')
+              .eq('id', tenantUser.tenant_id)
+              .maybeSingle();
+            const state = (tenantRow as { lifecycle_state?: string } | null)?.lifecycle_state;
+            const pathname = new URL(request.url).pathname;
+            if (state && !isLifecycleAccessible(state, pathname)) {
+              throw new ApiError(
+                'tenant_locked',
+                'Tenant is being off-boarded. Only export and reactivation are permitted.',
+                423
+              );
+            }
+          } catch (err) {
+            // Re-throw only the intentional lifecycle block; all other errors → fail-open.
+            if (err instanceof ApiError && err.statusCode === 423) throw err;
+            console.warn('[lifecycle-gate] check skipped (fail-open)', err);
           }
         }
 
