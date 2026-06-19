@@ -15,7 +15,10 @@ describe('writeAuditLog', () => {
     });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({
       action: 'tenant.offboard.scheduled', tenant_id: 't1',
-      user_id: 'u1', user_role: 'owner', result: 'success',
+      user_id: 'u1', user_role: 'owner',
+      event_type: 'tenant_lifecycle', resource: 'tenant',
+      permission: 'tenant.offboard.scheduled', security_level: 'info',
+      result: { status: 'success' },
       metadata: { reason: 'voluntary' },
     }));
   });

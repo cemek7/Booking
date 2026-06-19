@@ -2,8 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import JSZip from 'jszip';
 import { GRACE_DAYS } from './types';
 
+// Real tenant-scoped tables (verified against live schema). 'staff' is not a
+// table — staff/members live in tenant_users.
 const EXPORT_TABLES = [
-  'reservations', 'customers', 'services', 'staff', 'transactions', 'messages', 'chats', 'tenants',
+  'reservations', 'customers', 'services', 'tenant_users', 'transactions',
+  'messages', 'chats', 'reviews', 'faqs', 'leads', 'tenants',
 ] as const;
 
 function toCsv(rows: Record<string, unknown>[]): string {
