@@ -2,11 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runTeardownTask, type OffboardingTaskRow } from './teardownTasks';
 import { writeAuditLog } from '@/lib/audit/log';
 
-// Operational/PII tables deleted in Phase 1. VERIFY against the live schema in Task 12
-// and extend as needed. Order is children-first where FK constraints require it.
+// Operational/PII tables deleted in Phase 1. Names verified against the codebase
+// schema (static audit). Order is children-first where FK constraints require it.
+// NOTE: deletes ignore per-table errors, so a not-yet-existing table is harmless.
 const OPERATIONAL_TABLES = [
   'messages', 'chats', 'whatsapp_conversations', 'reservations', 'customers',
-  'staff', 'services', 'leads', 'knowledge_articles', 'whatsapp_configurations',
+  'staff', 'services', 'leads', 'whatsapp_configurations',
 ] as const;
 
 export async function runDueTeardownTasks(admin: SupabaseClient): Promise<number> {

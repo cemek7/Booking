@@ -42,15 +42,20 @@ async function cancelBilling(_admin: SupabaseClient, _tenantId: string): Promise
 }
 
 async function refundWalletCash(admin: SupabaseClient, tenantId: string): Promise<TaskResult> {
-  const { data: wallet } = await admin.from('tenant_wallets').select('cash_collected_credits').eq('tenant_id', tenantId).maybeSingle();
-  const cash = Number((wallet as { cash_collected_credits?: number } | null)?.cash_collected_credits ?? 0);
-  if (cash <= 0) return { status: 'skipped' };
-  return { status: 'done', payload: { refund_cash_credits: cash, manual_payout_required: true } };
+  // Wallet lives in `ai_wallets` (migration 077); balance_credits is the real
+  // column. The actual cash-vs-credit split is derived from the ledgers, so v1
+  // flags the balance for manual payout rather than auto-transferring.
+  const { data: wallet } = await admin.from('ai_wallets').select('balance_credits').eq('tenant_id', tenantId).maybeSingle();
+  const balance = Number((wallet as { balance_credits?: number } | null)?.balance_credits ?? 0);
+  if (balance <= 0) return { status: 'skipped' };
+  return { status: 'done', payload: { refund_balance_credits: balance, manual_payout_required: true } };
 }
 
 async function closePaystackSubaccount(admin: SupabaseClient, tenantId: string): Promise<TaskResult> {
-  const { data: row } = await admin.from('tenant_payment_settings').select('subaccount_code').eq('tenant_id', tenantId).maybeSingle();
-  const code = (row as { subaccount_code?: string } | null)?.subaccount_code;
+  // The Paystack subaccount code is persisted on the tenant row
+  // (tenants.paystack_subaccount_code — written by /api/payments/subaccounts).
+  const { data: row } = await admin.from('tenants').select('paystack_subaccount_code').eq('id', tenantId).maybeSingle();
+  const code = (row as { paystack_subaccount_code?: string } | null)?.paystack_subaccount_code;
   if (!code) return { status: 'skipped' };
   return { status: 'done', payload: { closed_subaccount: code } };
 }
