@@ -19,6 +19,7 @@ import type { WhatsAppProviderClient } from '@/lib/whatsapp/providers/types';
 import { siasOperations } from '@/lib/sias-operations';
 import { runDueSiasCampaigns } from '@/lib/siasCampaignRunner';
 import { brandCustomerText } from '@/lib/whatsapp/v2/outboundBranding';
+import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/lib/offboarding/purgeWorker';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -26,6 +27,13 @@ const supabaseAdmin = createClient(
 );
 
 export const maxDuration = 300; // 5-minute budget for nightly job
+
+export async function runOffboardingSweep(): Promise<{ teardown: number; operational: number; financial: number }> {
+  const teardown = await runDueTeardownTasks(supabaseAdmin);
+  const operational = await runOperationalPurge(supabaseAdmin);
+  const financial = await runFinancialPurge(supabaseAdmin);
+  return { teardown, operational, financial };
+}
 
 const WHATSAPP_SEND_CACHE = new Map<string, Promise<WhatsAppProviderClient | null>>();
 
@@ -112,6 +120,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[cron/nightly] at-risk clients alert failed', err);
     results.at_risk_clients_alert_error = msg;
+  }
+
+  // ── Task 8: Off-boarding lifecycle sweep ──────────────────────────────────
+  try {
+    results.offboarding = await runOffboardingSweep();
+  } catch (e) {
+    console.error('[cron/nightly] offboarding sweep failed', e);
   }
 
   await sendTelegramInfo(`Nightly cron complete ✅\n${JSON.stringify(results, null, 2)}`);
