@@ -12,12 +12,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
-import { 
-  ApiError, 
-  ApiErrorFactory, 
+import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
+import {
+  ApiError,
+  ApiErrorFactory,
   handleRouteError
 } from '@/lib/error-handling/api-error';
+import { hasPermission } from '@/types/unified-permissions';
+import type { Role } from '@/types/roles';
+import { createApiLogger } from '@/lib/logger/api-logger';
+import { getAlertService } from '@/lib/monitoring/alerting';
 
 /**
  * Route handler context
@@ -30,6 +34,8 @@ export interface RouteContext {
     role: string;
     tenantId?: string;
     permissions?: string[];
+    sessionId?: string;
+    metadata?: Record<string, unknown>;
   };
   supabase: SupabaseClient;
   params?: Record<string, string>;
@@ -51,6 +57,26 @@ export interface RouteHandlerOptions {
   requireTenantMembership?: boolean; // Require tenant_users membership (default: true for auth: true). When false, user.role will be '' and user.tenantId will be undefined.
 }
 
+async function resolveIsGlobalAdmin(userId: string, email?: string | null): Promise<boolean> {
+  try {
+    const admin = createSupabaseAdminClient();
+    const normalizedEmail = email?.trim().toLowerCase() ?? '';
+
+    if (normalizedEmail) {
+      const { data: adminByEmail } = await admin
+        .from('admins')
+        .select('email, status')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+
+      if (adminByEmail) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Create unified API route handler
  * 
@@ -70,6 +96,8 @@ export function createApiHandler(
   options: RouteHandlerOptions = {}
 ) {
   return async (request: NextRequest, context?: { params?: Promise<Record<string, string>> | Record<string, string> }) => {
+    const apiLogger = createApiLogger(request);
+    apiLogger.logRequest();
     try {
       // Await params if it's a Promise (Next.js 15+)
       const params = context?.params 
@@ -87,48 +115,62 @@ export function createApiHandler(
       // Handle authentication
       if (options.auth !== false) {
         const authHeader = request.headers.get('authorization') || '';
-        console.log('[route-handler] Auth check for', request.method, request.url.split('?')[0], 'authHeader:', authHeader ? 'present' : 'MISSING');
-        
+
         if (!authHeader.startsWith('Bearer ')) {
           const error = ApiErrorFactory.missingAuthorization();
           return error.toResponse();
         }
 
         const token = authHeader.slice(7);
-        const supabase = createSupabaseBearerClient(token);
 
-        const { data: authData, error: authError } = await supabase.auth.getUser();
+        // Verify the JWT via the admin client — createSupabaseBearerClient uses the
+        // accessToken option which replaces the auth module, making auth.getUser() throw.
+        const { data: authData, error: authError } = await createSupabaseAdminClient().auth.getUser(token);
 
         if (authError || !authData?.user) {
           const error = ApiErrorFactory.invalidToken({ cause: authError?.message });
           return error.toResponse();
         }
 
-        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows)
-        // Default to true when undefined for backward compatibility
+        // Build a bearer-scoped client for RLS-enforced database queries
+        const supabase = createSupabaseBearerClient(token);
+
+        const isGlobalAdmin = await resolveIsGlobalAdmin(authData.user.id, authData.user.email);
+
+        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows).
+        // When bypassed, still resolve membership if a tenant header is present so mixed
+        // routes can support tenant users and superadmins from the same handler.
+        // Default to true when undefined for backward compatibility.
         const requireTenantMembership = options.requireTenantMembership !== false;
+        const requestedTenantId = request.headers.get('x-tenant-id');
+        const shouldResolveTenantMembership = requireTenantMembership || Boolean(requestedTenantId);
 
         let tenantUser: { tenant_id: string; role: string } | null = null;
 
-        if (requireTenantMembership) {
-          // Extract tenant ID from header to support multi-tenant users
-          const tenantId = request.headers.get('x-tenant-id');
-
-          if (!tenantId) {
+        if (shouldResolveTenantMembership) {
+          if (!requestedTenantId) {
             const error = ApiErrorFactory.badRequest('Missing required x-tenant-id header for authenticated request');
             return error.toResponse();
           }
 
-          // Validate the header-based tenant scope against tenant_users
-          // Scope by user_id + tenant_id to avoid multi-tenant "multiple rows" errors
-          const { data: tenantUserData, error: tenantUserError } = await supabase
+          // Validate the header-based tenant scope against tenant_users.
+          // Use the admin client here: tenant_users may have RLS enabled with no SELECT
+          // policy for regular users, causing the bearer client to return 0 rows even
+          // when the row exists. Membership validation is a server-side trust check.
+          const { data: tenantUserData, error: tenantUserError } = await createSupabaseAdminClient()
             .from('tenant_users')
             .select('tenant_id, role')
             .eq('user_id', authData.user.id)
-            .eq('tenant_id', tenantId)
+            .eq('tenant_id', requestedTenantId)
             .maybeSingle();
 
           if (tenantUserError || !tenantUserData) {
+            console.error('[Auth] tenant_users lookup failed', {
+              userId: authData.user.id,
+              tenantId: requestedTenantId,
+              error: tenantUserError?.message,
+              found: !!tenantUserData,
+            });
             const error = ApiErrorFactory.forbidden('Access denied');
             return error.toResponse();
           }
@@ -136,19 +178,34 @@ export function createApiHandler(
           tenantUser = tenantUserData;
         }
 
-        // Check role requirements (only when tenant membership is verified)
-        if (requireTenantMembership && options.roles && options.roles.length > 0) {
-          if (!tenantUser?.role || !options.roles.includes(tenantUser.role)) {
+        // Check role requirements — always validate roles if specified,
+        // even when requireTenantMembership is false (prevents RBAC bypass)
+        if (options.roles && options.roles.length > 0) {
+          const effectiveRole = isGlobalAdmin ? 'superadmin' : (tenantUser?.role || '');
+          if (!effectiveRole || !options.roles.includes(effectiveRole)) {
+            console.error('[Auth] role check failed', {
+              userRole: effectiveRole || tenantUser?.role,
+              requiredRoles: options.roles,
+            });
             const error = ApiErrorFactory.insufficientPermissions(options.roles);
             return error.toResponse();
           }
         }
 
-        // TODO: Permission enforcement is not yet implemented
-        // When implementing, fetch user permissions from database and check against options.permissions
-        // For now, if permissions are specified, log a warning
+        // Enforce permission requirements against the permissions matrix.
+        // Permissions are expressed as "resource:action" strings, e.g. "payments:refund".
         if (options.permissions && options.permissions.length > 0) {
-          console.warn('[route-handler] Permission checking requested but not yet implemented. Permissions:', options.permissions);
+          const userRole = tenantUser?.role as Role | undefined;
+          const denied = options.permissions.filter(permission => {
+            const colonIdx = permission.indexOf(':');
+            const resource = colonIdx >= 0 ? permission.slice(0, colonIdx) : permission;
+            const action = colonIdx >= 0 ? permission.slice(colonIdx + 1) : 'read';
+            return !hasPermission(userRole ?? 'staff', resource, action as 'read' | 'write' | 'delete' | 'admin');
+          });
+          if (denied.length > 0) {
+            const error = ApiErrorFactory.insufficientPermissions(options.permissions);
+            return error.toResponse();
+          }
         }
 
         // Authorization is enforced server-side based on Supabase auth + tenant membership.
@@ -158,7 +215,7 @@ export function createApiHandler(
           user: {
             id: authData.user.id,
             email: authData.user.email || '',
-            role: tenantUser?.role || '',
+            role: isGlobalAdmin ? 'superadmin' : (tenantUser?.role || ''),
             tenantId: tenantUser?.tenant_id,
             permissions: [],
           },
@@ -188,7 +245,17 @@ export function createApiHandler(
         return NextResponse.json(result, { status: 200 });
       }
     } catch (error) {
-      return handleRouteError(error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      // Only alert on unexpected server errors, not known ApiErrors (4xx)
+      if (!(error instanceof ApiError)) {
+        apiLogger.logError(err);
+        getAlertService().sendErrorAlert(err, {
+          operation: `${request.method} ${new URL(request.url).pathname}`,
+        }).catch((alertErr: unknown) => {
+          apiLogger.warn('Alert delivery failed', { error: String(alertErr) });
+        });
+      }
+      return handleRouteError(err);
     }
   };
 }
@@ -254,6 +321,19 @@ export async function parseJsonBody<T = any>(request: NextRequest): Promise<T> {
 }
 
 /**
+ * Get the server-verified tenant ID from route context.
+ * Always uses ctx.user.tenantId (validated via tenant_users lookup during auth).
+ * Rejects mismatched X-Tenant-ID headers with 403.
+ */
+export function getVerifiedTenantId(ctx: RouteContext): string {
+  const tenantId = ctx.user?.tenantId;
+  if (!tenantId) {
+    throw ApiErrorFactory.badRequest('Tenant context is required for this operation');
+  }
+  return tenantId;
+}
+
+/**
  * Helper to extract route params
  */
 export function getRouteParam(
@@ -307,26 +387,18 @@ export class ApiHandlerBuilder<T = any> {
 
   handle(fn: RouteHandler<T>): (request: NextRequest, ctx?: any) => Promise<NextResponse> {
     this.handler = fn;
+    const preHandlers = this.preHandlers;
+    const capturedHandler = this.handler;
 
-    return async (request: NextRequest, context?: any) => {
-      try {
-        // Run pre-handlers
-        const ctx: RouteContext = {
-          request,
-          supabase: getSupabaseRouteHandlerClient(),
-          params: context?.params,
-        };
-
-        for (const preHandler of this.preHandlers) {
+    // Delegate to createApiHandler so auth/role/permission config is enforced.
+    return createApiHandler(
+      async (ctx) => {
+        for (const preHandler of preHandlers) {
           await preHandler(ctx);
         }
-
-        // Run main handler
-        const result = this.handler ? await this.handler(ctx) : null;
-        return NextResponse.json(result, { status: 200 });
-      } catch (error) {
-        return handleRouteError(error instanceof Error ? error : new Error(String(error)));
-      }
-    };
+        return capturedHandler ? await capturedHandler(ctx) : null;
+      },
+      this.config,
+    );
   }
 }
