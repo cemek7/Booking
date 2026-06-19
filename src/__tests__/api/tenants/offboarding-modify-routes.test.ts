@@ -109,7 +109,7 @@ function chain(final: any): any {
 }
 
 // ─── Admin client mock ────────────────────────────────────────────────────────
-function adminMock() {
+function adminMock({ isGlobalAdmin = false }: { isGlobalAdmin?: boolean } = {}) {
   return {
     auth: {
       getUser: jest.fn().mockResolvedValue({
@@ -127,7 +127,12 @@ function adminMock() {
       if (t === 'tenant_users') {
         return chain({ data: { tenant_id: 'ten_1', role: 'owner' }, error: null });
       }
-      // offboarding_tasks insert, admins, etc.
+      if (t === 'admins') {
+        // resolveIsGlobalAdmin: superadmin routes need this to return a row so the
+        // role check resolves the effective role to 'superadmin'.
+        return chain({ data: isGlobalAdmin ? { email: 'o@test.com', status: 'active' } : null, error: null });
+      }
+      // offboarding_tasks insert, etc.
       return chain({ data: null, error: null });
     }),
   };
@@ -204,6 +209,13 @@ describe('offboarding modify routes', () => {
 
   // ── Superadmin PATCH with offboard body ──────────────────────────────────────
   describe('PATCH /api/superadmin/tenants/[tenantId]', () => {
+    beforeEach(() => {
+      // Superadmin route (requireTenantMembership: false, roles: ['superadmin']):
+      // the effective role comes from resolveIsGlobalAdmin, so the admins lookup
+      // must return a row.
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(adminMock({ isGlobalAdmin: true }));
+    });
+
     it('triggers off-boarding when offboard.reason is provided', async () => {
       const res = await PATCH(
         superadminPatchReq({ offboard: { reason: 'gdpr_erasure' } }) as unknown as NextRequest,

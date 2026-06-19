@@ -127,6 +127,11 @@ function adminMock() {
       }),
     },
     from: jest.fn((t: string) => {
+      if (t === 'tenant_users') {
+        // The route-handler validates the header tenant scope against tenant_users
+        // (admin-side) before the handler body runs. Owner satisfies these routes.
+        return chain({ data: { tenant_id: 'ten_1', role: 'owner' }, error: null });
+      }
       if (t === 'tenants') {
         // Covers both the lifecycle gate check AND the offboard route's tenant lookup.
         // lifecycle_state:'active' lets the gate pass; id/name satisfy the business logic.
