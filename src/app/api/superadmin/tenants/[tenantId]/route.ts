@@ -4,6 +4,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { topUpTenantWallet } from '@/lib/billing/ai-wallet';
+import { enterOffboarding } from '@/lib/offboarding/offboardService';
 
 type TenantPatchBody = {
   status?: 'active' | 'suspended' | 'inactive';
@@ -12,6 +13,7 @@ type TenantPatchBody = {
   wallet_topup_credits?: number;
   wallet_topup_reference?: string;
   wallet_topup_description?: string;
+  offboard?: { reason: 'non_payment' | 'gdpr_erasure' | 'superadmin' };
 };
 
 export const PATCH = createHttpHandler(
@@ -57,6 +59,16 @@ export const PATCH = createHttpHandler(
       }
     }
 
+    let offboardResult: { lifecycleState: string } | null = null;
+    if (body.offboard?.reason) {
+      offboardResult = await enterOffboarding(admin, {
+        tenantId,
+        reason: body.offboard.reason,
+        actorUserId: ctx.user!.id,
+        actorRole: 'superadmin',
+      });
+    }
+
     const { data: tenant } = await admin
       .from('tenants')
       .select('id, name, status, plan, created_at, updated_at, settings')
@@ -66,6 +78,7 @@ export const PATCH = createHttpHandler(
     return {
       tenant,
       wallet: walletResult,
+      offboard: offboardResult,
     };
   },
   'PATCH',
