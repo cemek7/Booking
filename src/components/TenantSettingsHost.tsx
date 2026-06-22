@@ -12,6 +12,15 @@ const TenantSettings = dynamic(() => import('./TenantSettingsClient'), {
   loading: () => <div className="p-4 border rounded bg-white max-w-2xl">Loading…</div>,
 });
 
+// Close-Account section loads its own tenant + lifecycle state, so it mounts
+// here without editing the heavily-iterated TenantSettingsClient.
+const CloseAccount = dynamic(() => import('./settings/CloseAccountLoader'), { ssr: false });
+
 export default function TenantSettingsHost() {
-  return <TenantSettings />;
+  return (
+    <>
+      <TenantSettings />
+      <CloseAccount />
+    </>
+  );
 }

@@ -34,7 +34,7 @@ export const GET = createHttpHandler(
 
     const { data: row, error } = await ctx.supabase
       .from('tenants')
-      .select('id, name, timezone, preferred_llm_model, llm_token_rate')
+      .select('id, name, timezone, preferred_llm_model, llm_token_rate, lifecycle_state, scheduled_purge_at')
       .eq('id', tenantId)
       .maybeSingle();
 
