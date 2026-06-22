@@ -24,8 +24,9 @@ const OPERATIONAL_TABLES = [
   'whatsapp_media', 'whatsapp_message_queue', 'whatsapp_sessions',
   'whatsapp_connection_logs', 'whatsapp_connection_metrics', 'messages',
   'dialog_sessions', 'chats', 'whatsapp_conversations', 'whatsapp_connections',
-  // Support
-  'support_messages', 'support_assignments', 'support_tickets',
+  // Support (support_messages/support_assignments have NO tenant_id — they are
+  // scoped via ticket_id and purged separately in purgeSupportChildren below).
+  'support_tickets',
   // Notifications / reminders
   'booking_notifications', 'scheduled_notifications', 'notifications', 'reminders',
   // Marketing / SIAS / escalation
@@ -40,6 +41,20 @@ const OPERATIONAL_TABLES = [
   'whatsapp_provider_secrets', 'whatsapp_configurations',
   'tenant_reminder_settings', 'tenant_tone_profiles', 'tenant_modules',
 ] as const;
+
+/**
+ * Purge support_messages + support_assignments, which have no tenant_id and are
+ * scoped only via ticket_id. Deletes them for every support ticket owned by the
+ * tenant (don't rely on an unverified FK cascade — this is PII).
+ */
+async function purgeSupportChildren(admin: SupabaseClient, tenantId: string): Promise<void> {
+  const { data: tickets } = await admin
+    .from('support_tickets').select('id').eq('tenant_id', tenantId);
+  const ticketIds = ((tickets ?? []) as Array<{ id: string }>).map((t) => t.id);
+  if (ticketIds.length === 0) return;
+  await admin.from('support_messages').delete().in('ticket_id', ticketIds);
+  await admin.from('support_assignments').delete().in('ticket_id', ticketIds);
+}
 
 export async function runDueTeardownTasks(admin: SupabaseClient): Promise<number> {
   const { data: tasks } = await admin
@@ -63,6 +78,8 @@ export async function runOperationalPurge(admin: SupabaseClient): Promise<number
     if (!allSettled) continue;
 
     await admin.from('tenants').update({ lifecycle_state: 'purging' }).eq('id', tenant.id);
+    // Ticket-scoped children first (no tenant_id of their own).
+    await purgeSupportChildren(admin, tenant.id);
     for (const table of OPERATIONAL_TABLES) {
       await admin.from(table).delete().eq('tenant_id', tenant.id);
     }

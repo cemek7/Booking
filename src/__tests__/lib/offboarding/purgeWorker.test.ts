@@ -52,6 +52,15 @@ describe('runOperationalPurge', () => {
     expect(deletes).not.toContain('audit_logs');
     expect(updates.at(-1)).toEqual(expect.objectContaining({ lifecycle_state: 'purged' }));
   });
+
+  it('purges support_messages + support_assignments by ticket_id (no tenant_id of their own)', async () => {
+    pushDb([{ id: 't1', scheduled_purge_at: new Date(Date.now() - 1000).toISOString() }]); // due tenants
+    pushDb([{ task_type: 'export_data', status: 'done' }]);                                  // gating tasks
+    pushDb([{ id: 'tk1' }, { id: 'tk2' }]);                                                   // support_tickets ids
+    const n = await runOperationalPurge(admin);
+    expect(n).toBe(1);
+    expect(deletes).toEqual(expect.arrayContaining(['support_messages', 'support_assignments', 'support_tickets']));
+  });
 });
 
 describe('runFinancialPurge', () => {
