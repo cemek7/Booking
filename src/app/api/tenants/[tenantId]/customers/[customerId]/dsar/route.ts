@@ -5,6 +5,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { exportCustomerData } from '@/lib/dsar/export';
 import { eraseCustomerData } from '@/lib/dsar/erase';
+import { writeAuditLog } from '@/lib/audit/log';
 
 /** Resolve + tenant-guard the route params. */
 function resolveParams(ctx: { params?: Record<string, string>; user?: { tenantId?: string } }) {
@@ -28,7 +29,14 @@ export const GET = createHttpHandler(
     const { tenantId, customerId } = resolveParams(ctx);
     const admin = createSupabaseAdminClient();
     const data = await exportCustomerData(admin, { tenantId, customerId });
-    // TODO(audit): record this export in audit_logs once its columns are confirmed.
+    await writeAuditLog(admin, {
+      action: 'customer.dsar.export',
+      tenantId,
+      userId: ctx.user?.id,
+      userRole: ctx.user?.role,
+      result: 'success',
+      metadata: { customerId },
+    });
     return { success: true, export: data };
   },
   'GET',
@@ -48,7 +56,14 @@ export const POST = createHttpHandler(
 
     const admin = createSupabaseAdminClient();
     const report = await eraseCustomerData(admin, { tenantId, customerId, dryRun });
-    // TODO(audit): record this erasure in audit_logs once its columns are confirmed.
+    await writeAuditLog(admin, {
+      action: dryRun ? 'customer.dsar.erase.dryrun' : 'customer.dsar.erase',
+      tenantId,
+      userId: ctx.user?.id,
+      userRole: ctx.user?.role,
+      result: 'success',
+      metadata: { customerId, dryRun, actions: report.actions },
+    });
     return { success: true, report };
   },
   'POST',
