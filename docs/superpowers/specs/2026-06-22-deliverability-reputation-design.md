@@ -74,6 +74,18 @@ Rules (in order):
 
 `WINDOW_MS = 24*60*60*1000` (env-tunable `META_SERVICE_WINDOW_HOURS`, default 24).
 
+> **Two correctness notes:**
+> - **Consent model:** the gate uses `last_inbound_at` (the customer messaged/booked this tenant) as
+>   *implicit* opt-in and `opted_out_at` (STOP) as the override. Capturing *explicit* opt-in checkboxes is
+>   out of scope here (it lives with the booking-form opt-in work); for v1, "previously transacted with this
+>   tenant" is the opt-in basis, plus a valid template outside the window.
+> - **Per-tenant window ⊆ Meta's per-number window (safe by construction):** our `last_inbound_at` is keyed
+>   per `(customer, tenant)`, while Meta's 24h window is per `(number, customer)`. On the shared number a
+>   customer who messaged tenant A also opens Meta's window for the number — but our gate still treats a
+>   send from tenant B (whom they never messaged) as *outside* window → template required. So our rule is
+>   always **stricter-or-equal** to Meta's, which is the correct direction and also prevents the
+>   cross-tenant "who is this?" leak.
+
 ### Unit 2 — Template registry: `message_templates` table + `templateRegistry.ts`
 
 Maps an internal `message_type` to the WABA's approved template. Platform-level (the shared number's WABA approves templates once); a `tenant_id IS NULL` row is the platform default, with optional per-tenant overrides for graduated tenants on their own WABA.
@@ -97,36 +109,44 @@ message_templates
 
 ### Unit 3 — Send governor: `tenant_messaging_stats` + `sendGovernor.ts`
 
-Per-tenant rolling-24h accounting and risk decision.
+Per-tenant fixed-window 24h accounting and risk decision.
 
 ```
 tenant_messaging_stats
   tenant_id        UUID PK
-  window_start     TIMESTAMPTZ       -- start of the current rolling 24h bucket
-  sent_24h         INT DEFAULT 0
-  initiated_24h    INT DEFAULT 0
-  cold_outbound_24h INT DEFAULT 0    -- initiated sends with no inbound in window
+  window_start     TIMESTAMPTZ        -- start of the current 24h accounting window (see note)
+  sent_24h         INT DEFAULT 0       -- total messages (velocity)
+  initiated_24h    INT DEFAULT 0       -- business-initiated messages (velocity)
+  initiated_recipients_24h INT DEFAULT 0  -- UNIQUE business-initiated recipients (the limit unit)
+  recipients_seen  JSONB DEFAULT '[]'  -- distinct recipient hashes this window, to dedupe the count
+  cold_outbound_24h INT DEFAULT 0      -- initiated template sends to non-engaged (out-of-window) recipients
   opt_outs_24h     INT DEFAULT 0
   failures_24h     INT DEFAULT 0
-  risk_score       NUMERIC DEFAULT 0 -- 0..1
+  risk_score       NUMERIC DEFAULT 0   -- 0..1
   quarantined_until TIMESTAMPTZ NULL
   updated_at       TIMESTAMPTZ
 ```
 
+> **Window note (honest about the approximation):** Meta enforces a *true rolling* 24h. v1 uses a
+> **fixed window** that resets when `now - window_start ≥ 24h` (simpler, no per-event log). This can permit
+> a ~2× burst across a reset boundary; we mitigate by setting `tenantWeight` conservatively (well under the
+> per-number tier). A true sliding-window counter is a documented v2 upgrade. `recipients_seen` is bounded
+> (hashed phone, capped) and cleared on window reset.
+
 `risk_score` = weighted blend (weights env-tunable), each component **explicitly scaled to 0..1** so that
 small-but-dangerous rates register (a raw 2% opt-out rate must read as "high", not 0.02):
-- `volumeScore` = `min(1, initiated_24h / tenantAllocation)`
+- `volumeScore` = `min(1, initiated_recipients_24h / tenantAllocation)`  ← unique recipients, the limit unit
 - `coldScore` = `cold_outbound_24h / max(initiated_24h, 1)` (already 0..1)
 - `optOutScore` = `min(1, optOutRate / OPT_OUT_DANGER)` where `optOutRate = opt_outs_24h / max(sent_24h,1)`, `OPT_OUT_DANGER = 0.02` (2% ⇒ 1.0)
 - `failureScore` = `min(1, failureRate / FAILURE_DANGER)` where `failureRate = failures_24h / max(sent_24h,1)`, `FAILURE_DANGER = 0.05` (5% ⇒ 1.0)
 
 `evaluateSend(admin, tenantId, numberQuality)` → `{ allow, throttleDelayMs?, quarantine?, reason }`:
 - If `quarantined_until > now` → `allow:false, reason:'quarantined'` (initiated only; replies bypass the governor).
-- Compute `tenantAllocation` = `numberLimitPer24h × qualityFactor × tenantWeight` (see Unit 4). If `initiated_24h ≥ tenantAllocation` → `allow:false, reason:'allocation_exhausted'`. **Overflow handling (no queue):** the cron rebooking/nudge sends already self-retry on their next nightly run (throttled by their existing `metadata` sent-at keys), so a skipped night is naturally re-attempted. The real-time **waitlist** notification is best-effort — overflow is **dropped with a logged skip** (acceptable: a waitlist ping is non-critical and the customer can still book). No new retry queue is introduced.
+- Compute `tenantAllocation` = `numberLimitPer24h × qualityFactor × tenantWeight` (see Unit 4), where `numberLimitPer24h` is Meta's **unique-recipient** tier limit. A send is allowed against allocation when the recipient is **already counted this window** (`recipients_seen` contains it — a follow-up message to someone you've already initiated to, costs no new recipient) OR `initiated_recipients_24h < tenantAllocation`. Otherwise → `allow:false, reason:'allocation_exhausted'`. **Overflow handling (no queue):** the cron rebooking/nudge sends already self-retry on their next nightly run (throttled by their existing `metadata` sent-at keys), so a skipped night is naturally re-attempted. The real-time **waitlist** notification is best-effort — overflow is **dropped with a logged skip** (acceptable: a waitlist ping is non-critical and the customer can still book). No new retry queue is introduced.
 - If `risk_score ≥ QUARANTINE_THRESHOLD` → set `quarantined_until = now + QUARANTINE_HOURS`, `allow:false, reason:'risk_quarantine'`.
 - Else `allow:true` (with an optional small `throttleDelayMs` pacing when near allocation).
 
-Counters are incremented after each send via `recordSend(admin, tenantId, {kind, cold, failed})`; the 24h bucket resets when `now - window_start ≥ 24h`.
+Counters are incremented after each send via `recordSend(admin, tenantId, {kind, recipient, cold, failed})`: it bumps `sent_24h`/`initiated_24h`, and bumps `initiated_recipients_24h` **only when `recipient` is new** to `recipients_seen` this window. The fixed window resets (`recipients_seen → []`, counters → 0) when `now - window_start ≥ 24h`.
 
 ### Unit 4 — Meta quality/limit webhooks: `whatsapp_number_quality` + `metaQualityWebhook.ts`
 
@@ -190,6 +210,7 @@ Replies (`initiated:false`) keep their current path; we only add `recordSend(kin
 
 - `META_SERVICE_WINDOW_HOURS` = 24
 - `RISK_WEIGHTS` = volume .35 / cold .30 / optOut .20 / failure .15
+- `OPT_OUT_DANGER` = 0.02 (2% opt-out ⇒ score 1.0), `FAILURE_DANGER` = 0.05 (5% failure ⇒ 1.0)
 - `QUARANTINE_THRESHOLD` = 0.8, `QUARANTINE_HOURS` = 24
 - `QUALITY_FACTOR` = GREEN 1.0 / YELLOW 0.5 / RED 0.0-for-cold
 - `TENANT_WEIGHT` = equal share by default (active tenants on the number); plan may make it plan-tier-weighted
