@@ -52,8 +52,8 @@ export const GET = createHttpHandler(
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const body = await parseJsonBody<{ token?: string }>(ctx.request).catch(() => ({}));
-    return processToken(body?.token);
+    const body: { token?: string } = await parseJsonBody<{ token?: string }>(ctx.request).catch(() => ({}));
+    return processToken(body.token);
   },
   'POST',
   { auth: false },

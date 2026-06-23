@@ -51,8 +51,8 @@ export const GET = createHttpHandler(
 export const POST = createHttpHandler(
   async (ctx) => {
     const { tenantId, customerId } = resolveParams(ctx);
-    const body = await parseJsonBody<{ confirm?: boolean }>(ctx.request).catch(() => ({}));
-    const dryRun = body?.confirm !== true;
+    const body: { confirm?: boolean } = await parseJsonBody<{ confirm?: boolean }>(ctx.request).catch(() => ({}));
+    const dryRun = body.confirm !== true;
 
     const admin = createSupabaseAdminClient();
     const report = await eraseCustomerData(admin, { tenantId, customerId, dryRun });
