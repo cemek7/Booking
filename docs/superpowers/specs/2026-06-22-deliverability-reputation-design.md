@@ -93,6 +93,8 @@ message_templates
 
 `resolveTemplate(admin, tenantId, messageType, language)` → returns an `approved` template (tenant override first, else platform default), or `null`. The gate treats `null` as "hold outside window".
 
+> **Provider interface (verified):** `MetaAdapter.sendTemplateMessage(to, templateName, parameters?: Array<{default: string}>)` currently **hardcodes `language: { code: 'en_US' }`**. So `param_mapping` must produce an **ordered `Array<{default: string}>`** for the body `{{1}}..{{n}}`, and the plan must either (a) thread `language` through `sendTemplateMessage` (small provider change) or (b) constrain v1 to `en_US` and store `language='en_US'` in the registry. Lean: thread `language` through — it's a one-line provider change and avoids a hidden constraint.
+
 ### Unit 3 — Send governor: `tenant_messaging_stats` + `sendGovernor.ts`
 
 Per-tenant rolling-24h accounting and risk decision.
@@ -111,15 +113,16 @@ tenant_messaging_stats
   updated_at       TIMESTAMPTZ
 ```
 
-`risk_score` = weighted blend (weights env-tunable), each component normalized 0..1:
-- `volumeScore` = initiated_24h / tenantAllocation
-- `coldScore` = cold_outbound_24h / max(initiated_24h, 1)
-- `optOutScore` = opt_outs_24h / max(sent_24h, 1) (scaled — even 1–2% is high)
-- `failureScore` = failures_24h / max(sent_24h, 1)
+`risk_score` = weighted blend (weights env-tunable), each component **explicitly scaled to 0..1** so that
+small-but-dangerous rates register (a raw 2% opt-out rate must read as "high", not 0.02):
+- `volumeScore` = `min(1, initiated_24h / tenantAllocation)`
+- `coldScore` = `cold_outbound_24h / max(initiated_24h, 1)` (already 0..1)
+- `optOutScore` = `min(1, optOutRate / OPT_OUT_DANGER)` where `optOutRate = opt_outs_24h / max(sent_24h,1)`, `OPT_OUT_DANGER = 0.02` (2% ⇒ 1.0)
+- `failureScore` = `min(1, failureRate / FAILURE_DANGER)` where `failureRate = failures_24h / max(sent_24h,1)`, `FAILURE_DANGER = 0.05` (5% ⇒ 1.0)
 
 `evaluateSend(admin, tenantId, numberQuality)` → `{ allow, throttleDelayMs?, quarantine?, reason }`:
 - If `quarantined_until > now` → `allow:false, reason:'quarantined'` (initiated only; replies bypass the governor).
-- Compute `tenantAllocation` = `numberLimitPer24h × qualityFactor × tenantWeight` (see Unit 4). If `initiated_24h ≥ tenantAllocation` → `allow:false, reason:'allocation_exhausted'` (overflow deferred to next window by the cron, not dropped).
+- Compute `tenantAllocation` = `numberLimitPer24h × qualityFactor × tenantWeight` (see Unit 4). If `initiated_24h ≥ tenantAllocation` → `allow:false, reason:'allocation_exhausted'`. **Overflow handling (no queue):** the cron rebooking/nudge sends already self-retry on their next nightly run (throttled by their existing `metadata` sent-at keys), so a skipped night is naturally re-attempted. The real-time **waitlist** notification is best-effort — overflow is **dropped with a logged skip** (acceptable: a waitlist ping is non-critical and the customer can still book). No new retry queue is introduced.
 - If `risk_score ≥ QUARANTINE_THRESHOLD` → set `quarantined_until = now + QUARANTINE_HOURS`, `allow:false, reason:'risk_quarantine'`.
 - Else `allow:true` (with an optional small `throttleDelayMs` pacing when near allocation).
 
@@ -135,7 +138,11 @@ New webhook field handlers (mounted in the existing Meta webhook route) for:
 
 ```
 whatsapp_number_quality
-  phone_number_id  TEXT PK
+  phone_number_id  TEXT PK          -- the Meta phone_number_id; for the SHARED number this is
+                                    -- process.env.WHATSAPP_PHONE_NUMBER_ID (the default/platform Meta
+                                    -- number is env-configured via providerSelection, NOT a
+                                    -- whatsapp_configurations row). Dedicated tenants key on their
+                                    -- own whatsapp_configurations.meta_phone_number_id.
   quality_rating   TEXT             -- 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN'
   messaging_tier   TEXT             -- 'TIER_250' | 'TIER_1K' | 'TIER_10K' | 'TIER_100K' | 'TIER_UNLIMITED'
   limit_per_24h    INT
@@ -143,7 +150,18 @@ whatsapp_number_quality
   updated_at       TIMESTAMPTZ
 ```
 
-`qualityFactor`: GREEN → 1.0, YELLOW → 0.5 (halve allocations, pre-emptive), RED → 0.0 for new/cold initiated sends (only in-window replies + already-engaged conversations continue) + auto-quarantine the top-risk tenants. This is the early-warning that converts a yellow rating into corrective throttling **before** it goes red/banned.
+> **Shared-number model (verified):** the shared number is the platform Meta number from
+> `WHATSAPP_PHONE_NUMBER_ID`/`WHATSAPP_ACCESS_TOKEN` env (`providerSelection.buildDefaultWhatsAppProviderConfig`).
+> Inbound is attributed to a tenant by **routing code** (`identityResolver.resolveIncoming`) at
+> `/api/webhooks/whatsapp`. Per-tenant routing-code tenants all share this one number's quality + limit —
+> which is exactly why the communal-reputation risk exists. Dedicated tenants have their own
+> `whatsapp_configurations` row + number (isolated reputation).
+
+**Quality response** (two distinct levers, so RED doesn't accidentally block safe in-window traffic):
+- `qualityFactor` scales the **allocation** only: GREEN → 1.0, YELLOW → 0.5 (halve, pre-emptive), RED → 0.25.
+- A separate **cold-send hold** keys off RED: when `quality_rating = 'RED'`, the governor holds **cold** initiated sends (no inbound in window) regardless of allocation, and auto-quarantines the top-risk tenants — while **in-window replies and already-engaged (within-24h) conversations keep flowing**. Free-form replies are never blocked by quality.
+
+This is the early-warning that converts a yellow rating into corrective throttling **before** it goes red/banned, without choking the legitimate in-window traffic that actually rebuilds quality.
 
 ### Unit 5 — Graduation advisor: `graduationAdvisor.ts` (nightly)
 
@@ -188,7 +206,7 @@ Replies (`initiated:false`) keep their current path; we only add `recordSend(kin
 - Exact Meta webhook payload shapes for each field (verify against current Graph API version) and where to mount them in the existing Meta webhook route.
 - Whether `tenant_messaging_stats` 24h buckets are rolling-reset in `recordSend` or swept by the nightly cron (lean: reset-on-write + nightly safety sweep).
 - Param-mapping format for templates (ordered positional `{{1}}..{{n}}` from a named context).
-- Confirm the shared number's `phone_number_id` source (from `whatsapp_configurations.meta_phone_number_id`).
+- Shared-number `phone_number_id` source is **env `WHATSAPP_PHONE_NUMBER_ID`** (verified); the plan must read it from there for the shared path and from `whatsapp_configurations.meta_phone_number_id` only for dedicated tenants.
 - Seed/registration path for the initial approved templates (rebooking_followup, rebooking_nudge, waitlist_slot).
 
 ## Non-goals
