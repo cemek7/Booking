@@ -97,7 +97,12 @@ export class MetaAdapter implements WhatsAppProviderClient {
     }
   }
 
-  async sendTemplateMessage(to: string, templateName: string, parameters?: Array<{ default: string }>) {
+  async sendTemplateMessage(
+    to: string,
+    templateName: string,
+    parameters?: Array<{ default: string }>,
+    language = 'en_US'
+  ) {
     try {
       const payload: Record<string, unknown> = {
         messaging_product: 'whatsapp',
@@ -105,7 +110,7 @@ export class MetaAdapter implements WhatsAppProviderClient {
         type: 'template',
         template: {
           name: templateName,
-          language: { code: 'en_US' },
+          language: { code: language },
           components: parameters && parameters.length > 0
             ? [{
                 type: 'body',

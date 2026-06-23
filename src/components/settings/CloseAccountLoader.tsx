@@ -30,10 +30,9 @@ export default function CloseAccountLoader() {
         setTenantId(id);
         setName(current?.name ?? '');
 
-        const res = await authFetch(`/api/admin/tenant/${id}/settings`);
-        if (res.ok) {
-          const json = await res.json();
-          const row = json?.row ?? null;
+        const res = await authFetch<{ row?: { lifecycle_state?: string; scheduled_purge_at?: string | null } }>(`/api/admin/tenant/${id}/settings`);
+        if (!res.error) {
+          const row = res.data?.row ?? null;
           if (row?.lifecycle_state) setLifecycleState(row.lifecycle_state as LifecycleState);
           setScheduledPurgeAt(row?.scheduled_purge_at ?? null);
         }

@@ -19,7 +19,8 @@ export interface WhatsAppProviderClient {
   sendTemplateMessage?(
     to: string,
     templateName: string,
-    parameters?: Array<{ default: string }>
+    parameters?: Array<{ default: string }>,
+    language?: string
   ): Promise<{ success: boolean; messageId?: string }>;
   sendMediaMessage(
     to: string,

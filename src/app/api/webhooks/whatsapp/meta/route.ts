@@ -6,6 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueueJob } from '@/lib/webhooks';
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQualityWebhook';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -125,6 +126,14 @@ export async function POST(request: NextRequest) {
   for (const entry of entries) {
     const changes = entry.changes ?? [];
     for (const change of changes) {
+      if (
+        ['phone_number_quality_update', 'messaging_limits', 'account_update', 'message_template_status_update']
+          .includes(change.field ?? '')
+      ) {
+        await ingestQualityWebhook(supabase as never, change);
+        continue;
+      }
+
       if (change.field !== 'messages') continue;
       const value = change.value ?? {};
       const metaPhoneNumberId = value.metadata?.phone_number_id;

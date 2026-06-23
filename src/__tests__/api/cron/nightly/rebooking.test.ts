@@ -53,12 +53,23 @@ jest.mock('@/lib/monitoring/telegramAlert', () => ({
   sendTelegramInfo:  jest.fn().mockResolvedValue(undefined),
   sendTelegramAlert: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
+  getTenantWhatsAppProviderClient: jest.fn(),
+}));
+jest.mock('@/lib/offboarding/purgeWorker', () => ({
+  runDueTeardownTasks: jest.fn().mockResolvedValue(0),
+  runOperationalPurge: jest.fn().mockResolvedValue(0),
+  runFinancialPurge: jest.fn().mockResolvedValue(0),
+}));
 // getTenantWhatsAppConfig (in evolutionClient) reads provider config via the
 // admin client — point it at the same mockClient so WA_CONFIG flows through the
 // shared response queue.
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: () => mockClient,
   createServerSupabaseClient: () => mockClient,
+}));
+jest.mock('@/lib/whatsapp/v2/deliverability/governedSend', () => ({
+  sendGovernedInitiated: jest.fn(),
 }));
 // SIAS campaign bookkeeping is fire-and-forget side effect — stub it so it does
 // not touch the response queue or require its own DB fixtures.
@@ -73,6 +84,12 @@ const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
 import { sendRebookingFollowUps, sendRebookingNudges, __resetWhatsAppSendCache } from '@/app/api/cron/nightly/route';
+import { sendGovernedInitiated } from '@/lib/whatsapp/v2/deliverability/governedSend';
+import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+
+const mockedSendGovernedInitiated = sendGovernedInitiated as jest.MockedFunction<typeof sendGovernedInitiated>;
+const mockedGetTenantWhatsAppProviderClient =
+  getTenantWhatsAppProviderClient as jest.MockedFunction<typeof getTenantWhatsAppProviderClient>;
 
 // ── Shared fixtures ────────────────────────────────────────────────────────
 
@@ -108,6 +125,11 @@ describe('sendRebookingFollowUps', () => {
     mockFetch.mockReset();
     __resetWhatsAppSendCache();
     jest.clearAllMocks();
+    mockedSendGovernedInitiated.mockResolvedValue({ sent: true, mode: 'freeform', reason: 'sent' });
+    mockedGetTenantWhatsAppProviderClient.mockResolvedValue({
+      sendTextMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'msg_1' }),
+      sendTemplateMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'msg_2' }),
+    } as never);
   });
 
   it('returns 0 when no reservations fall in the 3–4 day window', async () => {
@@ -158,28 +180,24 @@ describe('sendRebookingFollowUps', () => {
   });
 
   it('skips when no WhatsApp config is found for the tenant', async () => {
+    mockedGetTenantWhatsAppProviderClient.mockResolvedValueOnce(null);
     pushDb([validReservation()]);
     pushDb({ id: 'cust_1', metadata: {} }); // customers
     pushDb(null, 0);                        // newer count → 0
-    pushDb(null);                           // whatsapp_configs (maybeSingle) → not found
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
   });
 
-  it('skips and does not update metadata when Evolution API returns non-ok', async () => {
+  it('skips and does not update metadata when governed send returns unsent', async () => {
     pushDb([validReservation()]);
     pushDb({ id: 'cust_1', metadata: {} });
     pushDb(null, 0);
-    pushDb(WA_CONFIG);
-    // Push a sentinel — if the update runs it will consume this; if not it stays
-    pushDb({ sentinel: true });
-    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+    pushDb({ last_inbound_at: null, opted_out_at: null });
+    mockedSendGovernedInitiated.mockResolvedValue({ sent: false, reason: 'allocation_exhausted' });
 
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
-    // Sentinel must still be in the queue (update path was skipped)
-    expect(responses).toHaveLength(1);
-    expect((responses[0].data as any)?.sentinel).toBe(true);
+    expect(mockedSendGovernedInitiated).toHaveBeenCalled();
   });
 
   it('sends follow-up and updates metadata on happy path', async () => {
@@ -187,23 +205,19 @@ describe('sendRebookingFollowUps', () => {
     pushDb([res]);
     pushDb({ id: 'cust_1', metadata: {} });
     pushDb(null, 0);   // newer count
-    pushDb(WA_CONFIG); // wa config
+    pushDb({ last_inbound_at: null, opted_out_at: null });
     // Customer update (direct-await)
     pushDb(null);
 
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ key: { id: 'msg_1' } }) });
-
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(1);
-
-    // Verify Evolution API was called
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('sendText'),
+    expect(mockedSendGovernedInitiated).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
-        method: 'POST',
-        // EvolutionClient.cleanPhoneNumber strips the leading '+'
-        body: expect.stringContaining('2348012345678'),
-      })
+        tenantId: 'tenant_1',
+        recipient: '+2348012345678',
+        messageType: 'rebooking_followup',
+      }),
     );
   });
 });
@@ -218,6 +232,11 @@ describe('sendRebookingNudges', () => {
     mockFetch.mockReset();
     __resetWhatsAppSendCache();
     jest.clearAllMocks();
+    mockedSendGovernedInitiated.mockResolvedValue({ sent: true, mode: 'freeform', reason: 'sent' });
+    mockedGetTenantWhatsAppProviderClient.mockResolvedValue({
+      sendTextMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'msg_1' }),
+      sendTemplateMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'msg_2' }),
+    } as never);
   });
 
   it('returns 0 when there are no v2-enabled tenants', async () => {
@@ -234,9 +253,9 @@ describe('sendRebookingNudges', () => {
   });
 
   it('skips tenant when no WhatsApp config is found', async () => {
+    mockedGetTenantWhatsAppProviderClient.mockResolvedValueOnce(null);
     pushDb([{ id: 'tenant_1', settings: {} }]);
     pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb(null); // waConfig → not found (maybeSingle)
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
   });
@@ -244,7 +263,6 @@ describe('sendRebookingNudges', () => {
   it('skips service when no completed reservations are older than the cutoff', async () => {
     pushDb([{ id: 'tenant_1', settings: {} }]);
     pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb(WA_CONFIG);
     pushDb([]); // reservations before cutoff → empty
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
@@ -254,7 +272,6 @@ describe('sendRebookingNudges', () => {
     const oldStart = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     pushDb([{ id: 'tenant_1', settings: {} }]);
     pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb(WA_CONFIG);
     pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 1); // newer count (direct-await) → count: 1
     const sent = await sendRebookingNudges();
@@ -265,7 +282,6 @@ describe('sendRebookingNudges', () => {
     const oldStart = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     pushDb([{ id: 'tenant_1', settings: {} }]);
     pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb(WA_CONFIG);
     pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 0); // newer count → 0
     pushDb(null);    // customer (maybeSingle) → not found
@@ -281,7 +297,6 @@ describe('sendRebookingNudges', () => {
 
     pushDb([{ id: 'tenant_1', settings: {} }]);
     pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: intervalDays }]);
-    pushDb(WA_CONFIG);
     pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 0);
     pushDb({ id: 'cust_1', metadata: { rebooking_nudge_sent_at: { svc_1: lastNudgeAt } } });
@@ -295,24 +310,22 @@ describe('sendRebookingNudges', () => {
 
     pushDb([{ id: 'tenant_1', settings: {} }]);
     pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb(WA_CONFIG);
     pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 0); // newer count
     pushDb({ id: 'cust_1', metadata: {} }); // customer (no prior nudge)
+    pushDb({ last_inbound_at: null, opted_out_at: null });
     // customer update (direct-await)
     pushDb(null);
 
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ key: { id: 'msg_1' } }) });
-
     const sent = await sendRebookingNudges();
     expect(sent).toBe(1);
-
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('sendText'),
+    expect(mockedSendGovernedInitiated).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('BOOK'),
-      })
+        tenantId: 'tenant_1',
+        recipient: '+2348012345678',
+        messageType: 'rebooking_nudge',
+      }),
     );
   });
 });

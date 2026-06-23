@@ -19,6 +19,8 @@ import type { WhatsAppProviderClient } from '@/lib/whatsapp/providers/types';
 import { siasOperations } from '@/lib/sias-operations';
 import { runDueSiasCampaigns } from '@/lib/siasCampaignRunner';
 import { brandCustomerText } from '@/lib/whatsapp/v2/outboundBranding';
+import { sendGovernedInitiated } from '@/lib/whatsapp/v2/deliverability/governedSend';
+import { runGraduationAdvisor } from '@/lib/whatsapp/v2/deliverability/graduationAdvisor';
 import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/lib/offboarding/purgeWorker';
 
 const supabaseAdmin = createClient(
@@ -27,6 +29,16 @@ const supabaseAdmin = createClient(
 );
 
 export const maxDuration = 300; // 5-minute budget for nightly job
+
+function toTemplateParameters(paramMapping: unknown[]): Array<{ default: string }> {
+  return paramMapping.map((entry) => {
+    if (entry && typeof entry === 'object' && 'default' in entry) {
+      return { default: String((entry as { default?: unknown }).default ?? '') };
+    }
+
+    return { default: String(entry ?? '') };
+  });
+}
 
 export async function runOffboardingSweep(): Promise<{ teardown: number; operational: number; financial: number }> {
   const teardown = await runDueTeardownTasks(supabaseAdmin);
@@ -129,6 +141,17 @@ export async function GET(request: Request): Promise<NextResponse> {
     console.error('[cron/nightly] offboarding sweep failed', e);
   }
 
+  // ── Task 9: Deliverability graduation advisor ─────────────────────────────
+  try {
+    results.deliverability_graduation = {
+      advised: await runGraduationAdvisor(supabaseAdmin as never),
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[cron/nightly] deliverability graduation advisor failed', err);
+    results.deliverability_graduation_error = msg;
+  }
+
   await sendTelegramInfo(`Nightly cron complete ✅\n${JSON.stringify(results, null, 2)}`);
 
   return NextResponse.json(results);
@@ -156,6 +179,23 @@ async function runDueCampaignsForAllTenants(): Promise<{ processed: number; deli
   }
 
   return { processed, delivered, failed, tenants: tenantIds.length };
+}
+
+async function loadConversationFlags(
+  tenantId: string,
+  phone: string,
+): Promise<{ last_inbound_at: string | null; opted_out_at: string | null }> {
+  const { data } = await supabaseAdmin
+    .from('whatsapp_conversations')
+    .select('last_inbound_at, opted_out_at')
+    .eq('tenant_id', tenantId)
+    .eq('phone_number', phone)
+    .maybeSingle();
+
+  return {
+    last_inbound_at: typeof data?.last_inbound_at === 'string' ? data.last_inbound_at : null,
+    opted_out_at: typeof data?.opted_out_at === 'string' ? data.opted_out_at : null,
+  };
 }
 
 // ─── Insights aggregation ─────────────────────────────────────────────────────
@@ -303,6 +343,7 @@ export async function sendRebookingFollowUps(): Promise<number> {
     if (!service?.rebooking_interval_days) continue;
     if (!reservation.customer_phone) continue;
 
+    const recipientPhone = reservation.customer_phone;
     const serviceId = reservation.service_id as string;
 
     // Check if follow-up was already sent for this customer + service
@@ -310,7 +351,7 @@ export async function sendRebookingFollowUps(): Promise<number> {
       .from('customers')
       .select('id, metadata')
       .eq('tenant_id', reservation.tenant_id)
-      .eq('phone', reservation.customer_phone)
+      .eq('phone', recipientPhone)
       .maybeSingle();
 
     if (!customer) continue;
@@ -325,7 +366,7 @@ export async function sendRebookingFollowUps(): Promise<number> {
       .from('reservations')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', reservation.tenant_id)
-      .eq('customer_phone', reservation.customer_phone)
+      .eq('customer_phone', recipientPhone)
       .eq('service_id', serviceId)
       .gt('start_at', reservation.start_at ?? threeDaysAgo);
 
@@ -340,22 +381,45 @@ export async function sendRebookingFollowUps(): Promise<number> {
       ? `How are your ${serviceName} looking? 😊`
       : `Hi${reservation.customer_name ? ` ${reservation.customer_name}` : ''}! How are you enjoying your ${serviceName}? 😊`;
 
-    const branded = await brandCustomerText(
-      reservation.tenant_id,
-      reservation.customer_phone,
-      greeting,
-      { initiated: true }
-    );
-    if (!branded) continue; // customer opted out of reminders
-    const sendRes = await client.sendTextMessage(reservation.customer_phone, branded);
+    const conv = await loadConversationFlags(reservation.tenant_id, recipientPhone);
+    const sendRes = await sendGovernedInitiated(supabaseAdmin as never, {
+      tenantId: reservation.tenant_id,
+      recipient: recipientPhone,
+      messageType: 'rebooking_followup',
+      lastInboundAt: conv.last_inbound_at,
+      optedOutAt: conv.opted_out_at,
+      buildFreeform: () => greeting,
+      sendFreeform: async (text) => {
+        const branded = await brandCustomerText(
+          reservation.tenant_id,
+          recipientPhone,
+          text,
+          { initiated: true, conv },
+        );
+        if (!branded) return false;
+        const response = await client.sendTextMessage(recipientPhone, branded);
+        return response.success;
+      },
+      sendTemplate: async (name, language, paramMapping) => {
+        if (!client.sendTemplateMessage) return false;
+        const response = await client.sendTemplateMessage(
+          recipientPhone,
+          name,
+          toTemplateParameters(paramMapping),
+          language,
+        );
+        return response.success;
+      },
+    });
 
-    if (!sendRes.success) {
-      console.warn('[cron/nightly] follow-up send failed', { tenant_id: reservation.tenant_id, phone: reservation.customer_phone });
+    if (!sendRes.sent) {
+      if (sendRes.reason !== 'send_failed') continue;
+      console.warn('[cron/nightly] follow-up send failed', { tenant_id: reservation.tenant_id, phone: recipientPhone });
       await siasOperations.recordCampaignRun({
         tenantId: reservation.tenant_id,
         campaignType: 'reactivation',
         action: 'send_reactivation',
-        targetPhone: reservation.customer_phone,
+        targetPhone: recipientPhone,
         targetBookingId: reservation.id,
         sourceEvent: 'cron.rebooking_followup',
         status: 'retry_scheduled',
@@ -375,7 +439,7 @@ export async function sendRebookingFollowUps(): Promise<number> {
       tenantId: reservation.tenant_id,
       campaignType: 'reactivation',
       action: 'send_reactivation',
-      targetPhone: reservation.customer_phone,
+      targetPhone: recipientPhone,
       targetBookingId: reservation.id,
       sourceEvent: 'cron.rebooking_followup',
       status: 'sent',
@@ -498,11 +562,34 @@ export async function sendRebookingNudges(): Promise<number> {
         const customerName = lastRes.customer_name ?? '';
         const nudge = `Hi${customerName ? ` ${customerName}` : ''}! Time for your next ${service.name}? 📅 Reply *BOOK* to get started.`;
 
-        const branded = await brandCustomerText(tenant.id, phone, nudge, { initiated: true });
-        if (!branded) continue; // customer opted out of reminders
-        const sendRes = await client.sendTextMessage(phone, branded);
+        const conv = await loadConversationFlags(tenant.id, phone);
+        const sendRes = await sendGovernedInitiated(supabaseAdmin as never, {
+          tenantId: tenant.id,
+          recipient: phone,
+          messageType: 'rebooking_nudge',
+          lastInboundAt: conv.last_inbound_at,
+          optedOutAt: conv.opted_out_at,
+          buildFreeform: () => nudge,
+          sendFreeform: async (text) => {
+            const branded = await brandCustomerText(tenant.id, phone, text, { initiated: true, conv });
+            if (!branded) return false;
+            const response = await client.sendTextMessage(phone, branded);
+            return response.success;
+          },
+          sendTemplate: async (name, language, paramMapping) => {
+            if (!client.sendTemplateMessage) return false;
+            const response = await client.sendTemplateMessage(
+              phone,
+              name,
+              toTemplateParameters(paramMapping),
+              language,
+            );
+            return response.success;
+          },
+        });
 
-        if (!sendRes.success) {
+        if (!sendRes.sent) {
+          if (sendRes.reason !== 'send_failed') continue;
           console.warn('[cron/nightly] nudge send failed', { tenant_id: tenant.id, phone });
           await siasOperations.recordCampaignRun({
             tenantId: tenant.id,

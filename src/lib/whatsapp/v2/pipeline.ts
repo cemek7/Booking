@@ -87,7 +87,7 @@ export async function processMessageV2(
   // ── Opt-out keyword (customers only) ──────────────────────────────────────
   const optSignal: OptOutSignal = detectOptOutKeyword(rawMessage);
   if (optSignal && conv.role !== 'owner' && conv.role !== 'staff') {
-    await handleOptOutSignal(phone, tenantId, optSignal);
+    await handleOptOutSignal(externalId, tenantId, optSignal);
     await markMessagesProcessed(batch.messageIds);
     return true;
   }
@@ -99,7 +99,7 @@ export async function processMessageV2(
     .from('whatsapp_conversations')
     .update({ last_inbound_at: new Date().toISOString() })
     .eq('tenant_id', tenantId)
-    .eq('phone_number', phone);
+    .eq('phone_number', externalId);
 
   // ── 3. Route to appropriate flow handler ──────────────────────────────────
   // Owner onboarding is handled separately from the main pipeline

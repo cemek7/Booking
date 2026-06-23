@@ -13,6 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 import { brandCustomerText } from './outboundBranding';
+import { sendGovernedInitiated } from './deliverability/governedSend';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,6 +24,16 @@ export interface WaitlistEntry {
   service_id: string;
   date: string;
   staff_id?: string;
+}
+
+function toTemplateParameters(paramMapping: unknown[]): Array<{ default: string }> {
+  return paramMapping.map((entry) => {
+    if (entry && typeof entry === 'object' && 'default' in entry) {
+      return { default: String((entry as { default?: unknown }).default ?? '') };
+    }
+
+    return { default: String(entry ?? '') };
+  });
 }
 
 // ─── Register waitlist interest ───────────────────────────────────────────────
@@ -80,7 +91,7 @@ export async function notifyWaitlist(
   // Find all conversations with matching waitlist interest
   const { data: conversations } = await supabaseAdmin
     .from('whatsapp_conversations')
-    .select('phone_number, flow_data')
+    .select('phone_number, flow_data, last_inbound_at, opted_out_at')
     .eq('tenant_id', tenantId)
     .not('flow_data->waitlist_interest', 'is', null);
 
@@ -109,8 +120,43 @@ export async function notifyWaitlist(
     const config = await getTenantWhatsAppConfig(tenantId);
     if (config) {
       const client = getProviderClient({ ...config, instanceName: instanceKey });
-      const branded = await brandCustomerText(tenantId, conv.phone_number, message, { initiated: true });
-      if (branded) await client.sendTextMessage(conv.phone_number, branded);
+      const result = await sendGovernedInitiated(supabaseAdmin as never, {
+        tenantId,
+        recipient: conv.phone_number,
+        messageType: 'waitlist_slot',
+        lastInboundAt: typeof conv.last_inbound_at === 'string' ? conv.last_inbound_at : null,
+        optedOutAt: typeof conv.opted_out_at === 'string' ? conv.opted_out_at : null,
+        buildFreeform: () => message,
+        sendFreeform: async (text) => {
+          const branded = await brandCustomerText(
+            tenantId,
+            conv.phone_number,
+            text,
+            {
+              initiated: true,
+              conv: {
+                last_inbound_at: typeof conv.last_inbound_at === 'string' ? conv.last_inbound_at : null,
+                opted_out_at: typeof conv.opted_out_at === 'string' ? conv.opted_out_at : null,
+              },
+            },
+          );
+          if (!branded) return false;
+          const sendRes = await client.sendTextMessage(conv.phone_number, branded);
+          return sendRes.success;
+        },
+        sendTemplate: async (name, language, paramMapping) => {
+          if (!client.sendTemplateMessage) return false;
+          const sendRes = await client.sendTemplateMessage(
+            conv.phone_number,
+            name,
+            toTemplateParameters(paramMapping),
+            language,
+          );
+          return sendRes.success;
+        },
+      });
+
+      if (!result.sent) continue;
     }
 
     // Mark as notified (so we don't double-notify)
