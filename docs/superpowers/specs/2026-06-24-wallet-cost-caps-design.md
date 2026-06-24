@@ -22,8 +22,11 @@ tenant's AI spend.
 
 - `withTenantWalletSpend` (`billing/ai-wallet.ts:210`) reserves/settles per call and throws
   `wallet_block` on insufficient balance. ✅
-- `ai_wallet_ledger.kind` ∈ `'reservation' | 'usage' | 'topup' | 'refund' | 'adjustment'`:
-  `reservation` is written at call-**start**, `usage` (settled charge) **after** the call. ✅
+- `ai_wallet_ledger.kind` ∈ `'reservation' | 'usage' | 'topup' | 'refund' | 'adjustment'`. Per the
+  `077_ai_wallets.sql` RPCs: `reserve` writes a **negative `reservation`** row = the *full* estimated
+  charge at call-**start**; `settle` writes only the **delta** (`usage` if actual>estimate, `refund`
+  if under). So the true per-call spend is the reservation (reconciled by the delta), **not** the
+  `usage` row. ✅
 - The pipeline's AI entry `callAIWithRetry` (`pipeline.ts:309`) already pre-checks
   `isQuotaExceeded` and **`return null` → L1 / button-menu fallback** when over budget. This is the
   clean degradation seam we reuse. ✅
@@ -40,8 +43,8 @@ tenant's AI spend.
 | Cap mechanisms | **Velocity/burst cap** (fast loop-catch) **+ daily budget ceiling**. (No monthly, no per-conversation — out of scope.) |
 | Velocity cap | **Platform safety guard** — env default, **superadmin-only** override per tenant. Owners cannot raise it. |
 | Daily budget | **Platform default, owner-lowerable** in settings (clamped server-side to ≤ `DAILY_BUDGET_PLATFORM_MAX`). |
-| Measurement | **Query `ai_wallet_ledger`** (no new write path). Velocity = `usage`+`reservation` in the window (reservations catch loops at call-start); daily = settled `usage` since tenant-tz start-of-day. |
-| Enforcement seam | **Pre-check at `callAIWithRetry` entry** (next to `isQuotaExceeded`) → `return null` → clean L1 fallback, zero wasted retries. A hard **backstop `throw`** stays in `withTenantWalletSpend` for non-pipeline wallet-wrapped paths. |
+| Measurement | **Query `ai_wallet_ledger`** (no new write path). Spend in a window = **`−SUM(amount_credits)` where `kind <> 'topup'`** — verified against the `077_ai_wallets.sql` RPCs: `reserve` writes the full charge as a **negative `reservation`** row at call-start, `settle` writes only the estimate-vs-actual **delta** (`usage` if over, `refund` if under). So summing only `usage` would undercount badly; the net non-topup debit is the true spend, and because the reservation lands at call-**start**, it catches loops immediately. Daily uses the same sum since tenant-tz start-of-day. |
+| Enforcement seam | **Pre-check at the TOP of `callAIWithRetry`, BEFORE the `isQuotaExceeded` block** → `return null` → clean L1 fallback, zero wasted retries. (The `isQuotaExceeded` block can early-`return callFlash` to L3, so a check placed *after* it would be bypassed on that path.) A hard **backstop `throw`** stays in `withTenantWalletSpend` for non-pipeline wallet-wrapped paths. |
 | Scope | **Wallet-wrapped AI paths** (the WhatsApp pipeline + onboarding/template/summarizer/ML flows). Truly-direct AI paths (voice STT, ad-hoc) are out of scope. |
 | Capped behavior | **Graceful L1 degradation** — AI off, rules engine / button menu still books. Never a hard "unavailable" error. |
 
@@ -62,20 +65,22 @@ interface CapDecision {
 async function checkCaps(admin: SupabaseClient, tenantId: string): Promise<CapDecision>;
 ```
 
-Logic:
-- **Velocity:** `SUM(amount_credits)` over `ai_wallet_ledger` where `tenant_id = t`,
-  `kind IN ('usage','reservation')`, `created_at > now − VELOCITY_WINDOW_MIN`.
+Spend in a window = **`spent = −SUM(amount_credits)`** over `ai_wallet_ledger` where `tenant_id = t`,
+`kind <> 'topup'`, and `created_at` in the window. (`reservation` rows are negative full charges at
+call-start; `usage`/`refund`/`adjustment` reconcile; `topup` is deposits and is excluded. Negating the
+sum yields actual credits spent.) Logic:
+- **Velocity:** `spent` over `created_at > now − VELOCITY_WINDOW_MIN`.
   If `≥ velocityCap(tenant)` → `{ allowed:false, reason:'velocity_cap' }`.
-- **Daily:** `SUM(amount_credits)` where `kind = 'usage'`, `created_at ≥ startOfDay(tenant.timezone)`.
+- **Daily:** `spent` over `created_at ≥ startOfDay(tenant.timezone)`.
   If `≥ dailyBudget(tenant)` → `{ allowed:false, reason:'daily_cap' }`.
   Else `softWarn = spentToday ≥ SOFT_WARN_PCT × dailyBudget`.
-- All sums are non-negative spend; verify `amount_credits` sign convention in the plan (the guard
-  uses absolute spend).
+- A reservation is reconciled by its settle within the same call, so in-flight reservations slightly
+  *over*-count spend (by the estimate-vs-actual delta) — which is the safe direction for a guard.
 
 `velocityCap(tenant)` = `tenant.velocity_credits_override ?? env VELOCITY_CREDITS`.
 `dailyBudget(tenant)` = `min(ai_wallets.daily_budget_credits ?? env DAILY_BUDGET_DEFAULT, env DAILY_BUDGET_PLATFORM_MAX)`.
 
-### Unit 2 — Caps config + storage (migration `092`)
+### Unit 2 — Caps config + storage (migration `094`)
 
 ```sql
 ALTER TABLE ai_wallets
@@ -91,15 +96,18 @@ ALTER TABLE ai_wallets
 
 ### Unit 3 — Enforcement integration
 
-In `callAIWithRetry` (`pipeline.ts`), immediately after the existing `isQuotaExceeded` block:
+At the **TOP of `callAIWithRetry` (`pipeline.ts`), BEFORE the existing `isQuotaExceeded` block** —
+because that block can `return callFlash(...)` early (escalating to L3), which would skip a check
+placed after it:
 
 ```ts
 const cap = await checkCaps(supabaseAdmin, tenantId);
 if (!cap.allowed) {
   await maybeAlertCap(supabaseAdmin, tenantId, cap.reason);   // Unit 4
-  return null;                                                // → L1 / button menu
+  return null;                                                // → L1 / button menu (covers L2 AND L3)
 }
 if (cap.softWarn) await maybeSoftWarn(supabaseAdmin, tenantId, cap);  // Unit 4
+// ...then the existing isQuotaExceeded(...) logic
 ```
 
 **Backstop:** keep the existing `wallet_block` throw in `withTenantWalletSpend`, and add the same
@@ -135,7 +143,7 @@ wallet-wrapped callers are still protected. The pipeline never hits it because i
 
 ## Open items for the plan
 
-- Confirm `ai_wallet_ledger.amount_credits` sign for `usage`/`reservation` (guard sums absolute spend).
+- (resolved in self-review) ai_wallet_ledger debits are NEGATIVE (reservation=-estimate, usage=-delta); spend = -SUM(amount_credits) over kind<>'topup'. `daily_budget_credits` lives on `ai_wallets`, so the tenant-settings PUT must update ai_wallets (not the tenants row it currently writes).
 - `startOfDay(tenant.timezone)` helper — tenant tz from `tenants.timezone`; fall back to UTC.
 - Exact settings-route field wiring for `daily_budget_credits` (owner) vs superadmin `velocity_credits_override`.
 - Calibrate the credit thresholds against measured per-call cost before enabling enforcement (ship
