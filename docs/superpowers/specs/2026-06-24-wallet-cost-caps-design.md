@@ -110,18 +110,29 @@ if (cap.softWarn) await maybeSoftWarn(supabaseAdmin, tenantId, cap);  // Unit 4
 // ...then the existing isQuotaExceeded(...) logic
 ```
 
-**Backstop:** keep the existing `wallet_block` throw in `withTenantWalletSpend`, and add the same
-`checkCaps` hard-block there (throwing `wallet_block: velocity_cap` / `daily_cap`) so non-pipeline
-wallet-wrapped callers are still protected. The pipeline never hits it because it pre-checks.
+**Backstop (no double-work):** add the same `checkCaps` hard-block inside `withTenantWalletSpend`
+(throwing `wallet_block: velocity_cap` / `daily_cap`) so non-pipeline wallet-wrapped callers
+(onboarding, template-gen, summarizer, ML — all low-frequency) are still protected. To avoid the
+pipeline re-running `checkCaps` (it already pre-checked at the entry), add an opt-out option
+`WalletProtectedCallOptions.skipCapCheck?: boolean`; the pipeline's two `withTenantWalletSpend`
+calls pass `skipCapCheck: true`. So an *allowed* pipeline call runs `checkCaps` **once** (entry); a
+*capped* one runs it once then `return null` (never reaching the wrapper). Other callers keep the
+backstop. The existing balance-`wallet_block` throw is unchanged.
 
-### Unit 4 — Alerts (`spendAlerts.ts`)
+### Unit 4 — Alerts (`spendAlerts.ts`) — deduped, no spam
 
-- **Soft-warn (≥ `SOFT_WARN_PCT`, default 80%):** once per tenant per day (guarded by
-  `ai_wallets.budget_warned_on = today`), insert a `notifications` row + optional `telegramAlert`:
-  "AI budget 80% used today."
-- **Hard-stop (`daily_cap`):** owner notification "AI paused for today (rules-only). Top up or it
-  resets at midnight." `velocity_cap`: "AI briefly paused — unusually fast usage detected."
-- Alerts are best-effort (never block the request); surfaced in `getTenantWalletSummary`.
+Owner alerts cover the **daily-budget** axis and fire **at most once per tenant per day**, guarded by
+`ai_wallets.budget_warned_on = today` (set on first alert, so neither the 80% soft-warn nor the 100%
+hard-stop re-fires on every subsequent capped message):
+- **Soft-warn (≥ `SOFT_WARN_PCT`, default 80%):** `notifications` row + optional `telegramAlert`
+  "AI budget 80% used today." Sets `budget_warned_on = today`.
+- **Hard-stop (`daily_cap`):** if not already alerted today, "AI paused for today (rules-only). Top
+  up or it resets at midnight." Also sets `budget_warned_on`.
+
+The transient **`velocity_cap`** is self-clearing (the window rolls in minutes), so it is **logged**
+(and optionally surfaced to superadmin telemetry) rather than owner-alerted — repeated velocity hits
+during a loop must not spam the owner. Alerts are best-effort (never block the request) and the cap
+state is surfaced in `getTenantWalletSummary`.
 
 ## Configuration (env defaults; confirm in plan)
 
@@ -134,12 +145,21 @@ wallet-wrapped callers are still protected. The pipeline never hits it because i
 
 - **Fail-open on guard error:** if the ledger query fails, **allow** the call (log) — a metering
   glitch must not take AI offline. (The balance reservation still bounds true overspend.)
-- **Idempotency:** `checkCaps` is read-only; soft-warn dedup via `budget_warned_on`.
+- **Measurement robustness (verified):** a *failed* call is rolled back — `withTenantWalletSpend`'s
+  error path calls `settleTenantWalletSpend`, so the `reservation` debit is offset by a `refund`,
+  netting ~0 in the spend sum. The existing `idx_ai_wallet_ledger_tenant_created_at (tenant_id,
+  created_at DESC)` index (migration 077) backs both the velocity (last-N-min) and daily SUM queries
+  — no new index needed.
+- **Idempotency:** `checkCaps` is read-only; all daily-budget owner alerts dedup via
+  `budget_warned_on` (once/day); velocity is logged only.
 - **Tests:** `checkCaps` matrix (under budget / velocity hit / daily hit / 80% soft-warn / failed
-  query ⇒ fail-open); pipeline `callAIWithRetry` returns `null` when capped (no wallet reserve
-  attempted); `withTenantWalletSpend` backstop throws `wallet_block:*`; settings clamp (owner can't
-  exceed platform max, can't set velocity); soft-warn fires once/day. Reuse the queue-based Supabase
-  mock from the v2/deliverability tests.
+  query ⇒ fail-open) using the negated-non-topup sum (assert a `reservation` of −X + later `refund`
+  +X nets ~0); pipeline `callAIWithRetry` returns `null` when capped **before** `isQuotaExceeded`
+  runs (no wallet reserve attempted) and passes `skipCapCheck:true` to the wrapper on the allowed
+  path; `withTenantWalletSpend` backstop throws `wallet_block:*` only when `skipCapCheck` is unset;
+  settings clamp (owner can't exceed platform max, can't set velocity); daily alerts fire once/day
+  (second capped message in the same day does not re-alert). Reuse the queue-based Supabase mock from
+  the v2/deliverability tests.
 
 ## Open items for the plan
 
