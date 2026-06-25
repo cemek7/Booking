@@ -1,6 +1,8 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { isGlobalAdmin } from '@/types/unified-permissions';
+import { defaultLogger } from '@/lib/logger';
 
 /**
  * GET /api/admin/metrics
@@ -54,10 +56,10 @@ export const GET = createHttpHandler(
     if (llmResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch LLM metrics'));
 
     // Log non-critical query errors so they are visible in server logs
-    if (userResult.error) console.warn('[admin/metrics] tenant_users query failed', userResult.error.message);
-    if (revenueResult.error) console.warn('[admin/metrics] transactions query failed', revenueResult.error.message);
-    if (tenantResult.error) console.warn('[admin/metrics] tenants query failed', tenantResult.error.message);
-    if (reservationResult.error) console.warn('[admin/metrics] reservations query failed', reservationResult.error.message);
+    if (userResult.error) defaultLogger.warn('[admin/metrics] tenant_users query failed', userResult.error.message);
+    if (revenueResult.error) defaultLogger.warn('[admin/metrics] transactions query failed', revenueResult.error.message);
+    if (tenantResult.error) defaultLogger.warn('[admin/metrics] tenants query failed', tenantResult.error.message);
+    if (reservationResult.error) defaultLogger.warn('[admin/metrics] reservations query failed', reservationResult.error.message);
 
     // --- Build lookup maps ---
 
@@ -153,5 +155,5 @@ export const GET = createHttpHandler(
     return { metrics: Object.values(byTenant) };
   },
   'GET',
-  { auth: true, roles: ['admin'] }
+  { auth: true, roles: ['superadmin'] }
 );

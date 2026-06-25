@@ -1,10 +1,15 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 export const GET = createHttpHandler(
   async (ctx) => {
     const { searchParams } = new URL(ctx.request.url);
-    const tenantId = searchParams.get('tenant_id');
+    // global_admin may query any tenant; owner/admin are scoped to their own tenant
+    const isGlobalAdmin = ctx.user?.role === 'superadmin';
+    const tenantId = isGlobalAdmin
+      ? (searchParams.get('tenant_id') ?? ctx.user?.tenantId)
+      : ctx.user?.tenantId;
 
     if (!tenantId) {
       throw ApiErrorFactory.badRequest('tenant_id required');
@@ -48,5 +53,5 @@ export const GET = createHttpHandler(
     return { requests: totalRequests, total_tokens: totalTokens, cost: estimatedCost };
   },
   'GET',
-  { auth: true, roles: ['owner', 'admin', 'global_admin'] }
+  { auth: true, roles: ['owner', 'superadmin'] }
 );

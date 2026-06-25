@@ -71,24 +71,32 @@ describe('StaffMetrics', () => {
   });
 
   describe('Charts Rendering', () => {
-    it('should render the completion contribution pie chart', () => {
+    it('should render the completion contribution pie chart', async () => {
       render(<StaffMetrics {...defaultProps} />);
-      expect(screen.getByText('My Completion Contribution')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByText('My Completion Contribution')).toBeInTheDocument()
+      );
     });
 
-    it('should render the completed bookings by staff bar chart', () => {
+    it('should render the completed bookings by staff bar chart', async () => {
       render(<StaffMetrics {...defaultProps} />);
-      expect(screen.getByText('Completed Bookings by Staff')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByText('Completed Bookings by Staff')).toBeInTheDocument()
+      );
     });
 
-    it('should render the utilization, revenue and tips bar chart', () => {
+    it('should render the utilization, revenue and tips bar chart', async () => {
       render(<StaffMetrics {...defaultProps} />);
-      expect(screen.getByText('Staff Utilization, Revenue & Tips (Top 10)')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByText('Staff Utilization, Revenue & Tips (Top 10)')).toBeInTheDocument()
+      );
     });
 
-    it('should render the team performance table', () => {
+    it('should render the team performance table', async () => {
       render(<StaffMetrics {...defaultProps} />);
-      expect(screen.getByText('Performance Breakdown')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByText('Performance Breakdown')).toBeInTheDocument()
+      );
     });
   });
 

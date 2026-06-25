@@ -5,6 +5,7 @@
  * PHI access tracking, and security incident management
  */
 
+import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -145,7 +146,7 @@ export default function HIPAAComplianceDashboard() {
       );
       
     } catch (error) {
-      console.error('Error fetching compliance data:', error);
+      defaultLogger.error('Error fetching compliance data:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -179,7 +180,7 @@ export default function HIPAAComplianceDashboard() {
       URL.revokeObjectURL(url);
       
     } catch (error) {
-      console.error('Error generating compliance report:', error);
+      defaultLogger.error('Error generating compliance report:', error);
     }
   };
 
@@ -268,8 +269,8 @@ export default function HIPAAComplianceDashboard() {
               {metrics?.compliance_score || 0}%
             </div>
             <p className="text-xs text-muted-foreground">
-              {metrics?.compliance_score >= 95 ? 'Excellent' : 
-               metrics?.compliance_score >= 85 ? 'Good' : 'Needs Attention'}
+              {(metrics?.compliance_score ?? 0) >= 95 ? 'Excellent' :
+               (metrics?.compliance_score ?? 0) >= 85 ? 'Good' : 'Needs Attention'}
             </p>
           </CardContent>
         </Card>

@@ -62,8 +62,6 @@ export default function DateRangePicker({
     }
   };
 
-  const selectedOption = PERIOD_OPTIONS.find((opt) => opt.value === period);
-
   if (compact) {
     return (
       <Select value={period} onValueChange={handlePeriodChange}>

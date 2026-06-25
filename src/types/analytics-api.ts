@@ -1,3 +1,10 @@
+export interface AnalyticsInsights {
+  summary?: string;
+  recommendations?: string[];
+  anomalies?: Array<{ metric: string; description: string }>;
+  [key: string]: unknown;
+}
+
 export type DashboardPeriod = 'day' | 'week' | 'month' | 'quarter';
 export type StaffPeriod = 'week' | 'month' | 'quarter';
 export type ManagerPeriod = 'week' | 'month' | 'quarter' | 'year';
@@ -65,4 +72,19 @@ export interface StaffMemberMetric {
   tips_total: number;
   utilization_rate: number;
   avg_service_duration_min: number;
+}
+
+export interface AnalyticsInsights {
+  retention: {
+    first_time: number;
+    returning: number;
+    loyalty: number;
+    total_customers: number;
+  };
+  revenue_sources: {
+    direct: number;
+    chat: number;
+    partner: number;
+    total_revenue: number;
+  };
 }

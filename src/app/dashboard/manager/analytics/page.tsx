@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { requireAuth } from '@/lib/auth/server-auth';
 import { Metadata } from 'next';
 import ManagerMetrics from '@/components/analytics/ManagerMetrics';

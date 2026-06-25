@@ -270,7 +270,7 @@ export function getAnalyticsMenuItems(userRole: Role): Array<{
     {
       id: 'global',
       label: 'Global Analytics',
-      path: '/superadmin/analytics',
+      path: '/dashboard/superadmin/analytics',
       description: 'System-wide analytics',
       enabled: access.permissions.canViewGlobalData
     }

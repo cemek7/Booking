@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { requireAuth } from '@/lib/auth/server-auth';
 import { Metadata } from 'next';
 import StaffMetrics from '@/components/analytics/StaffMetrics';
@@ -42,7 +43,7 @@ export default async function StaffAnalyticsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <StaffMetrics userId={user.id} tenantId={user.tenantId} />
+          <StaffMetrics userId={user.id} tenantId={user.tenantId} userRole={user.role} />
         </CardContent>
       </Card>
     </div>

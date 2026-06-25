@@ -1,5 +1,7 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { getTenantCurrency } from '@/lib/tenant-currency';
 
 /**
  * GET /api/staff/metrics
@@ -8,21 +10,13 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
  * revenue sum (from completed transactions), tips total, utilization rate,
  * average service duration, and avg customer rating from customer_feedback —
  * all scoped to the requested window (?days=N, default 30).
- * Tenant is derived from the authenticated user's context; X-Tenant-ID header
- * may only override for superadmin roles.
+ * Tenant is derived from the authenticated user's verified context.
  */
 export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
-    // Derive tenant from authenticated user; only superadmin may override via header.
-    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
-    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
-      ? headerTenantId
-      : ctx.user!.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.badRequest('tenant_id required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
+    const currency = await getTenantCurrency(ctx.supabase, tenantId, 'USD');
 
     // Role-based access: staff members can only see their own metrics
     const userRole = ctx.user!.role;
@@ -148,7 +142,7 @@ export const GET = createHttpHandler(
       };
     });
 
-    return { metrics };
+    return { metrics, currency };
   },
   'GET',
   { auth: true }

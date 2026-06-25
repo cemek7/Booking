@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Staff Analytics API
  * 
@@ -23,8 +24,8 @@ export const GET = createHttpHandler(
     }
 
     const { period } = queryValidation.data;
-    const staffId = ctx.user.id;
-    const tenantId = ctx.user.tenantId;
+    const staffId = ctx.user?.id;
+    const tenantId = ctx.user?.tenantId;
 
     const endDate = new Date();
     const startDate = new Date();

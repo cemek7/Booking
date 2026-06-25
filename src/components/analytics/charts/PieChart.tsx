@@ -39,6 +39,7 @@ const CustomTooltip: React.FC<
     formatValue?: (value: number) => string;
     showPercentage?: boolean;
     total?: number;
+    payload?: any[];
   }
 > = ({ active, payload, formatValue, showPercentage, total }) => {
   if (!active || !payload || !payload.length) {
@@ -72,13 +73,14 @@ const renderCustomLabel = ({
   outerRadius,
   percent,
 }: {
-  cx: number;
-  cy: number;
-  midAngle: number;
-  innerRadius: number;
-  outerRadius: number;
-  percent: number;
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  innerRadius?: number;
+  outerRadius?: number;
+  percent?: number;
 }) => {
+  if (cx === undefined || cy === undefined || midAngle === undefined || innerRadius === undefined || outerRadius === undefined || percent === undefined) return null;
   const RADIAN = Math.PI / 180;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
@@ -171,7 +173,7 @@ export default function PieChart({
               cx="50%"
               cy="50%"
               labelLine={false}
-              label={showPercentage ? renderCustomLabel : false}
+              label={showPercentage ? (renderCustomLabel as any) : false}
               outerRadius={Math.min(height * 0.35, 120)}
               innerRadius={innerRadius}
               fill="#8884d8"

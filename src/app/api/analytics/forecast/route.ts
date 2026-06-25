@@ -1,5 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { PredictiveAnalyticsEngine } from '@/lib/ai/predictiveAnalytics';
 
 /**
@@ -10,11 +10,7 @@ import { PredictiveAnalyticsEngine } from '@/lib/ai/predictiveAnalytics';
 export const GET = createHttpHandler(
   async (ctx) => {
     const { searchParams } = new URL(ctx.request.url);
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const horizon = (searchParams.get('horizon') as 'monthly' | 'quarterly' | 'yearly') || 'monthly';
     const includeSeasonality = searchParams.get('seasonality') !== 'false';

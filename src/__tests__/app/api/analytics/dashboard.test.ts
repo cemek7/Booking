@@ -4,7 +4,6 @@ import { GET } from '@/app/api/analytics/dashboard/route';
 
 // Mock dependencies
 jest.mock('@/lib/analyticsService');
-jest.mock('@/lib/error-handling/api-error');
 
 const mockAnalyticsService = {
   getDashboardMetrics: jest.fn(),

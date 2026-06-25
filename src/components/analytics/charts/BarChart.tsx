@@ -15,13 +15,13 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export interface BarDataPoint {
-  name: string;
   [key: string]: string | number;
 }
 
 export interface BarChartProps {
   data: BarDataPoint[];
   dataKeys: string[];
+  xAxisKey?: string;
   title?: string;
   description?: string;
   colors?: string[];
@@ -37,7 +37,7 @@ export interface BarChartProps {
  * Custom tooltip for bar chart
  */
 const CustomTooltip: React.FC<
-  TooltipProps<number, string> & { formatValue?: (value: number) => string }
+  TooltipProps<number, string> & { formatValue?: (value: number) => string; payload?: any[]; label?: string }
 > = ({ active, payload, label, formatValue }) => {
   if (!active || !payload || !payload.length) {
     return null;
@@ -46,7 +46,7 @@ const CustomTooltip: React.FC<
   return (
     <div className="rounded-lg border bg-background p-3 shadow-lg">
       <p className="text-sm font-medium mb-2">{label}</p>
-      {payload.map((entry, index) => (
+      {payload!.map((entry: any, index: number) => (
         <div key={index} className="flex items-center gap-2 text-sm">
           <div
             className="w-3 h-3 rounded"
@@ -100,6 +100,7 @@ const DEFAULT_COLORS = [
 export default function BarChart({
   data,
   dataKeys,
+  xAxisKey = 'name',
   title,
   description,
   colors = DEFAULT_COLORS,
@@ -145,7 +146,7 @@ export default function BarChart({
                 />
                 <YAxis
                   type="category"
-                  dataKey="name"
+                  dataKey={xAxisKey}
                   tick={{ fontSize: 12 }}
                   tickLine={false}
                   axisLine={false}
@@ -155,7 +156,7 @@ export default function BarChart({
             ) : (
               <>
                 <XAxis
-                  dataKey="name"
+                  dataKey={xAxisKey}
                   tick={{ fontSize: 12 }}
                   tickLine={false}
                   axisLine={false}
