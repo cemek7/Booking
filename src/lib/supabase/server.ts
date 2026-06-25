@@ -1,5 +1,4 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { type NextApiRequest, type NextApiResponse } from 'next';
 import { serialize } from 'cookie';
@@ -79,53 +78,52 @@ type ServerComponentClientOptions = {
  * @param accessToken - Optional access token to inject into the client
  * @param options - Configuration options for client behavior
  */
-export function getSupabaseServerComponentClient(
+export function createServerSupabaseClient(
   accessToken?: string,
   options?: ServerComponentClientOptions
 ) {
   const shouldLogErrors = options?.logCookieErrors ?? false;
 
-  return createClient(
-    {
-      get: async (name: string) => {
-        const cookieStore = await cookies();
-        return cookieStore.get(name)?.value;
-      },
-      set: async (name: string, value: string, options: CookieOptions) => {
-        const cookieStore = await cookies();
-        try {
-          cookieStore.set({ name, value, ...options });
-        } catch (error) {
-          if (shouldLogErrors) {
-            defaultLogger.warn('Failed to set cookie in route handler context', {
-              cookieName: name,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-          // The `set` method was called from a Server Component.
-          // This can be ignored if you have middleware refreshing
-          // user sessions.
-        }
-      },
-      remove: async (name: string, options: CookieOptions) => {
-        const cookieStore = await cookies();
-        try {
-          cookieStore.set({ name, value: '', ...options });
-        } catch (error) {
-          if (shouldLogErrors) {
-            defaultLogger.warn('Failed to remove cookie in route handler context', {
-              cookieName: name,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-          // The `delete` method was called from a Server Component.
-          // This can be ignored if you have middleware refreshing
-          // user sessions.
-        }
-      },
+  // Build the cookie adapter up-front (no env-var access here).
+  const cookieAdapter: CookieAdapter = {
+    get: async (name: string) => {
+      const cookieStore = await cookies();
+      return cookieStore.get(name)?.value;
     },
-    accessToken,
-  );
+    set: async (name: string, value: string, cookieOptions: CookieOptions) => {
+      void value;
+      void cookieOptions;
+      if (shouldLogErrors) {
+        defaultLogger.warn('Attempted cookie write from read-only server Supabase client', {
+          cookieName: name,
+        });
+      }
+    },
+    remove: async (name: string, cookieOptions: CookieOptions) => {
+      void cookieOptions;
+      if (shouldLogErrors) {
+        defaultLogger.warn('Attempted cookie removal from read-only server Supabase client', {
+          cookieName: name,
+        });
+      }
+    },
+  };
+
+  // Return a lazy proxy so that constructing this client at module-load time
+  // (e.g. in module-level service singletons) does NOT throw when env vars
+  // are absent during `next build`. The real Supabase client is created on
+  // first property access, which only happens inside request handlers.
+  let _client: ReturnType<typeof createClient> | null = null;
+  const getClient = () => {
+    if (!_client) _client = createClient(cookieAdapter, accessToken);
+    return _client;
+  };
+
+  return new Proxy({} as ReturnType<typeof createClient>, {
+    get(_target, prop: string | symbol) {
+      return Reflect.get(getClient() as object, prop);
+    },
+  });
 }
 
 /**
@@ -133,7 +131,22 @@ export function getSupabaseServerComponentClient(
  * This needs to be created for each request.
  */
 export function getSupabaseRouteHandlerClient(accessToken?: string) {
-  return getSupabaseServerComponentClient(accessToken, { logCookieErrors: true });
+  const cookieAdapter: CookieAdapter = {
+    get: async (name: string) => {
+      const cookieStore = await cookies();
+      return cookieStore.get(name)?.value;
+    },
+    set: async (name: string, value: string, cookieOptions: CookieOptions) => {
+      const cookieStore = await cookies();
+      cookieStore.set({ name, value, ...cookieOptions });
+    },
+    remove: async (name: string, cookieOptions: CookieOptions) => {
+      const cookieStore = await cookies();
+      cookieStore.set({ name, value: '', ...cookieOptions });
+    },
+  };
+
+  return createClient(cookieAdapter, accessToken);
 }
 
 /**
@@ -192,27 +205,28 @@ export function getSupabaseApiRouteClient(
  * Use this for operations that require bypassing RLS.
  */
 export const createSupabaseAdminClient = () => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Lazy proxy — same pattern as createServerSupabaseClient — so that module-level
+  // singletons calling this function don't throw at build time when env vars
+  // are absent. Validation is deferred to the first actual database call.
+  let _client: ReturnType<typeof createServerClient> | null = null;
 
-  if (!supabaseUrl || !serviceKey) {
-    throw new Error("Missing Supabase URL or Service Role Key for admin client");
-  }
+  const getAdminClient = () => {
+    if (_client) return _client;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceKey) {
+      throw new Error('Missing Supabase URL or Service Role Key for admin client');
+    }
+    _client = createServerClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      cookies: { get: async () => undefined, set: async () => {}, remove: async () => {} },
+    });
+    return _client;
+  };
 
-  // For admin client, we can use createServerClient without cookies, 
-  // as it will operate with the service key.
-  return createServerClient(supabaseUrl, serviceKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-    cookies: {
-      get: async () => undefined,
-      set: async () => {},
-      remove: async () => {},
+  return new Proxy({} as ReturnType<typeof createServerClient>, {
+    get(_target, prop: string | symbol) {
+      return Reflect.get(getAdminClient() as object, prop);
     },
   });
 };
-
-// Legacy alias for backward compatibility
-export const createServerSupabaseClient = getSupabaseServerComponentClient;

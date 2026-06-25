@@ -3,6 +3,8 @@
  * Validates required environment variables and provides helpful error messages
  */
 
+import { defaultLogger } from '@/lib/logger';
+
 interface EnvConfig {
   // Supabase
   NEXT_PUBLIC_SUPABASE_URL: string;
@@ -20,6 +22,8 @@ interface EnvConfig {
   EVOLUTION_API_BASE?: string;
   EVOLUTION_INSTANCE_NAME?: string;
   WHATSAPP_API_KEY?: string;
+  WAHA_API_BASE?: string;
+  WAHA_API_KEY?: string;
   REDIS_URL?: string;
   REDIS_PASSWORD?: string;
   OPENROUTER_API_KEY?: string;
@@ -50,11 +54,6 @@ const requiredEnvVars = [
 ];
 
 const conditionalRequiredVars: Record<string, string[]> = {
-  'ENABLE_WHATSAPP_INTEGRATION': [
-    'EVOLUTION_API_KEY',
-    'EVOLUTION_WEBHOOK_SECRET',
-    'EVOLUTION_API_BASE'
-  ],
   'ENABLE_MESSAGING_ADAPTER': [
     'REDIS_URL'
   ]
@@ -126,7 +125,7 @@ export function validateEnvironment(): EnvConfig {
 
   // Log warnings in development
   if (warnings.length > 0 && process.env.NODE_ENV !== 'production') {
-    console.warn('Environment warnings:', warnings);
+    defaultLogger.warn('Environment warnings:', warnings);
   }
 
   // Build typed config object instead of unsafe assertion
@@ -183,9 +182,9 @@ export const FEATURE_FLAG_CONFIG: Record<FeatureFlag, {
   dependencies?: FeatureFlag[];
 }> = {
   'ENABLE_WHATSAPP_INTEGRATION': {
-    description: 'Enable WhatsApp messaging integration via Evolution API',
+    description: 'Enable WhatsApp messaging integration (Evolution, WAHA, or Meta Cloud API)',
     defaultValue: false,
-    requiredEnvVars: ['EVOLUTION_API_KEY', 'EVOLUTION_WEBHOOK_SECRET', 'EVOLUTION_API_BASE']
+    requiredEnvVars: []
   },
   'ENABLE_PHASE5_FEATURES': {
     description: 'Enable Phase 5 advanced features and UI components',
@@ -231,7 +230,7 @@ function validateFeatureFlagValue(value: string | undefined): boolean {
   }
   
   // Invalid value - log warning and return false
-  console.warn(`Invalid feature flag value: "${value}". Expected: ${[...truthyValues, ...falsyValues].join(', ')}`);
+  defaultLogger.warn(`Invalid feature flag value: "${value}". Expected: ${[...truthyValues, ...falsyValues].join(', ')}`);
   return false;
 }
 
@@ -253,7 +252,7 @@ export function getFeatureFlag(flag: FeatureFlag): boolean {
   if (isEnabled && config.dependencies) {
     for (const dependency of config.dependencies) {
       if (!getFeatureFlag(dependency)) {
-        console.warn(`Feature flag ${flag} is enabled but dependency ${dependency} is disabled. Feature may not work correctly.`);
+        defaultLogger.warn(`Feature flag ${flag} is enabled but dependency ${dependency} is disabled. Feature may not work correctly.`);
       }
     }
   }
@@ -287,6 +286,22 @@ export function validateFeatureFlags(): {
   
   for (const [flag, config] of Object.entries(FEATURE_FLAG_CONFIG) as Array<[FeatureFlag, typeof FEATURE_FLAG_CONFIG[FeatureFlag]]>) {
     const isEnabled = getFeatureFlag(flag);
+
+    if (flag === 'ENABLE_WHATSAPP_INTEGRATION' && isEnabled) {
+      const hasEvolution =
+        !!process.env.EVOLUTION_API_KEY &&
+        !!process.env.EVOLUTION_WEBHOOK_SECRET &&
+        !!process.env.EVOLUTION_API_BASE;
+      const hasWaha =
+        !!process.env.WAHA_API_BASE &&
+        !!process.env.WAHA_API_KEY;
+      const hasMeta = !!process.env.WHATSAPP_ACCESS_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID;
+      if (!hasEvolution && !hasWaha && !hasMeta) {
+        errors.push(
+          'Feature flag ENABLE_WHATSAPP_INTEGRATION requires Evolution env (EVOLUTION_API_KEY/EVOLUTION_WEBHOOK_SECRET/EVOLUTION_API_BASE), WAHA env (WAHA_API_BASE/WAHA_API_KEY), or Meta env (WHATSAPP_ACCESS_TOKEN/WHATSAPP_PHONE_NUMBER_ID)'
+        );
+      }
+    }
     
     if (isEnabled && config.requiredEnvVars) {
       for (const envVar of config.requiredEnvVars) {
@@ -330,6 +345,11 @@ export function getServiceConfig() {
       webhookSecret: env.EVOLUTION_WEBHOOK_SECRET,
       baseUrl: env.EVOLUTION_API_BASE,
       instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'booka_instance'
+    } : null,
+
+    waha: env.WAHA_API_BASE ? {
+      baseUrl: env.WAHA_API_BASE,
+      apiKey: env.WAHA_API_KEY
     } : null,
     
     redis: env.REDIS_URL ? {

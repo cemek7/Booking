@@ -1,0 +1,70 @@
+/* ============================================================
+   BOKA DESIGN SYSTEM · v2 — Tailwind v4 @theme mapping + utilities
+   ------------------------------------------------------------
+   Import AFTER `@import "tailwindcss";` in your global stylesheet to expose
+   brand utilities: bg-paper, text-ink, border-line, bg-green, text-moss,
+   rounded-card, shadow-card, font-display, bg-boka, bg-hero-green, etc.
+   Values mirror ./tokens.css exactly — keep them in sync.
+   ============================================================ */
+
+@theme {
+  /* ---- Colors ---- */
+  --color-paper:        #f6f5ef;
+  --color-paper-strong: #ece7d8;
+  --color-surface:      #fffefb;
+  --color-app-canvas:   #f8fbf9;
+  --color-line:         #d8d3c4;
+  --color-border-strong:#c9c3b1;
+  --color-ink:          #10211a;
+  --color-ink-soft:     #274235;
+  --color-moss:         #4d6a59;
+
+  --color-green:        #059669;
+  --color-green-strong: #047857;
+  --color-green-deep:   #065f46;
+  --color-green-soft:   #ecfdf5;
+  --color-green-border: #a7f3d0;
+
+  --color-gold:         #d4b368;
+  --color-gold-soft:    #f7f0dd;
+
+  /* booking status */
+  --color-confirmed:    #059669;
+  --color-pending:      #b8862b;
+  --color-cancelled:    #b4453a;
+  --color-noshow:       #5c5448;
+
+  /* ---- Fonts ---- */
+  --font-display: "Iowan Old Style", "Newsreader", Palatino, "Book Antiqua", Georgia, serif;
+  --font-sans:    "Avenir Next", "Mulish", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* ---- Radius ---- */
+  --radius-md:   10px;
+  --radius-lg:   14px;
+  --radius-xl:   20px;
+  --radius-2xl:  18px;
+  --radius-3xl:  24px;
+  --radius-card: 18px;
+  --radius-pill: 999px;
+
+  /* ---- Shadows ---- */
+  --shadow-card:  0 1px 3px rgba(16,33,26,0.07), 0 1px 2px rgba(16,33,26,0.04);
+  --shadow-pop:   0 16px 40px rgba(16,33,26,0.12), 0 4px 12px rgba(16,33,26,0.06);
+  --shadow-green: 0 8px 22px rgba(5,150,105,0.22);
+}
+
+/* Marketing textured background (Tailwind: bg-boka) */
+@utility bg-boka {
+  background-color: #f6f5ef;
+  background-image:
+    radial-gradient(circle at top left,  rgba(212,179,104,0.14), transparent 24%),
+    radial-gradient(circle at top right, rgba(5,150,105,0.05),   transparent 24%),
+    linear-gradient(180deg, #f8f7f2 0%, #f3f0e6 100%);
+  background-attachment: fixed;
+}
+
+/* App hero wash (Tailwind: bg-hero-green) */
+@utility bg-hero-green {
+  background: radial-gradient(circle at top left, #f0fdf4, #ffffff 55%, #f8fbf9 100%);
+}

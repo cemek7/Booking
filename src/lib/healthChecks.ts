@@ -1,6 +1,7 @@
 import { getAppConfig, isIntegrationEnabled } from './configManager';
 import { checkFeatureRequirements } from './featureFlags';
 import { createSupabaseAdminClient } from './supabase/server';
+import { pingRedis } from './redis';
 
 export interface HealthCheck {
   name: string;
@@ -92,11 +93,14 @@ export async function checkRedis(): Promise<HealthCheck> {
       };
     }
     
-    // TODO: Add actual Redis connection test
+    const start = Date.now();
+    await pingRedis();
+    const latencyMs = Date.now() - start;
     return {
       name: 'Redis',
       status: 'healthy',
-      message: 'Redis configuration valid',
+      message: `Connected (${latencyMs}ms)`,
+      details: { latency_ms: latencyMs },
       lastChecked: new Date()
     };
   } catch (error) {
@@ -114,13 +118,19 @@ export async function checkRedis(): Promise<HealthCheck> {
  */
 export async function checkEvolutionAPI(): Promise<HealthCheck> {
   try {
-    const isEnabled = isIntegrationEnabled('evolution');
+    const hasEvolution =
+      !!process.env.EVOLUTION_API_KEY &&
+      !!process.env.EVOLUTION_WEBHOOK_SECRET &&
+      !!process.env.EVOLUTION_API_BASE;
+    const hasMeta = !!process.env.WHATSAPP_ACCESS_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const hasWaha = !!process.env.WAHA_API_BASE && !!process.env.WAHA_API_KEY;
+    const isEnabled = isIntegrationEnabled('evolution') || hasEvolution || hasMeta || hasWaha;
     
     if (!isEnabled) {
       return {
-        name: 'Evolution API',
+        name: 'WhatsApp Provider',
         status: 'warning',
-        message: 'Evolution API integration disabled',
+        message: 'WhatsApp integration disabled',
         lastChecked: new Date()
       };
     }
@@ -128,48 +138,100 @@ export async function checkEvolutionAPI(): Promise<HealthCheck> {
     const requirements = checkFeatureRequirements('whatsappIntegration');
     if (!requirements.satisfied) {
       return {
-        name: 'Evolution API',
+        name: 'WhatsApp Provider',
         status: 'error',
-        message: 'Evolution API configuration incomplete',
+        message: 'WhatsApp provider configuration incomplete',
         details: { missing: requirements.missing },
         lastChecked: new Date()
       };
     }
     
-    // Perform a real HTTP health check to the Evolution API
-    const apiUrl = process.env.EVOLUTION_API_URL;
-    if (apiUrl) {
+    if (hasMeta) {
+      const apiUrl = process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com';
+      const apiVersion = process.env.WHATSAPP_API_VERSION || 'v18.0';
+      const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID!;
+      const accessToken = process.env.WHATSAPP_ACCESS_TOKEN!;
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch(`${apiUrl}/health`, { signal: controller.signal }).catch(() => null);
-        clearTimeout(timeout);
-        if (!res || !res.ok) {
+        const response = await fetch(`${apiUrl.replace(/\/+$/, '')}/${apiVersion}/${phoneNumberId}?fields=display_phone_number,verified_name`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) {
           return {
-            name: 'Evolution API',
+            name: 'WhatsApp Provider',
             status: 'warning',
-            message: res ? `Evolution API returned HTTP ${res.status}` : 'Evolution API unreachable',
+            message: `Meta Graph API returned HTTP ${response.status}`,
             lastChecked: new Date()
           };
         }
       } catch {
         return {
-          name: 'Evolution API',
+          name: 'WhatsApp Provider',
           status: 'warning',
-          message: 'Evolution API health check timed out',
+          message: 'Meta Graph API health check timed out',
           lastChecked: new Date()
         };
       }
+    } else if (hasWaha) {
+      const apiUrl = (process.env.WAHA_API_BASE || '').replace(/\/+$/, '');
+      try {
+        const res = await fetch(`${apiUrl}/api/sessions/default`, {
+          headers: { 'X-Api-Key': process.env.WAHA_API_KEY || '' },
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => null);
+        if (!res || !res.ok) {
+          return {
+            name: 'WhatsApp Provider',
+            status: 'warning',
+            message: res ? `WAHA returned HTTP ${res.status}` : 'WAHA unreachable',
+            lastChecked: new Date()
+          };
+        }
+      } catch {
+        return {
+          name: 'WhatsApp Provider',
+          status: 'warning',
+          message: 'WAHA health check timed out',
+          lastChecked: new Date()
+        };
+      }
+    } else {
+      // Perform a real HTTP health check to the Evolution API
+      const apiUrl = process.env.EVOLUTION_API_BASE;
+      if (apiUrl) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
+          const res = await fetch(`${apiUrl}/health`, { signal: controller.signal }).catch(() => null);
+          clearTimeout(timeout);
+          if (!res || !res.ok) {
+            return {
+              name: 'WhatsApp Provider',
+              status: 'warning',
+              message: res ? `Evolution API returned HTTP ${res.status}` : 'Evolution API unreachable',
+              lastChecked: new Date()
+            };
+          }
+        } catch {
+          return {
+            name: 'WhatsApp Provider',
+            status: 'warning',
+            message: 'Evolution API health check timed out',
+            lastChecked: new Date()
+          };
+        }
+      }
     }
+
     return {
-      name: 'Evolution API',
+      name: 'WhatsApp Provider',
       status: 'healthy',
-      message: 'Evolution API connection verified',
+      message: 'WhatsApp provider connection verified',
       lastChecked: new Date()
     };
   } catch (error) {
     return {
-      name: 'Evolution API',
+      name: 'WhatsApp Provider',
       status: 'error',
       message: error instanceof Error ? error.message : 'Unknown error',
       lastChecked: new Date()

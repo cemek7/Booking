@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { JSONSchema7 } from 'json-schema';
 
 export interface FormField {

@@ -6,6 +6,7 @@
  * Handles fallbacks and retry logic
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { sendEmail } from './email-service';
 import { sendSMS } from './sms-service';
 import { sendWhatsApp } from './whatsapp-service';
@@ -56,7 +57,7 @@ export async function notifyBookingEvent(data: BookingNotificationData): Promise
   const results: NotificationResult[] = [];
   const preferences = data.customer.preferences || { email: true, sms: false, whatsapp: false };
 
-  console.log(`📢 Sending ${data.eventType} notifications for ${data.customer.name}`);
+  defaultLogger.info(`📢 Sending ${data.eventType} notifications for [customer]`);
 
   // Email notification
   if (preferences.email && data.customer.email) {
@@ -134,7 +135,7 @@ export async function notifyStaffAssignment(data: {
   const results: NotificationResult[] = [];
   const preferences = data.staff.preferences || { email: true, sms: false, whatsapp: false };
 
-  console.log(`📢 Notifying staff: ${data.staff.name} of new booking`);
+  defaultLogger.info(`📢 Notifying [staff] of new booking`);
 
   // Email notification
   if (preferences.email && data.staff.email) {
@@ -333,8 +334,10 @@ export async function sendBatchNotifications(
       } catch (error) {
         lastError = error;
         if (attempt < retries - 1) {
-          console.warn(`⚠️ Retry ${attempt + 1}/${retries} for ${item.data.customer.name}`);
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+          // Exponential backoff: 1s, 2s, 4s, ...
+          const backoffMs = RETRY_DELAY_MS * Math.pow(2, attempt);
+          defaultLogger.warn(`⚠️ Retry ${attempt + 1}/${retries} for ${item.data.customer.name}, waiting ${backoffMs}ms`);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
       }
     }

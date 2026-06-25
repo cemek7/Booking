@@ -1,10 +1,16 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getBrowserSupabase } from '@/lib/supabase/client';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
-export type ChatSummary = { id: string; subject: string; lastMessageAt?: string | null; unread?: number };
-export type ChatMessage = { id: string; chatId: string; content: string; role: 'user'|'assistant'; createdAt: string };
+export type ChatSummary = {
+  id: string;
+  subject: string;
+  channel: 'whatsapp' | 'instagram';
+  lastMessageAt?: string | null;
+  unread?: number;
+};
+export type ChatMessage = { id: string; chatId: string; author: string; content: string; role: 'user'|'assistant'; createdAt: string };
 
 // Database row types for type safety
 interface ChatRow {
@@ -12,7 +18,7 @@ interface ChatRow {
   last_message_at: string | null;
   session_id: string | null;
   customer_phone: string | null;
-  metadata: { subject?: string } | null;
+  metadata: { subject?: string; channel?: 'whatsapp' | 'instagram' } | null;
   unread_count?: number;
 }
 
@@ -25,7 +31,7 @@ interface MessageRow {
 }
 
 export function useChatRealtime(tenantId: string | null | undefined) {
-  const supabase = getBrowserSupabase();
+  const supabase = getSupabaseBrowserClient();
   const [loading, setLoading] = useState(false);
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -40,15 +46,16 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     try {
       const { data, error } = await supabase
         .from('chats')
-        .select('id,last_message_at,session_id,customer_phone,metadata')
+        .select('id,last_message_at,session_id,customer_phone,metadata,unread_count')
         .eq('tenant_id', tenantId)
         .order('last_message_at', { ascending: false, nullsFirst: false })
         .limit(50);
-      if (error) throw error;
+      if (error) { setChats([]); return; }
       const mapped: ChatSummary[] = ((data || []) as ChatRow[]).map((row) => ({
         id: row.id,
         lastMessageAt: row.last_message_at,
         subject: row.metadata?.subject || row.customer_phone || (row.session_id ? `Session ${row.session_id.slice(0,6)}` : `Chat ${String(row.id).slice(0,6)}`),
+        channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
         unread: row.unread_count ?? 0,
       }));
       setChats(mapped.map(c => ({ ...c, unread: unreadMap[c.id] ?? c.unread ?? 0 })));
@@ -66,6 +73,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     const mapped: ChatMessage[] = ((data || []) as MessageRow[]).map((m) => ({
       id: m.id,
       chatId: m.chat_id,
+      author: m.direction === 'outbound' ? 'You' : 'Customer',
       content: m.content || '',
       role: m.direction === 'outbound' ? 'user' : 'assistant',
       createdAt: m.created_at,
@@ -87,6 +95,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
             id: row.id,
             lastMessageAt: row.last_message_at,
             subject: row.metadata?.subject || row.customer_phone || (row.session_id ? `Session ${row.session_id.slice(0,6)}` : `Chat ${String(row.id).slice(0,6)}`),
+            channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
             unread: prev[idx]?.unread ?? 0,
           };
           if (idx === -1) return [updated, ...prev];
@@ -121,6 +130,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
           const msg: ChatMessage = {
             id: row.id,
             chatId: row.chat_id,
+            author: row.direction === 'outbound' ? 'You' : 'Customer',
             content: row.content || '',
             role: row.direction === 'outbound' ? 'user' : 'assistant',
             createdAt: row.created_at || new Date().toISOString(),
@@ -140,9 +150,13 @@ export function useChatRealtime(tenantId: string | null | undefined) {
 
   const send = useCallback(async (text: string) => {
     if (!activeId) return;
-    await fetch(`/api/chats/${encodeURIComponent(activeId)}/messages`, {
+    const response = await fetch(`/api/chats/${encodeURIComponent(activeId)}/messages`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
     });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+      throw new Error(payload?.message || payload?.error || 'Failed to send message');
+    }
   }, [activeId]);
 
   // reset unread when opening a chat

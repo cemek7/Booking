@@ -147,7 +147,7 @@ export function useAnalyticsRealtime({
 
       // Subscribe to the channel
       channel
-        .subscribe((status) => {
+        .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             setIsConnected(true);
             setError(null);

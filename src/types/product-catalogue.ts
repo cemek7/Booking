@@ -8,15 +8,23 @@ export interface Product {
   tenant_id: string;
   name: string;
   description?: string;
+  short_description?: string;
   price_cents: number;
+  cost_price_cents?: number;
   price?: number;
+  currency?: string;
+  sku?: string;
+  brand?: string;
   category_id?: string;
   category?: { id: string; name: string; description?: string };
   images?: string[];
   is_active: boolean;
   is_featured?: boolean;
+  is_digital?: boolean;
   track_inventory?: boolean;
   stock_quantity?: number;
+  low_stock_threshold?: number;
+  upsell_priority?: number;
   variants?: ProductVariant[];
   tags?: string[];
   metadata?: Record<string, unknown>;
@@ -24,15 +32,30 @@ export interface Product {
   updated_at?: string;
 }
 
+/** Product with all related data fully hydrated */
+export type ProductWithDetails = Product & {
+  variants?: ProductVariant[];
+  category?: { id: string; name: string; description?: string };
+  inventory?: { stock_quantity: number; reserved: number; available: number };
+};
+
 export interface ProductVariant {
   id: string;
   product_id: string;
   name: string;
+  variant_name?: string;
+  variant_type?: string;
+  description?: string;
   sku?: string;
   price_cents?: number;
   price?: number;
+  price_adjustment_cents?: number;
   stock_quantity?: number;
+  display_order?: number;
+  weight_grams?: number;
+  volume_ml?: number;
   attributes?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   is_active?: boolean;
   created_at?: string;
   updated_at?: string;
@@ -91,23 +114,32 @@ export interface UpdateProductRequest {
 export interface CreateProductVariantRequest {
   product_id: string;
   name: string;
+  variant_name?: string;
+  variant_type?: string;
   description?: string;
   sku?: string;
   price_cents?: number;
   price_adjustment_cents?: number;
   stock_quantity?: number;
+  display_order?: number;
   weight_grams?: number;
   volume_ml?: number;
   attributes?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   is_active?: boolean;
 }
 
 export interface UpdateProductVariantRequest {
   name?: string;
+  variant_name?: string;
+  variant_type?: string;
   sku?: string;
   price_cents?: number;
+  price_adjustment_cents?: number;
   stock_quantity?: number;
+  display_order?: number;
   attributes?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   is_active?: boolean;
 }
 
@@ -121,6 +153,8 @@ export interface ProductPermissions {
   can_view_cost_prices: boolean;
   can_set_pricing: boolean;
   can_manage_inventory: boolean;
+  can_edit_products?: boolean;
+  can_delete_products?: boolean;
 }
 
 export interface ProductListQuery {
@@ -130,7 +164,9 @@ export interface ProductListQuery {
   category_id?: string;
   is_active?: boolean;
   is_featured?: boolean;
+  is_digital?: boolean;
   status?: string;
+  stock_status?: 'in_stock' | 'low_stock' | 'out_of_stock' | 'all';
   include_variants?: boolean;
   include_stock_info?: boolean;
   price_min?: number;
@@ -138,6 +174,8 @@ export interface ProductListQuery {
   tags?: string | string[];
   sort?: string;
   order?: 'asc' | 'desc';
+  track_inventory?: boolean;
+  include_counts?: boolean;
 }
 
 export const PRODUCT_ROLE_PERMISSIONS: Record<string, ProductPermissions> = {
@@ -159,4 +197,63 @@ export const PRODUCT_VALIDATION_RULES = {
 export type CreateVariantRequest = CreateProductVariantRequest;
 /** Alias used by the variants route */
 export type UpdateVariantRequest = UpdateProductVariantRequest;
-export interface ProductCategory { id: string; name: string; parent_id?: string | null; description?: string; is_active?: boolean; }
+
+export interface CreateCategoryRequest {
+  name: string;
+  description?: string;
+  slug?: string;
+  parent_id?: string | null;
+  display_order?: number;
+  sort_order?: number;
+  is_active?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateCategoryRequest {
+  name?: string;
+  description?: string;
+  parent_id?: string | null;
+  display_order?: number;
+  is_active?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface InventoryMovement {
+  id: string;
+  product_id: string;
+  tenant_id: string;
+  movement_type: 'in' | 'out' | 'adjustment' | 'transfer';
+  quantity: number;
+  quantity_change?: number;
+  product?: { id: string; name: string };
+  reason?: string;
+  notes?: string;
+  reference_id?: string;
+  created_at?: string;
+  created_by?: string;
+}
+
+export interface CreateInventoryMovementRequest {
+  product_id: string;
+  movement_type: 'in' | 'out' | 'adjustment' | 'transfer';
+  quantity?: number;
+  quantity_change?: number;
+  reason?: string;
+  notes?: string;
+  reference_id?: string;
+}
+
+export interface ProductCategory {
+  id: string;
+  name: string;
+  slug?: string;
+  parent_id?: string | null;
+  description?: string;
+  is_active?: boolean;
+  sort_order?: number;
+  display_order?: number;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+  _count?: { products?: number };
+}

@@ -5,6 +5,7 @@
  * checker to provide comprehensive audit trails for all permission checks.
  */
 
+import { defaultLogger } from '@/lib/logger';
 import {
   UnifiedPermissionChecker,
   type UnifiedUser,
@@ -28,7 +29,7 @@ import {
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
 import { Role } from './roles';
-import { assertRole } from './type-safe-rbac';
+import { assertRole } from './unified-permissions';
 
 // ============================================================================
 // AUDITED PERMISSION CHECKER
@@ -576,7 +577,7 @@ async function setupRealTimeAlerts(supabase: SupabaseClient): Promise<void> {
         filter: "security_level=eq.critical"
       },
       (payload) => {
-        console.warn('🚨 CRITICAL SECURITY EVENT:', payload.new);
+        defaultLogger.warn('🚨 CRITICAL SECURITY EVENT:', payload.new);
         // Additional alert logic here (email, Slack, etc.)
       }
     )

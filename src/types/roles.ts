@@ -288,7 +288,7 @@ export function canAssumeRole(userRole: Role, targetRole: Role): boolean {
 export const ROLE_CONFIGS: Record<Role, DashboardRoleConfig> = {
   superadmin: {
     role: 'superadmin',
-    dashboardPath: '/superadmin',
+    dashboardPath: '/dashboard/superadmin',
     displayName: 'Super Administrator',
     description: 'Full system access and global management',
     availableModules: [

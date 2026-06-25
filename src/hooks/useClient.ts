@@ -1,6 +1,6 @@
 "use client";
 import { useQuery } from '@tanstack/react-query';
-import type { ClientProfile } from '@/components/ClientProfilePanel';
+type ClientProfile = Record<string, any>;
 
 async function fetchClient(id: string): Promise<ClientProfile | null> {
   const res = await fetch(`/api/clients/${id}`);

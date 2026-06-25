@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 /**
  * Machine Learning Integration for Predictive Analytics
  * Handles scheduling optimization, demand forecasting, and anomaly detection
@@ -5,10 +6,11 @@
  */
 
 import { trace, metrics } from '@opentelemetry/api';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { addLlmTokens } from './usageMetrics';
 import { ensureTenantHasQuota } from './llmQuota';
 import metricsLib from './metrics';
+import { withTenantWalletSpend } from './billing/ai-wallet';
 
 // Error types following llmAdapter pattern
 type MLQuotaBlockedError = Error & { code?: string };
@@ -233,22 +235,46 @@ export class MachineLearningService {
       
       // Get current availability slots
       const availabilitySlots = await this.getAvailabilitySlots(tenantId, date, staffId);
-      
-      // Calculate predictions for each available slot
-      const predictions: SchedulingPrediction[] = [];
 
-      for (const slot of availabilitySlots) {
-        const prediction = await this.predictSlotOptimality(
-          slot,
-          historicalData,
-          tenantId,
-          serviceId
-        );
-        predictions.push(prediction);
-      }
+      // Calculate predictions for each available slot and account for the compute cost
+      const walletResult = await withTenantWalletSpend(
+        this.supabase,
+        tenantId,
+        {
+          estimatedTokens: Math.max(256, Math.max(availabilitySlots.length, 1) * 16),
+          provider: 'internal',
+          model: 'ml_scheduling',
+          requestId: `ml:scheduling:${tenantId}:${date}`,
+          description: 'ML scheduling predictions',
+          metadata: {
+            service_id: serviceId ?? null,
+            staff_id: staffId ?? null,
+            availability_slots: availabilitySlots.length,
+          },
+        },
+        async () => {
+          const predictions: SchedulingPrediction[] = [];
 
-      // Sort by probability score (highest first)
-      predictions.sort((a, b) => b.probability_score - a.probability_score);
+          for (const slot of availabilitySlots) {
+            const prediction = await this.predictSlotOptimality(
+              slot,
+              historicalData,
+              tenantId,
+              serviceId
+            );
+            predictions.push(prediction);
+          }
+
+          // Sort by probability score (highest first)
+          predictions.sort((a, b) => b.probability_score - a.probability_score);
+
+          return {
+            predictions,
+            usage: { total_tokens: Math.max(1, predictions.length) },
+          };
+        }
+      );
+      const predictions = walletResult.predictions;
 
       // Track usage for quota management
       const usage = { computeUnits: predictions.length, cacheHits: 0 };
@@ -256,7 +282,7 @@ export class MachineLearningService {
         // Track compute units as tokens for quota system
         await addLlmTokens(this.supabase, tenantId, predictions.length);
       } catch (e) {
-        console.warn('ML service: token tracking failed', e);
+        defaultLogger.warn('ML service: token tracking failed', e);
       }
 
       this.predictionRequestsCounter.add(1, { type: 'scheduling' });
@@ -786,7 +812,7 @@ export class MachineLearningService {
         customers,
       };
     } catch (error) {
-      console.warn('Failed to get recent business data:', error);
+      defaultLogger.warn('Failed to get recent business data:', error);
       return {
         bookings: [],
         revenue: [],
@@ -906,17 +932,49 @@ export class MachineLearningService {
     }
 
     const { data } = await query;
-    
-    // Map to ServicePricingData interface
-    return (data || []).map(item => ({
-      service_id: item.id,
-      base_price: item.price || 0,
-      current_price: item.price || 0,
-      demand_score: 1.0, // Default value
-      competition_price: undefined,
-      seasonal_factor: 1.0,
-      tenant_id: tenantId
-    }));
+    if (!data || data.length === 0) return [];
+
+    const fetchedServiceIds = data.map((s: { id: string }) => s.id);
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const prevThirtyStart = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [recentBookings, prevBookings] = await Promise.all([
+      this.supabase.from('reservations').select('service_id')
+        .eq('tenant_id', tenantId).in('service_id', fetchedServiceIds).gte('created_at', thirtyDaysAgo),
+      this.supabase.from('reservations').select('service_id')
+        .eq('tenant_id', tenantId).in('service_id', fetchedServiceIds)
+        .gte('created_at', prevThirtyStart).lt('created_at', thirtyDaysAgo),
+    ]);
+
+    const recentCounts: Record<string, number> = {};
+    const prevCounts: Record<string, number> = {};
+    for (const b of (recentBookings.data ?? []) as Array<{ service_id: string }>) {
+      recentCounts[b.service_id] = (recentCounts[b.service_id] ?? 0) + 1;
+    }
+    for (const b of (prevBookings.data ?? []) as Array<{ service_id: string }>) {
+      prevCounts[b.service_id] = (prevCounts[b.service_id] ?? 0) + 1;
+    }
+    const maxRecent = Math.max(1, ...Object.values(recentCounts));
+    const currentMonth = now.getMonth(); // 0-11
+    // Simple seasonal factors: peaks in summer (Jun-Aug) and Dec, troughs in Jan-Feb
+    const monthlySeasonality = [0.8, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.2, 1.0, 0.9, 0.9, 1.2];
+    const seasonal_factor = monthlySeasonality[currentMonth];
+
+    return data.map((item: { id: string; price: number }) => {
+      const recent = recentCounts[item.id] ?? 0;
+      const prev = prevCounts[item.id] ?? 0;
+      const demand_score = recent / maxRecent * (prev > 0 ? Math.min(2, recent / prev) : 1);
+      return {
+        service_id: item.id,
+        base_price: item.price || 0,
+        current_price: item.price || 0,
+        demand_score: Math.max(0.1, Math.min(2.0, demand_score || 0.5)),
+        competition_price: undefined,
+        seasonal_factor,
+        tenant_id: tenantId,
+      };
+    });
   }
 
   private async getServicePricingHistory(serviceId: string): Promise<ServicePricingData[]> {
@@ -932,7 +990,7 @@ export class MachineLearningService {
       if (error) throw error;
       return data || [];
     } catch (error) {
-      console.warn('Failed to get service pricing history:', error);
+      defaultLogger.warn('Failed to get service pricing history:', error);
       return [];
     }
   }
@@ -949,7 +1007,7 @@ export class MachineLearningService {
       if (error) throw error;
       return data || [];
     } catch (error) {
-      console.warn('Failed to get service demand history:', error);
+      defaultLogger.warn('Failed to get service demand history:', error);
       return [];
     }
   }

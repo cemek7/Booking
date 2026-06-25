@@ -1,9 +1,17 @@
-/**
- * WhatsApp Service - Evolution API Integration
- * 
- * Handles sending WhatsApp messages via Evolution API
- * Includes pre-built templates for common use cases
- */
+import { defaultLogger } from '@/lib/logger';
+import { defaultLogger as logger } from '@/lib/logger';
+import { generateCalendarLinks, type BookingEvent } from './universalCalendar';
+import { getDefaultWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+
+/** Mask a phone number or email for safe logging */
+function maskPII(value: string): string {
+  if (value.includes('@')) {
+    const [local, domain] = value.split('@');
+    return `${local.slice(0, 2)}***@${domain}`;
+  }
+  // Phone: show last 4 digits
+  return value.length > 4 ? `***${value.slice(-4)}` : '****';
+}
 
 interface WhatsAppMessage {
   number: string;
@@ -21,41 +29,36 @@ interface EvolutionResponse {
   error?: string;
 }
 
-/**
- * Send WhatsApp message via Evolution API
- */
 export async function sendWhatsApp(message: WhatsAppMessage): Promise<EvolutionResponse> {
   try {
-    if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) {
-      console.warn('⚠️ Evolution API credentials not configured');
-      return { success: false, error: 'Evolution API not configured' };
+    const client = getDefaultWhatsAppProviderClient();
+    if (!client) {
+      logger.warn('WhatsApp provider credentials not configured');
+      return { success: false, error: 'WhatsApp provider not configured' };
     }
 
-    const instanceKey = process.env.EVOLUTION_INSTANCE_KEY;
-    const endpoint = `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceKey}`;
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': process.env.EVOLUTION_API_KEY,
-      },
-      body: JSON.stringify({
-        number: message.number,
-        text: message.text,
-      }),
-    });
-
-    const data = (await response.json()) as any;
-
-    if (response.ok && data.key) {
-      console.log(`✅ WhatsApp message sent to ${message.number}: ${data.key}`);
-      return { success: true, key: data.key };
+    if (message.template && client.sendTemplateMessage) {
+      const result = await client.sendTemplateMessage(
+        message.number,
+        message.template.name,
+        message.template.parameters
+      );
+      if (result.success) {
+        logger.info(`WhatsApp template sent to ${maskPII(message.number)}${result.messageId ? `: ${result.messageId}` : ''}`);
+        return { success: true, key: result.messageId };
+      }
+      return { success: false, error: 'Failed to send template message' };
     }
 
-    return { success: false, error: data.message || 'Failed to send message' };
+    const result = await client.sendTextMessage(message.number, message.text || '');
+    if (result.success) {
+      logger.info(`WhatsApp message sent to ${maskPII(message.number)}${result.messageId ? `: ${result.messageId}` : ''}`);
+      return { success: true, key: result.messageId };
+    }
+
+    return { success: false, error: 'Failed to send message' };
   } catch (error) {
-    console.error('❌ Error sending WhatsApp message:', error);
+    logger.error('Error sending WhatsApp message:', { error });
     throw error;
   }
 }
@@ -69,46 +72,31 @@ export async function sendWhatsAppTemplate(
   parameters?: Array<{ default: string }>
 ): Promise<EvolutionResponse> {
   try {
-    if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) {
-      console.warn('⚠️ Evolution API credentials not configured');
-      return { success: false, error: 'Evolution API not configured' };
+    const client = getDefaultWhatsAppProviderClient();
+    if (!client) {
+      logger.warn('WhatsApp provider credentials not configured');
+      return { success: false, error: 'WhatsApp provider not configured' };
     }
 
-    const instanceKey = process.env.EVOLUTION_INSTANCE_KEY;
-    const endpoint = `${process.env.EVOLUTION_API_URL}/message/sendTemplate/${instanceKey}`;
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': process.env.EVOLUTION_API_KEY,
-      },
-      body: JSON.stringify({
-        number,
-        template: {
-          name: templateName,
-          language: 'en_US',
-          parameters: parameters || [],
-        },
-      }),
-    });
-
-    const data = (await response.json()) as any;
-
-    if (response.ok && data.key) {
-      console.log(`✅ WhatsApp template sent to ${number}: ${data.key}`);
-      return { success: true, key: data.key };
+    if (!client.sendTemplateMessage) {
+      return { success: false, error: 'Template sending not supported by configured provider' };
     }
 
-    return { success: false, error: data.message || 'Failed to send template' };
+    const result = await client.sendTemplateMessage(number, templateName, parameters);
+    if (result.success) {
+      logger.info(`WhatsApp template sent to ${maskPII(number)}${result.messageId ? `: ${result.messageId}` : ''}`);
+      return { success: true, key: result.messageId };
+    }
+
+    return { success: false, error: 'Failed to send template' };
   } catch (error) {
-    console.error('❌ Error sending WhatsApp template:', error);
+    logger.error('Error sending WhatsApp template:', { error });
     throw error;
   }
 }
 
 /**
- * Send booking confirmation on WhatsApp
+ * Send booking confirmation on WhatsApp (includes universal calendar link)
  */
 export async function sendBookingConfirmationWhatsApp(
   phoneNumber: string,
@@ -119,11 +107,63 @@ export async function sendBookingConfirmationWhatsApp(
     time: string;
     location?: string;
     notes?: string;
+    calendarEvent?: BookingEvent;
   }
 ) {
-  const message = `Hi ${customerName},\n\n✅ Your booking has been confirmed!\n\n📋 Booking Details:\n• Service: ${bookingDetails.serviceName}\n• Date: ${bookingDetails.date}\n• Time: ${bookingDetails.time}${
-    bookingDetails.location ? `\n• Location: ${bookingDetails.location}` : ''
-  }${bookingDetails.notes ? `\n• Notes: ${bookingDetails.notes}` : ''}\n\nIf you need to cancel or reschedule, please let us know at least 24 hours in advance.\n\nSee you soon! 👋`;
+  let calendarLine = '';
+  if (bookingDetails.calendarEvent) {
+    try {
+      const links = generateCalendarLinks(bookingDetails.calendarEvent);
+      const googleLink = links.find(l => l.name === 'Google Calendar');
+      if (googleLink) {
+        calendarLine = `\n\n📅 Add to calendar: ${googleLink.url}`;
+      }
+    } catch {
+      // calendar link is non-critical; skip on error
+    }
+  }
+
+  const message =
+    `Hi ${customerName},\n\n✅ Your booking has been confirmed!\n\n📋 Booking Details:\n• Service: ${bookingDetails.serviceName}\n• Date: ${bookingDetails.date}\n• Time: ${bookingDetails.time}` +
+    (bookingDetails.location ? `\n• Location: ${bookingDetails.location}` : '') +
+    (bookingDetails.notes ? `\n• Notes: ${bookingDetails.notes}` : '') +
+    calendarLine +
+    `\n\nIf you need to cancel or reschedule, please let us know at least 24 hours in advance.\n\nSee you soon! 👋`;
+
+  return sendWhatsApp({
+    number: phoneNumber,
+    text: message,
+  });
+}
+
+/**
+ * Send payment request link on WhatsApp (pre-payment, mid-conversation)
+ */
+export async function sendPaymentLinkWhatsApp(
+  phoneNumber: string,
+  customerName: string,
+  paymentDetails: {
+    paymentUrl: string;
+    serviceName: string;
+    amount?: number;
+    currency?: string;
+    expiresInMinutes?: number;
+  }
+) {
+  const amountLine = paymentDetails.amount
+    ? `\n💰 Amount: ${paymentDetails.currency || ''} ${paymentDetails.amount.toFixed(2)}`
+    : '';
+  const expiryLine = paymentDetails.expiresInMinutes
+    ? `\n⏳ Link expires in ${paymentDetails.expiresInMinutes} minutes`
+    : '';
+
+  const message =
+    `Hi ${customerName},\n\n💳 *Complete Your Booking Payment*\n\n` +
+    `📋 Service: ${paymentDetails.serviceName}` +
+    amountLine +
+    expiryLine +
+    `\n\n👉 Pay here: ${paymentDetails.paymentUrl}\n\n` +
+    `_Reply DONE once payment is complete._`;
 
   return sendWhatsApp({
     number: phoneNumber,
@@ -316,30 +356,16 @@ export async function sendInvoiceWhatsApp(
   });
 }
 
-/**
- * Get Evolution API instance status
- */
-export async function getEvolutionInstanceStatus(): Promise<any> {
+export async function getEvolutionInstanceStatus(): Promise<unknown> {
   try {
-    if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) {
-      console.warn('⚠️ Evolution API credentials not configured');
+    const client = getDefaultWhatsAppProviderClient();
+    if (!client) {
+      defaultLogger.warn('⚠️ WhatsApp provider credentials not configured');
       return null;
     }
-
-    const instanceKey = process.env.EVOLUTION_INSTANCE_KEY;
-    const endpoint = `${process.env.EVOLUTION_API_URL}/instance/info/${instanceKey}`;
-
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        'apikey': process.env.EVOLUTION_API_KEY,
-      },
-    });
-
-    const data = await response.json();
-    return data;
+    return client.getConnectionStatus();
   } catch (error) {
-    console.error('❌ Error getting instance status:', error);
+    logger.error('Error getting WhatsApp provider status:', { error });
     return null;
   }
 }

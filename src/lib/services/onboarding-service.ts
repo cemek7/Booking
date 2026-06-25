@@ -1,5 +1,7 @@
+import { defaultLogger } from '@/lib/logger';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
+import { ensureTenantWahaProvisioning } from '@/lib/whatsapp/wahaProvisioning';
 
 interface Service {
   name: string;
@@ -11,6 +13,7 @@ interface Service {
 interface Staff {
   name?: string;
   email?: string;
+  phone?: string;
   role?: 'owner' | 'staff';
   status?: 'active' | 'on_leave';
 }
@@ -42,9 +45,9 @@ export async function createTenant(
     staff?: Staff[];
   }
 ) {
-  const { name, industry, business_type, timezone, description, services = [], staff = [] } = tenantDetails;
+  const { name, industry, business_type, timezone, services = [], staff = [] } = tenantDetails;
 
-  // Create tenant — store all schema columns added in migration 040
+  // Create tenant (columns added by migration 040: slug, industry, timezone, business_type)
   const tenantId = randomUUID();
   const slug = generateSlug(name, tenantId);
   const { data: tenant, error: tenantError } = await supabase
@@ -55,12 +58,16 @@ export async function createTenant(
       slug,
       industry: industry ?? null,
       business_type: business_type ?? null,
-      timezone: timezone, description ?? 'UTC',
+      timezone: timezone ?? 'UTC',
     })
     .select('id, slug')
     .single<TenantRow>();
 
   if (tenantError || !tenant) {
+    defaultLogger.error('[onboarding] tenant insert failed', {
+      code: tenantError?.code,
+      message: tenantError?.message,
+    });
     throw new Error('Failed to create tenant');
   }
 
@@ -72,7 +79,7 @@ export async function createTenant(
   if (ownerError) {
     // Compensating cleanup: remove the tenant row
     const { error: cleanupError } = await supabase.from('tenants').delete().eq('id', tenant.id);
-    if (cleanupError) console.error('Tenant cleanup failed after owner link error:', cleanupError);
+    if (cleanupError) defaultLogger.error('Tenant cleanup failed after owner link error:', cleanupError);
     throw new Error('Failed to link owner to tenant');
   }
 
@@ -89,7 +96,7 @@ export async function createTenant(
       }));
       const { error: servicesError } = await supabase.from('services').insert(serviceRows);
       if (servicesError) {
-        console.error('Failed to seed services:', servicesError);
+        defaultLogger.error('Failed to seed services:', servicesError);
         throw new Error('Failed to seed services');
       }
     }
@@ -100,15 +107,15 @@ export async function createTenant(
         tenant_id: tenant.id,
         email: s.email,
         name: s.name,
+        phone: s.phone ?? null,
         role: s.role || 'staff',
-        status: s.status || 'active',
       }));
       const { data: insertedStaff, error: staffInsertError } = await supabase
         .from('tenant_users')
         .insert(staffRows)
         .select('user_id');
       if (staffInsertError) {
-        console.error('Failed to seed staff members:', staffInsertError);
+        defaultLogger.error('Failed to seed staff members:', staffInsertError);
         throw new Error('Failed to seed staff members');
       }
 
@@ -133,7 +140,7 @@ export async function createTenant(
           // staff_schedules table created in migration 027
           const { error: scheduleInsertError } = await supabase.from('staff_schedules').insert(scheduleRows);
           if (scheduleInsertError) {
-            console.error('Failed to seed staff schedules:', scheduleInsertError);
+            defaultLogger.error('Failed to seed staff schedules:', scheduleInsertError);
             throw new Error('Failed to seed staff schedules');
           }
         }
@@ -150,9 +157,23 @@ export async function createTenant(
     ];
     for (const step of cleanupSteps) {
       const { error } = await step();
-      if (error) console.error('Tenant compensating cleanup error:', error);
+      if (error) defaultLogger.error('Tenant compensating cleanup error:', error);
     }
     throw seedError;
+  }
+
+  try {
+    await ensureTenantWahaProvisioning(supabase, tenant.id, name);
+  } catch (error) {
+    const mustSucceed = process.env.WAHA_AUTO_PROVISION_REQUIRED === 'true';
+    defaultLogger.error('[onboarding] WAHA auto-provisioning failed', {
+      tenantId: tenant.id,
+      mustSucceed,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (mustSucceed) {
+      throw new Error('Failed to auto-provision WhatsApp endpoint');
+    }
   }
 
   return { tenantId: tenant.id, slug };

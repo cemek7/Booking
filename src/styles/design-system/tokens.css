@@ -1,0 +1,127 @@
+/* ============================================================
+   BOKA DESIGN SYSTEM · v2 TOKENS  (single source of truth)
+   ------------------------------------------------------------
+   One palette, two contexts:
+     · Marketing = warm paper + gold + serif display
+     · App       = cooler near-white + emerald/green + sans + round (pills, 2xl/3xl)
+   No indigo, ever. Light theme is primary.
+   Consumed as plain CSS custom properties; mirror lives in ./theme.css (Tailwind @theme).
+   ============================================================ */
+
+:root {
+  /* ---- Neutrals / surfaces ---- */
+  --paper:          #f6f5ef;  /* marketing background */
+  --paper-strong:   #ece7d8;  /* raised editorial surfaces */
+  --surface:        #fffefb;  /* warm near-white card */
+  --app-canvas:     #f8fbf9;  /* app background — barely-green off-white */
+  --line:           #d8d3c4;  /* borders, dividers */
+  --border-strong:  #c9c3b1;  /* control borders */
+  --ink:            #10211a;  /* primary text / headings */
+  --ink-soft:       #274235;  /* secondary text */
+  --moss:           #4d6a59;  /* muted text, captions (app body — NOT slate) */
+
+  /* ---- Green / emerald (primary action) ----
+     Tailwind emerald-600/700/800 == green / green-strong / green-deep. */
+  --green:          #059669;
+  --green-strong:   #047857;  /* hover / pressed */
+  --green-deep:     #065f46;  /* deep accent text on tints */
+  --green-soft:     #ecfdf5;  /* tinted bg / success surface */
+  --green-border:   #a7f3d0;
+
+  /* ---- Gold (editorial accent — sparing) ---- */
+  --gold:           #d4b368;
+  --gold-soft:      #f7f0dd;
+
+  /* ---- Status (booking domain) ---- */
+  --status-confirmed:        #059669;
+  --status-confirmed-soft:   #ecfdf5;
+  --status-confirmed-border: #a7f3d0;
+  --status-pending:          #b8862b;
+  --status-pending-soft:     #fbf3e0;
+  --status-pending-border:   #ecd9a6;
+  --status-cancelled:        #b4453a;
+  --status-cancelled-soft:   #fbeae7;
+  --status-cancelled-border: #f0c5bd;
+  --status-noshow:           #5c5448;
+  --status-noshow-soft:      #efece4;
+  --status-noshow-border:    #d8d3c4;
+
+  /* ---- Functional aliases ---- */
+  --bg:             var(--paper);
+  --text-strong:    var(--ink);
+  --text-body:      var(--ink-soft);
+  --text-muted:     var(--moss);
+  --text-on-green:  #ffffff;
+  --text-on-gold:   var(--ink);
+  --focus-ring:     rgba(5, 150, 105, 0.32);
+  --selection-bg:   rgba(34, 197, 94, 0.18);
+  --selection-fg:   #0f172a;
+
+  /* ---- Signature washes ---- */
+  --bg-marketing:                        /* warm paper texture (marketing surfaces) */
+    radial-gradient(circle at top left,  rgba(212,179,104,0.14), transparent 24%),
+    radial-gradient(circle at top right, rgba(5,150,105,0.05),   transparent 24%),
+    linear-gradient(180deg, #f8f7f2 0%, #f3f0e6 100%);
+  --bg-hero-green:                       /* soft green→white radial (app hero cards/banners) */
+    radial-gradient(circle at top left, #f0fdf4, #ffffff 55%, #f8fbf9 100%);
+
+  /* ---- Typography ---- */
+  --font-display: "Iowan Old Style", "Newsreader", Palatino, "Book Antiqua", Georgia, serif;
+  --font-sans:    "Avenir Next", "Mulish", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --fw-regular:   400;
+  --fw-semibold:  600;
+  --tracking-display: -0.05em;
+  --tracking-heading: -0.04em;
+  --tracking-kicker:   0.32em;
+  --leading-display:   0.94;
+
+  /* ---- Radius (app leans round) ---- */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   10px;   /* default control radius */
+  --radius-lg:   14px;   /* compact / editorial cards */
+  --radius-xl:   20px;
+  --radius-2xl:  18px;   /* default app card */
+  --radius-3xl:  24px;   /* app hero card */
+  --radius-pill: 999px;  /* buttons + badges */
+  --radius-card: var(--radius-2xl);
+
+  /* ---- Spacing (4px scale) ---- */
+  --space-1: 0.25rem; --space-2: 0.5rem;  --space-3: 0.75rem; --space-4: 1rem;
+  --space-5: 1.25rem; --space-6: 1.5rem;  --space-8: 2rem;    --space-10: 2.5rem;
+  --space-12: 3rem;   --space-16: 4rem;   --space-20: 5rem;   --space-24: 6rem;
+  --page-x: 1.5rem;   --page-y: 1.25rem;  --section-gap: 1.25rem;
+
+  /* ---- Layout / shell ---- */
+  --control-h-sm: 32px;
+  --control-h-md: 40px;
+  --control-h-lg: 48px;
+  --topbar-h:     56px;
+  --sidebar-w:    240px;
+  --sidebar-w-drawer: 288px;
+  --content-max:  1280px;
+  --content-max-wide: 1600px;
+
+  /* ---- Elevation (warm, low-contrast) ---- */
+  --shadow-xs:    0 1px 2px rgba(16, 33, 26, 0.05);
+  --shadow-sm:    0 1px 3px rgba(16, 33, 26, 0.07), 0 1px 2px rgba(16, 33, 26, 0.04);
+  --shadow-md:    0 4px 14px rgba(16, 33, 26, 0.08), 0 2px 4px rgba(16, 33, 26, 0.04);
+  --shadow-lg:    0 16px 40px rgba(16, 33, 26, 0.12), 0 4px 12px rgba(16, 33, 26, 0.06);
+  --shadow-green: 0 8px 22px rgba(5, 150, 105, 0.22);
+  --ring:         0 0 0 3px var(--focus-ring);
+
+  /* ---- Motion ---- */
+  --ease-out:  cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast:  120ms;
+  --dur-base:  200ms;
+  --dur-slow:  320ms;
+}
+
+::selection { background: var(--selection-bg); color: var(--selection-fg); }
+
+/* ---- Surface utilities ---- */
+.boka-bg          { background-color: var(--paper); background-image: var(--bg-marketing); background-attachment: fixed; }
+.boka-app-bg      { background-color: var(--app-canvas); }
+.boka-hero-green  { background: var(--bg-hero-green); border: 1px solid var(--green-border); }

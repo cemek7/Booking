@@ -2,6 +2,8 @@
 // Booka frontend shared types (components + API shapes)
 // Copy into your repo. Keep in sync with backend OpenAPI.
 
+import type { Role } from './src/types/roles';
+
 // Re-export comprehensive type definitions
 export * from './src/types/roles';
 export * from './src/types/permissions';

@@ -9,8 +9,8 @@ export function useRealtimeClient() {
   const [client, setClient] = useState<RealtimeClient | null>(null);
 
   useEffect(() => {
-    const authToken = token || (typeof window !== 'undefined' ? localStorage.getItem('auth_token') || undefined : undefined);
-    const c = getRealtimeClient(authToken || undefined);
+    // Use token from tenant context; avoid reading from localStorage to reduce XSS surface
+    const c = getRealtimeClient(token || undefined);
     c.onStatus(setStatus);
     setStatus(c.getStatus());
     setClient(c);

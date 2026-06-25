@@ -157,28 +157,32 @@ function ensureClient() {
 }
 
 async function ensureReadyClient() {
+  // If we already have a ready client, return it immediately without taking the promise path
+  if (client && !connectPromise && !connectError) {
+    return client;
+  }
+
   // If we're already initializing, wait for that initialization to complete
   if (initializationPromise) {
     return initializationPromise;
   }
 
-  // If we have a client, check if it's ready
-  // Note: We don't check !connectError here because the state invariant
-  // guarantees that if connectError is set, client will be null.
-  // See module-level documentation for details on state management.
-  if (client) {
-    if (connectPromise) {
-      await connectPromise;
-    }
-    if (connectError) {
-      throw connectError;
-    }
-    return client;
-  }
-
-  // Start initialization and store the promise so concurrent callers can await it
+  // Start initialization and store the promise so concurrent callers can await it.
+  // The client existence check is inside the promise block to prevent race conditions
+  // where concurrent calls both pass the outer check before either initializes.
   initializationPromise = (async () => {
     try {
+      // If we already have a ready client, return it
+      if (client) {
+        if (connectPromise) {
+          await connectPromise;
+        }
+        if (connectError) {
+          throw connectError;
+        }
+        return client;
+      }
+
       ensureClient();
 
       if (connectPromise) {
@@ -195,6 +199,7 @@ async function ensureReadyClient() {
 
       return client;
     } finally {
+      // Only clear the promise after client is set; gate on client first above
       initializationPromise = null;
     }
   })();
@@ -216,28 +221,29 @@ export async function getRecent(chatId: string, limit = 50) {
   const raw = (c.lrange) ? await c.lrange(`chat:${chatId}:recent`, 0, limit - 1) : await c.lRange(`chat:${chatId}:recent`, 0, limit - 1);
   if (!Array.isArray(raw)) return [];
   return raw.map((r: string) => {
-    try { return JSON.parse(r); } catch { return { content: String(r) }; }
+    try { return JSON.parse(r); } catch (e) {
+      defaultLogger.warn('Redis JSON.parse failed for chat message', { chatId, error: e instanceof Error ? e.message : String(e) });
+      return { content: String(r) };
+    }
   }).reverse();
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function cacheSet(key: string, value: any, ttlSec?: number) {
+export async function cacheSet(key: string, value: any, ttlSec = 3600) {
   const c = await ensureReadyClient();
   const v = JSON.stringify(value);
-  if (typeof ttlSec === 'number') {
-    if (c.set) await c.set(key, v, 'EX', ttlSec);
-    else if (c.SET) await c.SET(key, v, 'EX', ttlSec);
-  } else {
-    if (c.set) await c.set(key, v);
-    else if (c.SET) await c.SET(key, v);
-  }
+  if (c.set) await c.set(key, v, 'EX', ttlSec);
+  else if (c.SET) await c.SET(key, v, 'EX', ttlSec);
 }
 
 export async function cacheGet(key: string) {
   const c = await ensureReadyClient();
   const v = (c.get) ? await c.get(key) : await c.GET(key);
   if (!v) return null;
-  try { return JSON.parse(v); } catch { return v; }
+  try { return JSON.parse(v); } catch (e) {
+    defaultLogger.warn('Redis cacheGet JSON.parse failed', { key, error: e instanceof Error ? e.message : String(e) });
+    return v;
+  }
 }
 
 export async function pingRedis() {

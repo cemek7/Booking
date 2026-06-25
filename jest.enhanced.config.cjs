@@ -29,8 +29,7 @@ module.exports = {
     '<rootDir>/node_modules/',
     '<rootDir>/.next/',
     '<rootDir>/dist/',
-    '<rootDir>/build/',
-    '<rootDir>/tests/e2e/' // Playwright handles these
+    '<rootDir>/build/'
   ],
   
   // Coverage configuration with quality gates

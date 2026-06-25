@@ -8,16 +8,17 @@ export interface FeatureFlag {
   enabled: boolean;
   category: 'core' | 'integration' | 'ui' | 'experimental';
   requiredConfig?: string[];
+  planRequired?: 'free' | 'pro' | 'business';
 }
 
 export const FEATURE_FLAGS: FeatureFlag[] = [
   {
     key: 'whatsappIntegration',
     name: 'WhatsApp Integration',
-    description: 'Enable WhatsApp booking and messaging through Evolution API',
+    description: 'Enable WhatsApp booking and messaging through Meta, WAHA, or Evolution',
     enabled: false,
     category: 'integration',
-    requiredConfig: ['EVOLUTION_API_KEY', 'EVOLUTION_WEBHOOK_SECRET']
+    requiredConfig: []
   },
   {
     key: 'phase5Features',
@@ -54,7 +55,25 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
     description: 'Enable multi-tenant architecture and isolation',
     enabled: false,
     category: 'core'
-  }
+  },
+  {
+    key: 'voiceNotes',
+    name: 'Voice Note Conversations',
+    description: 'Transcribe WhatsApp voice notes with Whisper and reply with TTS audio',
+    enabled: false,
+    category: 'integration',
+    planRequired: 'pro',
+    requiredConfig: ['OPENAI_API_KEY'],
+  },
+  {
+    key: 'voiceCalls',
+    name: 'Voice Call Link',
+    description: 'Generate secure WebRTC call links via LiveKit for real-time AI voice booking',
+    enabled: false,
+    category: 'integration',
+    planRequired: 'pro',
+    requiredConfig: ['LIVEKIT_URL', 'OPENAI_API_KEY'],
+  },
 ];
 
 /**
@@ -104,6 +123,21 @@ export function checkFeatureRequirements(key: string): {
   const flag = getFeatureFlag(key);
   if (!flag || !flag.requiredConfig) {
     return { satisfied: true, missing: [] };
+  }
+
+  if (key === 'whatsappIntegration') {
+    const hasEvolution =
+      !!process.env.EVOLUTION_API_KEY &&
+      !!process.env.EVOLUTION_WEBHOOK_SECRET &&
+      !!process.env.EVOLUTION_API_BASE;
+    const hasMeta = !!process.env.WHATSAPP_ACCESS_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const hasWaha = !!process.env.WAHA_API_BASE && !!process.env.WAHA_API_KEY;
+
+    if (hasEvolution || hasMeta || hasWaha) {
+      return { satisfied: true, missing: [] };
+    }
+
+    return { satisfied: false, missing: ['EVOLUTION_API_KEY/Evolution webhook secret, WAHA_API_BASE/WAHA_API_KEY, or WHATSAPP_ACCESS_TOKEN/WHATSAPP_PHONE_NUMBER_ID'] };
   }
   
   const missing = flag.requiredConfig.filter(configKey => {

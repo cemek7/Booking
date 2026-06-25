@@ -8,7 +8,8 @@
  * - Database audit trail (always)
  */
 
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 export type AlertSeverity = 'info' | 'warning' | 'error' | 'critical';
 
@@ -82,7 +83,7 @@ export class AlertService {
       slackWebhookUrl: config.slackWebhookUrl || process.env.SLACK_WEBHOOK_URL || '',
       enableDatabaseLogging: config.enableDatabaseLogging ?? true
     };
-    this.supabase = createServerSupabaseClient();
+    this.supabase = createSupabaseAdminClient();
   }
 
   /**
@@ -173,25 +174,25 @@ export class AlertService {
       critical: '🚨'
     };
 
-    console.error(
+    defaultLogger.error(
       `${emoji[alert.severity as AlertSeverity]} [${alert.severity.toUpperCase()}] ${alert.operation}:`,
       alert.message
     );
     
     if (alert.tenantId) {
-      console.error(`  Tenant: ${alert.tenantId}`);
+      defaultLogger.error(`  Tenant: ${alert.tenantId}`);
     }
     
     if (alert.resourceId) {
-      console.error(`  Resource: ${alert.resourceId}`);
+      defaultLogger.error(`  Resource: ${alert.resourceId}`);
     }
     
     if (alert.metadata && Object.keys(alert.metadata).length > 0) {
-      console.error('  Metadata:', JSON.stringify(alert.metadata, null, 2));
+      defaultLogger.error('  Metadata:', JSON.stringify(alert.metadata, null, 2));
     }
     
     if (alert.stackTrace) {
-      console.error('  Stack:', alert.stackTrace);
+      defaultLogger.error('  Stack:', alert.stackTrace);
     }
   }
 
@@ -214,7 +215,7 @@ export class AlertService {
         });
     } catch (error) {
       // Don't fail if logging fails
-      console.error('[Alert] Failed to log to database:', error);
+      defaultLogger.error('[Alert] Failed to log to database:', error);
     }
   }
 
@@ -257,21 +258,36 @@ export class AlertService {
         body: JSON.stringify(payload)
       });
     } catch (error) {
-      console.error('[Alert] Failed to send to Slack:', error);
+      defaultLogger.error('[Alert] Failed to send to Slack:', error);
     }
   }
 
   /**
-   * Send alert via email (placeholder - implement with actual email service)
+   * Send alert via email using SendGrid
    */
   private async sendToEmail(alert: any): Promise<void> {
     if (this.config.emailRecipients.length === 0) {
       return;
     }
 
-    // TODO: Implement email sending via SendGrid, AWS SES, etc.
-    console.log('[Alert] Would send email to:', this.config.emailRecipients);
-    console.log('[Alert] Email content:', alert);
+    try {
+      const { sendEmail } = await import('@/lib/integrations/email-service');
+      const severityColor = alert.severity === 'critical' ? '#990000' : '#ff0000';
+      await sendEmail({
+        to: this.config.emailRecipients,
+        subject: `[${alert.severity.toUpperCase()}] ${alert.operation}`,
+        html: `
+          <h2 style="color:${severityColor}">${alert.severity.toUpperCase()}: ${alert.operation}</h2>
+          <p><strong>Message:</strong> ${alert.message}</p>
+          ${alert.tenantId ? `<p><strong>Tenant:</strong> ${alert.tenantId}</p>` : ''}
+          ${alert.resourceId ? `<p><strong>Resource:</strong> ${alert.resourceId}</p>` : ''}
+          <p><strong>Timestamp:</strong> ${alert.timestamp}</p>
+          ${alert.stackTrace ? `<pre style="background:#f5f5f5;padding:10px;overflow:auto;font-size:12px">${alert.stackTrace}</pre>` : ''}
+        `,
+      });
+    } catch (error) {
+      defaultLogger.error('[Alert] Failed to send email alert:', error);
+    }
   }
 }
 

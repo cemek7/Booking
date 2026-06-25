@@ -199,7 +199,7 @@ export class MockBuilder {
     responses.forEach(({ url, response, status = 200 }) => {
       if (url) {
         fetchMock.mockImplementationOnce((input) => {
-          const requestUrl = typeof input === 'string' ? input : input.url;
+          const requestUrl = typeof input === 'string' ? input : (input as Request).url;
           if (typeof url === 'string' ? requestUrl.includes(url) : url.test(requestUrl)) {
             return Promise.resolve({
               ok: status >= 200 && status < 300,
@@ -235,7 +235,7 @@ export class TestAssertions {
     while (Date.now() - start < timeout) {
       const calls = mockFetch.mock.calls;
       const found = calls.some(call => {
-        const url = typeof call[0] === 'string' ? call[0] : call[0].url;
+        const url = typeof call[0] === 'string' ? call[0] : (call[0] as Request).url;
         return typeof expectedUrl === 'string' 
           ? url.includes(expectedUrl)
           : expectedUrl.test(url);
@@ -255,7 +255,7 @@ export class TestAssertions {
   ): void {
     const calls = mockFetch.mock.calls;
     const matchingCall = calls.find(call => {
-      const url = typeof call[0] === 'string' ? call[0] : call[0].url;
+      const url = typeof call[0] === 'string' ? call[0] : (call[0] as Request).url;
       return typeof expectedUrl === 'string' 
         ? url.includes(expectedUrl)
         : expectedUrl.test(url);
@@ -348,7 +348,7 @@ expect.extend({
   toHaveApiCall(mockFetch: jest.MockedFunction<typeof fetch>, expectedUrl: string | RegExp) {
     const calls = mockFetch.mock.calls;
     const found = calls.some(call => {
-      const url = typeof call[0] === 'string' ? call[0] : call[0].url;
+      const url = typeof call[0] === 'string' ? call[0] : (call[0] as Request).url;
       return typeof expectedUrl === 'string' 
         ? url.includes(expectedUrl)
         : expectedUrl.test(url);

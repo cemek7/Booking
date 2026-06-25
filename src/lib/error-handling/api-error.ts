@@ -5,6 +5,7 @@
  * All API errors should use this system
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { NextResponse } from 'next/server';
 
 /**
@@ -40,6 +41,10 @@ export const ErrorCodes = {
   OPERATION_NOT_ALLOWED: 'operation_not_allowed',
   INSUFFICIENT_BALANCE: 'insufficient_balance',
   QUOTA_EXCEEDED: 'quota_exceeded',
+
+  // Rate / lockout errors
+  RATE_LIMITED: 'rate_limited',
+  ACCOUNT_LOCKED: 'account_locked',
 
   // Server errors
   INTERNAL_SERVER_ERROR: 'internal_server_error',
@@ -77,6 +82,9 @@ const StatusCodeMap: Record<string, number> = {
   [ErrorCodes.OPERATION_NOT_ALLOWED]: 422,
   [ErrorCodes.INSUFFICIENT_BALANCE]: 422,
   [ErrorCodes.QUOTA_EXCEEDED]: 429,
+
+  [ErrorCodes.RATE_LIMITED]: 429,
+  [ErrorCodes.ACCOUNT_LOCKED]: 423,
 
   [ErrorCodes.INTERNAL_SERVER_ERROR]: 500,
   [ErrorCodes.DATABASE_ERROR]: 500,
@@ -134,7 +142,9 @@ export class ApiError extends Error {
       timestamp: new Date().toISOString(),
     };
 
-    if (includeDetails && this.details) {
+    // Never include error details in production to prevent information leakage
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (includeDetails && !isProduction && this.details) {
       response.details = this.details;
     }
 
@@ -165,12 +175,12 @@ export const ApiErrorFactory = {
       'Authorization header is missing or malformed'
     ),
 
-  invalidToken: (details?: Record<string, any>) =>
+  invalidToken: (details?: string | Record<string, any>) =>
     new ApiError(
       ErrorCodes.INVALID_TOKEN,
-      'Invalid or malformed token',
+      typeof details === 'string' ? details : 'Invalid or malformed token',
       undefined,
-      details
+      typeof details === 'object' ? details : undefined
     ),
 
   tokenExpired: () =>
@@ -218,12 +228,12 @@ export const ApiErrorFactory = {
       message || 'Bad request'
     ),
 
-  validationError: (details: Record<string, any>) =>
+  validationError: (details: string | Record<string, any>) =>
     new ApiError(
       ErrorCodes.VALIDATION_ERROR,
-      'Validation failed',
+      typeof details === 'string' ? details : 'Validation failed',
       undefined,
-      details
+      typeof details === 'object' ? details : undefined
     ),
 
   conflict: (message: string) =>
@@ -257,6 +267,27 @@ export const ApiErrorFactory = {
       502,
       { service },
       originalError
+    ),
+
+  tooManyRequests: (message?: string) =>
+    new ApiError(
+      ErrorCodes.RATE_LIMITED,
+      message || 'Too many requests. Please try again later.',
+      429
+    ),
+
+  invalidCredentials: () =>
+    new ApiError(
+      ErrorCodes.INVALID_CREDENTIALS,
+      'Invalid email or password.',
+      401
+    ),
+
+  accountLocked: (message?: string) =>
+    new ApiError(
+      ErrorCodes.ACCOUNT_LOCKED,
+      message || 'Account is locked due to too many failed attempts.',
+      423
     ),
 };
 
@@ -309,7 +340,7 @@ export async function handleMiddlewareError(
   error: Error,
   context?: { request?: { url: string } }
 ): Promise<NextResponse> {
-  console.error('[Middleware Error]', {
+  defaultLogger.error('[Middleware Error]', {
     error: error.message,
     url: context?.request?.url,
     stack: error.stack,
@@ -326,7 +357,7 @@ export async function handleRouteError(
   error: Error,
   includeDetails = false
 ): Promise<NextResponse> {
-  console.error('[Route Error]', {
+  defaultLogger.error('[Route Error]', {
     error: error.message,
     stack: error.stack,
   });

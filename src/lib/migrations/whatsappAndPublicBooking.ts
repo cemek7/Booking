@@ -9,6 +9,8 @@
  * 5. Create business hours table
  */
 
+import { defaultLogger } from '@/lib/logger';
+
 // Migration 1: Add tenant slug
 export const migration1_add_tenant_slug = `
 -- Add slug column to tenants
@@ -172,7 +174,9 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_log_status ON whatsapp_message_log(deliv
 `;
 
 // Helper function to run all migrations
-export async function runAllMigrations(supabase: any) {
+export async function runAllMigrations(
+  supabase: { rpc: (fn: string, params: { sql: string }) => Promise<{ error?: unknown | null }> }
+) {
   const migrations = [
     migration1_add_tenant_slug,
     migration2_whatsapp_connections,
@@ -184,15 +188,15 @@ export async function runAllMigrations(supabase: any) {
 
   for (let i = 0; i < migrations.length; i++) {
     try {
-      console.log(`Running migration ${i + 1}...`);
+      defaultLogger.info(`Running migration ${i + 1}...`);
       const { error } = await supabase.rpc('exec_sql', { sql: migrations[i] });
       if (error) {
-        console.error(`Migration ${i + 1} failed:`, error);
+        defaultLogger.error(`Migration ${i + 1} failed:`, error);
       } else {
-        console.log(`✅ Migration ${i + 1} completed`);
+        defaultLogger.info(`✅ Migration ${i + 1} completed`);
       }
     } catch (error) {
-      console.error(`Migration ${i + 1} error:`, error);
+      defaultLogger.error(`Migration ${i + 1} error:`, error);
     }
   }
 }

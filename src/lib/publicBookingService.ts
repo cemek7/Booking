@@ -8,6 +8,7 @@
  * - Business hours are stored in the tenant's local timezone
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
@@ -305,7 +306,8 @@ export async function createPublicBooking(
     }
 
     // Create booking atomically after conflict check passes
-    const { data: booking, error: bookingErr } = await supabase
+    // Use adminClient (same client as lock/conflict check) for atomicity
+    const { data: booking, error: bookingErr } = await adminClient
       .from('reservations')
       .insert({
         tenant_id: tenantId,
@@ -338,7 +340,7 @@ export async function createPublicBooking(
         await bookingPrevention.releaseSlotLock(lockResult.lockId);
       } catch (releaseError) {
         // Log the release error but don't throw to preserve the original error
-        console.error('Failed to release slot lock:', {
+        defaultLogger.error('Failed to release slot lock:', {
           lockId: lockResult.lockId,
           error: releaseError instanceof Error ? releaseError.message : String(releaseError)
         });
@@ -354,7 +356,8 @@ function generateTimeSlots(
   startTime: string,
   endTime: string,
   durationMinutes: number,
-  existingReservations: Array<{ start_at: string; end_at: string }>
+  existingReservations: Array<{ start_at: string; end_at: string }>,
+  targetDate: Date
 ): TimeSlot[] {
   const slots: TimeSlot[] = [];
 
@@ -362,10 +365,10 @@ function generateTimeSlots(
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
 
-  let current = new Date(baseDate);
+  let current = new Date(targetDate);
   current.setHours(startHour, startMin, 0, 0);
 
-  const dayEnd = new Date(baseDate);
+  const dayEnd = new Date(targetDate);
   dayEnd.setHours(endHour, endMin, 0, 0);
 
   // Generate 30-minute intervals

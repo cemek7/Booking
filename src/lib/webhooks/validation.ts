@@ -9,6 +9,7 @@
  * for use in route handlers where only signature validation is needed.
  */
 
+import { defaultLogger } from '@/lib/logger';
 import crypto from 'crypto';
 
 /**
@@ -28,7 +29,7 @@ export function verifyStripeSignature(
   webhookSecret: string
 ): boolean {
   if (!headerSignature) {
-    console.warn('❌ [Stripe] Missing signature header');
+    defaultLogger.warn('❌ [Stripe] Missing signature header');
     return false;
   }
 
@@ -45,7 +46,7 @@ export function verifyStripeSignature(
     }
 
     if (!timestamp || !signature) {
-      console.warn('❌ [Stripe] Invalid signature format');
+      defaultLogger.warn('❌ [Stripe] Invalid signature format');
       return false;
     }
 
@@ -55,12 +56,12 @@ export function verifyStripeSignature(
     const age = now - timestampNum;
 
     if (age > 300) {
-      console.warn(`❌ [Stripe] Signature too old: ${age} seconds`);
+      defaultLogger.warn(`❌ [Stripe] Signature too old: ${age} seconds`);
       return false;
     }
 
     if (age < -60) {
-      console.warn(`❌ [Stripe] Signature timestamp in future: ${age} seconds`);
+      defaultLogger.warn(`❌ [Stripe] Signature timestamp in future: ${age} seconds`);
       return false;
     }
 
@@ -81,18 +82,18 @@ export function verifyStripeSignature(
       );
       
       if (isValid) {
-        console.log(`✅ [Stripe] Webhook signature verified`);
+        defaultLogger.info(`✅ [Stripe] Webhook signature verified`);
       } else {
-        console.warn('❌ [Stripe] Signature mismatch');
+        defaultLogger.warn('❌ [Stripe] Signature mismatch');
       }
 
       return isValid;
     } catch {
-      console.warn('❌ [Stripe] Signature comparison failed');
+      defaultLogger.warn('❌ [Stripe] Signature comparison failed');
       return false;
     }
   } catch (error) {
-    console.error('❌ [Stripe] Error verifying signature:', error);
+    defaultLogger.error('❌ [Stripe] Error verifying signature:', error);
     return false;
   }
 }
@@ -114,7 +115,7 @@ export function verifyPaystackSignature(
   webhookSecret: string
 ): boolean {
   if (!headerSignature) {
-    console.warn('❌ [Paystack] Missing signature header');
+    defaultLogger.warn('❌ [Paystack] Missing signature header');
     return false;
   }
 
@@ -132,18 +133,18 @@ export function verifyPaystackSignature(
       );
 
       if (isValid) {
-        console.log(`✅ [Paystack] Webhook signature verified`);
+        defaultLogger.info(`✅ [Paystack] Webhook signature verified`);
       } else {
-        console.warn('❌ [Paystack] Signature mismatch');
+        defaultLogger.warn('❌ [Paystack] Signature mismatch');
       }
 
       return isValid;
     } catch {
-      console.warn('❌ [Paystack] Signature comparison failed');
+      defaultLogger.warn('❌ [Paystack] Signature comparison failed');
       return false;
     }
   } catch (error) {
-    console.error('❌ [Paystack] Error verifying signature:', error);
+    defaultLogger.error('❌ [Paystack] Error verifying signature:', error);
     return false;
   }
 }

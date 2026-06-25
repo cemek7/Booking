@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import { useCallback } from 'react';
 
 interface ToastProps {
@@ -17,16 +18,16 @@ export function useToast() {
     const message = description ? `${title}\n${description}` : title;
     
     if (type === 'error') {
-      console.error(message);
+      defaultLogger.error(message);
     } else if (type === 'success') {
-      console.log(message);
+      defaultLogger.info(message);
     }
     
     // Use window.alert for now - can be replaced with proper UI component
     if (typeof window !== 'undefined') {
       // You can add a proper toast UI here using a library like react-toastify
       // For now, we'll just log to console to avoid blocking UI
-      console.log({ title, description, type });
+      defaultLogger.info(`[toast:${type}] ${message}`);
     }
   }, []);
 

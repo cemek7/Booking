@@ -21,7 +21,8 @@ export type BookingStep =
   | 'service_selection'
   | 'date_time'
   | 'confirmation'
-  | 'completed';
+  | 'completed'
+  | 'payment_pending';
 
 /**
  * Represents an available time slot for public booking.

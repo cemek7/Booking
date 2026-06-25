@@ -134,37 +134,38 @@ async function handlePaymentCompleted(webhook: NormalizedWebhook) {
     const paymentIntentId = paymentData.id;
     const amount = webhook.metadata.amount;
     const currency = webhook.metadata.currency;
-    const customerId = webhook.metadata.customerId;
 
-    // Find related booking/transaction
-    const { data: booking, error: bookingError } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('payment_intent_id', paymentIntentId)
+    // Find related transaction/reservation on the canonical reservations path
+    const { data: transaction, error: transactionError } = await supabase
+      .from('transactions')
+      .select('id, booking_id, tenant_id, provider_transaction_id, metadata, reservation:reservations(*)')
+      .eq('provider_transaction_id', paymentIntentId)
       .single();
 
-    if (bookingError && bookingError.code !== 'PGRST116') {
-      throw new Error(`Failed to find booking: ${bookingError.message}`);
+    if (transactionError && transactionError.code !== 'PGRST116') {
+      throw new Error(`Failed to find reservation transaction: ${transactionError.message}`);
     }
 
-    if (booking) {
-      // Update booking status
+    const reservation = transaction?.reservation;
+
+    if (transaction && reservation) {
+      // Update reservation status
       await supabase
-        .from('bookings')
+        .from('reservations')
         .update({
           status: 'confirmed',
-          payment_status: 'paid',
           confirmed_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
-        .eq('id', booking.id);
+        .eq('id', transaction.booking_id);
 
-      // Create transaction record
+      // Update transaction record with the completed webhook payload
       await supabase
         .from('transactions')
-        .insert({
-          booking_id: booking.id,
-          tenant_id: booking.tenant_id,
+        .upsert({
+          id: transaction.id,
+          booking_id: transaction.booking_id,
+          tenant_id: transaction.tenant_id,
           amount: amount,
           currency: currency,
           type: 'payment',
@@ -172,6 +173,7 @@ async function handlePaymentCompleted(webhook: NormalizedWebhook) {
           provider: webhook.provider,
           provider_transaction_id: paymentIntentId,
           metadata: {
+            ...(transaction.metadata || {}),
             webhook_event_id: webhook.id,
             original_event: webhook.data
           }
@@ -179,14 +181,14 @@ async function handlePaymentCompleted(webhook: NormalizedWebhook) {
 
       // Enqueue confirmation notifications
       await enqueueJob('send_booking_confirmation', {
-        bookingId: booking.id,
-        userId: booking.user_id,
+        bookingId: transaction.booking_id,
+        userId: (reservation as any)?.user_id,
         method: 'whatsapp'
       });
 
-      console.log(`Payment completed for booking ${booking.id}`);
+      console.log(`Payment completed for reservation ${transaction.booking_id}`);
     } else {
-      console.warn(`No booking found for payment intent ${paymentIntentId}`);
+      console.warn(`No reservation transaction found for payment intent ${paymentIntentId}`);
     }
   } catch (error) {
     console.error('Error handling payment completion:', error);
@@ -202,29 +204,36 @@ async function handlePaymentFailed(webhook: NormalizedWebhook) {
     const paymentIntentId = paymentData.id;
     const failureReason = paymentData.last_payment_error?.message || 'Unknown error';
 
-    // Find and update booking
-    const { data: booking, error: bookingError } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('payment_intent_id', paymentIntentId)
+    // Find the canonical transaction/reservation pair
+    const { data: transaction, error: transactionError } = await supabase
+      .from('transactions')
+      .select('id, booking_id, tenant_id, provider_transaction_id, metadata, reservation:reservations(notes, user_id)')
+      .eq('provider_transaction_id', paymentIntentId)
       .single();
 
-    if (booking) {
+    if (transactionError && transactionError.code !== 'PGRST116') {
+      throw new Error(`Failed to find reservation transaction: ${transactionError.message}`);
+    }
+
+    const reservation = transaction?.reservation;
+
+    if (transaction && reservation) {
       await supabase
-        .from('bookings')
+        .from('reservations')
         .update({
-          payment_status: 'failed',
-          notes: (booking.notes || '') + `\nPayment failed: ${failureReason}`,
+          status: 'payment_failed',
+          notes: ((reservation as any)?.notes || '') + `\nPayment failed: ${failureReason}`,
           updated_at: new Date().toISOString()
         })
-        .eq('id', booking.id);
+        .eq('id', transaction.booking_id);
 
-      // Create failed transaction record
+      // Update transaction record with the failure webhook payload
       await supabase
         .from('transactions')
-        .insert({
-          booking_id: booking.id,
-          tenant_id: booking.tenant_id,
+        .upsert({
+          id: transaction.id,
+          booking_id: transaction.booking_id,
+          tenant_id: transaction.tenant_id,
           amount: webhook.metadata.amount,
           currency: webhook.metadata.currency,
           type: 'payment',
@@ -232,6 +241,7 @@ async function handlePaymentFailed(webhook: NormalizedWebhook) {
           provider: webhook.provider,
           provider_transaction_id: paymentIntentId,
           metadata: {
+            ...(transaction.metadata || {}),
             webhook_event_id: webhook.id,
             failure_reason: failureReason,
             original_event: webhook.data
@@ -240,8 +250,8 @@ async function handlePaymentFailed(webhook: NormalizedWebhook) {
 
       // Notify user of payment failure
       await enqueueJob('send_payment_failed_notification', {
-        bookingId: booking.id,
-        userId: booking.user_id,
+        bookingId: transaction.booking_id,
+        userId: (reservation as any)?.user_id,
         failureReason
       });
     }
@@ -367,7 +377,7 @@ async function handleWhatsAppStatusChanged(webhook: NormalizedWebhook) {
 // JOB QUEUE INTEGRATION
 // ===============================
 
-async function enqueueJob(jobType: string, payload: any, delay: number = 0) {
+async function enqueueJob(jobType: string, payload: Record<string, unknown>, delay: number = 0) {
   const supabase = getSupabaseRouteHandlerClient();
   
   try {
@@ -460,6 +470,4 @@ if (typeof window === 'undefined') { // Server-side only
 
 export {
   securityService,
-  validateWebhookConfig,
-  testWebhookHandler
 };

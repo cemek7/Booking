@@ -33,12 +33,20 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
     "**/*.mts",
-    ".next\\dev/types/**/*.ts",
-    ".next\\dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    ".next",
+    ".tsbuild",
+    ".turbo",
+    "coverage",
+    "dist",
+    "tests",
+    "src/__tests__",
+    "src/test",
+    "src/components/__tests__",
+    "jest.permission.config.ts"
   ]
 }

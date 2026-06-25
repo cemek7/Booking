@@ -9,24 +9,27 @@ interface SessionResult {
 
 export async function getSession(req: NextRequest): Promise<SessionResult> {
   const supabase = createServerSupabaseClient();
-  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-  if (sessionError || !session) {
+  if (userError || !user) {
     return { session: null, tenantId: null };
   }
 
+  // Build a minimal session-compatible object for callers that need it
+  const session = { user } as unknown as Session;
+
   // Extract tenant_id from user's app_metadata
-  const tenantId = session.user?.app_metadata?.tenant_id ?? null;
+  const tenantId = user?.app_metadata?.tenant_id ?? null;
 
   if (!tenantId) {
      // If not in metadata, try to get it from the tenant_users table as a fallback
      const { data: tenantUserData } = await supabase
        .from('tenant_users')
        .select('tenant_id')
-       .eq('user_id', session.user.id)
+       .eq('user_id', user.id)
        .limit(1)
        .single();
-     
+
      return { session, tenantId: tenantUserData?.tenant_id ?? null };
   }
 

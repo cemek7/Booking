@@ -17,46 +17,29 @@ export function getSupabaseBrowserClient() {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    // In a client component, this should not happen if env vars are set correctly
-    console.error('Supabase URL and Anon Key must be provided.');
-    throw new Error('Supabase URL and Anon Key must be provided.');
+    // Env vars are absent — this happens during `next build` static prerendering.
+    // Return a lazy proxy so SSR of client components doesn't crash; the real
+    // client will be created on first actual data access in the browser.
+    return new Proxy({} as ReturnType<typeof createBrowserClient>, {
+      get(_t, prop: string | symbol) {
+        // Retry creating the real client on every property access
+        const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        if (url && key) {
+          if (!browserClient) browserClient = createBrowserClient(url, key);
+          return Reflect.get(browserClient as object, prop, browserClient);
+        }
+        // Still no env vars — return no-ops for common Supabase methods
+        if (prop === 'from') return () => ({ select: () => Promise.resolve({ data: null, error: null }), insert: () => Promise.resolve({ data: null, error: null }) });
+        if (prop === 'auth') return { getUser: () => Promise.resolve({ data: { user: null }, error: null }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }) };
+        return () => Promise.resolve({ data: null, error: null });
+      },
+    }) as ReturnType<typeof createBrowserClient>;
   }
 
-  browserClient = createBrowserClient(supabaseUrl, supabaseAnonKey, {
-    cookies: {
-      get: (name: string) => {
-        if (typeof document === 'undefined') return undefined;
-        const nameEQ = name + '=';
-        const ca = document.cookie.split(';');
-        for (let i = 0; i < ca.length; i++) {
-          let c = ca[i].trim();
-          if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length);
-        }
-        return undefined;
-      },
-      set: (name: string, value: string, options: any) => {
-        if (typeof document === 'undefined') return;
-        let cookieStr = `${name}=${value}`;
-        if (options?.maxAge) cookieStr += `; Max-Age=${options.maxAge}`;
-        if (options?.expires) cookieStr += `; expires=${new Date(options.expires).toUTCString()}`;
-        if (options?.path) cookieStr += `; path=${options.path}`;
-        if (options?.domain) cookieStr += `; domain=${options.domain}`;
-        if (options?.secure) cookieStr += '; secure';
-        if (options?.sameSite) cookieStr += `; samesite=${options.sameSite}`;
-        document.cookie = cookieStr;
-      },
-      remove: (name: string, options: any) => {
-        if (typeof document === 'undefined') return;
-        let cookieStr = `${name}=; Max-Age=0`;
-        if (options?.path) cookieStr += `; path=${options.path}`;
-        if (options?.domain) cookieStr += `; domain=${options.domain}`;
-        document.cookie = cookieStr;
-      },
-    },
-  });
+  // Let @supabase/ssr manage browser storage directly. Custom cookie adapters
+  // can break PKCE verifier persistence during redirect-based sign-in flows.
+  browserClient = createBrowserClient(supabaseUrl, supabaseAnonKey);
   
   return browserClient;
 }
-
-// Legacy alias for backward compatibility
-export const getBrowserSupabase = getSupabaseBrowserClient;

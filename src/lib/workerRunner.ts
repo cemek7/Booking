@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import type { JobRow, JobPayload } from '@/types/jobs';
 
@@ -47,14 +48,20 @@ export async function processOnePendingJob() {
     // @ts-ignore -- dynamic import of JS runtime artifact
     let imported: any;
     try {
-      imported = await import('../../dist/worker.mjs');
+      const esmWorkerPath = '../../dist/worker.mjs';
+      imported = await import(esmWorkerPath);
     } catch (e) {
-      try { imported = await import('../../dist/worker.js'); } catch (e2) { throw e2; }
+      try {
+        const cjsWorkerPath = '../../dist/worker.js';
+        imported = await import(cjsWorkerPath);
+      } catch (e2) {
+        throw e2;
+      }
     }
     const mod = imported as any;
     handler = mod && (mod.handler || (mod.default && mod.default.handler)) ? (mod.handler || (mod.default && mod.default.handler)) : null;
   } catch (e) {
-    console.warn('Failed to load worker module', e);
+    defaultLogger.warn('Failed to load worker module', e);
   }
 
   if (!handler) {
@@ -91,7 +98,7 @@ export async function processOnePendingJob() {
         // Return early because the job is rescheduled (it remains pending).
         return result;
       } catch (e) {
-        console.warn('Failed to reschedule recurring job run', e);
+        defaultLogger.warn('Failed to reschedule recurring job run', e);
         // If rescheduling failed, fallthrough and mark this run completed.
       }
     }
@@ -108,7 +115,7 @@ export async function processOnePendingJob() {
       }).eq('id', job.id);
     } catch (e) {
       // Best-effort: if updating run metadata fails, still return the result but log.
-      console.warn('Failed to update completed job metadata', e);
+      defaultLogger.warn('Failed to update completed job metadata', e);
       await supabase.from('jobs').update({ status: 'completed', last_error: null, updated_at: new Date().toISOString() }).eq('id', job.id);
     }
     return result;
@@ -133,7 +140,7 @@ export async function loopWorkerUntilCancelled(signal?: { cancelled?: boolean })
     try {
       await processOnePendingJob();
     } catch (e) {
-      console.error('Worker loop error', e);
+      defaultLogger.error('Worker loop error', e);
     }
     // Small delay between polls
     await new Promise((r) => setTimeout(r, 2000));

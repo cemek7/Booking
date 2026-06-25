@@ -12,6 +12,7 @@
  * - PCI DSS - Payment card industry security
  */
 
+import { defaultLogger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Role } from './roles';
 import type { UnifiedUser, UnifiedPermissionContext, UnifiedAccessResult } from './unified-permissions';
@@ -497,12 +498,12 @@ export class AuditLogger {
         .insert(eventsToFlush.map(this.mapAuditEventToDatabase));
 
       if (error) {
-        console.error('Failed to write audit logs:', error);
+        defaultLogger.error('Failed to write audit logs:', error);
         // Re-add events to buffer for retry
         this.eventBuffer.unshift(...eventsToFlush);
       }
     } catch (error) {
-      console.error('Audit log write error:', error);
+      defaultLogger.error('Audit log write error:', error);
       // Re-add events to buffer for retry
       this.eventBuffer.unshift(...eventsToFlush);
     }
@@ -630,7 +631,7 @@ export class AuditLogger {
   private async alertSecurityTeam(event: AuditEvent): Promise<void> {
     // Implementation would send alerts to security team
     // This could be email, Slack, PagerDuty, etc.
-    console.warn(`🚨 SECURITY ALERT: ${event.eventType}`, {
+    defaultLogger.warn(`🚨 SECURITY ALERT: ${event.eventType}`, {
       userId: event.userId,
       action: event.action,
       reason: event.result.reason,

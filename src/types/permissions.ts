@@ -5,6 +5,7 @@
  * for role-based functionality across the booking system.
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { Role, getInheritedRoles } from './index';
 
 // Permission categories
@@ -391,7 +392,7 @@ export function hasPermission(
     return hasEnhancedPermission(userRole, permissionId, context);
   } catch (error) {
     // Fallback to original implementation if enhanced module not available
-    console.warn('Enhanced permissions not available, using fallback');
+    defaultLogger.warn('Enhanced permissions not available, using fallback');
     return hasPermissionFallback(userRole, permissionId, context);
   }
 }
@@ -468,7 +469,7 @@ export function getPermissionsForRole(role: Role): Permission[] {
     return permissionIds.map((id: string) => PERMISSIONS[id]).filter(Boolean); // Explicitly typed `id`
   } catch (error) {
     // Fallback to original implementation
-    console.warn('Enhanced permissions not available, using fallback for getPermissionsForRole');
+    defaultLogger.warn('Enhanced permissions not available, using fallback for getPermissionsForRole');
     return getPermissionsForRoleFallback(role);
   }
 }

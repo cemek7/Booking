@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 /**
  * LLM Context Manager
  *
@@ -20,36 +21,42 @@ import type { LlmContext, LlmContextMessage, GetContextOpts } from '@/types/llm'
 import { redactAndTruncate } from './pii';
 import redisLib from './redis';
 import summarizer from './summarizer';
-import { Role } from '@/types';
 
 export async function getContextForTenant(
   tenantId: string,
   opts: GetContextOpts = {}
 ): Promise<LlmContext> {
-  const { supabaseClient, limit = 20 } = opts;
+  const { supabaseClient, limit = 20, customerMessage } = opts;
   if (!supabaseClient) throw new Error('supabaseClient is required');
 
-  // Fetch tenant record
+  // Fetch tenant record (include metadata for tone_config, preferred_language, business_hours)
   const { data: tenantData } = await supabaseClient
     .from('tenants')
-    .select('id, name, settings')
+    .select('id, name, settings, metadata, llm_token_rate, preferred_llm_model')
     .eq('id', tenantId)
     .maybeSingle();
 
-  type RecentRaw = { id?: unknown; sender?: string | null; role?: Role | null; content?: string | null; created_at?: string | null };
+  type RecentRaw = { id?: unknown; sender?: string | null; role?: string | null; content?: string | null; created_at?: string | null };
   let recentMessagesRaw: Array<RecentRaw> = [];
   try {
     // find latest chat id for tenant
     const { data: lastChat } = await supabaseClient.from('chats').select('id').eq('tenant_id', tenantId).order('last_message_at', { ascending: false }).limit(1).maybeSingle();
     const chatId = lastChat && lastChat.id ? String(lastChat.id) : null;
     if (chatId) {
+      let redisFailed = false;
       try {
         const recent = await redisLib.getRecent(chatId, limit);
         if (Array.isArray(recent) && recent.length) {
           recentMessagesRaw = recent.map((r: RecentRaw) => ({ id: r.id, role: (r.sender === 'customer') ? 'customer' : 'ai', content: r.content, created_at: r.created_at }));
         }
       } catch (err) {
-        console.warn('llmContextManager: redis.getRecent failed', err);
+        defaultLogger.warn('llmContextManager: redis.getRecent failed, falling back to DB', err);
+        redisFailed = true;
+      }
+
+      // If Redis failed, force full DB fallback regardless of cache count
+      if (redisFailed) {
+        recentMessagesRaw = [];
       }
     }
 
@@ -58,17 +65,21 @@ export async function getContextForTenant(
       const remaining = limit - recentMessagesRaw.length;
       const { data: messages, error: messagesErr } = await supabaseClient
         .from('messages')
-        .select('id, sender as role, content, created_at')
+        .select('id, sender, content, created_at')
         .eq('tenant_id', tenantId)
-        .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(remaining);
-      if (messagesErr) console.warn('llmContextManager: messages fetch error', messagesErr);
+      if (messagesErr) defaultLogger.warn('llmContextManager: messages fetch error', messagesErr);
       if (Array.isArray(messages) && messages.length)
-        recentMessagesRaw = recentMessagesRaw.concat(messages.map((m: RecentRaw) => ({ id: m.id, role: m.role ?? 'customer', content: m.content, created_at: m.created_at })));
+        recentMessagesRaw = recentMessagesRaw.concat(messages.map((m: RecentRaw) => ({
+          id: m.id,
+          role: m.sender === 'customer' ? 'customer' : 'ai',
+          content: m.content,
+          created_at: m.created_at
+        })));
     }
   } catch (e) {
-    console.warn('llmContextManager: chat/messages lookup failed', e);
+    defaultLogger.warn('llmContextManager: chat/messages lookup failed', e);
   }
 
   // Reverse so chronological (oldest first) and redact/truncate
@@ -102,20 +113,71 @@ export async function getContextForTenant(
       }
     }
   } catch (e) {
-    console.warn('llmContextManager: recentChat lookup failed', e);
+    defaultLogger.warn('llmContextManager: recentChat lookup failed', e);
   }
 
   // LLM calls sample
   const { data: llmCalls, error: callsErr } = await supabaseClient.from('llm_calls').select('id, model, tokens, created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
-  if (callsErr) console.warn('llmContextManager: llm_calls fetch error', callsErr);
+  if (callsErr) defaultLogger.warn('llmContextManager: llm_calls fetch error', callsErr);
 
-  // top faqs
-  const { data: faqsData, error: faqsErr } = await supabaseClient.from('faqs').select('question, answer').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
-  if (faqsErr) console.warn('llmContextManager: faqs fetch error', faqsErr);
+  // top faqs — keyword-based relevance if customerMessage provided, else recency
+  let faqQuery = supabaseClient
+    .from('faqs')
+    .select('question, answer')
+    .eq('tenant_id', tenantId);
+
+  if (customerMessage) {
+    const keywords = customerMessage
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, '')
+      .split(/\s+/)
+      .filter((w) => w.length > 2)
+      .slice(0, 5);
+    if (keywords.length) {
+      faqQuery = faqQuery.or(keywords.map((k) => `question.ilike.%${k}%`).join(','));
+    }
+  } else {
+    faqQuery = faqQuery.order('created_at', { ascending: false });
+  }
+  faqQuery = faqQuery.limit(5);
+
+  const { data: faqsData, error: faqsErr } = await faqQuery;
+  if (faqsErr) defaultLogger.warn('llmContextManager: faqs fetch error', faqsErr);
   const faqs = Array.isArray(faqsData) ? faqsData.map((f: { question?: string | null; answer?: string | null }) => ({ question: redactAndTruncate(f.question ?? ''), answer: redactAndTruncate(f.answer ?? '') })) : [];
 
+  // services (top 10 active) for tenant-aware prompting
+  const { data: servicesData } = await supabaseClient
+    .from('services')
+    .select('name, duration, price, category')
+    .eq('tenant_id', tenantId)
+    .eq('is_active', true)
+    .limit(10);
+
+  // Extract agent-config fields from metadata
+  const meta = (tenantData?.metadata ?? {}) as Record<string, unknown>;
+  const toneConfig = (meta['tone_config'] ?? {}) as Record<string, unknown>;
+
+  const tenantContext = {
+    id: String(tenantData?.id ?? tenantId),
+    ...(tenantData ?? {}),
+    services: servicesData ?? [],
+    preferred_language: (meta['preferred_language'] as string | undefined) ?? undefined,
+    business_hours: (meta['business_hours'] as Record<string, { open: string | null; close: string | null; closed: boolean }> | undefined) ?? undefined,
+    greeting: (toneConfig['greeting'] as string | undefined) ?? undefined,
+    signature: (toneConfig['signature'] as string | undefined) ?? undefined,
+    verticalPackage: (meta['verticalPackage'] as string | undefined) ?? undefined,
+    managedPromise: (meta['managedPromise'] as string | undefined) ?? undefined,
+    outcomeTargets: Array.isArray(meta['outcomeTargets']) ? (meta['outcomeTargets'] as string[]) : undefined,
+    escalationRules: Array.isArray(meta['escalationRules']) ? (meta['escalationRules'] as string[]) : undefined,
+    operational_memory: (meta['operationalMemory'] as Record<string, unknown> | undefined) ?? undefined,
+    campaignDefaults: (meta['campaignDefaults'] as Record<string, unknown> | undefined) ?? undefined,
+    billingModel: (meta['billingModel'] as string | undefined) ?? undefined,
+    capture_leads: (meta['capture_leads'] as boolean | undefined) ?? false,
+    follow_up_delay_hours: (meta['follow_up_delay_hours'] as number | undefined) ?? 24,
+  };
+
   return {
-    tenant: tenantData ?? null,
+    tenant: tenantContext ?? null,
     recentMessages,
     recentCalls: llmCalls ?? [],
     faqs,

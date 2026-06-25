@@ -5,7 +5,19 @@
  * Includes pre-built templates for common use cases
  */
 
+import { defaultLogger } from '@/lib/logger';
 import sgMail from '@sendgrid/mail';
+import { generateCalendarLinks, type BookingEvent } from './universalCalendar';
+
+/** Escape HTML entities to prevent injection in email templates */
+function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 interface EmailOptions {
   to: string | string[];
@@ -31,26 +43,40 @@ const initSendGrid = () => {
 export async function sendEmail(options: EmailOptions): Promise<any> {
   try {
     if (!process.env.SENDGRID_API_KEY) {
-      console.warn('⚠️ SENDGRID_API_KEY not configured');
+      defaultLogger.warn('⚠️ SENDGRID_API_KEY not configured');
       return { success: false, error: 'SendGrid not configured' };
     }
 
     initSendGrid();
 
+    const fromEmail = options.from || process.env.SENDGRID_FROM_EMAIL;
+    if (!fromEmail) {
+      defaultLogger.warn('⚠️ No from address: set SENDGRID_FROM_EMAIL or pass options.from');
+      return { success: false, error: 'missing_from_address' };
+    }
+
     const message = {
       to: options.to,
-      from: options.from || (process.env.SENDGRID_FROM_EMAIL as string),
+      from: fromEmail,
       subject: options.subject,
       html: options.html,
       text: options.text,
       replyTo: options.replyTo,
     };
 
-    const response = await sgMail.send(message);
-    console.log(`✅ Email sent: ${options.subject} to ${options.to}`);
+    // Wrap SendGrid call with a timeout to prevent hanging the booking flow
+    const SENDGRID_TIMEOUT_MS = 10_000;
+    const response = await Promise.race([
+      sgMail.send(message),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('SendGrid request timed out')), SENDGRID_TIMEOUT_MS)
+      ),
+    ]);
+    const recipient = Array.isArray(options.to) ? `${options.to.length} recipients` : options.to.replace(/(.{2}).*@/, '$1***@');
+    defaultLogger.info(`Email sent: ${options.subject} to ${recipient}`);
     return { success: true, messageId: response[0].headers['x-message-id'] };
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    defaultLogger.error('❌ Error sending email:', error);
     throw error;
   }
 }
@@ -77,7 +103,7 @@ export async function sendWelcomeEmail(email: string, name: string) {
 }
 
 /**
- * Send booking confirmation email
+ * Send booking confirmation email (includes universal calendar links)
  */
 export async function sendBookingConfirmation(
   email: string,
@@ -88,24 +114,42 @@ export async function sendBookingConfirmation(
     time: string;
     location?: string;
     notes?: string;
+    calendarEvent?: BookingEvent;
   }
 ) {
+  let calendarHtml = '';
+  if (bookingDetails.calendarEvent) {
+    try {
+      const links = generateCalendarLinks(bookingDetails.calendarEvent);
+      const linkButtons = links.map(l =>
+        `<a href="${l.url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#4A5568;color:#fff;text-decoration:none;border-radius:4px;font-size:13px;">${l.name}</a>`
+      ).join('');
+      calendarHtml = `
+        <div style="margin-top:20px;">
+          <p><strong>Add to your calendar:</strong></p>
+          <p>${linkButtons}</p>
+        </div>`;
+    } catch {
+      // calendar links are non-critical; skip on error
+    }
+  }
+
   return sendEmail({
     to: email,
     subject: 'Booking Confirmation - Boka',
     html: `
       <h2>Booking Confirmed!</h2>
-      <p>Hi ${customerName},</p>
+      <p>Hi ${escapeHtml(customerName)},</p>
       <p>Your booking has been confirmed:</p>
-      
+
       <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px;">
-        <p><strong>Service:</strong> ${bookingDetails.serviceName}</p>
-        <p><strong>Date:</strong> ${bookingDetails.date}</p>
-        <p><strong>Time:</strong> ${bookingDetails.time}</p>
-        ${bookingDetails.location ? `<p><strong>Location:</strong> ${bookingDetails.location}</p>` : ''}
-        ${bookingDetails.notes ? `<p><strong>Notes:</strong> ${bookingDetails.notes}</p>` : ''}
+        <p><strong>Service:</strong> ${escapeHtml(bookingDetails.serviceName)}</p>
+        <p><strong>Date:</strong> ${escapeHtml(bookingDetails.date)}</p>
+        <p><strong>Time:</strong> ${escapeHtml(bookingDetails.time)}</p>
+        ${bookingDetails.location ? `<p><strong>Location:</strong> ${escapeHtml(bookingDetails.location)}</p>` : ''}
+        ${bookingDetails.notes ? `<p><strong>Notes:</strong> ${escapeHtml(bookingDetails.notes)}</p>` : ''}
       </div>
-      
+      ${calendarHtml}
       <p>If you need to cancel or reschedule, please let us know at least 24 hours in advance.</p>
       <p>See you soon!</p>
     `,
@@ -130,15 +174,15 @@ export async function sendBookingReminder(
     subject: `Reminder: Your booking in ${hoursUntilBooking} hours - Boka`,
     html: `
       <h2>Booking Reminder</h2>
-      <p>Hi ${customerName},</p>
+      <p>Hi ${escapeHtml(customerName)},</p>
       <p>This is a friendly reminder about your upcoming booking:</p>
-      
+
       <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px;">
-        <p><strong>Service:</strong> ${bookingDetails.serviceName}</p>
-        <p><strong>Date:</strong> ${bookingDetails.date}</p>
-        <p><strong>Time:</strong> ${bookingDetails.time}</p>
+        <p><strong>Service:</strong> ${escapeHtml(bookingDetails.serviceName)}</p>
+        <p><strong>Date:</strong> ${escapeHtml(bookingDetails.date)}</p>
+        <p><strong>Time:</strong> ${escapeHtml(bookingDetails.time)}</p>
       </div>
-      
+
       <p>Please arrive 10 minutes early if possible.</p>
       <p>See you soon!</p>
     `,
@@ -162,15 +206,15 @@ export async function sendCancellationEmail(
     subject: 'Booking Cancelled - Boka',
     html: `
       <h2>Booking Cancelled</h2>
-      <p>Hi ${customerName},</p>
+      <p>Hi ${escapeHtml(customerName)},</p>
       <p>Your booking has been cancelled:</p>
-      
+
       <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px;">
-        <p><strong>Service:</strong> ${bookingDetails.serviceName}</p>
-        <p><strong>Date:</strong> ${bookingDetails.date}</p>
-        <p><strong>Time:</strong> ${bookingDetails.time}</p>
+        <p><strong>Service:</strong> ${escapeHtml(bookingDetails.serviceName)}</p>
+        <p><strong>Date:</strong> ${escapeHtml(bookingDetails.date)}</p>
+        <p><strong>Time:</strong> ${escapeHtml(bookingDetails.time)}</p>
       </div>
-      
+
       <p>If you'd like to rebook, please visit our website or contact us.</p>
     `,
   });
@@ -192,54 +236,21 @@ export async function sendStaffAssignmentEmail(
 ) {
   return sendEmail({
     to: email,
-    subject: `New Booking Assignment - ${bookingDetails.serviceName}`,
+    subject: `New Booking Assignment - ${escapeHtml(bookingDetails.serviceName)}`,
     html: `
       <h2>You've been assigned a new booking</h2>
-      <p>Hi ${staffName},</p>
+      <p>Hi ${escapeHtml(staffName)},</p>
       <p>A new booking has been assigned to you:</p>
-      
+
       <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px;">
-        <p><strong>Customer:</strong> ${bookingDetails.customerName}</p>
-        <p><strong>Service:</strong> ${bookingDetails.serviceName}</p>
-        <p><strong>Date:</strong> ${bookingDetails.date}</p>
-        <p><strong>Time:</strong> ${bookingDetails.time}</p>
-        ${bookingDetails.notes ? `<p><strong>Notes:</strong> ${bookingDetails.notes}</p>` : ''}
+        <p><strong>Customer:</strong> ${escapeHtml(bookingDetails.customerName)}</p>
+        <p><strong>Service:</strong> ${escapeHtml(bookingDetails.serviceName)}</p>
+        <p><strong>Date:</strong> ${escapeHtml(bookingDetails.date)}</p>
+        <p><strong>Time:</strong> ${escapeHtml(bookingDetails.time)}</p>
+        ${bookingDetails.notes ? `<p><strong>Notes:</strong> ${escapeHtml(bookingDetails.notes)}</p>` : ''}
       </div>
-      
+
       <p>Please confirm your availability in the system.</p>
-    `,
-  });
-}
-
-/**
- * Send password reset email
- */
-export async function sendPasswordResetEmail(email: string, resetLink: string) {
-  return sendEmail({
-    to: email,
-    subject: 'Reset your Boka password',
-    html: `
-      <h2>Password Reset Request</h2>
-      <p>We received a request to reset your Boka password.</p>
-      <p>Click the link below to reset your password (valid for 1 hour):</p>
-      <p><a href="${resetLink}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
-      <p>If you didn't request this, please ignore this email.</p>
-    `,
-  });
-}
-
-/**
- * Send verification email
- */
-export async function sendVerificationEmail(email: string, verificationLink: string) {
-  return sendEmail({
-    to: email,
-    subject: 'Verify your Boka email address',
-    html: `
-      <h2>Email Verification</h2>
-      <p>Thank you for signing up for Boka. Please verify your email address by clicking the link below:</p>
-      <p><a href="${verificationLink}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Email</a></p>
-      <p>This link is valid for 24 hours.</p>
     `,
   });
 }
@@ -259,20 +270,20 @@ export async function sendInvoiceEmail(
   }
 ) {
   const itemsHtml = invoiceDetails.items
-    .map((item) => `<tr><td>${item.description}</td><td>$${item.amount.toFixed(2)}</td></tr>`)
+    .map((item) => `<tr><td>${escapeHtml(item.description)}</td><td>$${item.amount.toFixed(2)}</td></tr>`)
     .join('');
 
   return sendEmail({
     to: email,
-    subject: `Invoice #${invoiceDetails.invoiceNumber} - Boka`,
+    subject: `Invoice #${escapeHtml(invoiceDetails.invoiceNumber)} - Boka`,
     html: `
       <h2>Invoice</h2>
-      <p>Hi ${customerName},</p>
-      
+      <p>Hi ${escapeHtml(customerName)},</p>
+
       <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px;">
-        <p><strong>Invoice #:</strong> ${invoiceDetails.invoiceNumber}</p>
-        <p><strong>Date:</strong> ${invoiceDetails.date}</p>
-        ${invoiceDetails.dueDate ? `<p><strong>Due Date:</strong> ${invoiceDetails.dueDate}</p>` : ''}
+        <p><strong>Invoice #:</strong> ${escapeHtml(invoiceDetails.invoiceNumber)}</p>
+        <p><strong>Date:</strong> ${escapeHtml(invoiceDetails.date)}</p>
+        ${invoiceDetails.dueDate ? `<p><strong>Due Date:</strong> ${escapeHtml(invoiceDetails.dueDate)}</p>` : ''}
       </div>
       
       <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">

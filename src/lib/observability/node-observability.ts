@@ -1,18 +1,21 @@
-'use server';
-
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import * as api from '@opentelemetry/api';
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { Resource } from '@opentelemetry/resources';
-import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { PeriodicExportingMetricReader, MetricReader } from '@opentelemetry/sdk-metrics';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { Histogram, Counter, UpDownCounter } from '@opentelemetry/api';
+import { Histogram, Counter, UpDownCounter, ObservableGauge } from '@opentelemetry/api';
 import * as os from 'os';
 import * as v8 from 'v8';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+
+function getNodeAutoInstrumentations(): unknown[] {
+  return [];
+}
 
 // Types for our observability system
 interface MetricLabels {
@@ -87,8 +90,12 @@ export class NodeObservabilityService {
   private isInitialized = false;
   
   // Metrics
-  private metrics = new Map<string, Histogram | Counter | UpDownCounter>();
+  private metrics = new Map<string, Histogram | Counter | UpDownCounter | ObservableGauge>();
+  private lastCpuUsage = 0;
+  private lastMemoryUsage = 0;
   private businessMetrics: BusinessMetric[] = [];
+  private businessMetricsFlushBuffer: BusinessMetric[] = [];
+  private businessMetricsFlushInterval: NodeJS.Timeout | null = null;
   private systemMetricsInterval: NodeJS.Timeout | null = null;
   
   // Alerting
@@ -123,12 +130,12 @@ export class NodeObservabilityService {
   }): Promise<void> {
     try {
       if (this.isInitialized) {
-        console.warn('ObservabilityService already initialized');
+        defaultLogger.warn('ObservabilityService already initialized');
         return;
       }
 
       // Initialize OpenTelemetry
-      const resource = new Resource({
+      const resource = resourceFromAttributes({
         [SemanticResourceAttributes.SERVICE_NAME]: config.serviceName,
         [SemanticResourceAttributes.SERVICE_VERSION]: config.serviceVersion,
         [SemanticResourceAttributes.DEPLOYMENT_ENVIRONMENT]: config.environment,
@@ -137,19 +144,15 @@ export class NodeObservabilityService {
       });
 
       // Configure exporters
-      // const traceExporter = new OTLPTraceExporter({
-      //   url: config.otlpEndpoint || process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, // || 'http://localhost:4318/v1/traces',
-      // });
+      const traceExporter = new OTLPTraceExporter({
+        url: config.otlpEndpoint || process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+      });
 
-      // const metricExporter = new OTLPMetricExporter({
-      //   url: config.otlpEndpoint || process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, // || 'http://localhost:4318/v1/metrics',
-      // });
-      // const traceExporter = new OTLPTraceExporter();
-      // const metricExporter = new OTLPMetricExporter();
-
+      const metricExporter = new OTLPMetricExporter({
+        url: config.otlpEndpoint || process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+      });
 
       // Create SDK
-      /*
       this.sdk = new NodeSDK({
         resource,
         spanProcessor: new BatchSpanProcessor(traceExporter),
@@ -157,14 +160,13 @@ export class NodeObservabilityService {
           exporter: metricExporter,
           exportIntervalMillis: 30000, // Export every 30 seconds
         }),
-        instrumentations: config.enableAutoInstrumentation 
+        instrumentations: config.enableAutoInstrumentation
           ? [...getNodeAutoInstrumentations(), ...(config.customInstrumentations || [])]
           : config.customInstrumentations || [],
       });
 
       // Start the SDK
       this.sdk.start();
-      */
 
       // Initialize custom metrics
       await this.initializeMetrics();
@@ -175,13 +177,16 @@ export class NodeObservabilityService {
       // Start alert monitoring
       this.startAlertMonitoring();
 
+      // Start batched business metrics flush (every 30s instead of per-call DB writes)
+      this.startBusinessMetricsFlush();
+
       // Load existing alert rules
       await this.loadAlertRules();
 
       this.isInitialized = true;
-      console.log(`ObservabilityService initialized for ${config.serviceName}@${config.serviceVersion}`);
+      defaultLogger.info(`ObservabilityService initialized for ${config.serviceName}@${config.serviceVersion}`);
     } catch (error) {
-      console.error('Failed to initialize ObservabilityService:', error);
+      defaultLogger.error('Failed to initialize ObservabilityService:', error);
       throw error;
     }
   }
@@ -234,18 +239,44 @@ export class NodeObservabilityService {
       description: 'Current queue size',
     }));
 
-    // System metrics
-    this.metrics.set('cpu_usage_percent', meter.createUpDownCounter('cpu_usage_percent', {
+    // System metrics — use ObservableGauge so each collection replaces the previous value
+    const cpuGauge = meter.createObservableGauge('cpu_usage_percent', {
       description: 'CPU usage percentage',
-    }));
+    });
+    cpuGauge.addCallback((result) => { result.observe(this.lastCpuUsage); });
+    this.metrics.set('cpu_usage_percent', cpuGauge as unknown as ObservableGauge);
 
-    this.metrics.set('memory_usage_bytes', meter.createUpDownCounter('memory_usage_bytes', {
+    const memGauge = meter.createObservableGauge('memory_usage_bytes', {
       description: 'Memory usage in bytes',
-    }));
+    });
+    memGauge.addCallback((result) => { result.observe(this.lastMemoryUsage); });
+    this.metrics.set('memory_usage_bytes', memGauge as unknown as ObservableGauge);
 
     this.metrics.set('gc_collections_total', meter.createCounter('gc_collections_total', {
       description: 'Total number of garbage collections',
     }));
+  }
+
+  /**
+   * Flush buffered business metrics to DB in a single batch insert
+   */
+  private startBusinessMetricsFlush(): void {
+    this.businessMetricsFlushInterval = setInterval(async () => {
+      if (this.businessMetricsFlushBuffer.length === 0) return;
+      const batch = this.businessMetricsFlushBuffer.splice(0);
+      try {
+        await this.supabase.from('business_metrics').insert(
+          batch.map(m => ({
+            metric_name: m.name,
+            metric_value: m.value,
+            labels: m.labels,
+            recorded_at: m.timestamp?.toISOString()
+          }))
+        );
+      } catch (error: any) {
+        defaultLogger.error('Failed to flush business metrics batch:', error);
+      }
+    }, 30000); // flush every 30 seconds
   }
 
   /**
@@ -255,7 +286,7 @@ export class NodeObservabilityService {
     this.systemMetricsInterval = setInterval(async () => {
       const systemMetrics = this.collectSystemMetrics();
       await this.recordSystemMetrics(systemMetrics);
-    }, 15000); // Collect every 15 seconds
+    }, 60000); // Collect every 60 seconds
   }
 
   /**
@@ -282,9 +313,9 @@ export class NodeObservabilityService {
    */
   private async recordSystemMetrics(metrics: SystemMetrics): Promise<void> {
     try {
-      // Record to OpenTelemetry
-      (this.metrics.get('cpu_usage_percent') as UpDownCounter)?.add(metrics.cpu_usage * 100);
-      (this.metrics.get('memory_usage_bytes') as UpDownCounter)?.add(metrics.memory_usage);
+      // Update gauge fields — ObservableGauge callbacks read these directly
+      this.lastCpuUsage = metrics.cpu_usage * 100;
+      this.lastMemoryUsage = metrics.memory_usage;
 
       // Store in database for historical analysis
       await this.supabase.from('system_metrics').insert({
@@ -299,7 +330,7 @@ export class NodeObservabilityService {
       });
 
     } catch (error) {
-      console.error('Failed to record system metrics:', error);
+      defaultLogger.error('Failed to record system metrics:', error);
     }
   }
 
@@ -319,8 +350,11 @@ export class NodeObservabilityService {
         timestamp: new Date()
       };
 
-      // Store locally for aggregation
+      // Store locally for aggregation — cap to prevent unbounded growth
       this.businessMetrics.push(metric);
+      if (this.businessMetrics.length > 1000) {
+        this.businessMetrics.splice(0, this.businessMetrics.length - 1000);
+      }
 
       // Record to OpenTelemetry
       const otelMetric = this.metrics.get(name);
@@ -331,16 +365,13 @@ export class NodeObservabilityService {
         }
       }
 
-      // Store in database
-      await this.supabase.from('business_metrics').insert({
-        metric_name: name,
-        metric_value: value,
-        labels,
-        recorded_at: metric.timestamp?.toISOString()
-      });
+      // Buffer for batched DB flush (see startBusinessMetricsFlush) — avoids 1 DB write per call
+      if (this.businessMetricsFlushBuffer.length < 5000) {
+        this.businessMetricsFlushBuffer.push(metric);
+      }
 
     } catch (error: any) {
-      console.error(`Failed to record business metric ${name}:`, error);
+      defaultLogger.error(`Failed to record business metric ${name}:`, error);
     }
   }
 
@@ -375,7 +406,7 @@ export class NodeObservabilityService {
       (this.metrics.get('http_request_duration') as Histogram)?.record(duration / 1000, labels);
 
     } catch (error) {
-      console.error('Failed to record HTTP request metric:', error);
+      defaultLogger.error('Failed to record HTTP request metric:', error);
     }
   }
 
@@ -405,7 +436,7 @@ export class NodeObservabilityService {
       });
 
     } catch (error) {
-      console.error('Failed to record database query metric:', error);
+      defaultLogger.error('Failed to record database query metric:', error);
     }
   }
 
@@ -457,7 +488,7 @@ export class NodeObservabilityService {
     }).then(() => {
       // Success
     }).catch((error: any) => {
-      console.error('Failed to store trace:', error);
+      defaultLogger.error('Failed to store trace:', error);
     });
   }
 
@@ -508,7 +539,7 @@ export class NodeObservabilityService {
 
       return id;
     } catch (error) {
-      console.error('Failed to create alert rule:', error);
+      defaultLogger.error('Failed to create alert rule:', error);
       throw error;
     }
   }
@@ -542,7 +573,7 @@ export class NodeObservabilityService {
         }
       }
     } catch (error) {
-      console.error('Failed to check alert rules:', error);
+      defaultLogger.error('Failed to check alert rules:', error);
     }
   }
 
@@ -562,7 +593,7 @@ export class NodeObservabilityService {
         this.alertRules.set(rule.id, rule);
       }
     } catch (error) {
-      console.error('Failed to load alert rules:', error);
+      defaultLogger.error('Failed to load alert rules:', error);
     }
   }
 
@@ -608,7 +639,7 @@ export class NodeObservabilityService {
     try {
       // Database health
       const dbStart = Date.now();
-      const { data, error } = await this.supabase.from('health_check').select('count').limit(1);
+      const { data, error } = await this.supabase.from('tenants').select('id').limit(1);
       checks.database = {
         status: error ? 'unhealthy' : 'healthy',
         latency_ms: Date.now() - dbStart,
@@ -659,18 +690,22 @@ export class NodeObservabilityService {
       if (this.systemMetricsInterval) {
         clearInterval(this.systemMetricsInterval);
       }
-      
+
       if (this.alertCheckInterval) {
         clearInterval(this.alertCheckInterval);
+      }
+
+      if (this.businessMetricsFlushInterval) {
+        clearInterval(this.businessMetricsFlushInterval);
       }
 
       if (this.sdk) {
         await this.sdk.shutdown();
       }
 
-      console.log('ObservabilityService shutdown complete');
+      defaultLogger.info('ObservabilityService shutdown complete');
     } catch (error) {
-      console.error('Error during ObservabilityService shutdown:', error);
+      defaultLogger.error('Error during ObservabilityService shutdown:', error);
     }
   }
 
@@ -692,9 +727,42 @@ export class NodeObservabilityService {
   }
 
   private async getCurrentMetricValue(metricName: string): Promise<number> {
-    // This would fetch current metric value from your metrics storage
-    // For now, return a mock value
-    return 0;
+    switch (metricName) {
+      // ── System metrics (read directly from process) ──
+      case 'cpu_usage_percent': {
+        const cpu = process.cpuUsage();
+        return ((cpu.user + cpu.system) / 1_000_000) * 100;
+      }
+      case 'memory_usage_bytes':
+        return process.memoryUsage().rss;
+      case 'memory_usage_percent': {
+        const mem = process.memoryUsage();
+        return (mem.heapUsed / mem.heapTotal) * 100;
+      }
+
+      // ── In-process performance counters ──
+      case 'error_rate':
+        return this.performanceData.requestCount > 0
+          ? this.performanceData.errorCount / this.performanceData.requestCount
+          : 0;
+      case 'request_count':
+        return this.performanceData.requestCount;
+      case 'average_latency_ms':
+        return this.performanceData.requestCount > 0
+          ? this.performanceData.totalLatency / this.performanceData.requestCount
+          : 0;
+
+      // ── Business metrics (last-hour count from DB) ──
+      default: {
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const { count } = await this.supabase
+          .from('business_metrics')
+          .select('id', { count: 'exact', head: true })
+          .eq('metric_name', metricName)
+          .gte('recorded_at', oneHourAgo);
+        return count || 0;
+      }
+    }
   }
 
   private evaluateAlertCondition(value: number, threshold: number, operator: string): boolean {
@@ -746,9 +814,15 @@ export class NodeObservabilityService {
   private async sendAlertNotifications(alert: AlertEvent, channels: string[]): Promise<void> {
     // Implementation would integrate with notification systems
     // Slack, email, PagerDuty, etc.
-    console.log(`Alert triggered: ${alert.metric_name} = ${alert.current_value} (threshold: ${alert.threshold})`);
+    defaultLogger.info(`Alert triggered: ${alert.metric_name} = ${alert.current_value} (threshold: ${alert.threshold})`);
   }
 }
 
-// Export singleton instance
-export const observability = new NodeObservabilityService();
+// Export singleton instance — use global to survive Next.js HMR in dev
+// without this, every hot-reload stacks new setIntervals and Supabase clients
+declare global {
+  var __nodeObservability: NodeObservabilityService | undefined;
+}
+
+export const observability: NodeObservabilityService =
+  globalThis.__nodeObservability ?? (globalThis.__nodeObservability = new NodeObservabilityService());

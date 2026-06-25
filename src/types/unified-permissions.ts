@@ -11,6 +11,7 @@
  * 4. Enhanced Permissions (enhanced-permissions.ts) - Context-aware inheritance
  */
 
+import { defaultLogger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Role, normalizeRole, isValidRole } from './roles';
 import { PERMISSIONS, ROLE_PERMISSION_MAP, PermissionCheckResult } from './permissions';
@@ -111,7 +112,7 @@ export class UnifiedPermissionChecker {
       };
 
     } catch (error) {
-      console.error('Unified permission check failed:', error);
+      defaultLogger.error('Unified permission check failed:', error);
       return {
         granted: false,
         user: this.createDeniedUser(userId),
@@ -206,7 +207,7 @@ export class UnifiedPermissionChecker {
         isSuperAdmin: user.isSuperAdmin
       };
     } catch (error) {
-      console.error('Legacy validateTenantAccess failed:', error);
+      defaultLogger.error('Legacy validateTenantAccess failed:', error);
       return { canAccessTenant: false };
     }
   }
@@ -219,7 +220,7 @@ export class UnifiedPermissionChecker {
       const user = await this.getUserProfile(userId, tenantId);
       return user?.role || null;
     } catch (error) {
-      console.error('Legacy getUserRoleForTenant failed:', error);
+      defaultLogger.error('Legacy getUserRoleForTenant failed:', error);
       return null;
     }
   }
@@ -245,7 +246,7 @@ export class UnifiedPermissionChecker {
 
       return false;
     } catch (error) {
-      console.error('isGlobalAdmin failed:', error);
+      defaultLogger.error('isGlobalAdmin failed:', error);
       return false;
     }
   }
@@ -308,7 +309,7 @@ export class UnifiedPermissionChecker {
       };
 
     } catch (error) {
-      console.error('Failed to get user profile:', error);
+      defaultLogger.error('Failed to get user profile:', error);
       return null;
     }
   }
@@ -406,7 +407,7 @@ export class UnifiedPermissionChecker {
     return false;
   }
 
-  protected async hasAnyRole(user: UnifiedUser, roles: Role[]): Promise<boolean> {
+  async hasAnyRole(user: UnifiedUser, roles: Role[]): Promise<boolean> {
     if (user.isSuperAdmin) return true;
     
     // Check direct role match
@@ -524,7 +525,7 @@ export async function getUserRoleForTenant(
     const user = await checker.getUserProfile(userId, tenantId);
     return user?.role || null;
   } catch (e) {
-    console.warn('unified-permissions: getUserRoleForTenant failed', e);
+    defaultLogger.warn('unified-permissions: getUserRoleForTenant failed', e);
     return null;
   }
 }
@@ -548,25 +549,19 @@ export async function isGlobalAdmin(
   email?: string | null
 ): Promise<boolean> {
   try {
-    if (userId) {
-      const { data: byId } = await supabase
-        .from('admins')
-        .select('id')
-        .eq('id', userId)
-        .maybeSingle();
-      if (byId) return true;
-    }
     if (email) {
+      const normalizedEmail = email.trim().toLowerCase();
       const { data: byEmail } = await supabase
         .from('admins')
-        .select('id')
-        .eq('email', email)
+        .select('email, status')
+        .eq('email', normalizedEmail)
         .maybeSingle();
       if (byEmail) return true;
     }
+
     return false;
   } catch (e) {
-    console.warn('unified-permissions: isGlobalAdmin lookup failed', e);
+    defaultLogger.warn('unified-permissions: isGlobalAdmin lookup failed', e);
     return false;
   }
 }
@@ -583,10 +578,11 @@ export function hasPermission(
   role: Role,
   resource: string,
   action: 'read' | 'write' | 'delete' | 'admin',
-  scope: 'own' | 'tenant' | 'global' = 'tenant'
+  scope: 'own' | 'tenant' | 'global' = 'tenant',
+  tenantId?: string
 ): boolean {
   const context: UnifiedPermissionContext = {
-    tenantId: 'default',
+    tenantId: tenantId || 'default',
     resourceId: resource,
     operationType: action === 'admin' ? 'manage' : action,
     resourceType: resource,
@@ -629,8 +625,7 @@ export interface UnifiedMigrationUtilities {
 
 export const migrationUtils: UnifiedMigrationUtilities = {
   async migrateFromLegacyRbac(): Promise<void> {
-    console.log('🔄 Starting migration from legacy RBAC to unified permissions...');
-    // This would be implemented to help migrate existing code
+    defaultLogger.info('Starting migration from legacy RBAC to unified permissions...');
   },
 
   async updateImportsToUnified(): Promise<string[]> {
@@ -642,7 +637,6 @@ export const migrationUtils: UnifiedMigrationUtilities = {
   },
 
   async validateMigration(): Promise<boolean> {
-    // This would validate that the migration was successful
     return true;
   },
 
@@ -650,3 +644,82 @@ export const migrationUtils: UnifiedMigrationUtilities = {
     return analyzeMigrationStatus();
   }
 };
+
+// ─── Role → Dashboard path mapping (from deleted lib/permissions/unified-permissions.ts) ───
+
+const ROLE_DASHBOARD_PATHS: Record<string, string> = {
+  superadmin: '/dashboard/superadmin',
+  owner: '/dashboard',
+  manager: '/dashboard',
+  staff: '/dashboard/staff-dashboard',
+};
+
+export function getRoleDashboardPath(role: Role | string | undefined | null): string {
+  if (!role) return '/dashboard/staff-dashboard';
+  return ROLE_DASHBOARD_PATHS[role as string] || '/dashboard/staff-dashboard';
+}
+
+export function canAccessRoute(userRole: Role, route: string): boolean {
+  const routePermissions: Record<string, string[]> = {
+    '/dashboard/superadmin': ['superadmin'],
+    '/dashboard/calendar': ['owner', 'manager', 'staff'],
+    '/dashboard/bookings': ['owner', 'manager', 'staff'],
+    '/dashboard/staff/scheduling': ['owner', 'manager'],
+    '/dashboard/settings': ['owner'],
+    '/dashboard/billing': ['owner'],
+    '/dashboard/reports': ['owner', 'manager'],
+    '/dashboard/tasks': ['staff', 'manager'],
+  };
+  const allowed = routePermissions[route];
+  if (!allowed) return true; // unprotected route
+  return allowed.includes(userRole);
+}
+
+// ─── Superadmin audit log (from deleted lib/enhanced-rbac.ts) ───
+
+export async function auditSuperadminAction(
+  supabase: SupabaseClient,
+  adminUserId: string,
+  action: string,
+  targetTenantId?: string,
+  targetUserId?: string,
+  targetResource?: string,
+  requestDetails?: Record<string, unknown>,
+  ipAddress?: string,
+  userAgent?: string
+): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('superadmin_audit_log')
+      .insert({
+        admin_user_id: adminUserId,
+        action,
+        target_tenant_id: targetTenantId,
+        target_user_id: targetUserId,
+        target_resource: targetResource,
+        request_details: requestDetails || {},
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        created_at: new Date().toISOString(),
+      });
+    if (error) defaultLogger.error('Failed to log superadmin action', error);
+  } catch (e) {
+    defaultLogger.error('Failed to audit superadmin action', e);
+  }
+}
+
+// ─── StrictUserWithRole (from deleted types/type-safe-rbac.ts) ───
+
+export interface StrictUserWithRole {
+  readonly id: string;
+  readonly email: string;
+  readonly role: Role;
+  readonly tenantId?: string;
+}
+
+export function assertRole(value: unknown, context?: string): Role {
+  if (!isValidRole(value as string)) {
+    throw new TypeError(`Invalid role${context ? ` in ${context}` : ''}: ${String(value)}. Expected one of: staff, manager, owner, superadmin`);
+  }
+  return value as Role;
+}

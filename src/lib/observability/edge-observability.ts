@@ -6,6 +6,7 @@
  * APIs and focuses on tracing and business metrics that can be captured
  * from edge middleware.
  */
+import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 // Basic types needed for the edge service
@@ -88,7 +89,7 @@ export class EdgeObservabilityService {
     //   tags: context.tags,
     //   logs: context.logs,
     // }).catch((error: any) => {
-    //   console.error('EdgeObservability: Failed to store trace:', error.message);
+    //   defaultLogger.error('EdgeObservability: Failed to store trace:', error.message);
     // });
   }
 
@@ -125,10 +126,10 @@ export class EdgeObservabilityService {
         labels,
         recorded_at: new Date().toISOString(),
       }).catch((error: any) => {
-        console.error(`EdgeObservability: Failed to record business metric ${name}:`, error.message);
+        defaultLogger.error(`EdgeObservability: Failed to record business metric ${name}:`, error.message);
       });
     } catch (error: any) {
-      console.error(`EdgeObservability: Failed to record business metric ${name}:`, error.message);
+      defaultLogger.error(`EdgeObservability: Failed to record business metric ${name}:`, error.message);
     }
   }
 

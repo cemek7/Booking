@@ -1,8 +1,8 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { getBrowserSupabase } from '@/lib/supabase/client';
-import type { Message } from '@/components/chat/ChatThread';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import type { ChatMessage as Message } from '@/components/chat/ChatThread';
 import { messageSendSchema } from '@/lib/validation';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
@@ -31,7 +31,7 @@ export function useMessages(bookingId: string) {
     if (!bookingId) return;
     let channel: RealtimeChannel | null = null;
     try {
-      const sb = getBrowserSupabase();
+      const sb = getSupabaseBrowserClient();
       if (sb?.channel) {
         channel = sb.channel(`public:messages:booking:${bookingId}`)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `booking_id=eq.${bookingId}` }, (payload: RealtimePostgresChangesPayload<MessageRow>) => {
@@ -48,14 +48,14 @@ export function useMessages(bookingId: string) {
                   text: newMsg.content || newMsg.text || '',
                   status: 'sent',
                   createdAt: newMsg.created_at,
-                }];
+                } as unknown as Message];
               });
             }
           })
           .subscribe();
       }
     } catch { /* ignore subscription errors */ }
-    return () => { try { channel && getBrowserSupabase()?.removeChannel?.(channel); } catch { /* ignore */ } };
+    return () => { try { channel && getSupabaseBrowserClient()?.removeChannel?.(channel); } catch { /* ignore */ } };
   }, [bookingId, qc]);
   return q;
 }
