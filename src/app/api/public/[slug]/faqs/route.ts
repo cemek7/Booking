@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * GET /api/public/[slug]/faqs
  * Public FAQ list for a tenant's marketing mini-site — no auth required.

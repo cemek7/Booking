@@ -31,7 +31,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
     enabled: !!tenant?.id,
   });
 
-  const categories = categoriesData?.categories || [];
+  const categories = (categoriesData as any)?.categories || [];
 
   useEffect(() => {
     setLocalFilters(filters);
@@ -204,7 +204,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
               <input
                 type="text"
                 placeholder="hair, color, treatment"
-                value={localFilters.tags?.join(', ') || ''}
+                value={(Array.isArray(localFilters.tags) ? localFilters.tags.join(', ') : localFilters.tags) || ''}
                 onChange={(e) => {
                   const tags = e.target.value
                     .split(',')

@@ -1,4 +1,9 @@
+import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { recordLLMUsage, canMakeLLMRequest } from '@/lib/llmUsageTracker';
+import { callOpenRouter } from '@/lib/openrouter';
+import { isGoogleAIConfigured, getGoogleAIModel } from '@/lib/google-ai';
+import { estimatePromptTokens, withTenantWalletSpend } from './billing/ai-wallet';
 
 export interface TemplateGenerationRequest {
   category: 'confirmation' | 'reminder' | 'cancellation' | 'welcome' | 'follow_up' | 'custom';
@@ -24,9 +29,20 @@ export interface GeneratedTemplate {
   confidence: number;
 }
 
+type LLMChatCompletionResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    } | null;
+    text?: string | null;
+  }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  } | null;
+};
+
 class AITemplateGenerator {
-  private readonly openrouterKey = process.env.OPENROUTER_API_KEY;
-  private readonly baseUrl = process.env.OPENROUTER_BASE_URL || 'https://api.openrouter.ai';
 
   /**
    * Generate template content using AI
@@ -41,37 +57,39 @@ class AITemplateGenerator {
       throw new Error('LLM quota exceeded. Please upgrade your plan or wait for quota reset.');
     }
 
-    if (!this.openrouterKey) {
-      throw new Error('OpenRouter API key not configured');
+    if (!isGoogleAIConfigured() && !process.env.OPENROUTER_API_KEY) {
+      throw new Error('No LLM provider configured. Set GOOGLE_AI_API_KEY or OPENROUTER_API_KEY.');
     }
 
     try {
       const systemPrompt = this.buildSystemPrompt(request);
       const userPrompt = this.buildUserPrompt(request);
+      const supabase = createSupabaseAdminClient();
 
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.openrouterKey}`
+      const { json: data } = await withTenantWalletSpend(
+        supabase,
+        tenantId ?? null,
+        {
+          estimatedTokens: estimatePromptTokens(systemPrompt.length + userPrompt.length),
+          provider: isGoogleAIConfigured() ? 'google_ai' : 'openrouter',
+          model: isGoogleAIConfigured() ? getGoogleAIModel() : undefined,
+          requestId: `template:${tenantId ?? 'preview'}:${Date.now()}`,
+          description: 'AI template generation',
+          metadata: {
+            category: request.category,
+            vertical: request.vertical,
+            language: request.language,
+            tone: request.tone,
+          },
         },
-        body: JSON.stringify({
-          model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: 1000,
-          temperature: 0.7
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`OpenRouter API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
+        () => callOpenRouter(
+          [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+          undefined,
+          2
+        )
+      );
+      const content = (data as LLMChatCompletionResponse | null | undefined)?.choices?.[0]?.message?.content
+        ?? (data as LLMChatCompletionResponse | null | undefined)?.choices?.[0]?.text;
 
       if (!content) {
         throw new Error('No content returned from AI');
@@ -82,13 +100,15 @@ class AITemplateGenerator {
         const usage = data.usage;
         const inputTokens = usage?.prompt_tokens || 200;
         const outputTokens = usage?.completion_tokens || 300;
-        const costUsd = ((inputTokens + outputTokens) * 0.0003); // GPT-4o pricing estimate
+        const costUsd = 0; // Free model — no cost
+        const activeModel = isGoogleAIConfigured() ? getGoogleAIModel() : 'free-model';
+        const activeProvider = isGoogleAIConfigured() ? 'google_ai' as const : 'openrouter' as const;
 
         await recordLLMUsage(
           tenantId,
           userId,
-          'openrouter',
-          'gpt-4o',
+          activeProvider,
+          activeModel,
           'template_generation',
           inputTokens,
           outputTokens,
@@ -108,7 +128,7 @@ class AITemplateGenerator {
       return template;
 
     } catch (error) {
-      console.error('AI template generation failed:', error);
+      defaultLogger.error('AI template generation failed:', error);
       throw new Error('Failed to generate template with AI');
     }
   }
@@ -164,15 +184,25 @@ Return ONLY a valid JSON object with this structure:
   /**
    * Build user prompt with specific requirements
    */
+  /** Strip prompt-injection patterns and enforce a max length on user-supplied strings */
+  private sanitizeUserInput(input: string, maxLength = 500): string {
+    return input
+      .slice(0, maxLength)
+      // Remove sequences that attempt to override system instructions
+      .replace(/ignore\s+(previous|above|all)\s+instructions?/gi, '')
+      .replace(/system\s*:/gi, '')
+      .replace(/\[INST\]|\[\/INST\]|<\|im_start\|>|<\|im_end\|>/g, '');
+  }
+
   private buildUserPrompt(request: TemplateGenerationRequest): string {
     let prompt = `Generate a ${request.category} template for a ${request.vertical} business.`;
 
     if (request.description) {
-      prompt += `\n\nSpecific context: ${request.description}`;
+      prompt += `\n\nSpecific context: ${this.sanitizeUserInput(request.description)}`;
     }
 
     if (request.customRequirements) {
-      prompt += `\n\nCustom requirements: ${request.customRequirements}`;
+      prompt += `\n\nCustom requirements: ${this.sanitizeUserInput(request.customRequirements)}`;
     }
 
     // Add vertical-specific guidance
@@ -250,7 +280,7 @@ Return ONLY a valid JSON object with this structure:
       };
 
     } catch (error) {
-      console.error('Failed to parse AI-generated content:', error);
+      defaultLogger.error('Failed to parse AI-generated content:', error);
       
       // Fallback: create a basic template from the raw content
       return this.createFallbackTemplate(content, request);

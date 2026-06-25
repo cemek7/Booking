@@ -264,7 +264,7 @@ describe('Unified Middleware & Error Handling System', () => {
       expect(json).toHaveProperty('code');
       expect(json).toHaveProperty('message');
       expect(json).toHaveProperty('timestamp');
-      expect(json).toHaveProperty('details');
+      // details only present when toResponse(true) is called
     });
 
     it('should include error details when present', async () => {
@@ -295,7 +295,7 @@ describe('Unified Middleware & Error Handling System', () => {
       const json = await response.json();
 
       const timestamp = new Date(json.timestamp);
-      expect(timestamp.getTime()).toBeCloseTo(Date.now(), 1000);
+      expect(Math.abs(timestamp.getTime() - Date.now())).toBeLessThan(5000);
     });
   });
 

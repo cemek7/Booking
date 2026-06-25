@@ -47,10 +47,12 @@ describe('runGraduationAdvisor', () => {
 
     expect(count).toBe(1);
     expect(mockedSendTelegramAlert).toHaveBeenCalledTimes(1);
+    // notifications real columns: title/message/meta/read (no type/body/metadata).
     expect(inserts[0]).toMatchObject({
       tenant_id: 'ten_1',
-      type: 'graduation_recommended',
+      meta: expect.objectContaining({ kind: 'graduation_recommended' }),
     });
+    expect(inserts[0]).not.toHaveProperty('type');
   });
 
   it('returns 0 when no tenants qualify', async () => {

@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Calendar, momentLocalizer, View, ToolbarProps } from 'react-big-calendar';
+import { Calendar, momentLocalizer } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import StaffSidebar from './StaffSidebar';
@@ -31,6 +31,13 @@ interface SlotInfo {
   start: Date;
   end: Date;
 }
+
+type CalendarView = 'month' | 'week' | 'day' | 'agenda';
+type ToolbarProps = {
+  label: string;
+  onNavigate: (action: 'PREV' | 'TODAY' | 'NEXT') => void;
+  onView: (view: CalendarView) => void;
+};
 
 const CustomToolbar: React.FC<ToolbarProps> = ({ label, onNavigate, onView }) => {
   return (
@@ -63,7 +70,7 @@ const CustomToolbar: React.FC<ToolbarProps> = ({ label, onNavigate, onView }) =>
 };
 
 const InteractiveCalendar: React.FC = () => {
-  const [view, setView] = useState<View>('month');
+  const [view, setView] = useState<CalendarView>('month');
   const [date, setDate] = useState(new Date());
   // null means "all staff selected" (default); array means explicit user selection
   const [selectedStaff, setSelectedStaff] = useState<number[] | null>(null);
@@ -190,15 +197,15 @@ const InteractiveCalendar: React.FC = () => {
           endAccessor="end"
           view={view}
           date={date}
-          onView={(newView: View) => setView(newView)}
+          onView={(newView: CalendarView) => setView(newView)}
           onNavigate={(newDate: Date) => setDate(newDate)}
           style={{ height: '100%' }}
           resourceIdAccessor="resourceId"
           resourceTitleAccessor="resourceTitle"
-          eventPropGetter={eventPropGetter}
+          eventPropGetter={eventPropGetter as any}
           selectable
           onSelectSlot={handleSelectSlot}
-          onSelectEvent={handleSelectEvent}
+          onSelectEvent={handleSelectEvent as any}
           components={{
             toolbar: CustomToolbar,
           }}

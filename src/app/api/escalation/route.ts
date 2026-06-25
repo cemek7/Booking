@@ -1,9 +1,17 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
+import { defaultLogger } from '@/lib/logger';
+import { siasOperations } from '@/lib/sias-operations';
 
-const ClaimSchema = z.object({
-  action: z.enum(['claim', 'resolve']),
+const CreateEscalationSchema = z.object({
+  customerPhone: z.string().min(1),
+  sessionId: z.string().min(1),
+  reason: z.string().min(1),
+  assignedAgentId: z.string().uuid().optional(),
+  conversationSnapshot: z.array(z.any()).optional(),
+  status: z.enum(['pending', 'claimed', 'resolved', 'timed_out']).optional(),
 });
 
 /**
@@ -29,7 +37,7 @@ export const GET = createHttpHandler(
       .limit(50);
 
     if (error) {
-      console.error('[api/escalation] GET error:', error.message);
+      defaultLogger.error('[api/escalation] GET error:', error.message);
       throw ApiErrorFactory.internalServerError(new Error('Failed to fetch escalation queue'));
     }
 
@@ -40,49 +48,36 @@ export const GET = createHttpHandler(
 );
 
 /**
- * PATCH /api/escalation/:id
- * Claim or resolve an escalation ticket.
- * Body: { action: 'claim' | 'resolve' }
+ * POST /api/escalation
+ * Create a new escalation ticket from an app event or manual operator action.
  */
-export const PATCH = createHttpHandler(
+export const POST = createHttpHandler(
   async (ctx) => {
     const tenantId = ctx.user?.tenantId;
-    const agentId = ctx.user?.id;
     if (!tenantId) throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
 
-    // Extract escalation ID from URL path
-    const segments = new URL(ctx.request.url).pathname.split('/');
-    const escalationId = segments[segments.indexOf('escalation') + 1];
-    if (!escalationId) throw ApiErrorFactory.validationError({ id: 'Escalation ID required in URL' });
-
     const body = await ctx.request.json();
-    const parsed = ClaimSchema.safeParse(body);
+    const parsed = CreateEscalationSchema.safeParse(body);
     if (!parsed.success) {
       throw ApiErrorFactory.validationError(parsed.error.flatten().fieldErrors);
     }
 
-    const { action } = parsed.data;
+    const escalation = await siasOperations.createEscalationTicket({
+      tenantId,
+      customerPhone: parsed.data.customerPhone,
+      sessionId: parsed.data.sessionId,
+      reason: parsed.data.reason,
+      assignedAgentId: parsed.data.assignedAgentId ?? null,
+      conversationSnapshot: parsed.data.conversationSnapshot ?? [],
+      status: parsed.data.status ?? 'pending',
+    });
 
-    const updates: Record<string, unknown> =
-      action === 'claim'
-        ? { status: 'claimed', assigned_agent_id: agentId }
-        : { status: 'resolved', resolved_at: new Date().toISOString() };
-
-    const { data, error } = await ctx.supabase
-      .from('escalation_queue')
-      .update(updates)
-      .eq('id', escalationId)
-      .eq('tenant_id', tenantId)
-      .select('id, status, assigned_agent_id, resolved_at')
-      .single();
-
-    if (error) {
-      console.error('[api/escalation] PATCH error:', error.message);
-      throw ApiErrorFactory.internalServerError(new Error('Failed to update escalation'));
+    if (!escalation) {
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create escalation ticket'));
     }
 
-    return { escalation: data };
+    return { escalation };
   },
-  'PATCH',
+  'POST',
   { auth: true, roles: ['owner', 'manager', 'staff'] }
 );

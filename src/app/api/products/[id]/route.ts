@@ -1,6 +1,8 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { UpdateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
+import { defaultLogger } from '@/lib/logger';
 
 interface RouteParams {
   params: { id: string };
@@ -215,7 +217,7 @@ export const PUT = createHttpHandler(
             });
 
           if (movementError) {
-            console.error('Failed to log inventory movement:', movementError);
+            defaultLogger.error('Failed to log inventory movement:', movementError);
           }
         }
         

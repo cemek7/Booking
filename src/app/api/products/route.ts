@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { Product, ProductListQuery, CreateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
@@ -141,7 +142,7 @@ export const GET = createHttpHandler(
     }
 
     // Filter out cost prices if user doesn't have permission
-    const sanitizedProducts = products?.map((product: Record<string, unknown>) => {
+    const sanitizedProducts = (products as unknown as Record<string, unknown>[] | null)?.map((product: Record<string, unknown>) => {
       if (!permissions.can_view_cost_prices) {
         const { cost_price_cents, ...productWithoutCost } = product;
         return productWithoutCost;

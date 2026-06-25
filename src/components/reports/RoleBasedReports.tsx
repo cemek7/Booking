@@ -7,8 +7,8 @@ export default async function RoleBasedReports() {
 
   return (
     <div>
-      {user.role === 'owner' && <OwnerReports tenantId={user.tenantId} />}
-      {user.role === 'manager' && <ManagerReports tenantId={user.tenantId} />}
+      {user.role === 'owner' && <OwnerReports />}
+      {user.role === 'manager' && <ManagerReports />}
     </div>
   );
 }

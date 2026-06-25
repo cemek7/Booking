@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -70,7 +71,7 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.notFound('Category');
     }
 
-    const result: CategoryWithChildren = { ...category };
+    const result: CategoryWithChildren = { ...(category as unknown as CategoryWithChildren) };
 
     if (include_children) {
       const { data: children, error: childrenError } = await ctx.supabase

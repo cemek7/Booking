@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,7 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/components/ui/toast';
 import {
   Calendar,
   Link,
@@ -62,12 +63,8 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
         setIntegrations(data.integrations || []);
       }
     } catch (error) {
-      console.error('Failed to load calendar integrations:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load calendar integrations',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to load calendar integrations:', error);
+      toast('error', 'Failed to load calendar integrations');
     } finally {
       setLoading(false);
     }
@@ -81,7 +78,7 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
         setStaffMembers(data.staff || []);
       }
     } catch (error) {
-      console.error('Failed to load staff members:', error);
+      defaultLogger.error('Failed to load staff members:', error);
     }
   };
 
@@ -105,12 +102,8 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
         throw new Error('Failed to initiate calendar connection');
       }
     } catch (error) {
-      console.error('Failed to connect calendar:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to connect Google Calendar',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to connect calendar:', error);
+      toast('error', 'Failed to connect Google Calendar');
     } finally {
       setConnecting(false);
     }
@@ -124,20 +117,13 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
       if (response.ok) {
         await loadCalendarIntegrations();
-        toast({
-          title: 'Success',
-          description: 'Calendar disconnected successfully'
-        });
+        toast('success', 'Calendar disconnected successfully');
       } else {
         throw new Error('Failed to disconnect calendar');
       }
     } catch (error) {
-      console.error('Failed to disconnect calendar:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to disconnect calendar',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to disconnect calendar:', error);
+      toast('error', 'Failed to disconnect calendar');
     }
   };
 
@@ -152,20 +138,13 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
         const result = await response.json();
         await loadCalendarIntegrations();
         
-        toast({
-          title: 'Sync Complete',
-          description: `Synced ${result.events_synced} events${result.conflicts_detected > 0 ? `, ${result.conflicts_detected} conflicts detected` : ''}`
-        });
+        toast('success', `Synced ${result.events_synced} events${result.conflicts_detected > 0 ? `, ${result.conflicts_detected} conflicts detected` : ''}`);
       } else {
         throw new Error('Sync failed');
       }
     } catch (error) {
-      console.error('Sync failed:', error);
-      toast({
-        title: 'Error',
-        description: 'Calendar sync failed',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Sync failed:', error);
+      toast('error', 'Calendar sync failed');
     } finally {
       setSyncing(null);
     }
@@ -184,20 +163,13 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
       if (response.ok) {
         await loadCalendarIntegrations();
-        toast({
-          title: 'Success',
-          description: 'Calendar settings updated'
-        });
+        toast('success', 'Calendar settings updated');
       } else {
         throw new Error('Failed to update settings');
       }
     } catch (error) {
-      console.error('Failed to update settings:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to update calendar settings',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to update settings:', error);
+      toast('error', 'Failed to update calendar settings');
     }
   };
 

@@ -4,6 +4,7 @@ import React, { memo, useCallback } from 'react';
 import { useRouter } from "next/navigation";
 import { Table, THead, TBody, TR, TH, TD } from "../ui/table";
 import Button from "../ui/button";
+import { Badge } from '../ui/badge';
 import { toast } from '../ui/toast';
 import { useTenant } from "@/lib/supabase/tenant-context";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -36,13 +37,13 @@ const ServiceRow = memo<ServiceRowProps>(function ServiceRow({ service, onEdit, 
 
   return (
     <TR>
-      <TD>{service.id}</TD>
-      <TD>{service.name}</TD>
-      <TD>{service.description}</TD>
-      <TD>{service.price}</TD>
-      <TD>{service.duration}</TD>
-      <TD>{service.category}</TD>
-      <TD>{service.created_at ? new Date(service.created_at).toLocaleString() : ""}</TD>
+      <TD className="font-medium text-slate-900">{service.id}</TD>
+      <TD className="font-medium text-slate-900">{service.name}</TD>
+      <TD className="max-w-[26rem] whitespace-normal text-slate-600">{service.description || '—'}</TD>
+      <TD className="font-medium text-slate-900">{typeof service.price === 'number' ? service.price : '—'}</TD>
+      <TD>{typeof service.duration === 'number' ? `${service.duration} min` : '—'}</TD>
+      <TD>{service.category || '—'}</TD>
+      <TD>{service.created_at ? new Date(service.created_at).toLocaleString() : '—'}</TD>
       <TD>
         <Button className="mr-2 px-2 py-1 text-xs" onClick={handleEdit}>Edit</Button>
         <Button className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600" onClick={handleDelete}>Delete</Button>
@@ -61,7 +62,13 @@ export default function ServicesList() {
       if (!tenant?.id) return [];
       const response = await authFetch('/api/services');
       if (response.error) throw new Error('Failed services fetch');
-      return response.data || [];
+      const payload = response.data as unknown;
+      if (Array.isArray(payload)) return payload;
+      if (payload && typeof payload === 'object') {
+        const nested = (payload as { data?: unknown }).data;
+        if (Array.isArray(nested)) return nested;
+      }
+      return [];
     },
     enabled: !!tenant?.id
   });
@@ -85,41 +92,64 @@ export default function ServicesList() {
     });
   }, [deleteMutation]);
 
-  if (isLoading) return <p>Loading...</p>;
-  if (error) return <p>Error loading services.</p>;
+  if (isLoading) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-8 text-sm text-slate-500 shadow-sm">
+        Loading services...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 px-6 py-8 text-sm text-red-700 shadow-sm">
+        Error loading services.
+      </div>
+    );
+  }
 
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <THead>
-          <TR>
-            <TH>ID</TH>
-            <TH>Name</TH>
-            <TH>Description</TH>
-            <TH>Price</TH>
-            <TH>Duration</TH>
-            <TH>Category</TH>
-            <TH>Created At</TH>
-            <TH>&nbsp;</TH>
-          </TR>
-        </THead>
-        <TBody>
-          {data && data.length > 0 ? (
-            data.map((service: Service) => (
-              <ServiceRow
-                key={service.id}
-                service={service}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-              />
-            ))
-          ) : (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Services</h2>
+          <p className="text-sm text-slate-500">Manage services, pricing, duration, and categories.</p>
+        </div>
+        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-slate-600">
+          {data?.length ?? 0} services
+        </Badge>
+      </div>
+      <div className="overflow-x-auto">
+        <Table className="min-w-[960px]">
+          <THead>
             <TR>
-              <TD colSpan={8} className="text-center">No services found.</TD>
+              <TH className="w-16">ID</TH>
+              <TH className="w-40">Name</TH>
+              <TH className="min-w-[280px]">Description</TH>
+              <TH className="w-24">Price</TH>
+              <TH className="w-24">Duration</TH>
+              <TH className="w-28">Category</TH>
+              <TH className="w-36">Created At</TH>
+              <TH className="w-28">&nbsp;</TH>
             </TR>
-          )}
-        </TBody>
-      </Table>
+          </THead>
+          <TBody>
+            {data && data.length > 0 ? (
+              data.map((service: Service) => (
+                <ServiceRow
+                  key={service.id}
+                  service={service}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                />
+              ))
+            ) : (
+              <TR>
+                <TD colSpan={8} className="text-center text-slate-500">No services found.</TD>
+              </TR>
+            )}
+          </TBody>
+        </Table>
+      </div>
     </div>
   );
 }

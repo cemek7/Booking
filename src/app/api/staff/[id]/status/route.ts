@@ -1,13 +1,13 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const id = ctx.request.url.split('/').slice(-2, -1)[0];
+    const id = (ctx as any).params?.id;
     if (!id) throw ApiErrorFactory.badRequest('User ID required');
 
-    const url = new URL(ctx.request.url);
-    const tenantId = url.searchParams.get('tenant_id');
+    const tenantId = ctx.user!.tenantId;
     if (!tenantId) throw ApiErrorFactory.badRequest('tenant_id required');
 
     const payload = await ctx.request.json().catch(() => ({}));

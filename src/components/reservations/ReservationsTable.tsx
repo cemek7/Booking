@@ -67,7 +67,7 @@ const ReservationRow = memo<ReservationRowProps>(function ReservationRow({
             value = reservation.end as string;
             break;
           default:
-            value = (reservation as Record<string, unknown>)[col] as string | number | undefined;
+            value = (reservation as any)[col] as string | number | undefined;
         }
         return <td key={String(col)} className="p-2 border">{String(value ?? '')}</td>;
       })}

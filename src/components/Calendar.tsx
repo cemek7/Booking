@@ -99,8 +99,8 @@ export const Calendar: React.FC<CalendarProps> = ({ view, events, staffLanes, on
     onRangeChange(range.start, range.end);
   }, [range.start, range.end, onRangeChange]);
   // Group events by staff when lanes active (declare before any early return)
-  const grouped = useMemo(() => {
-    if (!staffLanes) return { all: events } as any;
+  const grouped = useMemo((): Record<string, BookingEvent[]> => {
+    if (!staffLanes) return { all: events };
     const map: Record<string, BookingEvent[]> = {};
     events.forEach(ev => { const key = ev.staffId || 'unassigned'; map[key] = map[key] || []; map[key].push(ev); });
     return map;

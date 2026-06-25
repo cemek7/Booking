@@ -1,6 +1,8 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
+import { defaultLogger } from '@/lib/logger';
 
 const ArticleSchema = z.object({
   title: z.string().min(1).max(200),
@@ -26,7 +28,7 @@ export const GET = createHttpHandler(
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('[api/knowledge] GET error:', error.message);
+      defaultLogger.error('[api/knowledge] GET error:', error.message);
       throw ApiErrorFactory.internalServerError(new Error('Failed to fetch knowledge articles'));
     }
 
@@ -61,7 +63,7 @@ export const POST = createHttpHandler(
       .single();
 
     if (error) {
-      console.error('[api/knowledge] POST error:', error.message);
+      defaultLogger.error('[api/knowledge] POST error:', error.message);
       throw ApiErrorFactory.internalServerError(new Error('Failed to create knowledge article'));
     }
 
@@ -91,7 +93,7 @@ export const DELETE = createHttpHandler(
       .eq('tenant_id', tenantId);
 
     if (error) {
-      console.error('[api/knowledge] DELETE error:', error.message);
+      defaultLogger.error('[api/knowledge] DELETE error:', error.message);
       throw ApiErrorFactory.internalServerError(new Error('Failed to deactivate knowledge article'));
     }
 

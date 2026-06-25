@@ -9,6 +9,12 @@ export interface NotificationPreferencesValues {
   optInPolicy?: string;
   notifyFrom?: string;
   customReminderMessage?: string;
+  notificationPreferences?: {
+    newBookings?: boolean;
+    cancellations?: boolean;
+    dailySummary?: boolean;
+    weeklySummary?: boolean;
+  };
 }
 
 const CHANNELS = ['whatsapp','email','sms'];
@@ -53,6 +59,30 @@ export function NotificationPreferencesSection({ values, onChange }: { values: N
               <button key={ch} onClick={()=>toggleChannel(ch)} type="button" className={`px-3 py-1 rounded text-[11px] border ${active? 'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}>{ch}</button>
             );
           })}
+        </div>
+      </FormSection>
+      <FormSection title="Operational Notifications" description="Choose which owner-facing summaries and alerts Booka should send.">
+        <div className="grid gap-2 md:grid-cols-2">
+          {[
+            ['newBookings', 'New booking alerts'],
+            ['cancellations', 'Cancellation alerts'],
+            ['dailySummary', 'Daily summary'],
+            ['weeklySummary', 'Weekly summary'],
+          ].map(([key, label]) => (
+            <label key={key} className="flex items-center gap-2 rounded border px-3 py-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                checked={Boolean(local.notificationPreferences?.[key as keyof NonNullable<NotificationPreferencesValues['notificationPreferences']>])}
+                onChange={(e) =>
+                  update('notificationPreferences', {
+                    ...(local.notificationPreferences || {}),
+                    [key]: e.target.checked,
+                  })
+                }
+              />
+              <span>{label}</span>
+            </label>
+          ))}
         </div>
       </FormSection>
       <FormSection title="Content" description="Customize sender identity & reminder wording.">

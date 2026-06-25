@@ -50,7 +50,7 @@ export default function IntegratedBookingForm({
       const response = await authPost('/api/bookings/products', bookingData);
       
       if (response.error) {
-        throw new Error(response.error || 'Failed to create booking');
+        throw new Error(String(response.error) || 'Failed to create booking');
       }
 
       return response.data;
@@ -58,7 +58,7 @@ export default function IntegratedBookingForm({
     onSuccess: (data) => {
       toast.success('Booking created successfully');
       if (onBookingCreated) {
-        onBookingCreated(data.booking.id);
+        onBookingCreated((data as any).booking.id);
       }
       // Reset form
       setSelectedProducts([]);
@@ -146,7 +146,7 @@ export default function IntegratedBookingForm({
     selectedProducts.length > 0 && 
     bookingDetails.appointment_date && 
     bookingDetails.appointment_time &&
-    !createBookingMutation.isLoading;
+    !createBookingMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -288,7 +288,7 @@ export default function IntegratedBookingForm({
             disabled={!canSubmit}
             className="bg-primary text-white px-8 py-3 text-lg"
           >
-            {createBookingMutation.isLoading ? (
+            {createBookingMutation.isPending ? (
               <>
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2" />
                 Creating Booking...

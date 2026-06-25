@@ -86,8 +86,8 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     enabled: !!tenant?.id,
   });
 
-  const categories = categoriesData?.categories || [];
-  const popularTags = tagsData?.tags || [];
+  const categories = (categoriesData as any)?.categories || [];
+  const popularTags = (tagsData as any)?.tags || [];
 
   const handleSearch = () => {
     // Clean up the query - remove empty values
@@ -149,9 +149,9 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
   };
 
   const handleTagToggle = (tag: string) => {
-    const currentTags = searchQuery.tags || [];
+    const currentTags = Array.isArray(searchQuery.tags) ? searchQuery.tags : searchQuery.tags ? [searchQuery.tags] : [];
     const newTags = currentTags.includes(tag)
-      ? currentTags.filter(t => t !== tag)
+      ? currentTags.filter((t: string) => t !== tag)
       : [...currentTags, tag];
     
     setSearchQuery(prev => ({
@@ -222,12 +222,12 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
             )}
             {searchQuery.category_id && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
-                Category: {categories.find(c => c.id === searchQuery.category_id)?.name}
+                Category: {categories.find((c: any) => c.id === searchQuery.category_id)?.name}
               </span>
             )}
-            {searchQuery.tags && searchQuery.tags.length > 0 && (
+            {searchQuery.tags && (Array.isArray(searchQuery.tags) ? searchQuery.tags.length > 0 : true) && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
-                Tags: {searchQuery.tags.join(', ')}
+                Tags: {Array.isArray(searchQuery.tags) ? searchQuery.tags.join(', ') : searchQuery.tags}
               </span>
             )}
             {(searchQuery.price_min || searchQuery.price_max) && (
@@ -287,9 +287,9 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <label className="block text-sm font-medium text-gray-700 mb-1">Stock Status</label>
               <select
                 value={searchQuery.stock_status || ''}
-                onChange={(e) => setSearchQuery(prev => ({ 
-                  ...prev, 
-                  stock_status: e.target.value || undefined 
+                onChange={(e) => setSearchQuery(prev => ({
+                  ...prev,
+                  stock_status: (e.target.value || undefined) as ProductListQuery['stock_status']
                 }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
@@ -400,7 +400,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <label className="block text-sm font-medium text-gray-700 mb-2">Popular Tags</label>
               <div className="flex flex-wrap gap-2">
                 {popularTags.slice(0, 15).map((tag: string) => {
-                  const isSelected = searchQuery.tags?.includes(tag);
+                  const isSelected = Array.isArray(searchQuery.tags) ? searchQuery.tags.includes(tag) : searchQuery.tags === tag;
                   return (
                     <button
                       key={tag}

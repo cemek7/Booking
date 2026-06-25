@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useEffect } from 'react';
 import { Table, THead, TBody, TR, TH, TD } from "../ui/table";
 import Button from "../ui/button";
+import { Badge } from '../ui/badge';
 import Modal from '../ui/modal';
 import CustomerProfileCard, { CustomerRow } from './CustomerProfileCard';
 import ReservationForm from '../reservations/ReservationForm';
@@ -18,6 +19,25 @@ interface CustomerListRowProps {
   onEdit: (id: number) => void;
   onDelete: (id: number) => void;
 }
+
+type CustomerStatsPayload = {
+  totalBookings?: number;
+  total_bookings?: number;
+  lastBookingAt?: string | null;
+  last_booking_at?: string | null;
+  status?: string;
+  tier?: string;
+};
+
+type CustomerHistoryPayload = {
+  lifetimeSpend?: number;
+  recent?: Array<{ id: string; start_at?: string; status?: string; total?: number }>;
+};
+
+type ChatCreateResponse = {
+  id?: string | number;
+  data?: Array<{ id?: string | number }>;
+};
 
 const CustomerListRow = memo<CustomerListRowProps>(function CustomerListRow({
   customer,
@@ -42,12 +62,12 @@ const CustomerListRow = memo<CustomerListRowProps>(function CustomerListRow({
   }, []);
 
   return (
-    <TR className="cursor-pointer hover:bg-indigo-50" onClick={handleRowClick}>
-      <TD>{customer.id}</TD>
-      <TD>{customer.name}</TD>
-      <TD>{customer.phone}</TD>
-      <TD>{customer.notes}</TD>
-      <TD>{customer.created_at ? new Date(customer.created_at).toLocaleString() : ""}</TD>
+    <TR className="cursor-pointer hover:bg-slate-50" onClick={handleRowClick}>
+      <TD className="font-medium text-slate-900">{customer.id}</TD>
+      <TD className="font-medium text-slate-900">{customer.name}</TD>
+      <TD className="font-mono text-slate-700">{customer.phone || '—'}</TD>
+      <TD className="max-w-[28rem] whitespace-normal text-slate-600">{customer.notes || '—'}</TD>
+      <TD>{customer.created_at ? new Date(customer.created_at).toLocaleString() : '—'}</TD>
       <TD onClick={handleActionClick}>
         <Button className="mr-2 px-2 py-1 text-xs" onClick={handleEdit}>Edit</Button>
         <Button className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600" onClick={handleDelete}>Delete</Button>
@@ -78,7 +98,13 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
       if (!effectiveTenantId) return [];
       const response = await authFetch('/api/customers');
       if (response.error) throw new Error('Failed customers fetch');
-      return response.data || [];
+      const payload = response.data as unknown;
+      if (Array.isArray(payload)) return payload;
+      if (payload && typeof payload === 'object') {
+        const nested = (payload as { data?: unknown }).data;
+        if (Array.isArray(nested)) return nested;
+      }
+      return [];
     },
     enabled: !!effectiveTenantId
   });
@@ -109,7 +135,7 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
       try {
         const response = await authFetch(`/api/customers/${c.id}/stats`);
         if (response.error) { setSelectedStats(null); return; }
-        const json = response.data;
+        const json = response.data as CustomerStatsPayload;
         setSelectedStats({
           totalBookings: json.totalBookings ?? json.total_bookings,
           lastBookingAt: json.lastBookingAt ?? json.last_booking_at,
@@ -122,7 +148,7 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
       try {
         const response = await authFetch(`/api/customers/${c.id}/history`);
         if (response.error) { setSelectedHistory(null); return; }
-        const json = response.data;
+        const json = response.data as CustomerHistoryPayload;
         setSelectedHistory({ lifetimeSpend: json.lifetimeSpend || 0, recent: Array.isArray(json.recent) ? json.recent : [] });
       } catch { setSelectedHistory(null); }
     })();
@@ -138,40 +164,63 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
     );
   }), [data, filter]);
 
-  if (isLoading) return <p>Loading...</p>;
-  if (error) return <p>Error loading customers.</p>;
+  if (isLoading) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-8 text-sm text-slate-500 shadow-sm">
+        Loading customers...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 px-6 py-8 text-sm text-red-700 shadow-sm">
+        Error loading customers.
+      </div>
+    );
+  }
 
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <THead>
-          <TR>
-            <TH>ID</TH>
-            <TH>Name</TH>
-            <TH>Phone</TH>
-            <TH>Notes</TH>
-            <TH>Created At</TH>
-            <TH>&nbsp;</TH>
-          </TR>
-        </THead>
-        <TBody>
-          {filtered && filtered.length > 0 ? (
-            filtered.map((customer: CustomerRow) => (
-              <CustomerListRow
-                key={customer.id}
-                customer={customer}
-                onRowClick={handleRowClick}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-              />
-            ))
-          ) : (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Customers</h2>
+          <p className="text-sm text-slate-500">Search, edit, and message customers without losing context.</p>
+        </div>
+        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-slate-600">
+          {filtered?.length ?? 0} customers
+        </Badge>
+      </div>
+      <div className="overflow-x-auto">
+        <Table className="min-w-[860px]">
+          <THead>
             <TR>
-              <TD colSpan={6} className="text-center">{filter ? 'No matches.' : 'No customers found.'}</TD>
+              <TH className="w-16">ID</TH>
+              <TH className="w-40">Name</TH>
+              <TH className="w-36">Phone</TH>
+              <TH className="min-w-[280px]">Notes</TH>
+              <TH className="w-36">Created At</TH>
+              <TH className="w-28">&nbsp;</TH>
             </TR>
-          )}
-        </TBody>
-      </Table>
+          </THead>
+          <TBody>
+            {filtered && filtered.length > 0 ? (
+              filtered.map((customer: CustomerRow) => (
+                <CustomerListRow
+                  key={customer.id}
+                  customer={customer}
+                  onRowClick={handleRowClick}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                />
+              ))
+            ) : (
+              <TR>
+                <TD colSpan={6} className="text-center text-slate-500">{filter ? 'No matches.' : 'No customers found.'}</TD>
+              </TR>
+            )}
+          </TBody>
+        </Table>
+      </div>
 
       <Modal open={open} onClose={() => setOpen(false)}>
         {selected && (
@@ -188,8 +237,8 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
                     router.push(`/chat?phone=${encodeURIComponent(selected.phone)}`);
                     return;
                   }
-                  const data = response.data;
-                  const chatId = data?.id || data?.[0]?.id;
+                  const data = response.data as ChatCreateResponse | Array<{ id?: string | number }>;
+                  const chatId = Array.isArray(data) ? data[0]?.id : data?.id || data?.data?.[0]?.id;
                   if (chatId) { router.push(`/chat?chat=${encodeURIComponent(chatId)}`); return; }
                 }
               } catch {}

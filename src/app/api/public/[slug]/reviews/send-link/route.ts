@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * POST /api/public/[slug]/reviews/send-link
  *
@@ -48,12 +49,15 @@ export const POST = createHttpHandler(
       `We'd love to hear about your experience. Please take a moment to leave us a review:\n\n` +
       `${reviewUrl}`;
 
-    // Try to send via WhatsApp (Evolution API) — gracefully degrade if not configured
+    // Try to send via WhatsApp using the tenant's configured provider — gracefully degrade if not configured
     let whatsappSent = false;
     try {
-      const { sendWhatsAppMessage } = await import('@/lib/evolutionClient');
-      const result = await sendWhatsAppMessage(tenant.id, body.phone, message);
-      whatsappSent = result.success;
+      const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+      const client = await getTenantWhatsAppProviderClient(tenant.id);
+      if (client) {
+        await client.sendTextMessage(body.phone, message);
+        whatsappSent = true;
+      }
     } catch {
       // WhatsApp integration not configured — still return the link
     }

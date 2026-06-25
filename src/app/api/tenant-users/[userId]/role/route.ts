@@ -1,9 +1,12 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
+const VALID_ROLES = ['owner', 'manager', 'staff'] as const;
+
 const UpdateRoleBodySchema = z.object({
-  role: z.string().min(1, 'Role is required'),
+  role: z.enum(VALID_ROLES),
 });
 
 /**
@@ -24,8 +27,14 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.validationError({ userId: 'User ID is required' });
     }
 
+    // Prevent self-promotion
+    if (ctx.user?.id === userId) {
+      throw ApiErrorFactory.forbidden('Cannot modify your own role');
+    }
+
     // Verify the caller has access to this tenant
-    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+    const tenantOk = ctx.user?.role === 'superadmin' || ctx.user?.tenantId === tenantId;
+    if (!tenantOk) {
       throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
@@ -36,6 +45,11 @@ export const PATCH = createHttpHandler(
     }
 
     const { role } = bodyValidation.data;
+
+    // Only owners (or superadmin) can assign the 'owner' role
+    if (role === 'owner' && ctx.user?.role !== 'owner' && ctx.user?.role !== 'superadmin') {
+      throw ApiErrorFactory.forbidden('Only owners can assign the owner role');
+    }
 
     const { error } = await ctx.supabase
       .from('tenant_users')
@@ -50,5 +64,5 @@ export const PATCH = createHttpHandler(
     return { ok: true, userId, role };
   },
   'PATCH',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'superadmin'] }
 );

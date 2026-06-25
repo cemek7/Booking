@@ -1,4 +1,6 @@
 "use client";
+
+export const dynamic = 'force-dynamic';
 import { useMemo, useState } from 'react';
 import { Calendar } from '@/components/Calendar';
 import ConflictResolutionOverlay from '@/components/ConflictResolutionOverlay';
@@ -195,7 +197,7 @@ export default function SchedulePage() {
                     // Avoid infinite loops: only update if changed
                     setRange(prev => (prev?.start === start && prev?.end === end) ? prev : { start, end });
                   }}
-                  staffOptions={staff}
+                  staffOptions={(staff as { id: string; name?: string }[]).filter(s => s.id)}
                 />
               )}
             </section>
@@ -210,7 +212,7 @@ export default function SchedulePage() {
         {openComposer && (
           <Modal open={openComposer} onClose={()=>setOpenComposer(false)}>
             <BookingComposer
-              context={{ tenantId: 't1', prefill: { start: '', end: '' } }}
+              context={{ tenantId: tenant?.id ?? '', prefill: { start: '', end: '' } }}
               onComplete={(bk) => {
                 // On complete, refresh bookings queries in scope
                 qc.invalidateQueries({ queryKey: ['bookings'] });

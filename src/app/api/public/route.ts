@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Public Booking Routes - No Authentication Required
  */
@@ -6,17 +7,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import publicBookingService from '@/lib/publicBookingService';
+import { sendBookingConfirmation } from '@/lib/integrations/email-service';
+import { defaultLogger } from '@/lib/logger';
 
 /**
  * GET /api/public/[slug]
  * Get public tenant info (header, logo, description)
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { slug: string } }
-) {
+export async function GET(request: NextRequest) {
   try {
-    const { slug } = params;
+    const slug = new URL(request.url).searchParams.get('slug') || '';
 
     if (!slug) {
       return NextResponse.json({ error: 'Slug required' }, { status: 400 });
@@ -26,7 +26,7 @@ export async function GET(
     return NextResponse.json(tenantInfo);
 
   } catch (error) {
-    console.error('Error fetching tenant info:', error);
+    defaultLogger.error('Error fetching tenant info:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch tenant' },
       { status: 404 }
@@ -60,7 +60,7 @@ export async function getServices(
     return NextResponse.json(services);
 
   } catch (error) {
-    console.error('Error fetching services:', error);
+    defaultLogger.error('Error fetching services:', error);
     return NextResponse.json(
       { error: 'Failed to fetch services' },
       { status: 500 }
@@ -113,7 +113,7 @@ export async function getAvailability(
     return NextResponse.json({ slots });
 
   } catch (error) {
-    console.error('Error fetching availability:', error);
+    defaultLogger.error('Error fetching availability:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch availability' },
       { status: 500 }
@@ -169,20 +169,60 @@ export async function createBooking(
       }
     );
 
-    // TODO: Send confirmation email/WhatsApp
-    // TODO: Notify tenant owner
+    // Send confirmation email and notify tenant owner (fire-and-forget)
+    const supabaseForNotify = getSupabaseRouteHandlerClient();
+    const [serviceResult, tenantResult] = await Promise.all([
+      supabaseForNotify
+        .from('services')
+        .select('name')
+        .eq('id', validated.service_id)
+        .maybeSingle(),
+      supabaseForNotify
+        .from('tenants')
+        .select('name, settings')
+        .eq('id', tenant.id)
+        .maybeSingle(),
+    ]);
+
+    const serviceName = serviceResult.data?.name ?? 'Your Service';
+    const tenantName = tenantResult.data?.name ?? 'The Business';
+    const ownerEmail = (tenantResult.data?.settings as Record<string, string> | null)?.notification_email;
+
+    sendBookingConfirmation(validated.customer_email, validated.customer_name, {
+      serviceName,
+      date: validated.date,
+      time: validated.time,
+      notes: validated.notes,
+    }).catch(() => {});
+
+    if (ownerEmail) {
+      import('@/lib/integrations/email-service').then(({ sendEmail }) => {
+        sendEmail({
+          to: ownerEmail,
+          subject: `New booking: ${serviceName} on ${validated.date}`,
+          html: `
+            <p>A new booking has been made via your public storefront.</p>
+            <p><strong>Service:</strong> ${serviceName}</p>
+            <p><strong>Date:</strong> ${validated.date} at ${validated.time}</p>
+            <p><strong>Customer:</strong> ${validated.customer_name} (${validated.customer_email})</p>
+            <p><strong>Phone:</strong> ${validated.customer_phone}</p>
+            ${validated.notes ? `<p><strong>Notes:</strong> ${validated.notes}</p>` : ''}
+          `,
+        }).catch(() => {});
+      });
+    }
 
     return NextResponse.json(
-      { booking_id: booking.id, status: 'pending' },
+      { booking_id: booking.id, status: 'pending', business: tenantName },
       { status: 201 }
     );
 
   } catch (error) {
-    console.error('Error creating booking:', error);
+    defaultLogger.error('Error creating booking:', error);
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Validation failed', details: error.errors },
+        { error: 'Validation failed', details: error.issues },
         { status: 400 }
       );
     }

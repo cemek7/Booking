@@ -10,7 +10,7 @@ export default function StaffSelect({ value, onChange }: { value: string; onChan
       if (!tenant?.id) return [];
       const response = await authFetch(`/api/tenants/${tenant.id}/staff`, { tenantId: tenant.id });
       if (response.error) throw new Error('Failed to load staff');
-      return response.data || [];
+      return (response.data as any[]) || [];
     },
     enabled: !!tenant?.id
   });

@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import React from 'react';
 import { requireAuth } from '@/lib/auth/server-auth';
 import OwnerDashboardClient from './OwnerDashboardClient';
@@ -13,7 +14,7 @@ export default async function OwnerDashboardPage() {
   return (
     <OwnerDashboardClient user={{
       ...user,
-      role: normalizedRole
+      role: normalizedRole as 'owner' | 'superadmin'
     }} />
   );
 }

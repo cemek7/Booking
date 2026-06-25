@@ -54,7 +54,8 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     try {
       const response = await authPost('/api/skills', { tenant_id: tenantId, name: optimistic.name, category: optimistic.category });
       if (response.error) throw new Error('create failed');
-      if (response.data?.skill) setSkills(prev => prev.map(s => s.id === tempId ? response.data.skill : s));
+      const createData = response.data as any;
+      if (createData?.skill) setSkills(prev => prev.map(s => s.id === tempId ? createData.skill : s));
       else await loadAll();
     } catch (e: any) {
       setSkills(prev => prev.filter(s => s.id !== tempId));
@@ -69,7 +70,8 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     try {
       const response = await authPost('/api/staff-skills', { tenant_id: tenantId, user_id: selectedStaff, skill_id: selectedSkill, proficiency });
       if (response.error) throw new Error('assign failed');
-      if (response.data?.assignment) setAssignments(prev => prev.map(a => a === optimistic ? response.data.assignment : a));
+      const assignData = response.data as any;
+      if (assignData?.assignment) setAssignments(prev => prev.map(a => a === optimistic ? assignData.assignment : a));
       else await loadAll();
     } catch (e: any) {
       setAssignments(prev => prev.filter(a => a !== optimistic));
@@ -112,7 +114,8 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     try {
       const response = await authPatch(`/api/skills/${id}`, { name: newName.trim() });
       if (response.error) throw new Error('rename failed');
-      if (response.data?.skill) setSkills(prev => prev.map(s => s.id === id ? response.data.skill : s));
+      const renameData = response.data as any;
+      if (renameData?.skill) setSkills(prev => prev.map(s => s.id === id ? renameData.skill : s));
     } catch (e: any) {
       setError(e.message || 'Rename failed');
     }

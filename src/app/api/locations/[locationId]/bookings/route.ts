@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -39,25 +40,26 @@ export const GET = createHttpHandler(
       const { start, end } = queryValidation.data;
       span.setAttributes({ 'date.range.start': start, 'date.range.end': end });
 
-      const { data: bookings, error } = await ctx.supabase
-        .from('bookings')
-        .select(`
-          *,
-          customer:customers(*),
-          service:services(*),
-          staff:staff(*)
-        `)
+      const { data: reservations, error } = await ctx.supabase
+        .from('reservations')
+        .select('id, tenant_id, location_id, customer_id, customer_name, phone, service_id, staff_id, start_at, end_at, status, notes')
         .eq('location_id', locationId)
         .eq('tenant_id', tenantId)
-        .gte('start_time', start)
-        .lte('end_time', end);
+        .gte('start_at', start)
+        .lte('end_at', end);
 
       if (error) {
         throw ApiErrorFactory.databaseError(error);
       }
 
-      span.setAttribute('db.results.count', bookings?.length || 0);
-      return { success: true, bookings: bookings || [] };
+      const bookings = (reservations || []).map((reservation) => ({
+        ...reservation,
+        start_time: reservation.start_at,
+        end_time: reservation.end_at,
+      }));
+
+      span.setAttribute('db.results.count', bookings.length || 0);
+      return { success: true, bookings };
     } finally {
       span.end();
     }

@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+import { defaultLogger } from '@/lib/logger';
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import { getTenantPublicInfo, getTenantServices } from '@/lib/publicBookingService';
@@ -43,7 +45,7 @@ export default async function BookingPage({ params }: BookingPageProps) {
       </Suspense>
     );
   } catch (error) {
-    console.error(`Error loading booking page for slug: ${params.slug}`, error);
+    defaultLogger.error(`Error loading booking page for slug: ${params.slug}`, error);
     notFound();
   }
 }

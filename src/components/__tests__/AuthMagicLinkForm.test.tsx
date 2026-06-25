@@ -5,7 +5,7 @@ import AuthMagicLinkForm from '@/components/AuthMagicLinkForm';
 // Minimal inline supabase mock
 jest.mock('@/lib/supabase/client', () => {
   const mockAuth = { auth: { signInWithOtp: jest.fn().mockResolvedValue({ data: null, error: null }), onAuthStateChange: jest.fn().mockReturnValue({ data: { subscription: { unsubscribe: () => {} } } }), signOut: jest.fn() } };
-  return { getBrowserSupabase: () => mockAuth, default: mockAuth, supabase: mockAuth };
+  return { getSupabaseBrowserClient: () => mockAuth, getBrowserSupabase: () => mockAuth, default: mockAuth, supabase: mockAuth };
 })
 
 describe('AuthMagicLinkForm', () => {

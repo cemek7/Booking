@@ -24,7 +24,7 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
   // Clear pending if fresh server messages contain a matching text (basic heuristic)
   useEffect(() => {
     if (!messages || messages.length === 0 || pendingMessages.length === 0) return;
-    setPendingMessages(pm => pm.filter(p => !messages.some(m => m.text === p.text && m.createdAt !== p.createdAt)));
+    setPendingMessages(pm => pm.filter(p => !messages.some(m => (m as any).text === p.text && (m as any).createdAt !== p.createdAt)));
   }, [messages, pendingMessages]);
   const runAction = async (a: 'confirm'|'cancel'|'reschedule'|'mark_paid') => {
     if (onAction) return onAction(a);
@@ -57,24 +57,24 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
             {messagesError && <div className="text-xs text-red-600">Failed to load messages.</div>}
             {!messagesLoading && !messagesError && (
               <ChatThread
-                messages={[...(messages || []), ...pendingMessages]}
-                bookingId={booking.id}
-                onSend={async () => ({ id: `tmp_${Date.now()}`, bookingId: booking.id, direction: 'outbound', channel: 'app', text: '', status: 'pending', createdAt: new Date().toISOString() })}
+                {...{
+                  messages: [...(messages || []), ...pendingMessages],
+                  bookingId: booking.id,
+                  onSend: async () => ({ id: `tmp_${Date.now()}`, bookingId: booking.id, direction: 'outbound', channel: 'app', text: '', status: 'pending', createdAt: new Date().toISOString() }),
+                } as any}
               />
             )}
           </div>
           <div className="mt-2">
-            <ChatComposer onSend={async (m) => {
-              const optimistic = { id: `tmp_${Date.now()}`, bookingId: booking.id, direction: 'outbound', channel: 'app', text: m.text, status: 'pending', createdAt: new Date().toISOString() };
+            <ChatComposer onSend={(async (m: any) => {
+              const optimistic = { id: `tmp_${Date.now()}`, bookingId: booking.id, direction: 'outbound', channel: 'app', text: m.text ?? m, status: 'pending', createdAt: new Date().toISOString() };
               setPendingMessages(p => [...p, optimistic]);
               try {
-                await sendMessage.mutateAsync({ channel: 'app', text: m.text, attachments: m.attachments });
+                await sendMessage.mutateAsync({ channel: 'app', text: m.text ?? m, attachments: m.attachments });
               } catch (err) {
-                // Mark failed
                 setPendingMessages(p => p.map(msg => msg.id === optimistic.id ? { ...msg, status: 'failed' } : msg));
               }
-              return optimistic;
-            }} />
+            }) as any} />
           </div>
         </div>
       </div>

@@ -227,15 +227,15 @@ export default function ProductVariants({ productId, productName }: ProductVaria
                 </TD>
                 <TD className="text-gray-600">{variant.sku || '-'}</TD>
                 <TD>
-                  {variant.price_adjustment_cents !== 0 && (
+                  {(variant.price_adjustment_cents ?? 0) !== 0 && (
                     <span className={`font-medium ${
-                      variant.price_adjustment_cents > 0 ? 'text-green-600' : 'text-red-600'
+                      (variant.price_adjustment_cents ?? 0) > 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {variant.price_adjustment_cents > 0 ? '+' : ''}
-                      ${(variant.price_adjustment_cents / 100).toFixed(2)}
+                      {(variant.price_adjustment_cents ?? 0) > 0 ? '+' : ''}
+                      ${((variant.price_adjustment_cents ?? 0) / 100).toFixed(2)}
                     </span>
                   )}
-                  {variant.price_adjustment_cents === 0 && (
+                  {(variant.price_adjustment_cents ?? 0) === 0 && (
                     <span className="text-gray-500">No adjustment</span>
                   )}
                 </TD>
@@ -254,7 +254,7 @@ export default function ProductVariants({ productId, productName }: ProductVaria
                   </span>
                 </TD>
                 <TD className="text-gray-500">
-                  {new Date(variant.created_at).toLocaleDateString()}
+                  {new Date(variant.created_at ?? '').toLocaleDateString()}
                 </TD>
                 {canEdit && (
                   <TD>
@@ -270,7 +270,7 @@ export default function ProductVariants({ productId, productName }: ProductVaria
                         variant="outline"
                         size="sm"
                         onClick={() => handleDelete(variant)}
-                        disabled={deleteVariantMutation.isLoading}
+                        disabled={deleteVariantMutation.isPending}
                         className="text-red-600 border-red-300 hover:bg-red-50"
                       >
                         Delete
@@ -290,7 +290,7 @@ export default function ProductVariants({ productId, productName }: ProductVaria
           isOpen={showCreateModal}
           onClose={() => setShowCreateModal(false)}
           onSubmit={(data) => createVariantMutation.mutate(data)}
-          isLoading={createVariantMutation.isLoading}
+          isLoading={createVariantMutation.isPending}
           title="Create New Variant"
           productName={productName}
         />
@@ -302,7 +302,7 @@ export default function ProductVariants({ productId, productName }: ProductVaria
           isOpen={!!editingVariant}
           onClose={() => setEditingVariant(null)}
           onSubmit={(data) => updateVariantMutation.mutate({ id: editingVariant.id, data })}
-          isLoading={updateVariantMutation.isLoading}
+          isLoading={updateVariantMutation.isPending}
           title="Edit Variant"
           productName={productName}
           initialData={{
@@ -386,7 +386,7 @@ function VariantModal({
       sku: formData.sku?.trim().toUpperCase(),
     };
 
-    onSubmit(submissionData);
+    onSubmit(submissionData as unknown as CreateVariantRequest);
   };
 
   const handleInputChange = (key: string, value: any) => {

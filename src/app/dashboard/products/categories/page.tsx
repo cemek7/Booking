@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
@@ -40,7 +42,7 @@ export default function CategoriesPage() {
   });
 
   const categories = categoriesData?.categories || [];
-  const canEdit = userRole && ['superadmin', 'owner', 'manager'].includes(userRole);
+  const canEdit = typeof userRole === 'string' && ['superadmin', 'owner', 'manager'].includes(userRole);
 
   // Create category mutation
   const createCategoryMutation = useMutation({
@@ -230,7 +232,7 @@ export default function CategoriesPage() {
                       </span>
                     </TD>
                     <TD className="text-gray-500">
-                      {new Date(category.created_at).toLocaleDateString()}
+                      {category.created_at ? new Date(category.created_at).toLocaleDateString() : '—'}
                     </TD>
                     {canEdit && (
                       <TD>
@@ -246,7 +248,7 @@ export default function CategoriesPage() {
                             variant="outline"
                             size="sm"
                             onClick={() => handleDelete(category)}
-                            disabled={deleteCategoryMutation.isLoading}
+                            disabled={deleteCategoryMutation.isPending}
                             className="text-red-600 border-red-300 hover:bg-red-50"
                           >
                             Delete
@@ -266,8 +268,8 @@ export default function CategoriesPage() {
           <CategoryModal
             isOpen={showCreateModal}
             onClose={() => setShowCreateModal(false)}
-            onSubmit={(data) => createCategoryMutation.mutate(data)}
-            isLoading={createCategoryMutation.isLoading}
+            onSubmit={(data) => createCategoryMutation.mutate(data as CreateCategoryRequest)}
+            isLoading={createCategoryMutation.isPending}
             title="Create New Category"
           />
         )}
@@ -278,7 +280,7 @@ export default function CategoriesPage() {
             isOpen={!!editingCategory}
             onClose={() => setEditingCategory(null)}
             onSubmit={(data) => updateCategoryMutation.mutate({ id: editingCategory.id, data })}
-            isLoading={updateCategoryMutation.isLoading}
+            isLoading={updateCategoryMutation.isPending}
             title="Edit Category"
             initialData={{
               name: editingCategory.name,

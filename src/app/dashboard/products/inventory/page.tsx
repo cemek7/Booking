@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
@@ -118,29 +120,35 @@ export default function InventoryPage() {
   });
 
   const getStockStatus = (product: Product) => {
+    const qty = product.stock_quantity ?? 0;
+    const threshold = product.low_stock_threshold ?? 0;
     if (!product.track_inventory) return { status: 'No tracking', color: 'text-gray-500' };
-    if (product.stock_quantity <= 0) return { status: 'Out of stock', color: 'text-red-600' };
-    if (product.stock_quantity <= product.low_stock_threshold) return { status: 'Low stock', color: 'text-yellow-600' };
+    if (qty <= 0) return { status: 'Out of stock', color: 'text-red-600' };
+    if (qty <= threshold) return { status: 'Low stock', color: 'text-yellow-600' };
     return { status: 'In stock', color: 'text-green-600' };
   };
 
   const getStockAlert = (product: Product) => {
+    const qty = product.stock_quantity ?? 0;
+    const threshold = product.low_stock_threshold ?? 0;
     if (!product.track_inventory) return null;
-    if (product.stock_quantity <= 0) return 'error';
-    if (product.stock_quantity <= product.low_stock_threshold) return 'warning';
+    if (qty <= 0) return 'error';
+    if (qty <= threshold) return 'warning';
     return null;
   };
 
-  const lowStockCount = products.filter((p: Product) => 
-    p.track_inventory && p.stock_quantity > 0 && p.stock_quantity <= p.low_stock_threshold
+  const lowStockCount = products.filter((p: Product) => {
+    const qty = p.stock_quantity ?? 0;
+    const threshold = p.low_stock_threshold ?? 0;
+    return p.track_inventory && qty > 0 && qty <= threshold;
+  }).length;
+
+  const outOfStockCount = products.filter((p: Product) =>
+    p.track_inventory && (p.stock_quantity ?? 0) <= 0
   ).length;
 
-  const outOfStockCount = products.filter((p: Product) => 
-    p.track_inventory && p.stock_quantity <= 0
-  ).length;
-
-  const totalValue = products.reduce((sum: number, p: Product) => 
-    sum + (p.track_inventory ? (p.cost_price_cents || 0) * p.stock_quantity : 0), 0
+  const totalValue = products.reduce((sum: number, p: Product) =>
+    sum + (p.track_inventory ? (p.cost_price_cents || 0) * (p.stock_quantity ?? 0) : 0), 0
   ) / 100;
 
   if (productsLoading) {
@@ -313,7 +321,7 @@ export default function InventoryPage() {
                             </span>
                           </TD>
                           <TD className="text-gray-600">
-                            ${((product.cost_price_cents || 0) * product.stock_quantity / 100).toFixed(2)}
+                            ${((product.cost_price_cents || 0) * (product.stock_quantity ?? 0) / 100).toFixed(2)}
                           </TD>
                           {canManage && (
                             <TD>
@@ -380,12 +388,12 @@ export default function InventoryPage() {
                             </div>
                             <div className="text-right">
                               <p className={`text-sm font-medium ${
-                                movement.quantity_change > 0 ? 'text-green-600' : 'text-red-600'
+                                (movement.quantity_change ?? 0) > 0 ? 'text-green-600' : 'text-red-600'
                               }`}>
-                                {movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}
+                                {(movement.quantity_change ?? 0) > 0 ? '+' : ''}{movement.quantity_change ?? 0}
                               </p>
                               <p className="text-xs text-gray-500">
-                                {new Date(movement.created_at).toLocaleDateString()}
+                                {new Date(movement.created_at ?? '').toLocaleDateString()}
                               </p>
                             </div>
                           </div>
@@ -411,7 +419,7 @@ export default function InventoryPage() {
               setSelectedProduct(null);
             }}
             onSubmit={(data) => adjustStockMutation.mutate(data)}
-            isLoading={adjustStockMutation.isLoading}
+            isLoading={adjustStockMutation.isPending}
             products={products}
             selectedProductId={selectedProduct}
           />
@@ -539,11 +547,11 @@ function StockAdjustmentModal({
             {selectedProduct && (
               <div className="bg-gray-50 p-3 rounded">
                 <p className="text-sm text-gray-600">
-                  Current stock: <span className="font-medium">{selectedProduct.stock_quantity}</span>
+                  Current stock: <span className="font-medium">{selectedProduct.stock_quantity ?? 0}</span>
                 </p>
                 <p className="text-sm text-gray-600">
                   New stock will be: <span className="font-medium">
-                    {selectedProduct.stock_quantity + formData.quantity_change}
+                    {(selectedProduct.stock_quantity ?? 0) + formData.quantity_change}
                   </span>
                 </p>
               </div>

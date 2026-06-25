@@ -1,4 +1,7 @@
 "use client";
+
+export const dynamic = 'force-dynamic';
+import { Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { useTenant } from '@/lib/supabase/tenant-context';
@@ -8,15 +11,21 @@ import { BusinessProfileSection } from '@/components/settings/BusinessProfileSec
 import { NotificationPreferencesSection } from '@/components/settings/NotificationPreferencesSection';
 import { SecuritySettingsSection } from '@/components/settings/SecuritySettingsSection';
 import { WhatsAppSyncSection } from '@/components/settings/WhatsAppSyncSection';
+import { InstagramConnectSection } from '@/components/settings/InstagramConnectSection';
+import { PaymentSettingsSection } from '@/components/settings/PaymentSettingsSection';
+import { AgentConfigSection } from '@/components/settings/AgentConfigSection';
+import type { BusinessHours } from '@/components/settings/BusinessHoursSection';
 import { toast } from '@/components/ui/toast';
 
 interface TabDef { key: string; label: string; description: string; }
 const tabs: TabDef[] = [
   { key: 'tenant', label: 'Tenant Profile', description: 'Identity, timezone, branding.' },
   { key: 'business', label: 'Business Profile', description: 'Services catalog, pricing, durations.' },
+  { key: 'agent', label: 'Agent', description: 'AI agent identity, personality, business hours, lead capture, and voice support.' },
   { key: 'notifications', label: 'Notifications', description: 'Reminder timing, channel defaults, opt-in policy.' },
   { key: 'security', label: 'Security', description: 'Roles, MFA enrollment, session & access controls.' },
-  { key: 'whatsapp', label: 'WhatsApp Sync', description: 'Integration status, template mappings, connectivity.' }
+  { key: 'whatsapp', label: 'Channels', description: 'Owner command channel, Instagram DM setup, and shared-number metadata.' },
+  { key: 'payments', label: 'Payments', description: 'Bank account for revenue collection via Paystack split settlement.' },
 ];
 
 interface ServiceDraft { id?: string; name: string; description?: string; duration?: number; price?: number; category?: string; is_active?: boolean; skills?: string[]; }
@@ -26,6 +35,9 @@ interface TenantSettings {
   brandingColor?: string;
   contactEmail?: string;
   locale?: string;
+  ownerName?: string;
+  ownerPhone?: string;
+  businessNickname?: string;
   tone?: string;
   styleGuidelines?: string;
   voiceParameters?: Record<string, unknown>;
@@ -47,6 +59,13 @@ interface TenantSettings {
   optInPolicy?: 'implicit' | 'explicit';
   notifyFrom?: string;
   customReminderMessage?: string;
+  bookingSources?: string[];
+  notificationPreferences?: {
+    newBookings?: boolean;
+    cancellations?: boolean;
+    dailySummary?: boolean;
+    weeklySummary?: boolean;
+  };
   mfaRequired?: boolean;
   sessionTimeout?: number;
   apiKeyPresent?: boolean;
@@ -57,6 +76,36 @@ interface TenantSettings {
   whatsappNumber?: string;
   templateNamespace?: string;
   integrationStatus?: string;
+  channelConfig?: {
+    whatsapp?: {
+      status?: string;
+      mode?: 'shared_booka_number' | 'dedicated_number';
+      ownerCommandPhone?: string;
+      sendBookingAlerts?: boolean;
+      sendDailySummary?: boolean;
+      sendWeeklySummary?: boolean;
+      sendCancellationAlerts?: boolean;
+    };
+    instagram?: {
+      handle?: string;
+      profileUrl?: string;
+      dmGoal?: 'bookings' | 'lead_capture' | 'support';
+      useDmReplies?: boolean;
+    };
+  };
+  // Agent config
+  preferred_language?: string;
+  business_hours?: BusinessHours | null;
+  capture_leads?: boolean;
+  follow_up_delay_hours?: number;
+  follow_up_message_template?: string;
+  voice_notes_enabled?: boolean;
+  voice_calls_enabled?: boolean;
+  voice_stt_provider?: 'openai' | 'local';
+  voice_tts_provider?: 'openai' | 'local';
+  voice_character?: 'alloy' | 'nova' | 'echo' | 'shimmer' | 'onyx' | 'fable';
+  reply_with_audio?: 'always' | 'when_user_uses_voice' | 'never';
+  plan?: string;
 }
 
 async function fetchSettings(tenantId?: string): Promise<TenantSettings> {
@@ -72,7 +121,7 @@ async function patchSettings(tenantId: string, patch: Partial<TenantSettings>): 
   return res.json();
 }
 
-export default function SettingsPage() {
+function SettingsPageInner() {
   const router = useRouter();
   const search = useSearchParams();
   const activeKey = search?.get('tab');
@@ -132,6 +181,14 @@ export default function SettingsPage() {
   );
 }
 
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading settings…</div>}>
+      <SettingsPageInner />
+    </Suspense>
+  );
+}
+
 interface SettingsTabContentProps {
   tab: string;
   settings: TenantSettings;
@@ -176,13 +233,40 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
   let content: React.ReactNode = null;
   switch (tab) {
     case 'tenant':
-      content = <TenantProfileSection values={{ displayName: local.displayName, timezone: local.timezone, brandingColor: local.brandingColor, contactEmail: local.contactEmail, locale: local.locale, tone: local.tone, styleGuidelines: local.styleGuidelines, voiceParameters: local.voiceParameters, samplePhrases: local.samplePhrases, brandTagline: local.brandTagline, greeting: local.greeting, signature: local.signature }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
+      content = <TenantProfileSection values={{ displayName: local.displayName, timezone: local.timezone, brandingColor: local.brandingColor, contactEmail: local.contactEmail, locale: local.locale, ownerName: local.ownerName, ownerPhone: local.ownerPhone, businessNickname: local.businessNickname, bookingSources: local.bookingSources, tone: local.tone, styleGuidelines: local.styleGuidelines, voiceParameters: local.voiceParameters, samplePhrases: local.samplePhrases, brandTagline: local.brandTagline, greeting: local.greeting, signature: local.signature }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
       break;
     case 'business':
       content = <BusinessProfileSection values={{ requireDeposit: local.requireDeposit, services: (local.services as ServiceDraft[] | undefined) }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
       break;
+    case 'agent':
+      content = <AgentConfigSection
+        values={{
+          displayName: local.displayName,
+          greeting: local.greeting,
+          signature: local.signature,
+          tone: local.tone,
+          styleGuidelines: local.styleGuidelines,
+          voiceParameters: local.voiceParameters,
+          samplePhrases: local.samplePhrases,
+          preferred_language: local.preferred_language,
+          business_hours: local.business_hours,
+          capture_leads: local.capture_leads,
+          follow_up_delay_hours: local.follow_up_delay_hours,
+          follow_up_message_template: local.follow_up_message_template,
+          voice_notes_enabled: local.voice_notes_enabled,
+          voice_calls_enabled: local.voice_calls_enabled,
+          voice_stt_provider: local.voice_stt_provider,
+          voice_tts_provider: local.voice_tts_provider,
+          voice_character: local.voice_character,
+          reply_with_audio: local.reply_with_audio,
+          plan: local.plan,
+        }}
+        onChange={patch=>setLocal(l=>({ ...l, ...patch } as Partial<TenantSettings>))}
+        tenantId={tenantId}
+      />;
+      break;
     case 'notifications':
-      content = <NotificationPreferencesSection values={{ reminderLead: local.reminderLead, secondReminderLead: local.secondReminderLead, defaultChannels: local.defaultChannels, optInPolicy: local.optInPolicy, notifyFrom: local.notifyFrom, customReminderMessage: local.customReminderMessage }} onChange={patch=>setLocal(l=>({ ...l, ...patch, optInPolicy: patch.optInPolicy as ('implicit'|'explicit') | undefined }))} />;
+      content = <NotificationPreferencesSection values={{ reminderLead: local.reminderLead, secondReminderLead: local.secondReminderLead, defaultChannels: local.defaultChannels, optInPolicy: local.optInPolicy, notifyFrom: local.notifyFrom, customReminderMessage: local.customReminderMessage, notificationPreferences: local.notificationPreferences }} onChange={patch=>setLocal(l=>({ ...l, ...patch, optInPolicy: patch.optInPolicy as ('implicit'|'explicit') | undefined }))} />;
       break;
     case 'security':
       content = <SecuritySettingsSection
@@ -200,8 +284,23 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
       />;
       break;
     case 'whatsapp':
-      content = <WhatsAppSyncSection values={{ whatsappNumber: local.whatsappNumber, templateNamespace: local.templateNamespace, integrationStatus: local.integrationStatus }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
+      content = (
+        <div className="space-y-4">
+          <WhatsAppSyncSection
+            values={{
+              whatsappNumber: local.whatsappNumber,
+              templateNamespace: local.templateNamespace,
+              integrationStatus: local.integrationStatus,
+              channelConfig: local.channelConfig,
+            }}
+            onChange={patch=>setLocal(l=>({ ...l, ...patch }))}
+          />
+          <InstagramConnectSection />
+        </div>
+      );
       break;
+    case 'payments':
+      return <div className="space-y-4"><PaymentSettingsSection tenantId={tenantId!} /></div>;
     default:
       content = <div className="text-xs text-gray-500">Unknown tab.</div>;
   }

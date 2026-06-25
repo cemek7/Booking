@@ -1,5 +1,5 @@
 import { ComponentPropsWithoutRef, ReactNode } from 'react';
-import cn from 'classnames';
+import { cn } from '@/lib/utils';
 
 export default function GlassCard({
   className,

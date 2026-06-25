@@ -10,6 +10,7 @@ interface ProductCardProps {
   onDelete: (productId: string, productName: string) => void;
   formatPrice: (priceInCents: number, currency?: string) => string;
   getStockStatus: (product: Product) => { text: string; color: string };
+  onProductClick?: (product: Product) => void;
 }
 
 const ProductCard = memo<ProductCardProps>(function ProductCard({
@@ -19,6 +20,7 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
   onDelete,
   formatPrice,
   getStockStatus,
+  onProductClick,
 }) {
   const stockStatus = getStockStatus(product);
 
@@ -31,12 +33,16 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
   }, [onDelete, product.id, product.name]);
 
   return (
-    <div className="bg-white rounded-lg shadow hover:shadow-md transition-shadow border border-gray-200 overflow-hidden">
+    <div
+      className="bg-white rounded-lg shadow hover:shadow-md transition-shadow border border-gray-200 overflow-hidden"
+      onClick={onProductClick ? () => onProductClick(product) : undefined}
+      style={onProductClick ? { cursor: 'pointer' } : undefined}
+    >
       {/* Product Image */}
       <div className="aspect-square relative">
-        {product.images?.length > 0 ? (
+        {(product.images?.length ?? 0) > 0 ? (
           <img
-            src={product.images[0]}
+            src={product.images![0]}
             alt={product.name}
             className="w-full h-full object-cover"
           />
@@ -64,8 +70,8 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
             </span>
           )}
           {product.track_inventory &&
-            product.stock_quantity <= product.low_stock_threshold &&
-            product.stock_quantity > 0 && (
+            (product.stock_quantity ?? 0) <= (product.low_stock_threshold ?? 0) &&
+            (product.stock_quantity ?? 0) > 0 && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                 Low Stock
               </span>
@@ -113,9 +119,9 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
           <div className="font-semibold text-lg">
             {formatPrice(product.price_cents, product.currency)}
           </div>
-          {permissions.can_view_cost_prices && product.cost_price_cents > 0 && (
+          {permissions.can_view_cost_prices && (product.cost_price_cents ?? 0) > 0 && (
             <div className="text-sm text-gray-500">
-              Cost: {formatPrice(product.cost_price_cents, product.currency)}
+              Cost: {formatPrice(product.cost_price_cents ?? 0, product.currency)}
             </div>
           )}
         </div>
@@ -132,15 +138,15 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
             <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
               <div
                 className={`h-1.5 rounded-full ${
-                  product.stock_quantity === 0
+                  (product.stock_quantity ?? 0) === 0
                     ? 'bg-red-400'
-                    : product.stock_quantity <= product.low_stock_threshold
+                    : (product.stock_quantity ?? 0) <= (product.low_stock_threshold ?? 0)
                       ? 'bg-yellow-400'
                       : 'bg-green-400'
                 }`}
                 style={{
                   width: `${Math.min(
-                    (product.stock_quantity / Math.max(product.low_stock_threshold * 2, 1)) * 100,
+                    ((product.stock_quantity ?? 0) / Math.max((product.low_stock_threshold ?? 0) * 2, 1)) * 100,
                     100
                   )}%`,
                 }}
@@ -212,20 +218,27 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
 
 interface ProductGridProps {
   products: Product[];
-  permissions: ProductPermissions;
-  onEdit: (productId: string) => void;
-  onDelete: (productId: string, productName: string) => void;
-  formatPrice: (priceInCents: number, currency?: string) => string;
-  getStockStatus: (product: Product) => { text: string; color: string };
+  permissions?: ProductPermissions;
+  onEdit?: (productId: string) => void;
+  onDelete?: (productId: string, productName: string) => void;
+  formatPrice?: (priceInCents: number, currency?: string) => string;
+  getStockStatus?: (product: Product) => { text: string; color: string };
+  onProductClick?: (product: Product) => void;
 }
+
+const DEFAULT_PERMISSIONS: ProductPermissions = {
+  canCreate: false, canRead: true, canUpdate: false, canDelete: false, canManageInventory: false,
+  can_view_cost_prices: false, can_set_pricing: false, can_manage_inventory: false,
+};
 
 export default function ProductGrid({
   products,
-  permissions,
+  permissions = DEFAULT_PERMISSIONS,
   onEdit,
   onDelete,
   formatPrice,
   getStockStatus,
+  onProductClick,
 }: ProductGridProps) {
   if (products.length === 0) {
     return (
@@ -246,10 +259,11 @@ export default function ProductGrid({
           key={product.id}
           product={product}
           permissions={permissions}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          formatPrice={formatPrice}
-          getStockStatus={getStockStatus}
+          onEdit={onEdit ?? (() => {})}
+          onDelete={onDelete ?? (() => {})}
+          formatPrice={formatPrice ?? ((p, c) => `$${(p / 100).toFixed(2)}`)}
+          getStockStatus={getStockStatus ?? (() => ({ text: '', color: '' }))}
+          onProductClick={onProductClick}
         />
       ))}
     </div>

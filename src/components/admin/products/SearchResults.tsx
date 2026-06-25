@@ -132,7 +132,7 @@ export default function SearchResults({
           <div className="text-sm text-gray-600">
             Showing results for "{searchQuery.search}"
             {searchQuery.category_id && ` in selected category`}
-            {searchQuery.tags && searchQuery.tags.length > 0 && ` with tags: ${searchQuery.tags.join(', ')}`}
+            {searchQuery.tags && (Array.isArray(searchQuery.tags) ? searchQuery.tags.length > 0 : true) && ` with tags: ${Array.isArray(searchQuery.tags) ? searchQuery.tags.join(', ') : searchQuery.tags}`}
           </div>
         )}
 
@@ -261,8 +261,8 @@ function SearchResultsTable({ products, searchQuery, onProductClick }: SearchRes
 
   const getStockStatus = (product: Product) => {
     if (!product.track_inventory) return { text: 'No tracking', color: 'text-gray-500' };
-    if (product.stock_quantity <= 0) return { text: 'Out of stock', color: 'text-red-600' };
-    if (product.stock_quantity <= product.low_stock_threshold) return { text: 'Low stock', color: 'text-yellow-600' };
+    if ((product.stock_quantity ?? 0) <= 0) return { text: 'Out of stock', color: 'text-red-600' };
+    if ((product.stock_quantity ?? 0) <= (product.low_stock_threshold ?? 0)) return { text: 'Low stock', color: 'text-yellow-600' };
     return { text: 'In stock', color: 'text-green-600' };
   };
 
@@ -305,7 +305,7 @@ function SearchResultsTable({ products, searchQuery, onProductClick }: SearchRes
                         <span
                           key={tag}
                           className={`inline-flex px-1 py-0.5 text-xs rounded ${
-                            searchQuery.tags?.includes(tag)
+                            (Array.isArray(searchQuery.tags) && searchQuery.tags.includes(tag))
                               ? 'bg-primary text-white'
                               : 'bg-gray-100 text-gray-600'
                           }`}
@@ -364,7 +364,7 @@ function SearchResultsTable({ products, searchQuery, onProductClick }: SearchRes
                 </div>
               </TD>
               <TD className="text-gray-500 text-sm">
-                {new Date(product.updated_at).toLocaleDateString()}
+                {new Date(product.updated_at ?? '').toLocaleDateString()}
               </TD>
             </TR>
           );

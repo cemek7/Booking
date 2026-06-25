@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {

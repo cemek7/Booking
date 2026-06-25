@@ -1,8 +1,10 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { google } from 'googleapis';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { defaultLogger } from '@/lib/logger';
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -26,7 +28,7 @@ const StateSchema = z.object({
  * NOTE: This handler uses NextResponse.redirect instead of returning data
  * because it's an OAuth callback that needs to redirect back to the app.
  */
-export async function GET(request: any) {
+export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const state = searchParams.get('state');
@@ -88,7 +90,7 @@ export async function GET(request: any) {
       .upsert(calendarConfig, { onConflict: 'tenant_id, staff_id, provider' });
 
     if (upsertError) {
-      console.error('Failed to save calendar integration:', upsertError);
+      defaultLogger.error('Failed to save calendar integration:', upsertError);
       throw new Error('Failed to save calendar integration details.');
     }
 
@@ -100,7 +102,7 @@ export async function GET(request: any) {
     return NextResponse.redirect(`${returnUrl}?${successParams}`);
 
   } catch (e) {
-    console.error('Google Calendar callback failed:', e);
+    defaultLogger.error('Google Calendar callback failed:', e);
     const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
     const errorParams = new URLSearchParams({
       calendar_status: 'error',

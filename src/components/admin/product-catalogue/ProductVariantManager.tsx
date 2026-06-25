@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,7 +37,7 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/toast';
 import { ProductVariant, CreateProductVariantRequest, UpdateProductVariantRequest } from '@/types/product-catalogue';
 
 interface ProductVariantManagerProps {
@@ -113,7 +114,7 @@ export default function ProductVariantManager({
       const data = await response.json();
       setVariants(data.variants || []);
     } catch (error) {
-      console.error('Error fetching variants:', error);
+      defaultLogger.error('Error fetching variants:', error);
       toast.error('Failed to load variants');
     } finally {
       setLoading(false);
@@ -153,6 +154,8 @@ export default function ProductVariantManager({
     setSubmitting(true);
     try {
       const request: CreateProductVariantRequest = {
+        product_id: productId,
+        name: formData.variant_name.trim(),
         ...formData,
         variant_name: formData.variant_name.trim(),
         variant_type: formData.variant_type.trim(),
@@ -181,7 +184,7 @@ export default function ProductVariantManager({
       fetchVariants();
       onVariantUpdate?.();
     } catch (error) {
-      console.error('Error creating variant:', error);
+      defaultLogger.error('Error creating variant:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to create variant');
     } finally {
       setSubmitting(false);
@@ -233,7 +236,7 @@ export default function ProductVariantManager({
       fetchVariants();
       onVariantUpdate?.();
     } catch (error) {
-      console.error('Error updating variant:', error);
+      defaultLogger.error('Error updating variant:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to update variant');
     } finally {
       setSubmitting(false);
@@ -264,7 +267,7 @@ export default function ProductVariantManager({
       fetchVariants();
       onVariantUpdate?.();
     } catch (error) {
-      console.error('Error deleting variant:', error);
+      defaultLogger.error('Error deleting variant:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to delete variant');
     }
   };
@@ -273,13 +276,13 @@ export default function ProductVariantManager({
   const openEditDialog = (variant: ProductVariant) => {
     setEditingVariant(variant);
     setFormData({
-      variant_name: variant.variant_name,
-      variant_type: variant.variant_type,
-      price_adjustment_cents: variant.price_adjustment_cents,
-      stock_quantity: variant.stock_quantity,
+      variant_name: variant.variant_name ?? '',
+      variant_type: variant.variant_type ?? '',
+      price_adjustment_cents: variant.price_adjustment_cents ?? 0,
+      stock_quantity: variant.stock_quantity ?? 0,
       sku: variant.sku || '',
-      is_active: variant.is_active,
-      display_order: variant.display_order,
+      is_active: variant.is_active ?? true,
+      display_order: variant.display_order ?? 0,
       metadata: variant.metadata || {}
     });
     setFormErrors({});
@@ -293,9 +296,10 @@ export default function ProductVariantManager({
 
   // Get stock status
   const getStockStatus = (variant: ProductVariant) => {
-    if (variant.stock_quantity === 0) {
+    const qty = variant.stock_quantity ?? 0;
+    if (qty === 0) {
       return { color: 'destructive', label: 'Out of Stock' };
-    } else if (variant.stock_quantity <= 5) {
+    } else if (qty <= 5) {
       return { color: 'warning', label: 'Low Stock' };
     } else {
       return { color: 'success', label: 'In Stock' };
@@ -516,7 +520,7 @@ export default function ProductVariantManager({
                 <div>
                   <p className="text-sm font-medium">Low Stock</p>
                   <p className="text-2xl font-bold">
-                    {variants.filter(v => v.stock_quantity <= 5 && v.stock_quantity > 0).length}
+                    {variants.filter(v => (v.stock_quantity ?? 0) <= 5 && (v.stock_quantity ?? 0) > 0).length}
                   </p>
                 </div>
               </div>
@@ -575,7 +579,8 @@ export default function ProductVariantManager({
               <TableBody>
                 {variants.map((variant) => {
                   const stockStatus = getStockStatus(variant);
-                  const finalPrice = basePrice + variant.price_adjustment_cents;
+                  const adj = variant.price_adjustment_cents ?? 0;
+                  const finalPrice = basePrice + adj;
 
                   return (
                     <TableRow key={variant.id}>
@@ -595,11 +600,11 @@ export default function ProductVariantManager({
                           <div className="font-medium">
                             {formatPrice(finalPrice)}
                           </div>
-                          {variant.price_adjustment_cents !== 0 && (
+                          {adj !== 0 && (
                             <div className="text-sm text-muted-foreground">
-                              Base: {formatPrice(basePrice)} 
-                              {variant.price_adjustment_cents > 0 ? ' + ' : ' - '}
-                              {formatPrice(Math.abs(variant.price_adjustment_cents))}
+                              Base: {formatPrice(basePrice)}
+                              {adj > 0 ? ' + ' : ' - '}
+                              {formatPrice(Math.abs(adj))}
                             </div>
                           )}
                         </div>
@@ -647,7 +652,7 @@ export default function ProductVariantManager({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleDeleteVariant(variant.id, variant.variant_name)}
+                            onClick={() => handleDeleteVariant(variant.id, variant.variant_name ?? '')}
                             className="text-destructive hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />

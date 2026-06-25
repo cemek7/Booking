@@ -2,9 +2,6 @@ import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/bookings/route';
 
-// Mock dependencies
-jest.mock('@/lib/error-handling/api-error');
-
 const createMockSupabase = () => ({
   from: jest.fn().mockReturnThis(),
   select: jest.fn().mockReturnThis(),

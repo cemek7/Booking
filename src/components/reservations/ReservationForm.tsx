@@ -33,7 +33,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       if (!tenant?.id) return [];
       const response = await authFetch('/api/customers');
       if (response.error) throw new Error('Failed customers fetch');
-      return response.data || [];
+      return (response.data as any[]) || [];
     },
     enabled: !!tenant?.id
   });
@@ -62,7 +62,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       if (!tenant?.id) return [];
       const response = await authFetch('/api/bookings');
       if (response.error) throw new Error('Failed bookings fetch');
-      return response.data || [];
+      return (response.data as any[]) || [];
     },
     enabled: !!tenant?.id
   });
@@ -134,7 +134,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       }
       if (response.error) throw new Error(initialData ? "Failed to update reservation" : "Failed to create reservation");
       // Save reservation services (many-to-many)
-      const reservation = response.data;
+      const reservation = response.data as any;
       const reservationId = initialData?.id || reservation?.id || (reservation?.[0] && reservation[0].id);
       if (reservationId && services.length > 0) {
         await authPost(`/api/reservations/${reservationId}/services`, { services });

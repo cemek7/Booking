@@ -102,6 +102,7 @@ function chain(final: any): any {
     eq: () => chain(final),
     in: () => chain(final),
     update: () => chain(final),
+    upsert: async () => ({ error: null }),
     insert: async () => final,
     single: async () => final,
     maybeSingle: async () => final,
@@ -235,6 +236,19 @@ describe('offboarding modify routes', () => {
       );
       expect(res.status).toBe(200);
       expect(enterOffboarding).not.toHaveBeenCalled();
+    });
+
+    it('persists a superadmin velocity override on the wallet row', async () => {
+      const admin = adminMock({ isGlobalAdmin: true });
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(admin);
+
+      const res = await PATCH(
+        superadminPatchReq({ velocity_credits_override: 450 }) as unknown as NextRequest,
+        { params: { tenantId: 'ten_1' } } as any,
+      );
+
+      expect(res.status).toBe(200);
+      expect(admin.from).toHaveBeenCalledWith('ai_wallets');
     });
   });
 });

@@ -1,12 +1,13 @@
-import { EvolutionClient } from './evolutionClient';
+import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { getAppConfig } from './configManager';
+import { sendBookingConfirmation, sendBookingReminder } from '@/lib/integrations/email-service';
 
 export interface BookingNotificationData {
   bookingId: string;
   tenantId: string;
   customerId?: string;
   customerPhone: string;
+  customerEmail?: string;
   customerName?: string;
   serviceName: string;
   bookingDate: string;
@@ -21,18 +22,9 @@ export interface NotificationTemplate {
 }
 
 export class BookingNotificationService {
-  private evolutionClient: EvolutionClient;
   private supabase: ReturnType<typeof createServerSupabaseClient>;
-  private isEnabled: boolean;
 
   constructor() {
-    const config = getAppConfig();
-    this.isEnabled = config.integrations.evolution.enabled;
-    
-    if (this.isEnabled) {
-      this.evolutionClient = EvolutionClient.getInstance();
-    }
-    
     this.supabase = createServerSupabaseClient();
   }
 
@@ -40,41 +32,76 @@ export class BookingNotificationService {
    * Send booking confirmation notification
    */
   public async sendBookingConfirmation(booking: BookingNotificationData): Promise<{ success: boolean; error?: string }> {
-    if (!this.isEnabled) {
-      return { success: false, error: 'WhatsApp integration not enabled' };
-    }
-
     try {
-      const result = await this.evolutionClient.sendBookingConfirmation(
-        booking.tenantId,
-        booking.customerPhone,
-        {
-          bookingId: booking.bookingId,
-          tenantId: booking.tenantId,
-          customerId: booking.customerId,
-          serviceType: booking.serviceName,
-          status: booking.status
-        }
-      );
+      const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+      const client = await getTenantWhatsAppProviderClient(booking.tenantId);
+      if (!client) return { success: false, error: 'No WhatsApp config for tenant' };
+
+      const message =
+        `✅ *Booking Confirmed*\n\n` +
+        `Hi ${booking.customerName || 'there'}! Your booking has been confirmed.\n\n` +
+        `📋 Service: ${booking.serviceName}\n` +
+        `📅 Date: ${booking.bookingDate}\n` +
+        `⏰ Time: ${booking.bookingTime}\n` +
+        `🔖 Ref: #${booking.bookingId.slice(-8)}\n\n` +
+        `_Reply to this message if you need to make any changes._`;
+
+      await client.sendTextMessage(booking.customerPhone, message);
 
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
         type: 'confirmation',
         recipient: booking.customerPhone,
-        status: result.success ? 'sent' : 'failed',
-        error: result.success ? undefined : String(result.response)
+        channel: 'whatsapp',
+        status: 'sent',
+        message,
       });
 
-      return { success: result.success };
+      // Also send email confirmation if customer has an email address
+      if (booking.customerEmail) {
+        try {
+          await sendBookingConfirmation(
+            booking.customerEmail,
+            booking.customerName || 'there',
+            {
+              serviceName: booking.serviceName,
+              date: booking.bookingDate,
+              time: booking.bookingTime,
+            }
+          );
+          await this.logNotification({
+            bookingId: booking.bookingId,
+            tenantId: booking.tenantId,
+            type: 'confirmation',
+            recipient: booking.customerEmail,
+            channel: 'email',
+            status: 'sent',
+          });
+        } catch (emailErr) {
+          defaultLogger.warn('BookingNotificationService: email confirmation failed', emailErr);
+          await this.logNotification({
+            bookingId: booking.bookingId,
+            tenantId: booking.tenantId,
+            type: 'confirmation',
+            recipient: booking.customerEmail,
+            channel: 'email',
+            status: 'failed',
+            error: emailErr instanceof Error ? emailErr.message : 'Unknown error',
+          });
+        }
+      }
+
+      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
+
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
         type: 'confirmation',
         recipient: booking.customerPhone,
+        channel: 'whatsapp',
         status: 'failed',
         error: errorMessage
       });
@@ -87,46 +114,77 @@ export class BookingNotificationService {
    * Send booking reminder notification
    */
   public async sendBookingReminder(
-    booking: BookingNotificationData, 
+    booking: BookingNotificationData,
     minutesBefore: number = 30
   ): Promise<{ success: boolean; error?: string }> {
-    if (!this.isEnabled) {
-      return { success: false, error: 'WhatsApp integration not enabled' };
-    }
-
     try {
-      const result = await this.evolutionClient.sendBookingReminder(
-        booking.tenantId,
-        booking.customerPhone,
-        {
-          bookingId: booking.bookingId,
-          tenantId: booking.tenantId,
-          customerId: booking.customerId,
-          serviceType: booking.serviceName,
-          status: booking.status
-        },
-        minutesBefore
-      );
+      const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+      const client = await getTenantWhatsAppProviderClient(booking.tenantId);
+      if (!client) return { success: false, error: 'No WhatsApp config for tenant' };
+
+      const timeLabel = minutesBefore >= 60
+        ? `${minutesBefore / 60} hour${minutesBefore / 60 !== 1 ? 's' : ''}`
+        : `${minutesBefore} minute${minutesBefore !== 1 ? 's' : ''}`;
+
+      const message =
+        `⏰ *Booking Reminder*\n\n` +
+        `Hi ${booking.customerName || 'there'}! This is a reminder that your appointment is in ${timeLabel}.\n\n` +
+        `📋 Service: ${booking.serviceName}\n` +
+        `📅 Date: ${booking.bookingDate}\n` +
+        `⏰ Time: ${booking.bookingTime}\n\n` +
+        `_See you soon!_`;
+
+      await client.sendTextMessage(booking.customerPhone, message);
 
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
         type: 'reminder',
         recipient: booking.customerPhone,
-        status: result.success ? 'sent' : 'failed',
-        error: result.success ? undefined : String(result.response),
+        channel: 'whatsapp',
+        status: 'sent',
+        message,
         metadata: { minutesBefore }
       });
 
-      return { success: result.success };
+      // Also send email reminder if customer has an email address
+      if (booking.customerEmail) {
+        const hoursUntil = Math.round(minutesBefore / 60);
+        try {
+          await sendBookingReminder(
+            booking.customerEmail,
+            booking.customerName || 'there',
+            hoursUntil,
+            {
+              serviceName: booking.serviceName,
+              date: booking.bookingDate,
+              time: booking.bookingTime,
+            }
+          );
+          await this.logNotification({
+            bookingId: booking.bookingId,
+            tenantId: booking.tenantId,
+            type: 'reminder',
+            recipient: booking.customerEmail,
+            channel: 'email',
+            status: 'sent',
+            metadata: { minutesBefore }
+          });
+        } catch (emailErr) {
+          defaultLogger.warn('BookingNotificationService: email reminder failed', emailErr);
+        }
+      }
+
+      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
+
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
         type: 'reminder',
         recipient: booking.customerPhone,
+        channel: 'whatsapp',
         status: 'failed',
         error: errorMessage
       });
@@ -142,37 +200,41 @@ export class BookingNotificationService {
     booking: BookingNotificationData,
     previousStatus?: string
   ): Promise<{ success: boolean; error?: string }> {
-    if (!this.isEnabled) {
-      return { success: false, error: 'WhatsApp integration not enabled' };
-    }
-
     try {
-      const result = await this.evolutionClient.sendBookingStatusUpdate(
-        booking.tenantId,
-        booking.customerPhone,
-        {
-          bookingId: booking.bookingId,
-          tenantId: booking.tenantId,
-          customerId: booking.customerId,
-          serviceType: booking.serviceName,
-          status: booking.status
-        }
-      );
+      const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+      const client = await getTenantWhatsAppProviderClient(booking.tenantId);
+      if (!client) return { success: false, error: 'No WhatsApp config for tenant' };
+
+      const statusEmoji: Record<string, string> = {
+        confirmed: '✅', cancelled: '❌', completed: '🎉', requested: '📩', no_show: '⚠️'
+      };
+      const emoji = statusEmoji[booking.status] ?? '📋';
+
+      const message =
+        `${emoji} *Booking Update*\n\n` +
+        `Hi ${booking.customerName || 'there'}! Your booking status has been updated.\n\n` +
+        `📋 Service: ${booking.serviceName}\n` +
+        `📅 Date: ${booking.bookingDate}\n` +
+        `⏰ Time: ${booking.bookingTime}\n` +
+        `Status: *${booking.status.toUpperCase()}*\n\n` +
+        `_Contact us if you have any questions._`;
+
+      await client.sendTextMessage(booking.customerPhone, message);
 
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
         type: 'status_update',
         recipient: booking.customerPhone,
-        status: result.success ? 'sent' : 'failed',
-        error: result.success ? undefined : String(result.response),
+        status: 'sent',
+        message,
         metadata: { previousStatus, newStatus: booking.status }
       });
 
-      return { success: result.success };
+      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
+
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
@@ -194,31 +256,26 @@ export class BookingNotificationService {
     message: string,
     notificationType: string = 'custom'
   ): Promise<{ success: boolean; error?: string }> {
-    if (!this.isEnabled) {
-      return { success: false, error: 'WhatsApp integration not enabled' };
-    }
-
     try {
-      const result = await this.evolutionClient.sendMessage(
-        booking.tenantId,
-        booking.customerPhone,
-        message
-      );
+      const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+      const client = await getTenantWhatsAppProviderClient(booking.tenantId);
+      if (!client) return { success: false, error: 'No WhatsApp config for tenant' };
+
+      await client.sendTextMessage(booking.customerPhone, message);
 
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
         type: notificationType,
         recipient: booking.customerPhone,
-        status: result.success ? 'sent' : 'failed',
-        error: result.success ? undefined : String(result.response),
-        message: message
+        status: 'sent',
+        message,
       });
 
-      return { success: result.success };
+      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
+
       await this.logNotification({
         bookingId: booking.bookingId,
         tenantId: booking.tenantId,
@@ -291,7 +348,7 @@ export class BookingNotificationService {
         status: 'scheduled'
       });
     } catch (error) {
-      console.error('Error scheduling notification:', error);
+      defaultLogger.error('Error scheduling notification:', error);
     }
   }
 
@@ -303,6 +360,7 @@ export class BookingNotificationService {
     tenantId: string;
     type: string;
     recipient: string;
+    channel?: string;
     status: 'sent' | 'failed' | 'scheduled';
     error?: string;
     message?: string;
@@ -313,7 +371,7 @@ export class BookingNotificationService {
         booking_id: notification.bookingId,
         tenant_id: notification.tenantId,
         notification_type: notification.type,
-        channel: 'whatsapp',
+        channel: notification.channel || 'whatsapp',
         recipient: notification.recipient,
         status: notification.status,
         message: notification.message,
@@ -322,7 +380,7 @@ export class BookingNotificationService {
         sent_at: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Failed to log notification:', error);
+      defaultLogger.error('Failed to log notification:', error);
     }
   }
 

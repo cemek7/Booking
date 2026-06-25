@@ -1,19 +1,26 @@
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { getPaginationParams } from '@/lib/error-handling/migration-helpers';
 
+const ReservationCreateSchema = z.object({
+  customer_id: z.string().optional(),
+  service_id: z.string().optional(),
+  staff_id: z.string().optional(),
+  start_at: z.string().min(1, 'start_at is required'),
+  end_at: z.string().min(1, 'end_at is required'),
+  status: z.enum(['pending', 'confirmed', 'cancelled']).optional(),
+});
+
 /**
  * GET,POST /api/reservations
  *
- * GET: Fetch reservations, optionally filtered by tenant_id
- * POST: Create a new reservation
- *
- * GET Query params:
- * - tenant_id (optional): Filter by tenant (defaults to ctx.user.tenantId)
+ * GET: Fetch reservations for the authenticated user's tenant.
+ * POST: Create a new reservation in the authenticated user's tenant.
  *
  * POST Body: {
- *   tenant_id?: string,
  *   customer_id?: string,
  *   service_id?: string,
  *   staff_id?: string,
@@ -24,7 +31,6 @@ import { getPaginationParams } from '@/lib/error-handling/migration-helpers';
  */
 
 interface ReservationPayload {
-  tenant_id?: string;
   customer_id?: string;
   service_id?: string;
   staff_id?: string;
@@ -36,8 +42,7 @@ interface ReservationPayload {
 export const GET = createHttpHandler(
   async (ctx) => {
     const { page, limit, offset } = getPaginationParams(ctx);
-    const url = new URL(ctx.request.url);
-    const tenantId = url.searchParams.get('tenant_id') || ctx.user!.tenantId;
+    const tenantId = ctx.user!.tenantId;
 
     let query = ctx.supabase
       .from('reservations')
@@ -66,18 +71,32 @@ export const GET = createHttpHandler(
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const body = await parseJsonBody<ReservationPayload>(ctx.request);
+    const rawBody = await parseJsonBody<ReservationPayload>(ctx.request);
+    const parsed = ReservationCreateSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
+    }
+    const body = parsed.data;
 
-    // Validate required fields
-    if (!body.start_at || !body.end_at) {
-      throw ApiErrorFactory.validationError({
-        start_at: body.start_at ? undefined : 'start_at is required',
-        end_at: body.end_at ? undefined : 'end_at is required'
-      });
+    if (body.customer_id) {
+      const { data: c } = await ctx.supabase.from('customers')
+        .select('id').eq('id', body.customer_id).eq('tenant_id', ctx.user!.tenantId).maybeSingle();
+      if (!c) throw ApiErrorFactory.validationError({ customer_id: 'Not found in this tenant' });
+    }
+    if (body.service_id) {
+      const { data: s } = await ctx.supabase.from('services')
+        .select('id').eq('id', body.service_id).eq('tenant_id', ctx.user!.tenantId).maybeSingle();
+      if (!s) throw ApiErrorFactory.validationError({ service_id: 'Not found in this tenant' });
+    }
+    if (body.staff_id) {
+      const { data: st } = await ctx.supabase.from('tenant_users')
+        .select('user_id').eq('user_id', body.staff_id).eq('tenant_id', ctx.user!.tenantId).maybeSingle();
+      if (!st) throw ApiErrorFactory.validationError({ staff_id: 'Not found in this tenant' });
     }
 
     const payload = {
-      tenant_id: body.tenant_id || ctx.user!.tenantId,
+      tenant_id: ctx.user!.tenantId,
       customer_id: body.customer_id,
       service_id: body.service_id,
       staff_id: body.staff_id,

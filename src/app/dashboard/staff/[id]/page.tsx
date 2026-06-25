@@ -1,4 +1,6 @@
 "use client";
+
+export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useTenant } from '@/lib/supabase/tenant-context';

@@ -1,6 +1,6 @@
 // Basic Tabs component replacement
 import React, { createContext, useContext, useState } from 'react';
-import cn from 'classnames';
+import { cn } from '@/lib/utils';
 
 interface TabsContextType {
   value: string;
@@ -9,17 +9,24 @@ interface TabsContextType {
 
 const TabsContext = createContext<TabsContextType | null>(null);
 
-interface TabsProps {
-  defaultValue: string;
+export interface TabsProps {
+  defaultValue?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
   className?: string;
   children: React.ReactNode;
 }
 
-export function Tabs({ defaultValue, className, children }: TabsProps) {
-  const [value, setValue] = useState(defaultValue);
-  
+export function Tabs({ defaultValue, value: controlledValue, onValueChange, className, children }: TabsProps) {
+  const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue ?? '');
+  const value = controlledValue !== undefined ? controlledValue : uncontrolledValue;
+  const handleChange = (v: string) => {
+    if (controlledValue === undefined) setUncontrolledValue(v);
+    onValueChange?.(v);
+  };
+
   return (
-    <TabsContext.Provider value={{ value, onValueChange: setValue }}>
+    <TabsContext.Provider value={{ value, onValueChange: handleChange }}>
       <div className={cn('w-full', className)}>
         {children}
       </div>

@@ -10,7 +10,7 @@ export default function ServicesMultiSelect({ value, onChange }: { value: { id: 
       if (!tenant?.id) return [];
       const response = await authFetch('/api/services', { tenantId: tenant.id });
       if (response.error) throw new Error('Failed services fetch');
-      return response.data || [];
+      return (response.data as any[]) || [];
     },
     enabled: !!tenant?.id
   });

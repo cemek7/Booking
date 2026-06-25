@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -84,7 +85,7 @@ export const GET = createHttpHandler(
 
     if (query.include_children && categories) {
       const buildHierarchy = (parentId: string | null = null): CategoryWithChildren[] => {
-        return (categories as Category[])
+        return (categories as unknown as Category[])
           .filter(cat => cat.parent_id === parentId)
           .map(cat => ({
             ...cat,

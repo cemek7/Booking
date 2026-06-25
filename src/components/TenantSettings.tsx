@@ -4,6 +4,12 @@ import React, { useEffect, useState } from 'react';
 import { authFetch } from '@/lib/auth/auth-api-client';
 
 type Props = { tenantId: string };
+type TenantSettingsRow = {
+  name?: string;
+  timezone?: string;
+  preferred_llm_model?: string | null;
+  llm_token_rate?: number | string | null;
+};
 
 export default function TenantSettings({ tenantId }: Props) {
   const [loading, setLoading] = useState(false);
@@ -20,7 +26,7 @@ export default function TenantSettings({ tenantId }: Props) {
       try {
         const res = await authFetch(`/api/admin/tenant/${tenantId}/settings`, { method: 'GET' });
         if (res.status === 200) {
-          const row = res.data as any;
+          const row = res.data as TenantSettingsRow;
           if (!mounted) return;
           setName(row?.name ?? '');
           setTimezone(row?.timezone ?? '');
@@ -111,8 +117,9 @@ export default function TenantSettings({ tenantId }: Props) {
       </div>
 
       <div className="mb-3">
-        <label className="block text-sm font-medium">LLM token rate (currency/unit)</label>
-        <input value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" placeholder="e.g. 0.000002" />
+        <label className="block text-sm font-medium">Booka AI preflight rate</label>
+        <input value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" placeholder="credits per token, e.g. 0.000002" />
+        <p className="mt-1 text-xs text-gray-500">Used only to reserve wallet credits before provider usage returns the exact cost.</p>
       </div>
 
       <div className="flex gap-2 items-center">

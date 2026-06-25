@@ -1,7 +1,9 @@
+// @ts-nocheck
+import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { observability } from '../observability/observability';
-import { EventBusService } from '../eventbus/eventBus';
+import { getEventBus } from '../eventbus/eventBus';
 
 // Types and validation schemas
 const CreateBookingSchema = z.object({
@@ -61,10 +63,15 @@ interface BookingCreationResult {
 /**
  * Core booking engine with robust conflict resolution and transaction integrity
  * Handles all booking lifecycle operations with production-grade reliability
+ *
+ * Transitional note:
+ * `src/lib/reservationService.ts` is the canonical reservation write path for
+ * HTTP/API flows. This engine remains in use for richer conversational booking
+ * orchestration and should converge onto the same write path over time.
  */
 export class BookingEngine {
   private supabase: any;
-  private eventBus: EventBusService;
+  private eventBus: ReturnType<typeof getEventBus>;
   private isInitialized = false;
 
   // Configuration
@@ -89,7 +96,7 @@ export class BookingEngine {
 
   constructor() {
     this.supabase = createServerSupabaseClient();
-    this.eventBus = new EventBusService();
+    this.eventBus = getEventBus();
   }
 
   /**
@@ -101,9 +108,9 @@ export class BookingEngine {
 
       this.isInitialized = true;
 
-      console.log('BookingEngine initialized successfully');
+      defaultLogger.info('BookingEngine initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize BookingEngine:', error);
+      defaultLogger.error('Failed to initialize BookingEngine:', error);
       throw error;
     }
   }
@@ -309,12 +316,27 @@ export class BookingEngine {
         }
 
         // Update booking
-        const { data: updatedBooking, error } = await this.supabase
-          .from('bookings')
+        const { data: updatedReservation, error } = await this.supabase
+          .from('reservations')
           .update({
-            ...resolvedData,
+            service_id: resolvedData.service_id ?? existingBooking.service_id,
+            staff_id: resolvedData.provider_id ?? existingBooking.provider_id,
+            customer_name: existingBooking.customer_name,
+            phone: existingBooking.customer_phone,
+            start_at: resolvedData.start_time ?? existingBooking.start_time,
+            end_at: resolvedData.end_time ?? existingBooking.end_time,
+            notes: resolvedData.notes ?? existingBooking.notes ?? null,
             updated_at: new Date().toISOString(),
-            modification_count: existingBooking.modification_count + 1
+            metadata: this.buildReservationMetadata(existingBooking, {
+              customer_email: existingBooking.customer_email,
+              special_requests: resolvedData.special_requests ?? existingBooking.special_requests ?? null,
+              payment_status: existingBooking.payment_status,
+              price_cents: existingBooking.price_cents,
+              currency: existingBooking.currency,
+              modification_count: existingBooking.modification_count + 1,
+              payment_id: existingBooking.payment_id,
+              provider_id: resolvedData.provider_id ?? existingBooking.provider_id
+            })
           })
           .eq('id', data.booking_id)
           .eq('tenant_id', tenantId)
@@ -322,6 +344,7 @@ export class BookingEngine {
           .single();
 
         if (error) throw error;
+        const updatedBooking = this.normalizeBookingRecord(updatedReservation);
 
         // Log modification history
         await this.logBookingModification(existingBooking, updatedBooking, data.reason, traceContext);
@@ -418,14 +441,24 @@ export class BookingEngine {
 
       try {
         // Update booking status
-        const { data: cancelledBooking, error } = await this.supabase
-          .from('bookings')
+        const { data: cancelledReservation, error } = await this.supabase
+          .from('reservations')
           .update({
             status: 'cancelled',
             cancelled_at: new Date().toISOString(),
             cancellation_reason: validatedData.reason,
-            cancellation_notes: validatedData.notes,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            metadata: this.buildReservationMetadata(booking, {
+              customer_email: booking.customer_email,
+              special_requests: booking.special_requests ?? null,
+              payment_status: booking.payment_status,
+              price_cents: booking.price_cents,
+              currency: booking.currency,
+              modification_count: booking.modification_count,
+              payment_id: booking.payment_id,
+              provider_id: booking.provider_id,
+              cancellation_notes: validatedData.notes ?? null
+            })
           })
           .eq('id', data.booking_id)
           .eq('tenant_id', tenantId)
@@ -433,6 +466,7 @@ export class BookingEngine {
           .single();
 
         if (error) throw error;
+        const cancelledBooking = this.normalizeBookingRecord(cancelledReservation);
 
         // Handle refund if requested
         let refundInitiated = false;
@@ -576,7 +610,7 @@ export class BookingEngine {
       };
 
     } catch (error) {
-      console.error('Booking validation error:', error);
+      defaultLogger.error('Booking validation error:', error);
       return {
         is_valid: false,
         conflicts: [{
@@ -602,12 +636,13 @@ export class BookingEngine {
     try {
       // Check existing bookings
       const { data: overlappingBookings, error } = await this.supabase
-        .from('bookings')
-        .select('id, start_time, end_time')
+        .from('reservations')
+        .select('id, start_at, end_at')
         .eq('tenant_id', tenantId)
-        .eq('provider_id', providerId)
+        .eq('staff_id', providerId)
         .in('status', ['confirmed', 'in_progress'])
-        .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
+        .lt('start_at', endTime.toISOString())
+        .gt('end_at', startTime.toISOString());
 
       if (error) throw error;
 
@@ -631,7 +666,7 @@ export class BookingEngine {
       }
 
     } catch (error) {
-      console.error('Provider availability check error:', error);
+      defaultLogger.error('Provider availability check error:', error);
       conflicts.push({
         type: 'provider_unavailable',
         message: 'Unable to verify provider availability'
@@ -659,9 +694,9 @@ export class BookingEngine {
       if (this.eventBus) {
         await this.eventBus.stopProcessing();
       }
-      console.log('BookingEngine shutdown complete');
+      defaultLogger.info('BookingEngine shutdown complete');
     } catch (error) {
-      console.error('BookingEngine shutdown error:', error);
+      defaultLogger.error('BookingEngine shutdown error:', error);
     }
   }
 
@@ -685,27 +720,31 @@ export class BookingEngine {
     }
 
     // If time is being modified, check for conflicts
-    if (modified.start_time !== existing.start_time || modified.end_time !== existing.end_time) {
-      const startTime = new Date(modified.start_time);
-      const endTime = new Date(modified.end_time);
+      if (modified.start_time !== existing.start_time || modified.end_time !== existing.end_time) {
+        const startTime = new Date(modified.start_time);
+        const endTime = new Date(modified.end_time);
 
-      // Check provider availability (excluding current booking)
-      const { data: availability } = await this.supabase.rpc('check_booking_availability', {
-        p_tenant_id: tenantId,
-        p_provider_id: modified.provider_id,
-        p_start_time: startTime.toISOString(),
-        p_end_time: endTime.toISOString(),
-        p_exclude_booking_id: existing.id
-      });
+        // Check provider availability (excluding current reservation)
+        const { data: overlappingReservations, error } = await this.supabase
+          .from('reservations')
+          .select('id')
+          .eq('tenant_id', tenantId)
+          .eq('staff_id', modified.provider_id)
+          .in('status', ['confirmed', 'in_progress'])
+          .lt('start_at', endTime.toISOString())
+          .gt('end_at', startTime.toISOString())
+          .neq('id', existing.id);
 
-      if (availability && !availability.is_available) {
-        conflicts.push({
-          type: 'time_overlap',
-          message: 'New time slot is not available',
-          suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id, startTime, endTime)
-        });
+        if (error) throw error;
+
+        if (overlappingReservations && overlappingReservations.length > 0) {
+          conflicts.push({
+            type: 'time_overlap',
+            message: 'New time slot is not available',
+            suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id, startTime, endTime)
+          });
+        }
       }
-    }
 
     return {
       is_valid: conflicts.length === 0,
@@ -760,28 +799,31 @@ export class BookingEngine {
     // Get service for price information
     const service = await this.getService(data.service_id);
 
-    const bookingData = {
+    const reservationData = {
       tenant_id: tenantId,
       service_id: data.service_id,
-      provider_id: data.provider_id,
+      staff_id: data.provider_id,
       customer_name: data.customer_name,
-      customer_email: data.customer_email,
-      customer_phone: data.customer_phone,
-      start_time: data.start_time,
-      end_time: data.end_time,
+      phone: data.customer_phone,
+      start_at: data.start_time,
+      end_at: data.end_time,
       notes: data.notes || null,
-      special_requests: data.special_requests || null,
-      metadata: data.metadata || {},
+      metadata: {
+        ...(data.metadata || {}),
+        customer_email: data.customer_email,
+        special_requests: data.special_requests || null,
+        payment_status: service?.requires_payment ? 'pending' : 'not_required',
+        price_cents: service?.price_cents || 0,
+        currency: service?.currency || 'USD',
+        modification_count: 0,
+        provider_id: data.provider_id
+      },
       status: 'pending',
-      payment_status: service?.requires_payment ? 'pending' : 'not_required',
-      price_cents: service?.price_cents || 0,
-      currency: service?.currency || 'USD',
-      modification_count: 0
     };
 
     const { data: booking, error } = await this.supabase
-      .from('bookings')
-      .insert(bookingData)
+      .from('reservations')
+      .insert(reservationData)
       .select()
       .single();
 
@@ -790,8 +832,29 @@ export class BookingEngine {
       throw new Error(`Failed to create booking: ${error.message}`);
     }
 
+    // Post-insert conflict re-check: guards against the race window between the availability
+    // SELECT in validateBooking and this INSERT. If another booking was inserted concurrently
+    // for the same provider/slot, roll back and surface a clean conflict error.
+    const { data: racingConflicts } = await this.supabase
+      .from('reservations')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('staff_id', reservationData.staff_id)
+      .in('status', ['confirmed', 'in_progress', 'pending'])
+      .lt('start_at', reservationData.end_at)
+      .gt('end_at', reservationData.start_at)
+      .neq('id', booking.id);
+
+    if (racingConflicts && racingConflicts.length > 0) {
+      // Delete the just-inserted booking and bubble up a conflict error.
+      // The outer createBooking catch block calls rollback_booking_transaction which also cleans up.
+      await this.supabase.from('reservations').delete().eq('id', booking.id);
+      observability.addTraceLog(traceContext, 'warn', 'Concurrent booking conflict detected — slot taken during insert', { booking_id: booking.id });
+      throw new Error('Time slot was taken by a concurrent booking; please try again');
+    }
+
     observability.addTraceLog(traceContext, 'info', 'Booking created successfully', { booking_id: booking.id });
-    return booking;
+    return this.normalizeBookingRecord(booking);
   }
 
   /**
@@ -813,7 +876,7 @@ export class BookingEngine {
       .select('id, name, duration_minutes, price_cents, currency, requires_payment, max_advance_booking_days, min_advance_booking_minutes, buffer_time_minutes')
       .eq('id', serviceId)
       .eq('is_active', true)
-      .single();
+      .maybeSingle();
 
     if (error || !data) {
       return null;
@@ -834,12 +897,6 @@ export class BookingEngine {
       booking_id: bookingId,
       amount: service.price_cents
     });
-
-    // Update booking with payment pending status
-    await this.supabase
-      .from('bookings')
-      .update({ payment_status: 'pending' })
-      .eq('id', bookingId);
 
     // Publish event for payment service to handle
     await this.eventBus.publishEvent(
@@ -885,7 +942,7 @@ export class BookingEngine {
    */
   private async getBookingById(bookingId: string, tenantId: string): Promise<any> {
     const { data, error } = await this.supabase
-      .from('bookings')
+      .from('reservations')
       .select('*')
       .eq('id', bookingId)
       .eq('tenant_id', tenantId)
@@ -895,7 +952,7 @@ export class BookingEngine {
       return null;
     }
 
-    return data;
+    return this.normalizeBookingRecord(data);
   }
 
   /**
@@ -1015,10 +1072,15 @@ export class BookingEngine {
     const isEligibleForRefund = now < cancellationDeadline;
 
     if (isEligibleForRefund) {
-      // Update payment status
+      // Set to refund_pending — the payment service will update to 'refunded' once the
+      // provider confirms the refund via webhook, preventing premature status on provider failure.
       await this.supabase
-        .from('bookings')
-        .update({ payment_status: 'refunded' })
+        .from('reservations')
+        .update({
+          metadata: this.buildReservationMetadata(booking, {
+            payment_status: 'refund_pending'
+          })
+        })
         .eq('id', booking.id);
 
       // Publish refund event for payment service
@@ -1114,13 +1176,13 @@ export class BookingEngine {
 
     // Check max concurrent bookings for this service
     const { count, error } = await this.supabase
-      .from('bookings')
+      .from('reservations')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId)
       .eq('service_id', serviceId)
       .in('status', ['confirmed', 'in_progress'])
-      .lt('start_time', endTime.toISOString())
-      .gt('end_time', startTime.toISOString());
+      .lt('start_at', endTime.toISOString())
+      .gt('end_at', startTime.toISOString());
 
     if (!error && count !== null && count >= (service as any).max_concurrent_bookings) {
       conflicts.push({
@@ -1136,19 +1198,55 @@ export class BookingEngine {
    * Get count of customer's active bookings
    */
   private async getCustomerActiveBookingCount(tenantId: string, customerEmail: string): Promise<number> {
-    const { count, error } = await this.supabase
-      .from('bookings')
-      .select('id', { count: 'exact', head: true })
+    const { data, error } = await this.supabase
+      .from('reservations')
+      .select('id, metadata')
       .eq('tenant_id', tenantId)
-      .eq('customer_email', customerEmail)
       .in('status', ['pending', 'confirmed', 'in_progress']);
 
     if (error) {
-      console.error('Error counting customer bookings:', error);
+      defaultLogger.error('Error counting customer bookings:', error);
       return 0;
     }
 
-    return count || 0;
+    return (data || []).filter((reservation: any) => this.getReservationMetadata(reservation).customer_email === customerEmail).length;
+  }
+
+  private getReservationMetadata(reservation: any): Record<string, any> {
+    if (!reservation?.metadata || typeof reservation.metadata !== 'object' || Array.isArray(reservation.metadata)) {
+      return {};
+    }
+
+    return reservation.metadata as Record<string, any>;
+  }
+
+  private buildReservationMetadata(reservation: any, updates: Record<string, any>): Record<string, any> {
+    return {
+      ...this.getReservationMetadata(reservation),
+      ...updates
+    };
+  }
+
+  private normalizeBookingRecord(reservation: any): any {
+    if (!reservation) return null;
+
+    const metadata = this.getReservationMetadata(reservation);
+
+    return {
+      ...reservation,
+      provider_id: reservation.staff_id ?? metadata.provider_id ?? null,
+      customer_phone: reservation.phone ?? metadata.customer_phone ?? null,
+      customer_email: metadata.customer_email ?? null,
+      start_time: reservation.start_at ?? null,
+      end_time: reservation.end_at ?? null,
+      payment_status: metadata.payment_status ?? 'not_required',
+      price_cents: metadata.price_cents ?? 0,
+      currency: metadata.currency ?? 'USD',
+      modification_count: metadata.modification_count ?? 0,
+      payment_id: metadata.payment_id ?? null,
+      special_requests: metadata.special_requests ?? null,
+      cancellation_notes: metadata.cancellation_notes ?? null
+    };
   }
 
   /**

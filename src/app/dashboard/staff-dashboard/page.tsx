@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import Link from "next/link";
 import { Metadata } from 'next';
 import { requireAuth } from '@/lib/auth/server-auth';

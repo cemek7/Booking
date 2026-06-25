@@ -1,9 +1,11 @@
 "use client";
+
+export const dynamic = 'force-dynamic';
 import ReservationsList from '@/components/reservations/ReservationsList';
 import ReservationsCalendar from '@/components/ReservationsCalendar';
 import ReservationForm from '@/components/ReservationForm';
 import { useEffect, useState } from 'react';
-import { getBrowserSupabase } from '@/lib/supabase/client';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type SupabaseLite from '@/types/supabase';
 
 export default function TenantDashboardPage() {
@@ -14,7 +16,7 @@ export default function TenantDashboardPage() {
 
   useEffect(() => {
     let mounted = true;
-  const supabase = getBrowserSupabase() as unknown as SupabaseLite;
+  const supabase = getSupabaseBrowserClient() as unknown as SupabaseLite;
     async function loadSession() {
       const ses = await supabase.auth?.getSession?.();
       if (!mounted) return;

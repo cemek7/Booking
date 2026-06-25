@@ -1,7 +1,10 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createTenant } from '@/lib/services/onboarding-service';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
 import type { NextRequest } from 'next/server';
@@ -22,11 +25,18 @@ const StaffSchema = z.object({
   status: z.enum(['active', 'on_leave']).optional(),
 });
 
+function isValidIANATimezone(tz: string): boolean {
+  try { Intl.DateTimeFormat(undefined, { timeZone: tz }); return true; } catch { return false; }
+}
+
 const OnboardingBodySchema = z.object({
   name: z.string().min(1, 'Tenant name is required'),
   industry: z.string().optional(),
   business_type: z.string().optional(),
-  timezone: z.string().optional(),
+  timezone: z.string().optional().refine(
+    (tz) => !tz || isValidIANATimezone(tz),
+    { message: 'Invalid timezone — use IANA format (e.g. Africa/Lagos)' }
+  ),
   description: z.string().optional(),
   services: z.array(ServiceSchema).optional(),
   staff: z.array(StaffSchema).optional(),
@@ -50,9 +60,23 @@ const _authenticatedPOST = createHttpHandler(
         throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
       }
 
-      const { tenantId, tenantSlug } = await createTenant(ctx.supabase, userId, bodyValidation.data);
+      // Use admin client to bypass RLS for tenant + membership creation.
+      // The user is not yet a tenant member, so the bearer client cannot INSERT into tenant_users.
+      const adminClient = createSupabaseAdminClient();
+      const { tenantId, slug: tenantSlug } = await createTenant(adminClient, userId, bodyValidation.data);
 
       span.setAttribute('tenant.id', tenantId);
+
+      // Non-blocking: flag paystack subaccount setup as pending (bank details collected later)
+      void ctx.supabase
+        .from('tenants')
+        .update({ metadata: { paystack_subaccount_pending: true } })
+        .eq('id', tenantId)
+        .then(
+          () => defaultLogger.info('[onboarding] Paystack subaccount flagged pending', { tenantId }),
+          (err: unknown) => defaultLogger.warn('[onboarding] Failed to flag paystack subaccount pending', { tenantId, err })
+        );
+
       return { success: true, tenantId, tenantSlug };
     } finally {
       span.end();
@@ -72,7 +96,7 @@ export async function POST(request: Request): Promise<Response> {
   // Dev / CI fallback: bypass auth when Supabase env vars are absent (non-production only)
   if (
     process.env.NODE_ENV !== 'production' &&
-    (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY)
+    (!(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL) || !process.env.SUPABASE_SERVICE_ROLE_KEY)
   ) {
     const devTenantId = randomUUID();
     return new Response(

@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
@@ -54,7 +56,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     queryFn: getUserRole,
   });
 
-  const canEdit = userRole && ['superadmin', 'owner', 'manager'].includes(userRole);
+  const canEdit = typeof userRole === 'string' && ['superadmin', 'owner', 'manager'].includes(userRole);
 
   // Update product mutation
   const updateProductMutation = useMutation({
@@ -204,17 +206,20 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     );
   }
 
+  const stockQty = product.stock_quantity ?? 0;
+  const lowThreshold = product.low_stock_threshold ?? 0;
+
   const stockStatus = (() => {
     if (!product.track_inventory) return 'No tracking';
-    if (product.stock_quantity <= 0) return 'Out of stock';
-    if (product.stock_quantity <= product.low_stock_threshold) return 'Low stock';
+    if (stockQty <= 0) return 'Out of stock';
+    if (stockQty <= lowThreshold) return 'Low stock';
     return 'In stock';
   })();
 
   const stockStatusColor = (() => {
     if (!product.track_inventory) return 'text-gray-500';
-    if (product.stock_quantity <= 0) return 'text-red-600';
-    if (product.stock_quantity <= product.low_stock_threshold) return 'text-yellow-600';
+    if (stockQty <= 0) return 'text-red-600';
+    if (stockQty <= lowThreshold) return 'text-yellow-600';
     return 'text-green-600';
   })();
 
@@ -251,15 +256,15 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                   <Button
                     variant="outline"
                     onClick={handleCancel}
-                    disabled={updateProductMutation.isLoading}
+                    disabled={updateProductMutation.isPending}
                   >
                     Cancel
                   </Button>
                   <Button
                     onClick={handleSave}
-                    disabled={updateProductMutation.isLoading}
+                    disabled={updateProductMutation.isPending}
                   >
-                    {updateProductMutation.isLoading ? 'Saving...' : 'Save Changes'}
+                    {updateProductMutation.isPending ? 'Saving...' : 'Save Changes'}
                   </Button>
                 </>
               ) : (
@@ -270,10 +275,10 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                   <Button
                     variant="outline"
                     onClick={handleDelete}
-                    disabled={deleteProductMutation.isLoading}
+                    disabled={deleteProductMutation.isPending}
                     className="text-red-600 border-red-300 hover:bg-red-50"
                   >
-                    {deleteProductMutation.isLoading ? 'Deleting...' : 'Delete'}
+                    {deleteProductMutation.isPending ? 'Deleting...' : 'Delete'}
                   </Button>
                 </>
               )}
@@ -288,7 +293,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
               <h3 className="text-lg font-medium mb-4">Product Images</h3>
               {product.images && product.images.length > 0 ? (
                 <div className="space-y-2">
-                  {product.images.map((image, index) => (
+                  {product.images.map((image: string, index: number) => (
                     <img
                       key={index}
                       src={image}
@@ -399,7 +404,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                 ) : (
                   <div className="flex flex-wrap gap-1">
                     {product.tags && product.tags.length > 0 ? (
-                      product.tags.map((tag, index) => (
+                      product.tags.map((tag: string, index: number) => (
                         <span
                           key={index}
                           className="inline-flex px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded"
@@ -555,14 +560,14 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Created</label>
                   <p className="text-sm text-gray-600">
-                    {new Date(product.created_at).toLocaleDateString()} at{' '}
-                    {new Date(product.created_at).toLocaleTimeString()}
+                    {new Date(product.created_at ?? '').toLocaleDateString()} at{' '}
+                    {new Date(product.created_at ?? '').toLocaleTimeString()}
                   </p>
-                  
+
                   <label className="block text-sm font-medium text-gray-700 mb-2 mt-3">Last Updated</label>
                   <p className="text-sm text-gray-600">
-                    {new Date(product.updated_at).toLocaleDateString()} at{' '}
-                    {new Date(product.updated_at).toLocaleTimeString()}
+                    {new Date(product.updated_at ?? '').toLocaleDateString()} at{' '}
+                    {new Date(product.updated_at ?? '').toLocaleTimeString()}
                   </p>
                 </div>
               </div>

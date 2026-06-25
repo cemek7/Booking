@@ -1,14 +1,15 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { findFreeSlot } from '@/lib/scheduler';
+import { findFreeSlot } from '@/lib/optimizedScheduler';
 import { NextResponse } from 'next/server';
 
-interface FindFreeSlotPayload {
-  tenant_id: string;
-  from: string;
-  to: string;
-  duration_minutes?: number;
-}
+const FindFreeSlotSchema = z.object({
+  from: z.string().min(1, 'from ISO timestamp is required'),
+  to: z.string().min(1, 'to ISO timestamp is required'),
+  duration_minutes: z.number().positive().optional(),
+});
 
 /**
  * POST /api/scheduler/find-free-slot
@@ -17,19 +18,16 @@ interface FindFreeSlotPayload {
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    const tenantId = getVerifiedTenantId(ctx);
+
+    const raw = await ctx.request.json();
+    const parsed = FindFreeSlotSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
     }
-
-    const { from: fromIso, to: toIso, duration_minutes }: FindFreeSlotPayload = await ctx.request.json();
-
-    if (!fromIso || !toIso) {
-      throw ApiErrorFactory.badRequest('from and to ISO timestamps are required');
-    }
-
-    const durationMinutes = duration_minutes ? Number(duration_minutes) : 60;
+    const { from: fromIso, to: toIso, duration_minutes } = parsed.data;
+    const durationMinutes = duration_minutes ?? 60;
 
     // Find available slot
     const slot = await findFreeSlot(ctx.supabase, tenantId, fromIso, toIso, durationMinutes);

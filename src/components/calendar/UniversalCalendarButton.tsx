@@ -23,7 +23,7 @@ import {
   type CalendarButtonProps 
 } from '@/lib/integrations/universalCalendar';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/toast';
 
 /**
  * Universal Calendar Button Component

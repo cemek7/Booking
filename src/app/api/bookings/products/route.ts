@@ -1,5 +1,7 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { defaultLogger } from '@/lib/logger';
 
 interface BookingProductItem {
   product_id: string;
@@ -23,14 +25,7 @@ interface CreateProductBookingRequest {
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    // Derive tenant from authenticated user; only superadmin may override via header.
-    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
-    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
-      ? headerTenantId
-      : ctx.user!.tenantId;
-    if (!tenantId) {
-      throw ApiErrorFactory.notFound('Tenant not found');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     // Verify role has booking permissions
     const allowedRoles = ['superadmin', 'owner', 'manager', 'staff'];
@@ -156,7 +151,7 @@ export const POST = createHttpHandler(
       .single();
 
     if (bookingError) {
-      console.error('Error creating booking:', bookingError);
+      defaultLogger.error('Error creating booking:', bookingError);
       throw ApiErrorFactory.internalServerError(new Error(`Failed to create booking: ${bookingError.message}`));
     }
 
@@ -176,7 +171,7 @@ export const POST = createHttpHandler(
       .insert(bookingItems);
 
     if (itemsError) {
-      console.error('Error creating booking items:', itemsError);
+      defaultLogger.error('Error creating booking items:', itemsError);
       
       // Rollback the booking
       await ctx.supabase
@@ -214,7 +209,7 @@ export const POST = createHttpHandler(
         if (movementError) {
           // Roll back booking before surfacing the error
           const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
-          if (rbErr) console.error('Booking rollback failed:', rbErr);
+          if (rbErr) defaultLogger.error('Booking rollback failed:', rbErr);
           throw ApiErrorFactory.internalServerError(new Error('Failed to log inventory movement'));
         }
 
@@ -257,17 +252,17 @@ export const POST = createHttpHandler(
           const { data: updatedRows, error: invUpdateError } = await guardedUpdateQuery.select('product_id');
           if (invUpdateError) {
             const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
-            if (rbErr) console.error('Booking rollback failed:', rbErr);
+            if (rbErr) defaultLogger.error('Booking rollback failed:', rbErr);
             throw ApiErrorFactory.internalServerError(new Error('Failed to update inventory stock levels'));
           } else if (!updatedRows || updatedRows.length === 0) {
             // Another concurrent request modified the stock between our read and write
             const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
-            if (rbErr) console.error('Booking rollback failed:', rbErr);
+            if (rbErr) defaultLogger.error('Booking rollback failed:', rbErr);
             throw ApiErrorFactory.conflict(`Inventory conflict for product ${productItem.product_id}: concurrent modification detected`);
           }
         } else {
           const { error: rbErr } = await ctx.supabase.from('product_bookings').delete().eq('id', booking.id);
-          if (rbErr) console.error('Booking rollback failed:', rbErr);
+          if (rbErr) defaultLogger.error('Booking rollback failed:', rbErr);
           throw ApiErrorFactory.internalServerError(new Error(`Inventory record not found for product ${productItem.product_id}`));
         }
       }
@@ -301,10 +296,7 @@ export const POST = createHttpHandler(
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.user!.tenantId;
-    if (!tenantId) {
-      throw ApiErrorFactory.notFound('Tenant not found');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const url = new URL(ctx.request.url);
     const page = parseInt(url.searchParams.get('page') || '1');
@@ -361,7 +353,7 @@ export const GET = createHttpHandler(
     const { data: bookings, error, count } = await query;
 
     if (error) {
-      console.error('Error fetching product bookings:', error);
+      defaultLogger.error('Error fetching product bookings:', error);
       throw ApiErrorFactory.internalServerError(new Error(`Failed to fetch bookings: ${error.message}`));
     }
 

@@ -20,9 +20,10 @@ const mockSupabase = {
 
 jest.mock('@/lib/supabase/client', () => ({
   getBrowserSupabase: jest.fn(() => mockSupabase),
+  getSupabaseBrowserClient: jest.fn(() => mockSupabase),
 }));
 
-import { getBrowserSupabase } from '@/lib/supabase/client';
+import { getBrowserSupabase, getSupabaseBrowserClient } from '@/lib/supabase/client';
 const mockGetBrowserSupabase = getBrowserSupabase as jest.MockedFunction<typeof getBrowserSupabase>;
 
 describe('useChatRealtime', () => {
@@ -182,7 +183,31 @@ describe('useChatRealtime', () => {
       expect(chat.id).toBe('chat-1');
       expect(chat.subject).toBe('Test Chat');
       expect(chat.lastMessageAt).toBe('2024-01-20T10:00:00Z');
+      expect(chat.channel).toBe('whatsapp');
       expect(chat.unread).toBe(3);
+    });
+
+    it('should map instagram channel metadata onto chat summaries', async () => {
+      const mockChats = [
+        {
+          id: 'chat-ig-1',
+          last_message_at: '2024-01-20T10:00:00Z',
+          session_id: null,
+          customer_phone: 'IGSID_123',
+          metadata: { subject: 'IG Lead', channel: 'instagram' },
+          unread_count: 1,
+        },
+      ];
+
+      mockFromTable(mockChats);
+
+      const { result } = renderHook(() => useChatRealtime('tenant-123'));
+
+      await waitFor(() => {
+        expect(result.current.chats).toHaveLength(1);
+      });
+
+      expect(result.current.chats[0]?.channel).toBe('instagram');
     });
 
     it('should use customer_phone as subject when no metadata', async () => {
@@ -619,6 +644,23 @@ describe('useChatRealtime', () => {
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining(encodeURIComponent('chat with spaces')),
         expect.any(Object)
+      );
+    });
+
+    it('should throw the API message when send fails', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: false,
+        json: async () => ({ message: 'Instagram replies are only allowed within 24 hours.' }),
+      });
+
+      const { result } = renderHook(() => useChatRealtime('tenant-123'));
+
+      act(() => {
+        result.current.setActiveId('chat-1');
+      });
+
+      await expect(result.current.send('Test message')).rejects.toThrow(
+        'Instagram replies are only allowed within 24 hours.'
       );
     });
   });

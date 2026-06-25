@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useAuthHeaders } from '@/hooks/useAuthHeaders';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,60 +53,28 @@ const CATEGORY_ICONS = {
   custom: '🎨'
 };
 
-const MOCK_TEMPLATES: Template[] = [
-  {
-    id: '1',
-    name: 'Booking Confirmation',
-    description: 'Sent when a booking is confirmed',
-    category: 'confirmation',
-    content: 'Hi {{customer_name}}! Your appointment at {{business_name}} is confirmed for {{appointment_date}} at {{appointment_time}}.',
-    variables: [],
-    language: 'en',
-    active: true,
-    usage_count: 1250,
-    last_used: '2025-11-29T10:30:00Z',
-    created_at: '2025-11-15T08:00:00Z',
-    updated_at: '2025-11-25T14:20:00Z'
-  },
-  {
-    id: '2',
-    name: '24h Reminder',
-    description: 'Reminder sent 24 hours before appointment',
-    category: 'reminder',
-    content: 'Hi {{customer_name}}! Just a friendly reminder about your appointment tomorrow at {{appointment_time}} for {{service_name}}.',
-    variables: [],
-    language: 'en',
-    active: true,
-    usage_count: 890,
-    last_used: '2025-11-29T09:15:00Z',
-    created_at: '2025-11-15T08:00:00Z',
-    updated_at: '2025-11-20T16:45:00Z'
-  },
-  {
-    id: '3',
-    name: 'Cancellation Notice',
-    description: 'Sent when appointment is cancelled',
-    category: 'cancellation',
-    content: 'Hi {{customer_name}}, your appointment for {{appointment_date}} has been cancelled. We hope to see you again soon!',
-    variables: [],
-    language: 'en',
-    active: false,
-    usage_count: 45,
-    last_used: '2025-11-28T13:22:00Z',
-    created_at: '2025-11-15T08:00:00Z',
-    updated_at: '2025-11-22T11:30:00Z'
-  }
-];
-
 export default function TemplateManagement() {
-  const [templates, setTemplates] = useState<Template[]>(MOCK_TEMPLATES);
-  const [filteredTemplates, setFilteredTemplates] = useState<Template[]>(MOCK_TEMPLATES);
+  const headers = useAuthHeaders();
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [filteredTemplates, setFilteredTemplates] = useState<Template[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
   const [showEditor, setShowEditor] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | undefined>();
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'inactive'>('all');
+
+  const loadTemplates = useCallback(async () => {
+    if (!headers) return;
+    const res = await fetch('/api/templates', { headers });
+    if (!res.ok) { setLoadError('Failed to load templates'); return; }
+    const data = await res.json();
+    setTemplates(data?.templates ?? []);
+    setLoadError(null);
+  }, [headers]);
+
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
   // Filter templates based on search and filters
   useEffect(() => {
@@ -150,61 +119,72 @@ export default function TemplateManagement() {
   };
 
   const handleSaveTemplate = async (template: Template) => {
+    if (!headers) return;
     try {
       if (template.id) {
-        // Update existing
-        setTemplates(prev => prev.map(t => 
-          t.id === template.id 
-            ? { ...template, updated_at: new Date().toISOString() }
-            : t
-        ));
+        const res = await fetch(`/api/templates?id=${template.id}`, {
+          method: 'PATCH', headers,
+          body: JSON.stringify(template),
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        setTemplates(prev => prev.map(t => t.id === template.id ? data.template : t));
       } else {
-        // Create new
-        const newTemplate: Template = {
-          ...template,
-          id: Date.now().toString(),
-          usage_count: 0,
-          last_used: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-        setTemplates(prev => [newTemplate, ...prev]);
+        const res = await fetch('/api/templates', {
+          method: 'POST', headers,
+          body: JSON.stringify(template),
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        setTemplates(prev => [data.template, ...prev]);
       }
       setShowEditor(false);
-    } catch (error) {
-      console.error('Failed to save template:', error);
+    } catch {
+      console.error('Failed to save template');
     }
   };
 
   const handleDeleteTemplate = async (templateId: string) => {
-    if (!confirm('Are you sure you want to delete this template?')) return;
-    
+    if (!confirm('Are you sure you want to delete this template?') || !headers) return;
     try {
+      const res = await fetch(`/api/templates?id=${templateId}`, { method: 'DELETE', headers });
+      if (!res.ok) throw new Error();
       setTemplates(prev => prev.filter(t => t.id !== templateId));
-    } catch (error) {
-      console.error('Failed to delete template:', error);
+    } catch {
+      console.error('Failed to delete template');
     }
   };
 
-  const handleDuplicateTemplate = (template: Template) => {
-    const duplicated: Template = {
-      ...template,
-      id: Date.now().toString(),
-      name: `${template.name} (Copy)`,
-      usage_count: 0,
-      last_used: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    setTemplates(prev => [duplicated, ...prev]);
+  const handleDuplicateTemplate = async (template: Template) => {
+    if (!headers) return;
+    try {
+      const res = await fetch('/api/templates', {
+        method: 'POST', headers,
+        body: JSON.stringify({ ...template, name: `${template.name} (Copy)` }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setTemplates(prev => [data.template, ...prev]);
+    } catch {
+      console.error('Failed to duplicate template');
+    }
   };
 
   const toggleTemplateStatus = async (templateId: string) => {
-    setTemplates(prev => prev.map(t =>
-      t.id === templateId
-        ? { ...t, active: !t.active, updated_at: new Date().toISOString() }
-        : t
-    ));
+    if (!headers) return;
+    const template = templates.find(t => t.id === templateId);
+    if (!template) return;
+    const newActive = !template.active;
+    setTemplates(prev => prev.map(t => t.id === templateId ? { ...t, active: newActive } : t));
+    try {
+      const res = await fetch(`/api/templates?id=${templateId}`, {
+        method: 'PATCH', headers,
+        body: JSON.stringify({ active: newActive }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setTemplates(prev => prev.map(t => t.id === templateId ? { ...t, active: template.active } : t));
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -229,7 +209,7 @@ export default function TemplateManagement() {
     return (
       <TemplateEditor
         initialTemplate={editingTemplate}
-        onSave={handleSaveTemplate}
+        onSave={handleSaveTemplate as any}
         onCancel={() => setShowEditor(false)}
       />
     );
@@ -237,6 +217,11 @@ export default function TemplateManagement() {
 
   return (
     <div className="max-w-7xl mx-auto p-6">
+      {loadError && (
+        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+          {loadError}
+        </div>
+      )}
       <div className="mb-6">
         <div className="flex justify-between items-center mb-4">
           <div>

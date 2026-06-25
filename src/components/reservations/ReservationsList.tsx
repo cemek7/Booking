@@ -10,16 +10,20 @@ import { authFetch } from '@/lib/auth/auth-api-client';
 async function fetchReservations(url: string) {
   const res = await authFetch(url);
   if (!res.status || res.status >= 400) throw new Error('Failed reservations fetch');
-  return res.data;
+  return (res.data as any[]) || [];
 }
 
 interface ReservationsListProps {
   customerId?: string;
+  tenantId?: string;
 }
 
-const ReservationsList: React.FC<ReservationsListProps> = ({ customerId }) => {
-  // Build API URL based on whether customerId is provided
-  const apiUrl = customerId ? `/api/reservations?customer_id=eq.${customerId}` : '/api/reservations';
+const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantId }) => {
+  // Build API URL based on available filters
+  const params = new URLSearchParams();
+  if (customerId) params.set('customer_id', `eq.${customerId}`);
+  if (tenantId) params.set('tenant_id', `eq.${tenantId}`);
+  const apiUrl = `/api/reservations${params.toString() ? `?${params}` : ''}`;
   const qc = useQueryClient();
   const { data, error, isLoading } = useQuery({ queryKey: ['reservations', customerId || 'all'], queryFn: () => fetchReservations(apiUrl) });
   const [deletingId, setDeletingId] = useState<string | null>(null);

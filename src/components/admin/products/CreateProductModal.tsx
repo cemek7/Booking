@@ -53,7 +53,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     enabled: !!tenant?.id && isOpen,
   });
 
-  const categories = categoriesData?.categories || [];
+  const categories = (categoriesData as any)?.categories || [];
 
   // Create product mutation
   const createProductMutation = useMutation({
@@ -63,7 +63,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
       const response = await authPost('/api/products', productData);
       
       if (response.error) {
-        throw new Error(response.error || 'Failed to create product');
+        throw new Error(String(response.error) || 'Failed to create product');
       }
 
       return response.data;
@@ -90,15 +90,15 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
       newErrors.price_cents = 'Price must be non-negative';
     }
 
-    if (formData.cost_price_cents < 0) {
+    if ((formData.cost_price_cents ?? 0) < 0) {
       newErrors.cost_price_cents = 'Cost price must be non-negative';
     }
 
-    if (formData.stock_quantity < 0) {
+    if ((formData.stock_quantity ?? 0) < 0) {
       newErrors.stock_quantity = 'Stock quantity must be non-negative';
     }
 
-    if (formData.low_stock_threshold < 0) {
+    if ((formData.low_stock_threshold ?? 0) < 0) {
       newErrors.low_stock_threshold = 'Low stock threshold must be non-negative';
     }
 
@@ -176,7 +176,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
   };
 
   const handleClose = () => {
-    if (!createProductMutation.isLoading) {
+    if (!createProductMutation.isPending) {
       resetForm();
       onClose();
     }
@@ -198,7 +198,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
               <button
                 type="button"
                 onClick={handleClose}
-                disabled={createProductMutation.isLoading}
+                disabled={createProductMutation.isPending}
                 className="text-gray-400 hover:text-gray-600"
               >
                 ✕
@@ -323,7 +323,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
                     type="number"
                     step="0.01"
                     min="0"
-                    value={formData.cost_price_cents / 100}
+                    value={(formData.cost_price_cents ?? 0) / 100}
                     onChange={(e) => handleInputChange('cost_price_cents', Math.round(parseFloat(e.target.value || '0') * 100))}
                     className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
                       errors.cost_price_cents ? 'border-red-500' : 'border-gray-300'
@@ -483,16 +483,16 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
               type="button"
               variant="outline"
               onClick={handleClose}
-              disabled={createProductMutation.isLoading}
+              disabled={createProductMutation.isPending}
             >
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={createProductMutation.isLoading}
+              disabled={createProductMutation.isPending}
               className="bg-primary text-white"
             >
-              {createProductMutation.isLoading ? (
+              {createProductMutation.isPending ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
                   Creating...

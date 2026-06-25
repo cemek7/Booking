@@ -1,4 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { generateCalendarLinks, bookingToCalendarEvent } from '@/lib/integrations/universalCalendar';
 import { z } from 'zod';
@@ -28,11 +29,7 @@ const RequestBodySchema = z.object({
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const body = await ctx.request.json();
     const validation = RequestBodySchema.safeParse(body);
@@ -75,21 +72,23 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.notFound('Booking not found or access denied');
       }
 
+      // Cast to any because Supabase infers relational joins as arrays; they are singular here.
+      const b = booking as any;
       calendarEvent = bookingToCalendarEvent({
-        id: booking.id,
-        service_name: booking.service?.name || 'Appointment',
-        appointment_date: booking.start_at.split('T')[0],
-        appointment_time: booking.start_at.split('T')[1]?.substring(0, 5) || '00:00',
-        duration_minutes: booking.service?.duration_minutes ||
-          Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000),
-        customer_name: booking.customer_name,
-        customer_email: booking.customer_email,
-        staff_name: booking.staff?.name,
-        staff_email: booking.staff?.email,
-        notes: booking.notes,
+        id: b.id,
+        service_name: b.service?.name || 'Appointment',
+        appointment_date: b.start_at.split('T')[0],
+        appointment_time: b.start_at.split('T')[1]?.substring(0, 5) || '00:00',
+        duration_minutes: b.service?.duration_minutes ||
+          Math.round((new Date(b.end_at).getTime() - new Date(b.start_at).getTime()) / 60000),
+        customer_name: b.customer_name,
+        customer_email: b.customer_email,
+        staff_name: b.staff?.name,
+        staff_email: b.staff?.email,
+        notes: b.notes,
         tenant: {
-          business_name: booking.tenant.business_name,
-          contact_email: booking.tenant.contact_email,
+          business_name: b.tenant?.business_name,
+          contact_email: b.tenant?.contact_email,
         },
       });
     } else if (customEvent) {
@@ -125,11 +124,7 @@ export const POST = createHttpHandler(
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const bookingId = ctx.request.nextUrl.searchParams.get('bookingId');
 
@@ -167,21 +162,22 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.notFound('Booking not found or access denied');
     }
 
+    const b = booking as any;
     const calendarEvent = bookingToCalendarEvent({
-      id: booking.id,
-      service_name: booking.service?.name || 'Appointment',
-      appointment_date: booking.start_at.split('T')[0],
-      appointment_time: booking.start_at.split('T')[1]?.substring(0, 5) || '00:00',
-      duration_minutes: booking.service?.duration_minutes ||
-        Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000),
-      customer_name: booking.customer_name,
-      customer_email: booking.customer_email,
-      staff_name: booking.staff?.name,
-      staff_email: booking.staff?.email,
-      notes: booking.notes,
+      id: b.id,
+      service_name: b.service?.name || 'Appointment',
+      appointment_date: b.start_at.split('T')[0],
+      appointment_time: b.start_at.split('T')[1]?.substring(0, 5) || '00:00',
+      duration_minutes: b.service?.duration_minutes ||
+        Math.round((new Date(b.end_at).getTime() - new Date(b.start_at).getTime()) / 60000),
+      customer_name: b.customer_name,
+      customer_email: b.customer_email,
+      staff_name: b.staff?.name,
+      staff_email: b.staff?.email,
+      notes: b.notes,
       tenant: {
-        business_name: booking.tenant.business_name,
-        contact_email: booking.tenant.contact_email,
+        business_name: b.tenant?.business_name,
+        contact_email: b.tenant?.contact_email,
       },
     });
 

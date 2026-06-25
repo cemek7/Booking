@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * /api/services
  * Service management - unified error handling and auth
@@ -8,10 +9,18 @@
  * DELETE - Delete service (requires owner)
  */
 
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { parseJsonBody } from '@/lib/error-handling/route-handler';
+import { z } from 'zod';
+import { createHttpHandler, parseJsonBody, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { getPaginationParams } from '@/lib/error-handling/migration-helpers';
+
+const ServiceCreateSchema = z.object({
+  name: z.string().trim().min(1),
+  description: z.string().nullable().optional(),
+  price: z.number().min(0).optional(),
+  duration: z.number().int().min(1).optional(),
+  category: z.string().nullable().optional(),
+});
 
 interface ServiceCreatePayload {
   name: string;
@@ -24,11 +33,7 @@ interface ServiceCreatePayload {
 export const GET = createHttpHandler(
   async (ctx) => {
     const { page, limit, offset } = getPaginationParams(ctx);
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const { data, error } = await ctx.supabase
       .from('services')
@@ -59,23 +64,20 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.insufficientPermissions(['owner', 'manager']);
     }
 
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    const tenantId = getVerifiedTenantId(ctx);
 
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    const rawBody = await parseJsonBody<ServiceCreatePayload>(ctx.request);
+    const bodyValidation = ServiceCreateSchema.safeParse(rawBody);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
-
-    const body = await parseJsonBody<ServiceCreatePayload>(ctx.request);
-
-    if (!body.name?.trim()) {
-      throw ApiErrorFactory.validationError({ name: 'Service name is required' });
-    }
+    const body = bodyValidation.data;
 
     const { data, error } = await ctx.supabase
       .from('services')
       .insert({
         tenant_id: tenantId,
-        name: body.name.trim(),
+        name: body.name,
         description: body.description || null,
         price: body.price ?? 0,
         duration: body.duration ?? 30,
@@ -95,14 +97,10 @@ export const PATCH = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
     const serviceId = url.searchParams.get('id');
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    const tenantId = getVerifiedTenantId(ctx);
 
     if (!serviceId) {
       throw ApiErrorFactory.validationError({ id: 'Service ID is required' });
-    }
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
     if (!['owner', 'manager'].includes(ctx.user!.role)) {
@@ -130,14 +128,10 @@ export const DELETE = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
     const serviceId = url.searchParams.get('id');
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    const tenantId = getVerifiedTenantId(ctx);
 
     if (!serviceId) {
       throw ApiErrorFactory.validationError({ id: 'Service ID is required' });
-    }
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
     }
 
     if (ctx.user!.role !== 'owner') {

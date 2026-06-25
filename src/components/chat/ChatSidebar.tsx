@@ -2,7 +2,11 @@
 import { useState } from 'react';
 
 export interface ChatSummary {
-  id: string; subject: string; lastMessageAt?: string; unread?: number;
+  id: string;
+  subject: string;
+  channel: 'whatsapp' | 'instagram';
+  lastMessageAt?: string | null;
+  unread?: number;
 }
 
 interface ChatSidebarProps {
@@ -29,7 +33,18 @@ export function ChatSidebar({ chats, activeId, onSelect, filter }: ChatSidebarPr
               aria-current={c.id===activeId? 'true': undefined}
             >
               <div className="flex items-center justify-between">
-                <span className="font-medium truncate max-w-40" title={c.subject}>{c.subject}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-medium truncate max-w-40" title={c.subject}>{c.subject}</span>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      c.channel === 'instagram'
+                        ? 'bg-pink-100 text-pink-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {c.channel === 'instagram' ? 'IG' : 'WA'}
+                  </span>
+                </div>
                 {c.unread ? <span className="ml-2 inline-flex items-center justify-center text-xs px-2 py-0.5 rounded-full bg-indigo-600 text-white" aria-label={`${c.unread} unread messages`}>{c.unread}</span> : null}
               </div>
               <div className="text-[11px] text-gray-500 mt-0.5">

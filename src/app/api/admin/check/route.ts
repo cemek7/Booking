@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
@@ -17,40 +18,33 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.badRequest('email is required');
     }
 
-    // Check admins table for global admin
-    const { data: adminRow, error: adminErr } = await ctx.supabase
-      .from('admins')
-      .select('email')
-      .eq('email', email)
-      .maybeSingle();
+    const normalizedEmail = email.trim().toLowerCase();
+    const userId = ctx.user!.id;
 
-    if (adminErr) throw ApiErrorFactory.internalServerError(new Error('Failed to check admin status'));
+    // Query admin by email, and tenant membership by authenticated user ID.
+    const [adminByEmail, tu] = await Promise.all([
+      ctx.supabase.from('admins').select('email,status').eq('email', normalizedEmail).maybeSingle(),
+      ctx.supabase.from('tenant_users').select('tenant_id,role,user_id').eq('user_id', userId).limit(1).maybeSingle(),
+    ]);
 
-    if (adminRow) {
-      return { found: { admin: true, email: adminRow.email } };
+    if (adminByEmail.error) throw ApiErrorFactory.internalServerError(new Error('Failed to check admin status'));
+    if (tu.error) throw ApiErrorFactory.internalServerError(new Error('Failed to check tenant membership'));
+
+    if (adminByEmail.data && adminByEmail.data.status !== false) {
+      return { found: { admin: true, email: adminByEmail.data.email, user_id: userId } };
     }
 
-    // Check tenant_users for tenant membership
-    const { data: tu, error: tuErr } = await ctx.supabase
-      .from('tenant_users')
-      .select('tenant_id,role,email,user_id')
-      .eq('email', email)
-      .limit(1)
-      .maybeSingle();
-
-    if (tuErr) throw ApiErrorFactory.internalServerError(new Error('Failed to check tenant membership'));
-
-    if (tu) {
-      return { found: { 
-        tenant_id: tu.tenant_id, 
-        role: tu.role || 'staff',  // Default to 'staff' if role is null
-        email: tu.email || email,
-        user_id: tu.user_id
+    if (tu.data) {
+      return { found: {
+        tenant_id: tu.data.tenant_id,
+        role: tu.data.role || 'staff',
+        email: email,
+        user_id: tu.data.user_id,
       } };
     }
 
     return { found: null };
   },
   'POST',
-  { auth: false }
+  { auth: true, requireTenantMembership: false }
 );

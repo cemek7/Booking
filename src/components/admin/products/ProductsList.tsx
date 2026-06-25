@@ -46,9 +46,9 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
     <TR>
       <TD>
         <div className="flex items-center gap-3">
-          {product.images?.length > 0 ? (
+          {(product.images?.length ?? 0) > 0 ? (
             <img
-              src={product.images[0]}
+              src={product.images![0]}
               alt={product.name}
               className="h-10 w-10 rounded-lg object-cover"
             />
@@ -71,9 +71,9 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
       <TD>
         <div>
           {formatPrice(product.price_cents, product.currency)}
-          {permissions.can_view_cost_prices && product.cost_price_cents > 0 && (
+          {permissions.can_view_cost_prices && (product.cost_price_cents ?? 0) > 0 && (
             <div className="text-sm text-gray-500">
-              Cost: {formatPrice(product.cost_price_cents, product.currency)}
+              Cost: {formatPrice(product.cost_price_cents ?? 0, product.currency)}
             </div>
           )}
         </div>
@@ -234,13 +234,13 @@ export default function ProductsList() {
 
   const getStockStatus = useCallback((product: Product) => {
     if (!product.track_inventory) return { text: 'Not tracked', color: 'text-gray-500' };
-    if (product.stock_quantity === 0) return { text: 'Out of stock', color: 'text-red-600' };
-    if (product.stock_quantity <= product.low_stock_threshold) return { text: 'Low stock', color: 'text-yellow-600' };
+    if ((product.stock_quantity ?? 0) === 0) return { text: 'Out of stock', color: 'text-red-600' };
+    if ((product.stock_quantity ?? 0) <= (product.low_stock_threshold ?? 0)) return { text: 'Low stock', color: 'text-yellow-600' };
     return { text: 'In stock', color: 'text-green-600' };
   }, []);
 
-  const products = productsData?.products || [];
-  const pagination = productsData?.pagination || { total: 0, page: 1, totalPages: 1 };
+  const products: Product[] = (productsData as any)?.products || [];
+  const pagination = (productsData as any)?.pagination || { total: 0, page: 1, totalPages: 1 };
 
   if (isLoading) {
     return (
@@ -290,7 +290,7 @@ export default function ProductsList() {
         </div>
         
         <div className="flex items-center gap-2">
-          {permissions.can_create_products && (
+          {permissions.canCreate && (
             <Button
               onClick={() => setShowCreateModal(true)}
               className="bg-primary text-white"
@@ -334,7 +334,7 @@ export default function ProductsList() {
               {products.length === 0 ? (
                 <TR>
                   <TD colSpan={6} className="text-center py-8 text-gray-500">
-                    No products found. {permissions.can_create_products && (
+                    No products found. {permissions.canCreate && (
                       <button 
                         onClick={() => setShowCreateModal(true)}
                         className="text-primary underline ml-1"

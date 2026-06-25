@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
@@ -54,7 +55,7 @@ export const GET = createHttpHandler(
       
       if (servicesError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch services'));
 
-      lifetimeSpend = services.reduce((total: number, item: { quantity?: number; services?: { price?: number } | null }) => {
+      lifetimeSpend = (services as any[]).reduce((total: number, item: { quantity?: number; services?: { price?: number } | null }) => {
         const price = item.services?.price ?? 0;
         const quantity = item.quantity ?? 1;
         return total + (price * quantity);
@@ -72,25 +73,28 @@ export const GET = createHttpHandler(
 
     if (recentError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch recent reservations'));
 
-    const recentWithTotals = await Promise.all(recentReservations.map(async (res: { id: string; start_at: string; status: string }) => {
-      const { data: services, error } = await ctx.supabase
-        .from('reservation_services')
-        .select('quantity, services(price)')
-        .eq('reservation_id', res.id);
-      
-      if (error) {
-        console.error(`Failed to fetch services for reservation ${res.id}:`, error);
-        return { ...res, total: 0 };
-      }
+    const recentIds = recentReservations.map((r: { id: string }) => r.id);
+    const { data: recentSvcs } = await ctx.supabase
+      .from('reservation_services')
+      .select('reservation_id, quantity, services(price)')
+      .in('reservation_id', recentIds);
 
-      const total = services.reduce((acc: number, item: { quantity?: number; services?: { price?: number } | null }) => {
+    const svcMap = new Map<string, any[]>();
+    for (const svc of recentSvcs ?? []) {
+      const group = svcMap.get((svc as any).reservation_id) ?? [];
+      group.push(svc);
+      svcMap.set((svc as any).reservation_id, group);
+    }
+
+    const recentWithTotals = recentReservations.map((res: { id: string; start_at: string; status: string }) => {
+      const svcs = svcMap.get(res.id) ?? [];
+      const total = (svcs as any[]).reduce((acc: number, item: { quantity?: number; services?: { price?: number } | null }) => {
         const price = item.services?.price ?? 0;
         const quantity = item.quantity ?? 1;
         return acc + (price * quantity);
       }, 0);
-
       return { ...res, total };
-    }));
+    });
 
     return {
       lifetimeSpend,

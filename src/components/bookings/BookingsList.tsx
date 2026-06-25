@@ -59,7 +59,7 @@ async function fetchBookings(tenantId: string) {
   if (!tenantId) return [];
   const response = await authFetch('/api/bookings', { tenantId });
   if (response.error) throw new Error('Failed bookings fetch');
-  return response.data || [];
+  return (response.data as any[]) || [];
 }
 
 function BookingsList() {

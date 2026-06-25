@@ -53,7 +53,7 @@ interface Template {
 
 interface TemplateEditorProps {
   initialTemplate?: Template;
-  onSave: (template: Template) => void;
+  onSave: (template: Template) => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -145,9 +145,9 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
     (async () => {
       try {
         const supabase = getSupabaseBrowserClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        const userId = session.user.id;
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const userId = user.id;
         // Get tenantId from user metadata or tenant_users table
         const { data: tuRow } = await supabase
           .from('tenant_users')
@@ -268,23 +268,33 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
     return errors;
   };
 
+  const escapeHtml = (str: string) =>
+    str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
   const renderPreview = () => {
-    let content = template.content;
-    
-    // Replace simple variables
+    // Escape the raw template content first so user input cannot inject HTML tags
+    let content = escapeHtml(template.content);
+
+    // Replace simple variables (escape substituted values too)
     template.variables.forEach(variable => {
-      const value = previewData[variable.name] || `{{${variable.name}}}`;
+      const raw = previewData[variable.name] || `{{${variable.name}}}`;
+      const value = escapeHtml(raw);
       const pattern = new RegExp(`\\{\\{${variable.name}\\}\\}`, 'g');
       content = content.replace(pattern, value);
     });
 
-    // Handle conditional blocks (basic implementation)
-    content = content.replace(/\{\{#if\s+([^}]+)\}\}(.*?)\{\{\/if\}\}/gs, (match, condition, block) => {
+    // Handle conditional blocks
+    content = content.replace(/\{\{#if\s+([^}]+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (match, condition, block) => {
       const value = previewData[condition.trim()];
       return value ? block : '';
     });
 
-    // Convert markdown-like formatting to HTML
+    // Apply safe markdown-like formatting (content is already HTML-escaped above)
     content = content
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
@@ -531,7 +541,7 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
                       <div className="flex justify-between items-center mb-2">
                         <Label>Template Content</Label>
                         <div className="flex space-x-2 text-xs text-muted-foreground">
-                          <Badge variant="outline">{{variable}} for variables</Badge>
+                          <Badge variant="outline">{'{{variable}}'} for variables</Badge>
                           <Badge variant="outline">**bold** for formatting</Badge>
                         </div>
                       </div>

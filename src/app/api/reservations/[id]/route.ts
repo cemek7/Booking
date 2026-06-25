@@ -1,8 +1,11 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { auditSuperadminAction } from '@/lib/enhanced-rbac';
+import { auditSuperadminAction } from '@/types/unified-permissions';
 import { parseIso } from '@/lib/utils';
+import { defaultLogger } from '@/lib/logger';
+import { siasOperations } from '@/lib/sias-operations';
 
 /**
  * GET,PATCH,DELETE /api/reservations/[id]
@@ -22,7 +25,7 @@ import { parseIso } from '@/lib/utils';
 interface ReservationUpdatePayload {
   customer_name?: string;
   phone?: string;
-  service?: any;
+  service?: unknown;
   status?: 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
   start_at?: string;
   duration_minutes?: number;
@@ -40,7 +43,7 @@ export const PATCH = createHttpHandler(
       .from('reservations')
       .select('tenant_id, start_at, end_at, status')
       .eq('id', reservationId)
-      .single();
+      .maybeSingle();
 
     if (existErr) throw ApiErrorFactory.databaseError(existErr);
     if (!existing) throw ApiErrorFactory.notFound('Reservation');
@@ -65,7 +68,7 @@ export const PATCH = createHttpHandler(
         ctx.request.headers.get('x-forwarded-for') || '',
         ctx.request.headers.get('user-agent') || ''
       ).catch((err) => {
-        console.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
+        defaultLogger.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
       });
     }
 
@@ -145,10 +148,34 @@ export const PATCH = createHttpHandler(
         .from('reservation_logs')
         .insert({ reservation_id: reservationId, tenant_id: tenantId, action: 'update', actor, notes })
         .then(({ error: logErr }: { error: unknown }) => {
-          if (logErr) console.warn('[api/reservations/[id]] Failed to insert update log:', logErr);
+          if (logErr) defaultLogger.warn('[api/reservations/[id]] Failed to insert update log:', logErr);
         });
     } catch (e) {
-      console.warn('[api/reservations/[id]] Error writing update log:', e);
+      defaultLogger.warn('[api/reservations/[id]] Error writing update log:', e);
+    }
+
+    if (updates.status === 'no_show') {
+      await siasOperations.recordOutcomeAttribution({
+        tenantId,
+        reservationId: reservationId,
+        sourceEvent: 'reservation.status.no_show',
+        signal: 'no_show_reduction',
+        value: 1,
+        metadata: {
+          previous_status: existing.status,
+        },
+      }).catch(() => undefined);
+
+      await siasOperations.updateOperationalMemory({
+        tenantId,
+        memoryKey: 'no_show_patterns',
+        memoryValue: {
+          reservation_id: reservationId,
+          marked_at: new Date().toISOString(),
+        },
+        source: 'reservation.status.no_show',
+        confidence: 0.7,
+      }).catch(() => undefined);
     }
 
     return updated;
@@ -169,7 +196,7 @@ export const DELETE = createHttpHandler(
       .from('reservations')
       .select('tenant_id, start_at, end_at, status')
       .eq('id', reservationId)
-      .single();
+      .maybeSingle();
 
     if (existErr) throw ApiErrorFactory.databaseError(existErr);
     if (!existing) throw ApiErrorFactory.notFound('Reservation');
@@ -194,7 +221,7 @@ export const DELETE = createHttpHandler(
         ctx.request.headers.get('x-forwarded-for') || '',
         ctx.request.headers.get('user-agent') || ''
       ).catch((err) => {
-        console.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
+        defaultLogger.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
       });
     }
 
@@ -215,7 +242,7 @@ export const DELETE = createHttpHandler(
       const { bookingCancelled } = await import('@/lib/metrics');
       bookingCancelled(tenantId);
     } catch (metricError) {
-      console.warn('[api/reservations/[id]] Failed to record bookingCancelled metric:', metricError);
+      defaultLogger.warn('[api/reservations/[id]] Failed to record bookingCancelled metric:', metricError);
     }
 
     // Audit log
@@ -228,11 +255,28 @@ export const DELETE = createHttpHandler(
         actor,
         notes,
       }).then(({ error: logErr }: { error: unknown }) => {
-        if (logErr) console.warn('[api/reservations/[id]] Failed to insert cancellation log:', logErr);
+        if (logErr) defaultLogger.warn('[api/reservations/[id]] Failed to insert cancellation log:', logErr);
       });
     } catch (e) {
-      console.warn('[api/reservations/[id]] Error writing cancellation log:', e);
+      defaultLogger.warn('[api/reservations/[id]] Error writing cancellation log:', e);
     }
+
+    await siasOperations.recordCampaignRun({
+      tenantId,
+      campaignType: 'reactivation',
+      action: 'send_reactivation',
+      targetBookingId: reservationId,
+      sourceEvent: 'reservation.cancelled',
+      status: 'retry_scheduled',
+      scheduledFor: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      metadata: {
+        cancellation_reason: 'cancelled via api',
+      },
+      attribution: {
+        signal: 'revenue_recovery',
+        source_event: 'reservation.cancelled',
+      },
+    }).catch(() => undefined);
 
     return data;
   },

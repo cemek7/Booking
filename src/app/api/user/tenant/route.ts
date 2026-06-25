@@ -1,7 +1,9 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { normalizeRole, Role } from '@/types';
+import { defaultLogger } from '@/lib/logger';
 
 /**
  * POST /api/user/tenant
@@ -45,7 +47,7 @@ export const POST = createHttpHandler(
       .maybeSingle();
 
     if (error) {
-      console.error('[user/tenant] lookup failed', error);
+      defaultLogger.error('[user/tenant] lookup failed', error);
       throw ApiErrorFactory.databaseError(error);
     }
 
@@ -57,5 +59,5 @@ export const POST = createHttpHandler(
     return { data };
   },
   'POST',
-  { auth: false }
+  { auth: true }
 );

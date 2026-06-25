@@ -1,13 +1,14 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { findFreeStaff } from '@/lib/scheduler';
+import { findFreeStaff } from '@/lib/optimizedScheduler';
 import { NextResponse } from 'next/server';
 
-interface FindFreeStaffPayload {
-  tenant_id: string;
-  start_at: string;
-  end_at: string;
-}
+const FindFreeStaffSchema = z.object({
+  start_at: z.string().min(1, 'start_at is required'),
+  end_at: z.string().min(1, 'end_at is required'),
+});
 
 /**
  * POST /api/scheduler/find-free-staff
@@ -16,17 +17,15 @@ interface FindFreeStaffPayload {
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
-    const { start_at: startAt, end_at: endAt }: FindFreeStaffPayload = await ctx.request.json();
-
-    if (!startAt || !endAt) {
-      throw ApiErrorFactory.badRequest('start_at and end_at are required');
+    const raw = await ctx.request.json();
+    const parsed = FindFreeStaffSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
     }
+    const { start_at: startAt, end_at: endAt } = parsed.data;
 
     // Find available staff
     const staff = await findFreeStaff(ctx.supabase, tenantId, startAt, endAt);

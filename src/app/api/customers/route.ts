@@ -1,32 +1,52 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId, getPaginationParams } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { NextResponse } from 'next/server';
+import { defaultLogger } from '@/lib/logger';
+import { z } from 'zod';
+
+const CreateCustomerSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  customer_name: z.string().min(1).max(200).optional(),
+  phone: z.string().max(50).optional(),
+  phone_number: z.string().max(50).optional(),
+  notes: z.string().max(2000).optional(),
+}).refine(
+  (data) => data.name || data.customer_name,
+  { message: 'name or customer_name is required' }
+);
+
+const UpdateCustomerSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  phone: z.string().max(50).optional(),
+  email: z.string().email().max(200).optional(),
+  notes: z.string().max(2000).optional(),
+});
 
 /**
  * GET /api/customers
- * List customers for tenant
+ * List customers for tenant (paginated)
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
+    const { page, limit } = getPaginationParams(ctx.request);
+    const offset = ((page ?? 1) - 1) * (limit ?? 20);
+    const pageLimit = limit ?? 20;
 
     const { data, error } = await ctx.supabase
       .from('customers')
       .select('id,customer_name,phone_number,notes,created_at')
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false })
-      .limit(200);
+      .range(offset, offset + pageLimit - 1);
 
     if (error) {
-      console.error('[api/customers] GET error:', error);
+      defaultLogger.error('[api/customers] GET error:', error);
       throw ApiErrorFactory.internalServerError(new Error('Failed to fetch customers'));
     }
 
-    return data || [];
+    return { data: data || [], pagination: { page: page ?? 1, limit: pageLimit, offset } };
   },
   'GET',
   { auth: true }
@@ -38,13 +58,14 @@ export const GET = createHttpHandler(
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    const tenantId = getVerifiedTenantId(ctx);
 
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    const rawBody = await ctx.request.json();
+    const parsed = CreateCustomerSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      throw ApiErrorFactory.validationError(parsed.error.flatten().fieldErrors);
     }
-
-    const body = await ctx.request.json();
+    const body = parsed.data;
 
     const payload = {
       tenant_id: tenantId,
@@ -60,7 +81,7 @@ export const POST = createHttpHandler(
       .maybeSingle();
 
     if (error) {
-      console.error('[api/customers] POST error:', error);
+      defaultLogger.error('[api/customers] POST error:', error);
       throw ApiErrorFactory.internalServerError(new Error('Failed to create customer'));
     }
 
@@ -76,11 +97,7 @@ export const POST = createHttpHandler(
  */
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const id = ctx.request.nextUrl.searchParams.get('id');
 
@@ -88,7 +105,12 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.badRequest('Customer ID is required');
     }
 
-    const body = await ctx.request.json();
+    const rawBody = await ctx.request.json();
+    const parsed = UpdateCustomerSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      throw ApiErrorFactory.validationError(parsed.error.flatten().fieldErrors);
+    }
+    const body = parsed.data;
 
     const update = {
       name: body.name,
@@ -106,7 +128,7 @@ export const PATCH = createHttpHandler(
       .maybeSingle();
 
     if (error) {
-      console.error(`[api/customers] PATCH error for ${id}:`, error);
+      defaultLogger.error(`[api/customers] PATCH error for ${id}:`, error);
       throw ApiErrorFactory.internalServerError(new Error('Failed to update customer'));
     }
 
@@ -122,11 +144,7 @@ export const PATCH = createHttpHandler(
  */
 export const DELETE = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const id = ctx.request.nextUrl.searchParams.get('id');
 
@@ -141,7 +159,7 @@ export const DELETE = createHttpHandler(
       .eq('tenant_id', tenantId);
 
     if (error) {
-      console.error(`[api/customers] DELETE error for ${id}:`, error);
+      defaultLogger.error(`[api/customers] DELETE error for ${id}:`, error);
       throw ApiErrorFactory.internalServerError(new Error('Failed to delete customer'));
     }
 

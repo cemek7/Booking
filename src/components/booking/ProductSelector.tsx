@@ -199,11 +199,11 @@ export default function ProductSelector({
                 <TD>
                   {product.track_inventory ? (
                     <span className={`text-sm ${
-                      product.available_stock <= 0 ? 'text-red-600' :
-                      product.available_stock <= product.low_stock_threshold ? 'text-yellow-600' :
+                      (product as any).available_stock <= 0 ? 'text-red-600' :
+                      (product as any).available_stock <= (product.low_stock_threshold ?? 0) ? 'text-yellow-600' :
                       'text-green-600'
                     }`}>
-                      {product.available_stock} units
+                      {(product as any).available_stock} units
                     </span>
                   ) : (
                     <span className="text-gray-500 text-sm">No tracking</span>
@@ -222,7 +222,7 @@ export default function ProductSelector({
                 <TD>
                   <Button
                     size="sm"
-                    variant={selectedProductId === product.id ? "solid" : "outline"}
+                    variant={selectedProductId === product.id ? "default" : "outline"}
                     onClick={() => {
                       if (selectedProductId === product.id) {
                         setSelectedProductId(null);
@@ -270,17 +270,17 @@ export default function ProductSelector({
                     {variant.description}
                   </div>
                 )}
-                {showPricing && variant.price_adjustment_cents !== 0 && (
+                {showPricing && (variant.price_adjustment_cents ?? 0) !== 0 && (
                   <div className="text-sm mt-1">
-                    <span className={variant.price_adjustment_cents > 0 ? 'text-green-600' : 'text-red-600'}>
-                      {variant.price_adjustment_cents > 0 ? '+' : ''}
-                      ${(variant.price_adjustment_cents / 100).toFixed(2)}
+                    <span className={(variant.price_adjustment_cents ?? 0) > 0 ? 'text-green-600' : 'text-red-600'}>
+                      {(variant.price_adjustment_cents ?? 0) > 0 ? '+' : ''}
+                      ${((variant.price_adjustment_cents ?? 0) / 100).toFixed(2)}
                     </span>
                   </div>
                 )}
-                {variant.product_inventory?.[0] && (
+                {(variant as any).product_inventory?.[0] && (
                   <div className="text-xs text-gray-500 mt-1">
-                    Stock: {variant.product_inventory[0].available_stock}
+                    Stock: {(variant as any).product_inventory[0].available_stock}
                   </div>
                 )}
               </button>

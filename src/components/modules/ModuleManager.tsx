@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -67,11 +68,11 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
       setAvailableModules(available);
       setInstalledModules(installed);
     } catch (error) {
-      console.error('Error loading modules:', error);
+      defaultLogger.error('Error loading modules:', error);
       toast({
         title: 'Error',
         description: 'Failed to load modules',
-        variant: 'destructive'
+        type: 'error'
       });
     } finally {
       setLoading(false);
@@ -98,7 +99,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
           toast({
             title: 'Warnings',
             description: result.warnings.join(', '),
-            variant: 'default'
+            
           });
         }
 
@@ -107,11 +108,11 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
         throw new Error(result.error);
       }
     } catch (error) {
-      console.error('Installation error:', error);
+      defaultLogger.error('Installation error:', error);
       toast({
         title: 'Installation Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
+        type: 'error'
       });
     } finally {
       setInstalling(null);
@@ -137,11 +138,11 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
         throw new Error(result.error);
       }
     } catch (error) {
-      console.error('Uninstall error:', error);
+      defaultLogger.error('Uninstall error:', error);
       toast({
         title: 'Uninstall Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
+        type: 'error'
       });
     }
   };
@@ -164,11 +165,11 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
         throw new Error(result.error);
       }
     } catch (error) {
-      console.error('Config update error:', error);
+      defaultLogger.error('Config update error:', error);
       toast({
         title: 'Update Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
+        type: 'error'
       });
     }
     setConfigDialogOpen(false);
@@ -296,7 +297,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                           </div>
                           {module.modules?.features && (
                             <div className="flex flex-wrap gap-1">
-                              {module.modules.features.slice(0, 3).map((feature, idx) => (
+                              {module.modules.features.slice(0, 3).map((feature: string, idx: number) => (
                                 <Badge key={idx} variant="outline" className="text-xs">
                                   {feature}
                                 </Badge>

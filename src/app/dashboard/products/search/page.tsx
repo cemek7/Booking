@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+export const dynamic = 'force-dynamic';
+
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ProductListQuery } from '@/types/product-catalogue';
 import AdvancedSearch from '@/components/admin/products/AdvancedSearch';
 import SearchResults from '@/components/admin/products/SearchResults';
 
-export default function ProductSearchPage() {
+function ProductSearchPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -151,5 +153,13 @@ export default function ProductSearchPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ProductSearchPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}>
+      <ProductSearchPageInner />
+    </Suspense>
   );
 }

@@ -201,10 +201,14 @@ export function getConfigSummary(): {
     .map(([integration]) => integration);
   
   const missingConfiguration: string[] = [];
+  const hasAnyWhatsappProviderConfig =
+    Boolean(process.env.EVOLUTION_API_KEY && process.env.EVOLUTION_WEBHOOK_SECRET && process.env.EVOLUTION_API_BASE) ||
+    Boolean(process.env.WAHA_API_BASE && process.env.WAHA_API_KEY) ||
+    Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
   
   // Check for missing required configuration
-  if (config.features.whatsappIntegration && !config.integrations.evolution.enabled) {
-    missingConfiguration.push('Evolution API configuration missing for WhatsApp integration');
+  if (config.features.whatsappIntegration && !hasAnyWhatsappProviderConfig) {
+    missingConfiguration.push('WhatsApp provider configuration missing for WhatsApp integration');
   }
   
   if (config.features.messagingAdapter && !config.integrations.redis.enabled) {

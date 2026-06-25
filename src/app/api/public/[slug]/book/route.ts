@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Public Booking Routes - No Authentication Required
  */
@@ -8,6 +9,17 @@ import { z } from 'zod';
 import publicBookingService from '@/lib/publicBookingService';
 import { sendBookingConfirmation, sendEmail } from '@/lib/integrations/email-service';
 import type { RouteContext } from '@/lib/error-handling/route-handler';
+import { defaultLogger } from '@/lib/logger';
+
+/** Escape HTML entities to prevent injection in email templates */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 /**
  * Helper to get tenant by slug
@@ -15,7 +27,7 @@ import type { RouteContext } from '@/lib/error-handling/route-handler';
 async function getTenantBySlug(ctx: RouteContext, slug: string) {
   const { data: tenant, error: tenantErr } = await ctx.supabase
     .from('tenants')
-    .select('id')
+    .select('id, is_active')
     .eq('slug', slug)
     .maybeSingle();
 
@@ -24,6 +36,11 @@ async function getTenantBySlug(ctx: RouteContext, slug: string) {
   }
 
   if (!tenant) {
+    throw ApiErrorFactory.notFound('Tenant');
+  }
+
+  // Treat inactive tenants as not found to prevent bookings being created for disabled businesses
+  if (tenant.is_active === false) {
     throw ApiErrorFactory.notFound('Tenant');
   }
 
@@ -112,18 +129,18 @@ export const POST = createHttpHandler(
             subject: `New Booking: ${serviceName} on ${validated.date}`,
             html: `
               <h3>New Public Booking</h3>
-              <p><strong>Customer:</strong> ${validated.customer_name}</p>
-              <p><strong>Email:</strong> ${validated.customer_email}</p>
-              <p><strong>Phone:</strong> ${validated.customer_phone}</p>
-              <p><strong>Service:</strong> ${serviceName}</p>
-              <p><strong>Date:</strong> ${validated.date} at ${validated.time}</p>
-              ${validated.notes ? `<p><strong>Notes:</strong> ${validated.notes}</p>` : ''}
-              <p><strong>Booking ID:</strong> ${booking.id}</p>
+              <p><strong>Customer:</strong> ${escapeHtml(validated.customer_name)}</p>
+              <p><strong>Email:</strong> ${escapeHtml(validated.customer_email)}</p>
+              <p><strong>Phone:</strong> ${escapeHtml(validated.customer_phone)}</p>
+              <p><strong>Service:</strong> ${escapeHtml(serviceName)}</p>
+              <p><strong>Date:</strong> ${escapeHtml(validated.date)} at ${escapeHtml(validated.time)}</p>
+              ${validated.notes ? `<p><strong>Notes:</strong> ${escapeHtml(validated.notes)}</p>` : ''}
+              <p><strong>Booking ID:</strong> ${escapeHtml(booking.id)}</p>
             `,
           });
         }
       } catch (err) {
-        console.warn('[public/book] Failed to send notifications:', err);
+        defaultLogger.warn('[public/book] Failed to send notifications:', err);
       }
     })();
 

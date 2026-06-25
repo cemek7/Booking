@@ -19,7 +19,7 @@ export default function TenantSettingsClient() {
       setTenantId(current?.id ?? null);
       setName(current?.name ?? '');
       setTimezone(current?.timezone ?? '');
-    } catch (e) {
+    } catch {
       // ignore
     }
   }, []);
@@ -67,8 +67,9 @@ export default function TenantSettingsClient() {
       </div>
 
       <div className="mb-3">
-        <label className="block text-sm font-medium">LLM token rate (currency/unit)</label>
-        <input value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" placeholder="e.g. 0.000002" />
+        <label className="block text-sm font-medium">Booka AI preflight rate</label>
+        <input value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" placeholder="credits per token, e.g. 0.000002" />
+        <p className="mt-1 text-xs text-gray-500">Used only to reserve wallet credits before provider usage returns the exact cost.</p>
       </div>
 
       <div className="flex gap-2 items-center">

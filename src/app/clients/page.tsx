@@ -1,4 +1,6 @@
 "use client";
+
+export const dynamic = 'force-dynamic';
 import { useState } from 'react';
 import CustomersList from '@/components/customers/CustomersList';
 import Modal from '@/components/ui/modal';

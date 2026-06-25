@@ -1,16 +1,19 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+
+const CreateSkillSchema = z.object({
+  name: z.string().min(1, 'name is required'),
+  category: z.string().optional(),
+});
 
 // GET /api/skills -> list skills
 // POST /api/skills { name, category? } -> create skill
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const { data, error } = await ctx.supabase
       .from('skills')
@@ -28,20 +31,17 @@ export const GET = createHttpHandler(
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
-    const body = await ctx.request.json();
-    const name = (body?.name || '').trim();
-    const category = body?.category ? String(body.category).trim() : null;
-    
-    if (!name) {
-      throw ApiErrorFactory.badRequest('name is required');
+    const raw = await ctx.request.json();
+    const parsed = CreateSkillSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
     }
-    
+    const name = parsed.data.name.trim();
+    const category = parsed.data.category ? parsed.data.category.trim() : null;
+
     const { data, error } = await ctx.supabase
       .from('skills')
       .insert({

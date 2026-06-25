@@ -12,11 +12,12 @@ describe('MessagingAdapter contract', () => {
 });
 
 describe('PaymentsAdapter contract', () => {
-  it('picks paystack for NGN and stripe otherwise', async () => {
+  it('picks paystack as MVP default for all currencies', async () => {
     const adapter = new PaymentsAdapter({});
     const paystackProvider = (adapter as any).pickProvider('NGN');
-    const stripeProvider = (adapter as any).pickProvider('USD');
+    const usdProvider = (adapter as any).pickProvider('USD');
+    // Paystack is the MVP default; it handles all currencies unless tenant overrides
     expect(paystackProvider?.name).toBe('paystack');
-    expect(stripeProvider?.name).toBe('stripe');
+    expect(usdProvider?.name).toBe('paystack');
   });
 });

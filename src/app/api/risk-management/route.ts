@@ -1,6 +1,7 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { NextResponse } from 'next/server';
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import DoubleBookingPrevention from '@/lib/doubleBookingPrevention';
 import PaymentSecurityService from '@/lib/paymentSecurityService';
@@ -48,11 +49,7 @@ export const POST = createHttpHandler(
     try {
       const url = new URL(ctx.request.url);
       const action = url.searchParams.get('action');
-      const tenantId = ctx.user?.tenantId || ctx.request.headers.get('x-tenant-id');
-
-      if (!tenantId) {
-        throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
-      }
+      const tenantId = getVerifiedTenantId(ctx);
 
       span.setAttribute('risk_management.action', action || 'unknown');
       span.setAttribute('risk_management.tenant_id', tenantId);
@@ -183,11 +180,7 @@ export const GET = createHttpHandler(
     try {
       const url = new URL(ctx.request.url);
       const action = url.searchParams.get('action');
-      const tenantId = ctx.user?.tenantId || ctx.request.headers.get('x-tenant-id');
-
-      if (!tenantId) {
-        throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
-      }
+      const tenantId = getVerifiedTenantId(ctx);
 
       const paymentSecurity = new PaymentSecurityService(ctx.supabase);
 

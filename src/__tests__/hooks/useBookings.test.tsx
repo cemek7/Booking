@@ -222,13 +222,13 @@ describe('useCreateBooking', () => {
       });
 
       const bookingData = {
-        customer_name: 'John Doe',
-        customer_email: 'john@example.com',
-        customer_phone: '+1234567890',
-        service_id: '123e4567-e89b-12d3-a456-426614174000',
-        staff_id: '123e4567-e89b-12d3-a456-426614174001',
-        start_time: new Date('2024-01-15T10:00:00Z').toISOString(),
-        end_time: new Date('2024-01-15T11:00:00Z').toISOString(),
+        customerName: 'John Doe',
+        email: 'john@example.com',
+        phone: '+1234567890',
+        serviceId: '123e4567-e89b-12d3-a456-426614174000',
+        staffId: '123e4567-e89b-12d3-a456-426614174001',
+        start: new Date('2024-01-15T10:00:00Z').toISOString(),
+        end: new Date('2024-01-15T11:00:00Z').toISOString(),
         tenant_id: 'tenant-123',
       };
 
@@ -250,13 +250,13 @@ describe('useCreateBooking', () => {
       });
 
       const bookingData = {
-        customer_name: 'Jane Smith',
-        customer_email: 'jane@example.com',
-        customer_phone: '+9876543210',
-        service_id: '123e4567-e89b-12d3-a456-426614174000',
-        staff_id: '123e4567-e89b-12d3-a456-426614174001',
-        start_time: new Date().toISOString(),
-        end_time: new Date().toISOString(),
+        customerName: 'Jane Smith',
+        email: 'jane@example.com',
+        phone: '+9876543210',
+        serviceId: '123e4567-e89b-12d3-a456-426614174000',
+        staffId: '123e4567-e89b-12d3-a456-426614174001',
+        start: new Date().toISOString(),
+        end: new Date().toISOString(),
         tenant_id: 'tenant-456',
       };
 
@@ -279,13 +279,13 @@ describe('useCreateBooking', () => {
       });
 
       const invalidData = {
-        customer_name: '', // Invalid: empty name
-        customer_email: 'invalid-email', // Invalid: bad email
-        customer_phone: '+1234567890',
-        service_id: '123e4567-e89b-12d3-a456-426614174000',
-        staff_id: '123e4567-e89b-12d3-a456-426614174001',
-        start_time: new Date().toISOString(),
-        end_time: new Date().toISOString(),
+        customerName: '', // Invalid: empty name
+        email: 'invalid-email', // Invalid: bad email
+        phone: '+1234567890',
+        serviceId: '123e4567-e89b-12d3-a456-426614174000',
+        staffId: '123e4567-e89b-12d3-a456-426614174001',
+        start: new Date().toISOString(),
+        end: new Date().toISOString(),
         tenant_id: 'tenant-123',
       };
 
@@ -307,13 +307,13 @@ describe('useCreateBooking', () => {
       });
 
       const bookingData = {
-        customer_name: 'Test User',
-        customer_email: 'test@example.com',
-        customer_phone: '+1234567890',
-        service_id: '123e4567-e89b-12d3-a456-426614174000',
-        staff_id: '123e4567-e89b-12d3-a456-426614174001',
-        start_time: new Date().toISOString(),
-        end_time: new Date().toISOString(),
+        customerName: 'Test User',
+        email: 'test@example.com',
+        phone: '+1234567890',
+        serviceId: '123e4567-e89b-12d3-a456-426614174000',
+        staffId: '123e4567-e89b-12d3-a456-426614174001',
+        start: new Date().toISOString(),
+        end: new Date().toISOString(),
         tenant_id: 'tenant-123',
       };
 
@@ -337,13 +337,13 @@ describe('useCreateBooking', () => {
       });
 
       const bookingData = {
-        customer_name: 'Cache Test',
-        customer_email: 'cache@example.com',
-        customer_phone: '+1234567890',
-        service_id: '123e4567-e89b-12d3-a456-426614174000',
-        staff_id: '123e4567-e89b-12d3-a456-426614174001',
-        start_time: new Date().toISOString(),
-        end_time: new Date().toISOString(),
+        customerName: 'Cache Test',
+        email: 'cache@example.com',
+        phone: '+1234567890',
+        serviceId: '123e4567-e89b-12d3-a456-426614174000',
+        staffId: '123e4567-e89b-12d3-a456-426614174001',
+        start: new Date().toISOString(),
+        end: new Date().toISOString(),
         tenant_id: 'tenant-123',
       };
 

@@ -1,22 +1,12 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
-import { Product } from '@/types/product-catalogue';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * AI-powered product recommendations
  * Analyzes booking history, product relationships, and upsell priorities
  */
-
-interface RecommendationRequest {
-  context: 'booking' | 'product_view' | 'cart' | 'general';
-  customer_id?: string;
-  product_ids?: string[];
-  service_ids?: string[];
-  max_recommendations?: number;
-  price_range_factor?: number; // 0.5 = 50% of current basket value
-}
 
 interface RecommendationScore {
   product_id: string;
@@ -206,7 +196,7 @@ async function generateRecommendations(
       const maxRecommendedPrice = avgPrice * options.price_range_factor;
 
       // Filter out products that are too expensive
-      for (const [productId, score] of scores.entries()) {
+      for (const [productId] of scores.entries()) {
         const product = allProducts.find((p: { id: string; price_cents: number }) => p.id === productId);
         if (product && product.price_cents > maxRecommendedPrice) {
           scores.delete(productId);
@@ -253,7 +243,7 @@ async function addServiceBasedRecommendations(
 
   // Analyze historical booking patterns
   const { data: bookingHistory } = await supabase
-    .from('bookings')
+    .from('reservations')
     .select(`
       id,
       booking_products!inner(product_id)
@@ -340,7 +330,7 @@ async function addCustomerHistoryRecommendations(
 ) {
   // Get customer's purchase history
   const { data: customerBookings } = await supabase
-    .from('bookings')
+    .from('reservations')
     .select(`
       id,
       booking_products!inner(product_id, quantity)
@@ -368,7 +358,7 @@ async function addCustomerHistoryRecommendations(
 
   // Find products frequently bought by similar customers
   const { data: similarCustomers } = await supabase
-    .from('bookings')
+    .from('reservations')
     .select(`
       customer_id,
       booking_products!inner(product_id)

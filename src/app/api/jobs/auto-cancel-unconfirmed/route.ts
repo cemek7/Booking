@@ -1,15 +1,14 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 interface UnconfirmedBooking {
   id: string;
   tenant_id: string;
-  customer_phone: string;
+  phone: string | null;
   customer_name: string;
-  service_type: string;
-  booking_date: string;
-  booking_time: string;
-  start_time: string;
+  service: string | null;
+  start_at: string;
 }
 
 interface TenantSettings {
@@ -30,7 +29,7 @@ export const POST = createHttpHandler(
     const cronSecret = ctx.request.headers.get('x-cron-secret');
     const expectedSecret = process.env.CRON_SECRET;
 
-    if (expectedSecret && cronSecret !== expectedSecret) {
+    if (!expectedSecret || cronSecret !== expectedSecret) {
       throw ApiErrorFactory.missingAuthorization();
     }
 
@@ -66,14 +65,14 @@ export const POST = createHttpHandler(
         const now = new Date();
         const cutoffTime = new Date(now.getTime() + hoursBefore * 60 * 60 * 1000);
 
-        // Find unconfirmed bookings that are within the auto-cancel window
+        // Find unconfirmed reservations that are within the auto-cancel window
         const { data: bookings, error: bookingError } = await ctx.supabase
-          .from('bookings')
-          .select('id, tenant_id, customer_phone, customer_name, service_type, booking_date, booking_time, start_time')
+          .from('reservations')
+          .select('id, tenant_id, phone, customer_name, service, start_at')
           .eq('tenant_id', tenant.id)
           .in('status', ['pending', 'pending_approval', 'unconfirmed'])
-          .lte('start_time', cutoffTime.toISOString())
-          .gt('start_time', now.toISOString());
+          .lte('start_at', cutoffTime.toISOString())
+          .gt('start_at', now.toISOString());
 
         if (bookingError) {
           results.errors.push(`Tenant ${tenant.id}: ${bookingError.message}`);
@@ -84,9 +83,9 @@ export const POST = createHttpHandler(
           results.processed++;
 
           try {
-            // Cancel the booking
+            // Cancel the reservation
             const { error: updateError } = await ctx.supabase
-              .from('bookings')
+              .from('reservations')
               .update({
                 status: 'cancelled',
                 cancellation_reason: 'Auto-cancelled: Not confirmed within required timeframe',
@@ -109,7 +108,7 @@ export const POST = createHttpHandler(
                 tenant_id: booking.tenant_id,
                 action: 'auto_cancelled',
                 actor: { system: 'auto-cancel-job' },
-                notes: `Booking auto-cancelled ${hoursBefore} hour(s) before appointment time`,
+                notes: `Reservation auto-cancelled ${hoursBefore} hour(s) before appointment time`,
                 metadata: {
                   reason: 'unconfirmed',
                   original_status: 'pending',
@@ -156,34 +155,33 @@ async function notifyCustomerCancellation(
   booking: UnconfirmedBooking,
   tenantName: string
 ): Promise<void> {
-  if (!booking.customer_phone) return;
+  if (!booking.phone) return;
 
-  // Get Evolution client config for tenant
-  const { data: tenantConfig } = await supabase
-    .from('tenants')
-    .select('settings')
-    .eq('id', booking.tenant_id)
-    .single();
+  const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+  const client = await getTenantWhatsAppProviderClient(booking.tenant_id);
+  if (!client) return;
 
-  const settings = tenantConfig?.settings as { evolutionInstance?: string; evolutionApiKey?: string } | null;
-
-  if (!settings?.evolutionInstance) {
-    return;
-  }
-
-  // Dynamic import to avoid circular dependencies
-  const { EvolutionClient } = await import('@/lib/evolutionClient');
-  const client = EvolutionClient.getInstance();
+  const startAt = new Date(booking.start_at);
+  const bookingDate = startAt.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const bookingTime = startAt.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 
   const message =
     `Hi ${booking.customer_name || 'there'},\n\n` +
-    `Your booking at ${tenantName} for ${booking.service_type || 'your appointment'} ` +
-    `on ${booking.booking_date} at ${booking.booking_time} was not confirmed in time ` +
+    `Your reservation at ${tenantName} for ${booking.service || 'your appointment'} ` +
+    `on ${bookingDate} at ${bookingTime} was not confirmed in time ` +
     `and has been automatically cancelled.\n\n` +
     `If you'd like to rebook, please contact us or visit our booking page.\n\n` +
     `We apologize for any inconvenience.`;
 
-  await client.sendMessage(booking.tenant_id, booking.customer_phone, message);
+  await client.sendTextMessage(booking.phone, message);
 }
 
 // GET endpoint for health check / status
@@ -192,7 +190,7 @@ export const GET = createHttpHandler(
     return {
       status: 'ok',
       job: 'auto-cancel-unconfirmed',
-      description: 'Cancels unconfirmed bookings 2 hours before appointment time',
+      description: 'Cancels unconfirmed reservations 2 hours before appointment time',
       schedule: 'Recommended: every 15 minutes'
     };
   },
