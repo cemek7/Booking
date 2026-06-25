@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { checkCaps } from './spendCaps/spendGuard';
 
 export interface AiWalletSummary {
   tenant_id: string;
@@ -205,6 +206,7 @@ export interface WalletProtectedCallOptions {
   requestId?: string | null;
   description?: string | null;
   metadata?: Record<string, unknown>;
+  skipCapCheck?: boolean;
 }
 
 export async function withTenantWalletSpend<T>(
@@ -214,6 +216,13 @@ export async function withTenantWalletSpend<T>(
   execute: () => Promise<T>
 ): Promise<T> {
   if (!tenantId) return execute();
+
+  if (!options.skipCapCheck) {
+    const capDecision = await checkCaps(createSupabaseAdminClient(), tenantId);
+    if (!capDecision.allowed) {
+      throw new Error(`wallet_block: ${capDecision.reason}`);
+    }
+  }
 
   const tokenRate = await resolveTenantTokenRate(supabase, tenantId);
   const estimatedCredits = estimateWalletSpend(options.estimatedTokens, tokenRate);

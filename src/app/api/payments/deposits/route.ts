@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import PaymentService from '@/lib/paymentService';
@@ -7,7 +8,7 @@ interface DepositRequest {
   currency?: string;
   email: string;
   reservationId: string;
-  provider?: 'paystack' | 'stripe';
+  provider?: 'paystack' | 'stripe' | 'flutterwave';
 }
 
 export const POST = createHttpHandler(
@@ -22,6 +23,12 @@ export const POST = createHttpHandler(
 
     if (amount <= 0) {
       throw ApiErrorFactory.validationError({ amount: 'must be greater than 0' });
+    }
+
+    // Enforce reasonable bounds: minimum 1 unit, maximum 10,000,000 (e.g. 100,000 NGN in kobo)
+    const MAX_AMOUNT = 10_000_000;
+    if (amount > MAX_AMOUNT) {
+      throw ApiErrorFactory.validationError({ amount: `must not exceed ${MAX_AMOUNT}` });
     }
 
     // Get tenant info
@@ -71,6 +78,17 @@ export const POST = createHttpHandler(
       };
     }
 
+    // Look up tenant's Paystack subaccount (for split-payment settlement)
+    let subaccountCode: string | undefined;
+    if (provider === 'paystack') {
+      const { data: tenant } = await ctx.supabase
+        .from('tenants')
+        .select('metadata')
+        .eq('id', tenantUser.tenant_id)
+        .single();
+      subaccountCode = (tenant?.metadata as any)?.paystack_subaccount_code ?? undefined;
+    }
+
     const paymentService = new PaymentService(ctx.supabase);
     const result = await paymentService.initializePayment({
       tenantId: tenantUser.tenant_id,
@@ -83,6 +101,8 @@ export const POST = createHttpHandler(
         type: 'deposit',
         reservation_id: reservationId,
       },
+      subaccountCode,
+      bearer: 'account',
     });
 
     if (!result.success) {

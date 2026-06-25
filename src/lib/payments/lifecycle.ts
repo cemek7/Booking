@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { defaultLogger } from '@/lib/logger';
 /**
  * Payments Lifecycle Management - Production Ready
  * 
@@ -54,7 +56,7 @@ const CreatePaymentSchema = z.object({
   provider: z.enum(PaymentProviders),
   method: z.enum(PaymentMethods),
   customerId: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
   description: z.string().optional()
 });
 
@@ -62,7 +64,7 @@ const RefundRequestSchema = z.object({
   transactionId: z.string().uuid(),
   amount: z.number().positive().optional(), // If not provided, full refund
   reason: z.string().min(5),
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.string(), z.any()).optional()
 });
 
 export type CreatePaymentRequest = z.infer<typeof CreatePaymentSchema>;
@@ -98,13 +100,13 @@ export class PaymentLifecycleService {
       // Validate request
       const validatedRequest = CreatePaymentSchema.parse(request);
       
-      // Verify booking exists and belongs to tenant
-      const booking = await this.verifyBooking(validatedRequest.bookingId, tenantId);
+      // Verify reservation exists and belongs to tenant
+      const booking = await this.verifyReservation(validatedRequest.bookingId, tenantId);
       
       // Check for existing pending payment
       const existingPayment = await this.checkExistingPayment(validatedRequest.bookingId);
       if (existingPayment) {
-        throw new Error(`Payment already exists for booking: ${existingPayment.id}`);
+        throw new Error(`Payment already exists for reservation: ${existingPayment.id}`);
       }
 
       // Create provider-specific payment
@@ -149,7 +151,7 @@ export class PaymentLifecycleService {
       };
 
     } catch (error) {
-      console.error('Error creating payment:', error);
+      defaultLogger.error('Error creating payment:', error);
       throw error;
     }
   }
@@ -166,7 +168,7 @@ export class PaymentLifecycleService {
       // Find transaction by provider payment ID
       const { data: transaction, error } = await this.supabase
         .from('transactions')
-        .select('*, booking:bookings(*)')
+        .select('*, reservation:reservations(*)')
         .eq('provider_transaction_id', providerPaymentId)
         .eq('provider', provider)
         .single();
@@ -176,7 +178,7 @@ export class PaymentLifecycleService {
       }
 
       if (transaction.status === 'completed') {
-        console.log(`Payment already completed: ${transaction.id}`);
+        defaultLogger.info(`Payment already completed: ${transaction.id}`);
         return;
       }
 
@@ -186,12 +188,11 @@ export class PaymentLifecycleService {
         providerMetadata: metadata
       });
 
-      // Update booking payment status
+      // Confirm reservation after successful payment
       await this.supabase
-        .from('bookings')
+        .from('reservations')
         .update({
-          payment_status: 'paid',
-          status: transaction.booking.status === 'pending_payment' ? 'confirmed' : transaction.booking.status,
+          status: 'confirmed',
           updated_at: new Date().toISOString()
         })
         .eq('id', transaction.booking_id);
@@ -204,7 +205,7 @@ export class PaymentLifecycleService {
         creditAccount: 'revenue',
         amount: transaction.amount,
         currency: transaction.currency,
-        description: `Payment completed for booking ${transaction.booking_id}`
+        description: `Payment completed for reservation ${transaction.booking_id}`
       });
 
       // Publish payment completed event
@@ -222,10 +223,10 @@ export class PaymentLifecycleService {
         { tenantId: transaction.tenant_id }
       );
 
-      console.log(`Payment completed: ${transaction.id}`);
+      defaultLogger.info(`Payment completed: ${transaction.id}`);
 
     } catch (error) {
-      console.error('Error processing payment completion:', error);
+      defaultLogger.error('Error processing payment completion:', error);
       throw error;
     }
   }
@@ -242,7 +243,7 @@ export class PaymentLifecycleService {
     try {
       const { data: transaction, error } = await this.supabase
         .from('transactions')
-        .select('*')
+        .select('*, reservation:reservations(notes)')
         .eq('provider_transaction_id', providerPaymentId)
         .eq('provider', provider)
         .single();
@@ -258,12 +259,12 @@ export class PaymentLifecycleService {
         providerMetadata: metadata
       });
 
-      // Update booking payment status
+      // Mark reservation payment failure on the canonical reservations table
       await this.supabase
-        .from('bookings')
+        .from('reservations')
         .update({
-          payment_status: 'failed',
-          notes: (transaction.booking?.notes || '') + `\nPayment failed: ${failureReason}`,
+          status: 'payment_failed',
+          notes: (transaction.reservation?.notes || '') + `\nPayment failed: ${failureReason}`,
           updated_at: new Date().toISOString()
         })
         .eq('id', transaction.booking_id);
@@ -287,7 +288,7 @@ export class PaymentLifecycleService {
       await this.evaluatePaymentRetry(transaction);
 
     } catch (error) {
-      console.error('Error processing payment failure:', error);
+      defaultLogger.error('Error processing payment failure:', error);
       throw error;
     }
   }
@@ -354,13 +355,12 @@ export class PaymentLifecycleService {
         }
       });
 
-      // Update booking status if full refund
+      // Update reservation status if full refund
       if (refundAmount === originalTransaction.amount) {
         await this.supabase
-          .from('bookings')
+          .from('reservations')
           .update({
-            payment_status: 'refunded',
-            status: 'cancelled',
+            status: 'refunded',
             updated_at: new Date().toISOString()
           })
           .eq('id', originalTransaction.booking_id);
@@ -388,7 +388,7 @@ export class PaymentLifecycleService {
       };
 
     } catch (error) {
-      console.error('Error processing refund:', error);
+      defaultLogger.error('Error processing refund:', error);
       throw error;
     }
   }
@@ -407,7 +407,7 @@ export class PaymentLifecycleService {
         .select('*')
         .eq('provider_transaction_id', providerRefundId)
         .eq('provider', provider)
-        .eq('type', ['refund', 'partial_refund'])
+        .or('type.eq.refund,type.eq.partial_refund')
         .single();
 
       if (error || !refundTransaction) {
@@ -446,7 +446,7 @@ export class PaymentLifecycleService {
       );
 
     } catch (error) {
-      console.error('Error processing refund completion:', error);
+      defaultLogger.error('Error processing refund completion:', error);
       throw error;
     }
   }
@@ -501,7 +501,7 @@ export class PaymentLifecycleService {
       }
 
     } catch (error) {
-      console.error('Error recording ledger entry:', error);
+      defaultLogger.error('Error recording ledger entry:', error);
       throw error;
     }
   }
@@ -597,7 +597,7 @@ export class PaymentLifecycleService {
       return results;
 
     } catch (error) {
-      console.error('Error reconciling payments:', error);
+      defaultLogger.error('Error reconciling payments:', error);
       throw error;
     }
   }
@@ -709,16 +709,16 @@ export class PaymentLifecycleService {
   // HELPER METHODS
   // ===============================
 
-  private async verifyBooking(bookingId: string, tenantId: string) {
+  private async verifyReservation(bookingId: string, tenantId: string) {
     const { data: booking, error } = await this.supabase
-      .from('bookings')
+      .from('reservations')
       .select('*')
       .eq('id', bookingId)
       .eq('tenant_id', tenantId)
       .single();
 
     if (error || !booking) {
-      throw new Error(`Booking not found: ${bookingId}`);
+      throw new Error(`Reservation not found: ${bookingId}`);
     }
 
     return booking;
@@ -741,19 +741,122 @@ export class PaymentLifecycleService {
     booking: any,
     tenantId: string
   ) {
-    // This would integrate with actual payment providers
-    // For now, returning mock data structure
-    const providerPaymentId = `${request.provider}_${Date.now()}`;
-    
+    const amountMinorUnits = Math.round(request.amount * 100);
+    switch (request.provider) {
+      case 'stripe':    return this.createStripePayment(request, amountMinorUnits, tenantId);
+      case 'paystack':  return this.createPaystackPayment(request, booking, amountMinorUnits, tenantId);
+      case 'flutterwave': return this.createFlutterwavePayment(request, booking, amountMinorUnits, tenantId);
+      default: throw new Error(`Unsupported payment provider: ${request.provider}`);
+    }
+  }
+
+  private async createStripePayment(request: CreatePaymentRequest, amountMinorUnits: number, tenantId: string) {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) throw new Error('Stripe credentials not configured');
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const body = new URLSearchParams({
+      amount: String(amountMinorUnits),
+      currency: request.currency.toLowerCase(),
+      'payment_method_types[]': 'card',
+      'metadata[booking_id]': request.bookingId,
+      'metadata[reservation_id]': request.bookingId,
+      'metadata[tenant_id]': tenantId,
+    });
+    if (request.description) body.append('description', request.description);
+
+    const resp = await fetchWithTimeout('https://api.stripe.com/v1/payment_intents', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${stripeKey}`,
+        'Idempotency-Key': `payment_${request.bookingId}_${tenantId}`,
+      },
+      body,
+      timeoutMs: 15_000,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`Stripe payment creation failed: ${err?.error?.message || resp.status}`);
+    }
+    const data = await resp.json();
     return {
-      providerPaymentId,
-      clientSecret: `${providerPaymentId}_secret`,
-      paymentUrl: `https://${request.provider}.com/pay/${providerPaymentId}`,
-      providerData: {
-        created: new Date().toISOString(),
-        provider: request.provider,
-        method: request.method
-      }
+      providerPaymentId: data.id,
+      clientSecret: data.client_secret,
+      paymentUrl: null,
+      providerData: { created: new Date(data.created * 1000).toISOString(), provider: 'stripe', method: request.method, status: data.status },
+    };
+  }
+
+  private async createPaystackPayment(request: CreatePaymentRequest, booking: any, amountMinorUnits: number, tenantId: string) {
+    const paystackKey = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackKey) throw new Error('Paystack credentials not configured');
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const reference = `pay_${request.bookingId}_${Date.now()}`;
+    const email = booking.customer_email || booking.metadata?.customer_email || 'noemail@boka.app';
+
+    const resp = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${paystackKey}` },
+      body: JSON.stringify({
+        amount: amountMinorUnits,
+        email,
+        reference,
+        currency: request.currency.toUpperCase(),
+        metadata: { booking_id: request.bookingId, reservation_id: request.bookingId, tenant_id: tenantId, ...request.metadata },
+        ...(request.description ? { label: request.description } : {}),
+      }),
+      timeoutMs: 15_000,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`Paystack payment creation failed: ${err?.message || resp.status}`);
+    }
+    const data = await resp.json();
+    return {
+      providerPaymentId: data.data.reference,
+      clientSecret: null,
+      paymentUrl: data.data.authorization_url,
+      providerData: { created: new Date().toISOString(), provider: 'paystack', method: request.method, access_code: data.data.access_code },
+    };
+  }
+
+  private async createFlutterwavePayment(request: CreatePaymentRequest, booking: any, amountMinorUnits: number, tenantId: string) {
+    const flwKey = process.env.FLUTTERWAVE_SECRET_KEY;
+    if (!flwKey) throw new Error('Flutterwave credentials not configured');
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const txRef = `pay_${request.bookingId}_${Date.now()}`;
+    const email = booking.customer_email || booking.metadata?.customer_email || 'noemail@boka.app';
+    const redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/api/payments/flutterwave/callback`;
+
+    const resp = await fetchWithTimeout('https://api.flutterwave.com/v3/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${flwKey}` },
+      body: JSON.stringify({
+        tx_ref: txRef,
+        amount: amountMinorUnits / 100,
+        currency: request.currency.toUpperCase(),
+        redirect_url: redirectUrl,
+        customer: { email },
+        meta: { booking_id: request.bookingId, reservation_id: request.bookingId, tenant_id: tenantId, ...request.metadata },
+      }),
+      timeoutMs: 15_000,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`Flutterwave payment creation failed: ${err?.message || resp.status}`);
+    }
+    const data = await resp.json();
+    return {
+      providerPaymentId: txRef,
+      clientSecret: null,
+      paymentUrl: data.data?.link || null,
+      providerData: { created: new Date().toISOString(), provider: 'flutterwave', method: request.method },
     };
   }
 
@@ -824,7 +927,7 @@ export class PaymentLifecycleService {
       .in('type', ['refund', 'partial_refund']);
 
     if (error) {
-      console.error('Error getting total refunded:', error);
+      defaultLogger.error('Error getting total refunded:', error);
       return 0;
     }
 
@@ -836,18 +939,133 @@ export class PaymentLifecycleService {
     amount: number,
     reason: string
   ) {
-    // Mock provider refund creation
-    const providerRefundId = `refund_${originalTransaction.provider}_${Date.now()}`;
-    
+    const amountMinorUnits = Math.round(amount * 100);
+    switch (originalTransaction.provider) {
+      case 'stripe':    return this.createStripeRefund(originalTransaction, amountMinorUnits, reason);
+      case 'paystack':  return this.createPaystackRefund(originalTransaction, amountMinorUnits, reason);
+      case 'flutterwave': return this.createFlutterwaveRefund(originalTransaction, amountMinorUnits, reason);
+      default: throw new Error(`Unsupported refund provider: ${originalTransaction.provider}`);
+    }
+  }
+
+  private async createStripeRefund(originalTransaction: any, amountMinorUnits: number, reason: string) {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) throw new Error('Stripe credentials not configured');
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const stripeReason = reason.toLowerCase().includes('fraud')
+      ? 'fraudulent'
+      : reason.toLowerCase().includes('duplicate') ? 'duplicate' : 'requested_by_customer';
+
+    const resp = await fetchWithTimeout('https://api.stripe.com/v1/refunds', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${stripeKey}`,
+      },
+      body: new URLSearchParams({
+        payment_intent: originalTransaction.provider_transaction_id,
+        amount: String(amountMinorUnits),
+        reason: stripeReason,
+      }),
+      timeoutMs: 15_000,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`Stripe refund failed: ${err?.error?.message || resp.status}`);
+    }
+    const data = await resp.json();
     return {
-      providerRefundId,
-      status: 'processing'
+      providerRefundId: data.id,
+      status: data.status === 'succeeded' ? 'completed' : 'processing',
+    };
+  }
+
+  private async createPaystackRefund(originalTransaction: any, amountMinorUnits: number, reason: string) {
+    const paystackKey = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackKey) throw new Error('Paystack credentials not configured');
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const resp = await fetchWithTimeout('https://api.paystack.co/refund', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${paystackKey}` },
+      body: JSON.stringify({
+        transaction: originalTransaction.provider_transaction_id,
+        amount: amountMinorUnits,
+        merchant_note: reason,
+      }),
+      timeoutMs: 15_000,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`Paystack refund failed: ${err?.message || resp.status}`);
+    }
+    const data = await resp.json();
+    return {
+      providerRefundId: data.data?.id ? String(data.data.id) : `paystack_refund_${Date.now()}`,
+      status: 'processing',
+    };
+  }
+
+  private async createFlutterwaveRefund(originalTransaction: any, amountMinorUnits: number, reason: string) {
+    const flwKey = process.env.FLUTTERWAVE_SECRET_KEY;
+    if (!flwKey) throw new Error('Flutterwave credentials not configured');
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const resp = await fetchWithTimeout(
+      `https://api.flutterwave.com/v3/transactions/${originalTransaction.provider_transaction_id}/refund`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${flwKey}` },
+        body: JSON.stringify({ amount: amountMinorUnits / 100, comments: reason }),
+        timeoutMs: 15_000,
+      }
+    );
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`Flutterwave refund failed: ${err?.message || resp.status}`);
+    }
+    const data = await resp.json();
+    return {
+      providerRefundId: data.data?.id ? String(data.data.id) : `flw_refund_${Date.now()}`,
+      status: 'processing',
     };
   }
 
   private async evaluatePaymentRetry(transaction: any): Promise<void> {
-    // Implement retry logic based on failure reason and business rules
-    // This could be enhanced with ML-based retry predictions
+    const failureReason: string = (transaction.metadata?.failureReason || '').toLowerCase();
+
+    // Never retry card-holder or fraud-related declines
+    const noRetry = ['fraud', 'stolen_card', 'do_not_honor', 'pickup_card', 'card_velocity_exceeded',
+                     'insufficient_funds', 'expired_card', 'incorrect_cvc', 'invalid_card'];
+    if (noRetry.some(r => failureReason.includes(r))) return;
+
+    const retryCount = Number(transaction.metadata?.retry_count || 0);
+    if (retryCount >= 3) return;
+
+    // Only retry transient / network errors
+    const retriable = ['network', 'timeout', 'processing_error', 'service_unavailable', 'try_again'];
+    const shouldRetry = retriable.some(r => failureReason.includes(r)) || failureReason === '';
+    if (!shouldRetry) return;
+
+    // Exponential backoff: 1m, 2m, 4m
+    const retryAt = new Date(Date.now() + Math.pow(2, retryCount) * 60_000).toISOString();
+
+    await this.supabase
+      .from('transactions')
+      .update({
+        metadata: {
+          ...transaction.metadata,
+          retry_count: retryCount + 1,
+          retry_at: retryAt,
+          retry_scheduled: true,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', transaction.id);
   }
 
   private async getProviderTransactions(
@@ -855,8 +1073,90 @@ export class PaymentLifecycleService {
     startDate: string,
     endDate: string
   ): Promise<any[]> {
-    // Mock implementation - would integrate with actual provider APIs
-    return [];
+    switch (provider) {
+      case 'stripe':    return this.getStripeTransactions(startDate, endDate);
+      case 'paystack':  return this.getPaystackTransactions(startDate, endDate);
+      case 'flutterwave': return this.getFlutterwaveTransactions(startDate, endDate);
+      default: return [];
+    }
+  }
+
+  private async getStripeTransactions(startDate: string, endDate: string): Promise<any[]> {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) return [];
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const params = new URLSearchParams({
+      'created[gte]': String(Math.floor(new Date(startDate).getTime() / 1000)),
+      'created[lte]': String(Math.floor(new Date(endDate).getTime() / 1000)),
+      limit: '100',
+    });
+
+    const resp = await fetchWithTimeout(`https://api.stripe.com/v1/payment_intents?${params}`, {
+      headers: { 'Authorization': `Bearer ${stripeKey}` },
+      timeoutMs: 20_000,
+    }).catch(() => null);
+
+    if (!resp?.ok) return [];
+    const data = await resp.json().catch(() => ({ data: [] }));
+    return (data.data || []).map((pi: any) => ({
+      id: pi.id,
+      amount: pi.amount / 100,
+      currency: pi.currency.toUpperCase(),
+      status: pi.status,
+      created_at: new Date(pi.created * 1000).toISOString(),
+    }));
+  }
+
+  private async getPaystackTransactions(startDate: string, endDate: string): Promise<any[]> {
+    const paystackKey = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackKey) return [];
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    const params = new URLSearchParams({ from: startDate, to: endDate, perPage: '100' });
+
+    const resp = await fetchWithTimeout(`https://api.paystack.co/transaction?${params}`, {
+      headers: { 'Authorization': `Bearer ${paystackKey}` },
+      timeoutMs: 20_000,
+    }).catch(() => null);
+
+    if (!resp?.ok) return [];
+    const data = await resp.json().catch(() => ({ data: [] }));
+    return (data.data || []).map((txn: any) => ({
+      id: txn.reference,
+      amount: txn.amount / 100,
+      currency: txn.currency,
+      status: txn.status,
+      created_at: txn.created_at,
+    }));
+  }
+
+  private async getFlutterwaveTransactions(startDate: string, endDate: string): Promise<any[]> {
+    const flwKey = process.env.FLUTTERWAVE_SECRET_KEY;
+    if (!flwKey) return [];
+
+    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+    // Flutterwave date params are YYYY-MM-DD only
+    const params = new URLSearchParams({
+      from: startDate.slice(0, 10),
+      to: endDate.slice(0, 10),
+      page: '1',
+    });
+
+    const resp = await fetchWithTimeout(`https://api.flutterwave.com/v3/transactions?${params}`, {
+      headers: { 'Authorization': `Bearer ${flwKey}` },
+      timeoutMs: 20_000,
+    }).catch(() => null);
+
+    if (!resp?.ok) return [];
+    const data = await resp.json().catch(() => ({ data: [] }));
+    return (data.data || []).map((txn: any) => ({
+      id: txn.tx_ref,
+      amount: txn.amount,
+      currency: txn.currency,
+      status: txn.status === 'successful' ? 'succeeded' : txn.status,
+      created_at: txn.created_at,
+    }));
   }
 
   private mapProviderStatus(providerStatus: string, provider: PaymentProvider): PaymentStatus {
@@ -875,10 +1175,17 @@ export class PaymentLifecycleService {
         'success': 'completed',
         'failed': 'failed',
         'abandoned': 'cancelled'
+      },
+      flutterwave: {
+        'successful': 'completed',
+        'failed': 'failed',
+        'cancelled': 'cancelled',
+        'pending': 'pending',
+        'pending-verification': 'processing',
       }
     };
 
-    return statusMaps[provider]?.[providerStatus] || 'pending';
+    return (statusMaps as any)[provider]?.[providerStatus] || 'pending';
   }
 
   private async getRecentTransactions(
@@ -889,7 +1196,7 @@ export class PaymentLifecycleService {
     const cutoff = new Date();
     cutoff.setHours(cutoff.getHours() - hoursBack);
 
-    let query = this.supabase
+    const query = this.supabase
       .from('transactions')
       .select('*')
       .gte('created_at', cutoff.toISOString());
@@ -899,26 +1206,80 @@ export class PaymentLifecycleService {
       // query = query.eq('customer_id', customerId);
     }
 
-    const { data, error } = await query;
+    const { data } = await query;
     return data || [];
   }
 
   private async analyzeGeographicRisk(ipAddress: string) {
-    // Mock implementation - would integrate with IP geolocation service
-    return {
-      isHighRisk: false,
-      severity: 0,
-      description: ''
-    };
+    // Skip private / loopback addresses
+    if (/^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|::1)/.test(ipAddress)) {
+      return { isHighRisk: false, severity: 0, description: '' };
+    }
+
+    try {
+      const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
+      // ip-api.com free tier: 45 req/min, no auth required
+      const resp = await fetchWithTimeout(
+        `http://ip-api.com/json/${ipAddress}?fields=status,countryCode,proxy,hosting`,
+        { timeoutMs: 5_000 }
+      );
+      if (!resp.ok) return { isHighRisk: false, severity: 0, description: '' };
+
+      const geo = await resp.json().catch(() => ({}));
+      if (geo.status !== 'success') return { isHighRisk: false, severity: 0, description: '' };
+
+      if (geo.proxy || geo.hosting) {
+        return {
+          isHighRisk: true,
+          severity: 20,
+          description: `Transaction from ${geo.proxy ? 'proxy/VPN' : 'datacenter'} IP (${geo.countryCode})`,
+        };
+      }
+
+      return { isHighRisk: false, severity: 0, description: '' };
+    } catch {
+      // Non-fatal: geolocation failure must not block payments
+      return { isHighRisk: false, severity: 0, description: '' };
+    }
   }
 
   private async analyzeDeviceRisk(deviceFingerprint: string) {
-    // Mock implementation - would analyze device characteristics
-    return {
-      isRisky: false,
-      severity: 0,
-      description: ''
-    };
+    try {
+      // 1. Check against known flagged device fingerprints
+      const { data: flagged } = await this.supabase
+        .from('flagged_devices')
+        .select('risk_level, reason')
+        .eq('fingerprint', deviceFingerprint)
+        .maybeSingle();
+
+      if (flagged) {
+        const severity = flagged.risk_level === 'high' ? 35 : flagged.risk_level === 'medium' ? 20 : 10;
+        return {
+          isRisky: true,
+          severity,
+          description: `Device fingerprint previously flagged: ${flagged.reason || 'suspicious activity'}`,
+        };
+      }
+
+      // 2. Card-testing signal: same device used in many transactions
+      const { count } = await this.supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('metadata->>device_fingerprint', deviceFingerprint)
+        .neq('status', 'failed');
+
+      if ((count || 0) > 10) {
+        return {
+          isRisky: true,
+          severity: 25,
+          description: `Device fingerprint linked to ${count} transactions — possible card testing`,
+        };
+      }
+
+      return { isRisky: false, severity: 0, description: '' };
+    } catch {
+      return { isRisky: false, severity: 0, description: '' };
+    }
   }
 }
 
@@ -935,4 +1296,145 @@ export function getPaymentService(): PaymentLifecycleService {
   return paymentServiceInstance;
 }
 
-export { PaymentLifecycleService };
+// ===============================
+// UNIFIED POST-PAYMENT HANDLER
+// Called by all three webhook handlers after signature verification
+// ===============================
+
+export interface PaymentSuccessInput {
+  tenantId: string;
+  /** Payment reference / transaction ID from the provider */
+  reference: string;
+  provider: 'paystack' | 'stripe' | 'flutterwave';
+  /** Raw amount in minor units (kobo / cents) — optional */
+  amountMinor?: number;
+  currency?: string;
+  /** The reservation/booking ID if available from payment metadata */
+  reservationId?: string | null;
+}
+
+/**
+ * handlePaymentSuccess — shared post-payment confirmation path
+ *
+ * 1. Resolve reservation from reference or metadata
+ * 2. Mark reservation confirmed
+ * 3. Mark transaction successful
+ * 4. Send WhatsApp confirmation with calendar link
+ * 5. Send email confirmation with calendar link
+ */
+export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<void> {
+  const supabase = createServerSupabaseClient();
+  const { tenantId, reference, provider, reservationId } = input;
+
+  try {
+    // 1. Resolve reservation
+    let bookingId: string | null = reservationId || null;
+
+    if (!bookingId) {
+      const { data: tx } = await supabase
+        .from('transactions')
+        .select('raw')
+        .eq('provider_reference', reference)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      bookingId = (tx?.raw as any)?.reservation_id ?? null;
+    }
+
+    if (!bookingId) {
+      defaultLogger.warn(`[lifecycle] handlePaymentSuccess: no reservation for ref=${reference} tenant=${tenantId}`);
+      return;
+    }
+
+    // 2. Confirm reservation — only update if not already in a terminal state
+    // (prevents reactivating cancelled reservations when a late payment arrives)
+    const { data: reservation, error: resError } = await supabase
+      .from('reservations')
+      .update({ status: 'confirmed', updated_at: new Date().toISOString() })
+      .eq('id', bookingId)
+      .eq('tenant_id', tenantId)
+      .not('status', 'in', '("cancelled","completed","refunded")')
+      .select('id, start_at, end_at, customer_name, customer_phone, customer_email, notes, service_id')
+      .maybeSingle();
+
+    if (resError) {
+      defaultLogger.error('[lifecycle] handlePaymentSuccess: reservation update failed', resError);
+    }
+
+    // 3. Mark transaction success
+    await supabase
+      .from('transactions')
+      .update({ status: 'success', updated_at: new Date().toISOString() })
+      .eq('provider_reference', reference)
+      .eq('tenant_id', tenantId);
+
+    if (!reservation) return;
+
+    // Fetch service details
+    const { data: service } = await supabase
+      .from('services')
+      .select('name, duration')
+      .eq('id', reservation.service_id)
+      .maybeSingle();
+
+    const { data: tenantRow } = await supabase
+      .from('tenants')
+      .select('name, metadata')
+      .eq('id', tenantId)
+      .maybeSingle();
+
+    const serviceName: string = service?.name || 'Appointment';
+    const durationMinutes: number = service?.duration || 60;
+    const tenantName: string = tenantRow?.name || 'Boka';
+    const startAt = new Date(reservation.start_at);
+    const endAt = reservation.end_at
+      ? new Date(reservation.end_at)
+      : new Date(startAt.getTime() + durationMinutes * 60000);
+
+    const dateStr = startAt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const timeStr = startAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+    const calendarEvent = {
+      title: `${serviceName} - ${tenantName}`,
+      description: `Service: ${serviceName}\nBooking ref: #${bookingId.slice(-6).toUpperCase()}${reservation.notes ? `\nNotes: ${reservation.notes}` : ''}`,
+      startTime: startAt,
+      endTime: endAt,
+    };
+
+      // 4. WhatsApp confirmation
+    if (reservation.customer_phone) {
+      try {
+        const { getTenantWhatsAppConfig } = await import('@/lib/whatsapp/evolutionClient');
+        const waConfig = await getTenantWhatsAppConfig(tenantId);
+        if (waConfig) {
+          const { sendBookingConfirmationWhatsApp } = await import('@/lib/integrations/whatsapp-service');
+          await sendBookingConfirmationWhatsApp(
+            reservation.customer_phone,
+            reservation.customer_name || 'there',
+            { serviceName, date: dateStr, time: timeStr, calendarEvent }
+          );
+        }
+      } catch (waErr) {
+        defaultLogger.warn('[lifecycle] WhatsApp confirmation failed', waErr);
+      }
+    }
+
+    // 5. Email confirmation
+    if (reservation.customer_email) {
+      try {
+        const { sendBookingConfirmation } = await import('@/lib/integrations/email-service');
+        await sendBookingConfirmation(
+          reservation.customer_email,
+          reservation.customer_name || 'there',
+          { serviceName, date: dateStr, time: timeStr, calendarEvent }
+        );
+      } catch (emailErr) {
+        defaultLogger.warn('[lifecycle] Email confirmation failed', emailErr);
+      }
+    }
+
+    defaultLogger.info(`[lifecycle] Payment confirmed: booking=${bookingId} provider=${provider} ref=${reference}`);
+  } catch (err) {
+    defaultLogger.error('[lifecycle] handlePaymentSuccess error', err);
+  }
+}
