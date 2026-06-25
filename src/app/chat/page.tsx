@@ -1,5 +1,7 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from 'react';
+
+export const dynamic = 'force-dynamic';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatThread } from '@/components/chat/ChatThread';
@@ -7,8 +9,8 @@ import { ChatComposer } from '@/components/chat/ChatComposer';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import { useChatRealtime } from '@/hooks/useChatRealtime';
 
-// WhatsApp-style full height two-pane layout (sidebar + thread)
-export default function ChatPage() {
+// Inner component that uses useSearchParams — must be inside <Suspense>
+function ChatPageInner() {
   const { tenant } = useTenant();
   const { chats, activeId, setActiveId, messages, send, loading } = useChatRealtime(tenant?.id);
   const [query, setQuery] = useState('');
@@ -86,5 +88,14 @@ export default function ChatPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// WhatsApp-style full height two-pane layout (sidebar + thread)
+export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="flex h-[calc(100vh-4rem)] items-center justify-center text-sm text-gray-500">Loading chats…</div>}>
+      <ChatPageInner />
+    </Suspense>
   );
 }

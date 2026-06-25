@@ -19,15 +19,17 @@ export async function runGraduationAdvisor(admin: SupabaseClient): Promise<numbe
     await sendTelegramAlert(
       `Deliverability advisor: tenant ${candidate.tenant_id} reached ${candidate.initiated_recipients_24h} initiated recipients in 24h. Recommend graduating to a dedicated number.`,
     );
+    // notifications columns: tenant_id, title, message, meta, read (NO type/body/metadata).
     await admin.from('notifications').insert({
       tenant_id: candidate.tenant_id,
-      type: 'graduation_recommended',
       title: 'Dedicated number recommended',
-      body: `Tenant exceeded initiated-recipient threshold (${candidate.initiated_recipients_24h}/${threshold}).`,
-      metadata: {
+      message: `Tenant exceeded initiated-recipient threshold (${candidate.initiated_recipients_24h}/${threshold}).`,
+      meta: {
+        kind: 'graduation_recommended',
         initiated_recipients_24h: candidate.initiated_recipients_24h,
         threshold,
       },
+      read: false,
     });
   }
 

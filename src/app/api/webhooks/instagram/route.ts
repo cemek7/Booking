@@ -201,7 +201,12 @@ async function upsertChat(
   const { data, error } = await supabase
     .from('chats')
     .upsert(
-      { tenant_id: tenantId, customer_phone: externalId, last_message_at: new Date().toISOString() },
+      {
+        tenant_id: tenantId,
+        customer_phone: externalId,
+        metadata: { channel: 'instagram' },
+        last_message_at: new Date().toISOString(),
+      },
       { onConflict: 'tenant_id,customer_phone' }
     )
     .select('id')

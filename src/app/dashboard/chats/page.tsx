@@ -1,42 +1,32 @@
+export const dynamic = 'force-dynamic';
 import { requireAuth } from '@/lib/auth/server-auth';
-import ChatsList from '@/components/chat/ChatsList';
+import ChatsPanel from '@/components/chat/ChatsPanel';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 export default async function ChatsPage() {
   const user = await requireAuth(['owner', 'manager', 'staff']);
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Customer Messages</h1>
-        <p className="text-sm text-gray-600">
-          {user.role === 'owner' && 'View all customer communications and team chats across your business.'}
-          {user.role === 'manager' && 'Manage team communications and customer inquiries.'}
-          {user.role === 'staff' && 'View your communications with customers.'}
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded border shadow-sm">
-          <div className="text-xs text-gray-500 mb-1">Total Conversations</div>
-          <div className="text-2xl font-bold">—</div>
-        </div>
-        <div className="bg-white p-4 rounded border shadow-sm">
-          <div className="text-xs text-gray-500 mb-1">Unread Messages</div>
-          <div className="text-2xl font-bold text-orange-600">—</div>
-        </div>
-        <div className="bg-white p-4 rounded border shadow-sm">
-          <div className="text-xs text-gray-500 mb-1">Avg Response Time</div>
-          <div className="text-2xl font-bold">—</div>
-        </div>
-        <div className="bg-white p-4 rounded border shadow-sm">
-          <div className="text-xs text-gray-500 mb-1">Open Chats</div>
-          <div className="text-2xl font-bold">—</div>
+    <div className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 shadow-sm">
+        <div className="p-6 lg:p-8">
+          <Badge variant="outline" className="w-fit rounded-full border-slate-200 bg-white px-3 py-1 text-slate-600">
+            Messages
+          </Badge>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">Customer Messages</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            {user.role === 'owner' && 'View all customer communications across your business.'}
+            {user.role === 'manager' && 'Manage team communications and customer inquiries.'}
+            {user.role === 'staff' && 'View your communications with customers.'}
+          </p>
         </div>
       </div>
-
-      <div className="bg-white rounded border shadow-sm p-6">
-        <ChatsList />
-      </div>
+      <Card className="p-0">
+        <CardContent className="p-5">
+          <ChatsPanel />
+        </CardContent>
+      </Card>
     </div>
   );
 }

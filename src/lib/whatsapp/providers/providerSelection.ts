@@ -1,5 +1,7 @@
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { EvolutionAdapter } from './evolution';
+import { InstagramAdapter } from './instagram';
 import { MetaAdapter } from './meta';
 import { WahaAdapter } from './waha';
 import type { ProviderConfig, WhatsAppProviderClient } from './types';
@@ -77,4 +79,37 @@ export async function getTenantWhatsAppProviderClient(tenantId: string): Promise
   if (config.provider === 'waha') return new WahaAdapter(config);
   if (config.provider === 'meta') return new MetaAdapter(config);
   return new EvolutionAdapter(config);
+}
+
+async function getTenantInstagramProviderConfig(tenantId: string): Promise<ProviderConfig | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('whatsapp_provider_secrets')
+    .select('api_key, base_url, instance_name')
+    .eq('tenant_id', tenantId)
+    .eq('provider', 'instagram')
+    .maybeSingle();
+
+  if (error || !data?.api_key || !data?.base_url || !data?.instance_name) {
+    return null;
+  }
+
+  return {
+    provider: 'instagram',
+    baseUrl: trimTrailingSlash(data.base_url),
+    apiKey: data.api_key,
+    instanceName: data.instance_name,
+  };
+}
+
+export async function getTenantChannelProviderClient(
+  tenantId: string,
+  channel: 'whatsapp' | 'instagram' = 'whatsapp'
+): Promise<WhatsAppProviderClient | null> {
+  if (channel === 'instagram') {
+    const config = await getTenantInstagramProviderConfig(tenantId);
+    return config ? new InstagramAdapter(config) : null;
+  }
+
+  return getTenantWhatsAppProviderClient(tenantId);
 }

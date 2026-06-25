@@ -1,12 +1,27 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { chatMessagesSent } from '@/lib/metrics';
 import { trace } from '@opentelemetry/api';
+import { defaultLogger } from '@/lib/logger';
+import { getTenantChannelProviderClient } from '@/lib/whatsapp/providers/providerSelection';
 
 const PostMessageBodySchema = z.object({
   text: z.string().trim().min(1, 'Message text cannot be empty'),
 });
+
+function instagramReplyWindowMs(): number {
+  const hours = Number(process.env.META_SERVICE_WINDOW_HOURS ?? 24);
+  return (Number.isFinite(hours) ? hours : 24) * 60 * 60 * 1000;
+}
+
+function isInstagramReplyWindowOpen(lastInboundAt: string | null): boolean {
+  if (!lastInboundAt) return false;
+  const timestamp = Date.parse(lastInboundAt);
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp < instagramReplyWindowMs();
+}
 
 /**
  * POST /api/chats/{id}/messages
@@ -34,7 +49,7 @@ export const POST = createHttpHandler(
       // Fetch the chat to verify it exists and get its tenant_id
       const { data: chat, error: chatError } = await ctx.supabase
         .from('chats')
-        .select('id, tenant_id, customer_phone')
+        .select('id, tenant_id, customer_phone, metadata')
         .eq('id', chatId)
         .single();
 
@@ -43,12 +58,35 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.notFound('Chat');
       }
       span.setAttribute('tenant.id', chat.tenant_id);
+      const channel = chat.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp';
+      span.setAttribute('chat.channel', channel);
 
       // Verify user has access to this tenant's chat
       if (ctx.user?.tenantId && ctx.user.tenantId !== chat.tenant_id) {
         throw ApiErrorFactory.forbidden('Access denied to this chat');
       }
       span.setAttribute('auth.authorized', true);
+
+      if (channel === 'instagram') {
+        const { data: conv, error: convError } = await ctx.supabase
+          .from('whatsapp_conversations')
+          .select('last_inbound_at')
+          .eq('tenant_id', chat.tenant_id)
+          .eq('channel', 'instagram')
+          .eq('external_id', chat.customer_phone)
+          .maybeSingle();
+
+        if (convError) {
+          span.recordException(convError);
+          throw ApiErrorFactory.databaseError(convError);
+        }
+
+        if (!isInstagramReplyWindowOpen(typeof conv?.last_inbound_at === 'string' ? conv.last_inbound_at : null)) {
+          throw ApiErrorFactory.accountLocked(
+            'Instagram replies are only allowed within 24 hours of the customer’s last message. Continue on WhatsApp for follow-up.'
+          );
+        }
+      }
 
       // Insert the outbound message
       const { data: newMessage, error: insertError } = await ctx.supabase
@@ -75,30 +113,18 @@ export const POST = createHttpHandler(
       // Fire-and-forget handoff to external messaging provider
       (async () => {
         try {
-          const { data: tenant } = await ctx.supabase
-            .from('tenants')
-            .select('whatsapp_api_provider, waba_api_key, whatsapp_number_id, whatsapp_number')
-            .eq('id', chat.tenant_id)
-            .single();
-
-          const baseUrl = process.env.EVOLUTION_BASE_URL || 'https://api.evolution-api.com';
-          const apiKey = tenant?.waba_api_key || process.env.EVOLUTION_API_KEY;
-          const instance = tenant?.whatsapp_number_id;
+          const client = await getTenantChannelProviderClient(chat.tenant_id, channel);
           const number = chat?.customer_phone;
 
-          if (apiKey && instance && number) {
-            await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instance)}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'apikey': apiKey },
-              body: JSON.stringify({ number, textMessage: { text } }),
-            });
-            span.addEvent('Handoff to Evolution API successful');
+          if (client && number) {
+            await client.sendTextMessage(number, text);
+            span.addEvent('Handoff to channel provider successful');
           } else {
-            span.addEvent('Handoff to Evolution API skipped: missing config');
+            span.addEvent('Handoff to channel provider skipped: missing config');
           }
         } catch (e) {
           span.recordException(e as Error);
-          console.error('Evolution API handoff failed:', e);
+          defaultLogger.error('Channel provider handoff failed:', e);
         }
       })();
 

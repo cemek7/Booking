@@ -1,6 +1,10 @@
-import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
+import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
+import { getStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
 
 export interface EvolutionAPIConfig {
+  provider?: 'evolution' | 'waha' | 'meta';
   baseUrl: string;
   apiKey: string;
   instanceName: string;
@@ -48,6 +52,56 @@ export interface MessageTemplate {
   }>;
 }
 
+interface EvolutionIncomingMessage {
+  key?: {
+    id?: string;
+    participant?: string;
+    remoteJid?: string;
+    fromMe?: boolean;
+  };
+  messageTimestamp?: number;
+  message?: {
+    conversation?: string;
+    extendedTextMessage?: {
+      text?: string;
+      contextInfo?: {
+        stanzaId?: string;
+        quotedMessage?: { conversation?: string };
+        participant?: string;
+      };
+    };
+    imageMessage?: { caption?: string; mimetype?: string; fileName?: string; url?: string };
+    videoMessage?: { caption?: string; mimetype?: string; fileName?: string; url?: string };
+    audioMessage?: { mimetype?: string; fileName?: string; url?: string };
+    documentMessage?: { mimetype?: string; fileName?: string; url?: string };
+    locationMessage?: unknown;
+  };
+}
+
+function normalizeUrl(url?: string | null): string {
+  return (url ?? '').trim().toLowerCase().replace(/\/+$/, '');
+}
+
+function inferProviderFromConfigRow(data: Record<string, unknown>): 'evolution' | 'waha' | 'meta' {
+  const explicitProvider = data.provider;
+  if (explicitProvider === 'waha' || explicitProvider === 'evolution' || explicitProvider === 'meta') {
+    return explicitProvider;
+  }
+
+  const primaryBase = normalizeUrl((data.provider_base_url as string | undefined) ?? (data.evolution_base_url as string | undefined));
+  const wahaBase = normalizeUrl(process.env.WAHA_API_BASE);
+
+  if (primaryBase && wahaBase && primaryBase === wahaBase) {
+    return 'waha';
+  }
+
+  if (primaryBase.includes(':3100')) {
+    return 'waha';
+  }
+
+  return 'evolution';
+}
+
 class EvolutionAPIClient {
   private config: EvolutionAPIConfig;
   private get supabase() { return createSupabaseAdminClient(); }
@@ -56,12 +110,16 @@ class EvolutionAPIClient {
     this.config = config;
   }
 
+  /** Public accessors used by connectionManager when it builds raw fetch URLs. */
+  get baseUrl(): string { return this.config.baseUrl; }
+  get apiKey(): string  { return this.config.apiKey; }
+
   /**
    * Initialize WhatsApp instance
    */
   async initializeInstance(): Promise<{ success: boolean; qrCode?: string; status?: string }> {
     try {
-      const response = await fetch(`${this.config.baseUrl}/instance/create`, {
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/instance/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -77,8 +135,16 @@ class EvolutionAPIClient {
           readMessages: true,
           readStatus: true,
           syncFullHistory: false,
-          webhookUrl: this.config.webhookUrl
-        })
+          webhook: {
+            enabled: true,
+            url: this.config.webhookUrl,
+            webhookByEvents: true,
+            webhookBase64: true,
+            events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE', 'MESSAGES_UPSERT'],
+            webhookSecret: process.env.EVOLUTION_WEBHOOK_SECRET,
+          },
+        }),
+        timeoutMs: 10_000,
       });
 
       if (!response.ok) {
@@ -88,12 +154,12 @@ class EvolutionAPIClient {
       const data = await response.json();
       return {
         success: true,
-        qrCode: data.qrcode?.code,
+        qrCode: data.qrcode?.base64 || data.qrcode?.code,
         status: data.instance?.status
       };
 
     } catch (error) {
-      console.error('Failed to initialize WhatsApp instance:', error);
+      defaultLogger.error('Failed to initialize WhatsApp instance:', error);
       return { success: false };
     }
   }
@@ -103,8 +169,9 @@ class EvolutionAPIClient {
    */
   async getConnectionStatus(): Promise<{ connected: boolean; status?: string; phone?: string }> {
     try {
-      const response = await fetch(`${this.config.baseUrl}/instance/connectionState/${this.config.instanceName}`, {
-        headers: { 'apikey': this.config.apiKey }
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/instance/connectionState/${this.config.instanceName}`, {
+        headers: { 'apikey': this.config.apiKey },
+        timeoutMs: 10_000,
       });
 
       if (!response.ok) {
@@ -119,7 +186,7 @@ class EvolutionAPIClient {
       };
 
     } catch (error) {
-      console.error('Failed to get connection status:', error);
+      defaultLogger.error('Failed to get connection status:', error);
       return { connected: false };
     }
   }
@@ -132,7 +199,7 @@ class EvolutionAPIClient {
       // Clean phone number (remove non-digits, ensure country code)
       const cleanNumber = this.cleanPhoneNumber(to);
       
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         number: cleanNumber,
         textMessage: {
           text: text
@@ -143,13 +210,14 @@ class EvolutionAPIClient {
         payload.quoted = { id: quotedMessageId };
       }
 
-      const response = await fetch(`${this.config.baseUrl}/message/sendText/${this.config.instanceName}`, {
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/message/sendText/${this.config.instanceName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': this.config.apiKey
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        timeoutMs: 10_000,
       });
 
       if (!response.ok) {
@@ -163,7 +231,7 @@ class EvolutionAPIClient {
       };
 
     } catch (error) {
-      console.error('Failed to send text message:', error);
+      defaultLogger.error('Failed to send text message:', error);
       return { success: false };
     }
   }
@@ -180,7 +248,7 @@ class EvolutionAPIClient {
     try {
       const cleanNumber = this.cleanPhoneNumber(to);
       
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         number: cleanNumber
       };
 
@@ -215,13 +283,14 @@ class EvolutionAPIClient {
           break;
       }
 
-      const response = await fetch(`${this.config.baseUrl}/message/sendMedia/${this.config.instanceName}`, {
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/message/sendMedia/${this.config.instanceName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': this.config.apiKey
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        timeoutMs: 10_000,
       });
 
       if (!response.ok) {
@@ -235,7 +304,7 @@ class EvolutionAPIClient {
       };
 
     } catch (error) {
-      console.error('Failed to send media message:', error);
+      defaultLogger.error('Failed to send media message:', error);
       return { success: false };
     }
   }
@@ -259,13 +328,14 @@ class EvolutionAPIClient {
         }
       };
 
-      const response = await fetch(`${this.config.baseUrl}/message/sendTemplate/${this.config.instanceName}`, {
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/message/sendTemplate/${this.config.instanceName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': this.config.apiKey
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        timeoutMs: 10_000,
       });
 
       if (!response.ok) {
@@ -279,7 +349,7 @@ class EvolutionAPIClient {
       };
 
     } catch (error) {
-      console.error('Failed to send template message:', error);
+      defaultLogger.error('Failed to send template message:', error);
       return { success: false };
     }
   }
@@ -289,10 +359,11 @@ class EvolutionAPIClient {
    */
   async getChatMessages(chatId: string, limit: number = 50): Promise<WhatsAppMessage[]> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.config.baseUrl}/chat/fetchMessages/${this.config.instanceName}/${chatId}?limit=${limit}`,
         {
-          headers: { 'apikey': this.config.apiKey }
+          headers: { 'apikey': this.config.apiKey },
+          timeoutMs: 10_000,
         }
       );
 
@@ -304,7 +375,7 @@ class EvolutionAPIClient {
       return this.normalizeMessages(data.messages || []);
 
     } catch (error) {
-      console.error('Failed to get chat messages:', error);
+      defaultLogger.error('Failed to get chat messages:', error);
       return [];
     }
   }
@@ -316,7 +387,7 @@ class EvolutionAPIClient {
     try {
       const cleanNumber = this.cleanPhoneNumber(number);
       
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.config.baseUrl}/chat/whatsappNumbers/${this.config.instanceName}`,
         {
           method: 'POST',
@@ -326,7 +397,8 @@ class EvolutionAPIClient {
           },
           body: JSON.stringify({
             numbers: [cleanNumber]
-          })
+          }),
+          timeoutMs: 10_000,
         }
       );
 
@@ -351,7 +423,7 @@ class EvolutionAPIClient {
       return null;
 
     } catch (error) {
-      console.error('Failed to get contact info:', error);
+      defaultLogger.error('Failed to get contact info:', error);
       return null;
     }
   }
@@ -361,7 +433,7 @@ class EvolutionAPIClient {
    */
   async markAsRead(messageId: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.config.baseUrl}/chat/markMessageAsRead/${this.config.instanceName}`, {
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/chat/markMessageAsRead/${this.config.instanceName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -369,13 +441,14 @@ class EvolutionAPIClient {
         },
         body: JSON.stringify({
           readMessages: [{ id: messageId }]
-        })
+        }),
+        timeoutMs: 10_000,
       });
 
       return response.ok;
 
     } catch (error) {
-      console.error('Failed to mark message as read:', error);
+      defaultLogger.error('Failed to mark message as read:', error);
       return false;
     }
   }
@@ -387,7 +460,7 @@ class EvolutionAPIClient {
     try {
       const cleanNumber = this.cleanPhoneNumber(to);
       
-      const response = await fetch(`${this.config.baseUrl}/chat/presence/${this.config.instanceName}`, {
+      const response = await fetchWithTimeout(`${this.config.baseUrl}/chat/presence/${this.config.instanceName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -396,15 +469,36 @@ class EvolutionAPIClient {
         body: JSON.stringify({
           number: cleanNumber,
           presence: typing ? 'composing' : 'available'
-        })
+        }),
+        timeoutMs: 10_000,
       });
 
       return response.ok;
 
     } catch (error) {
-      console.error('Failed to set typing indicator:', error);
+      defaultLogger.error('Failed to set typing indicator:', error);
       return false;
     }
+  }
+
+  /** Convenience wrapper — sends an image. Used by mediaHandler. */
+  async sendImageMessage(to: string, url: string, caption?: string) {
+    return this.sendMediaMessage(to, { url, mimetype: 'image/jpeg' }, caption, 'image');
+  }
+
+  /** Convenience wrapper — sends a document. Used by mediaHandler. */
+  async sendDocumentMessage(to: string, url: string, filename?: string, caption?: string) {
+    return this.sendMediaMessage(to, { url, mimetype: 'application/octet-stream', filename }, caption, 'document');
+  }
+
+  /** Convenience wrapper — sends an audio file. Used by mediaHandler. */
+  async sendAudioMessage(to: string, url: string) {
+    return this.sendMediaMessage(to, { url, mimetype: 'audio/mpeg' }, undefined, 'audio');
+  }
+
+  /** Convenience wrapper — sends a video. Used by mediaHandler. */
+  async sendVideoMessage(to: string, url: string, caption?: string) {
+    return this.sendMediaMessage(to, { url, mimetype: 'video/mp4' }, caption, 'video');
   }
 
   /**
@@ -414,9 +508,9 @@ class EvolutionAPIClient {
     // Remove all non-digits
     let cleaned = number.replace(/\D/g, '');
     
-    // Add country code if missing (assuming US +1 for now)
+    // Add country code if missing; uses DEFAULT_COUNTRY_CODE env var or '1' as fallback
     if (cleaned.length === 10) {
-      cleaned = '1' + cleaned;
+      cleaned = (process.env.DEFAULT_COUNTRY_CODE || '1') + cleaned;
     }
     
     // Remove leading + if present
@@ -430,33 +524,39 @@ class EvolutionAPIClient {
   /**
    * Normalize message format from Evolution API
    */
-  private normalizeMessages(rawMessages: any[]): WhatsAppMessage[] {
-    return rawMessages.map(msg => ({
-      id: msg.key?.id || msg.messageTimestamp?.toString(),
-      from: msg.key?.participant || msg.key?.remoteJid,
-      to: msg.key?.remoteJid,
+  private normalizeMessages(rawMessages: EvolutionIncomingMessage[]): WhatsAppMessage[] {
+    return rawMessages.map(msg => {
+      const timestamp = typeof msg.messageTimestamp === 'number' ? msg.messageTimestamp * 1000 : Date.now();
+      const messageId = msg.key?.id || String(timestamp);
+
+      return {
+      id: messageId,
+      from: msg.key?.participant || msg.key?.remoteJid || '',
+      to: msg.key?.remoteJid || '',
       body: msg.message?.conversation || 
             msg.message?.extendedTextMessage?.text || 
             msg.message?.imageMessage?.caption || 
             msg.message?.videoMessage?.caption || 
             '',
       type: this.getMessageType(msg.message),
-      timestamp: msg.messageTimestamp * 1000, // Convert to milliseconds
-      messageId: msg.key?.id,
+      timestamp, // Convert to milliseconds
+      messageId,
       fromMe: msg.key?.fromMe || false,
       quotedMessage: msg.message?.extendedTextMessage?.contextInfo?.quotedMessage ? {
-        id: msg.message.extendedTextMessage.contextInfo.stanzaId,
+        id: msg.message.extendedTextMessage.contextInfo.stanzaId || messageId,
         body: msg.message.extendedTextMessage.contextInfo.quotedMessage.conversation || '',
-        from: msg.message.extendedTextMessage.contextInfo.participant
+        from: msg.message.extendedTextMessage.contextInfo.participant || ''
       } : undefined,
       mediaData: this.extractMediaData(msg.message)
-    }));
+      };
+    });
   }
 
   /**
    * Determine message type from Evolution API message object
    */
-  private getMessageType(message: any): WhatsAppMessage['type'] {
+  private getMessageType(message: EvolutionIncomingMessage['message']): WhatsAppMessage['type'] {
+    if (!message) return 'text';
     if (message.conversation || message.extendedTextMessage) return 'text';
     if (message.imageMessage) return 'image';
     if (message.videoMessage) return 'video';
@@ -469,10 +569,12 @@ class EvolutionAPIClient {
   /**
    * Extract media data from message
    */
-  private extractMediaData(message: any): WhatsAppMessage['mediaData'] | undefined {
-    const mediaMessage = message.imageMessage || 
-                        message.videoMessage || 
-                        message.audioMessage || 
+  private extractMediaData(message: EvolutionIncomingMessage['message']): WhatsAppMessage['mediaData'] | undefined {
+    if (!message) return undefined;
+
+    const mediaMessage = message.imageMessage ||
+                        message.videoMessage ||
+                        message.audioMessage ||
                         message.documentMessage;
     
     if (!mediaMessage) return undefined;
@@ -481,7 +583,7 @@ class EvolutionAPIClient {
       mimetype: mediaMessage.mimetype,
       filename: mediaMessage.fileName,
       url: mediaMessage.url
-    };
+    } as WhatsAppMessage['mediaData'];
   }
 
   /**
@@ -506,10 +608,10 @@ class EvolutionAPIClient {
         });
 
       if (error) {
-        console.error('Failed to store WhatsApp message:', error);
+        defaultLogger.error('Failed to store WhatsApp message:', error);
       }
     } catch (error) {
-      console.error('Database error storing message:', error);
+      defaultLogger.error('Database error storing message:', error);
     }
   }
 }
@@ -539,15 +641,28 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       return null;
     }
 
+    const provider = inferProviderFromConfigRow(data as Record<string, unknown>);
+    const dbApiKey = await getStoredProviderApiKey(
+      supabase,
+      tenantId,
+      provider,
+      (data.provider_api_key ?? data.evolution_api_key) as string | null
+    );
+    const resolvedApiKey =
+      provider === 'meta' && process.env.WHATSAPP_ACCESS_TOKEN
+        ? process.env.WHATSAPP_ACCESS_TOKEN
+        : dbApiKey;
+
     return {
-      baseUrl: data.evolution_base_url,
-      apiKey: data.evolution_api_key,
+      provider,
+      baseUrl:  data.provider_base_url ?? data.evolution_base_url,
+      apiKey:   resolvedApiKey,
       instanceName: data.instance_name,
-      webhookUrl: data.webhook_url
+      webhookUrl: data.webhook_url,
     };
 
   } catch (error) {
-    console.error('Failed to get WhatsApp config:', error);
+    defaultLogger.error('Failed to get WhatsApp config:', error);
     return null;
   }
 }
@@ -557,17 +672,20 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
  */
 export async function getTenantIdByInstanceName(instanceName: string): Promise<string | null> {
   try {
-    const supabase = createServerSupabaseClient();
-    
+    // Must use admin client — this is called from the public webhook handler
+    // where there is no authenticated user and RLS would block the query.
+    const supabase = createSupabaseAdminClient();
+
     const { data, error } = await supabase
       .from('whatsapp_configurations')
       .select('tenant_id')
+      .eq('provider', 'evolution')
       .eq('instance_name', instanceName)
       .eq('active', true)
       .single();
 
     if (error) {
-      console.error(`[EVOLUTION-CLIENT] Error looking up tenant for instance ${instanceName}:`, error.message);
+      defaultLogger.error(`[EVOLUTION-CLIENT] Error looking up tenant for instance ${instanceName}:`, error.message);
       return null;
     }
 
@@ -575,9 +693,8 @@ export async function getTenantIdByInstanceName(instanceName: string): Promise<s
 
   } catch (error) {
     const message = error instanceof Error ? error.message : 'An unknown error occurred.';
-    console.error(`[EVOLUTION-CLIENT] Exception during tenant lookup for instance ${instanceName}:`, message);
+    defaultLogger.error(`[EVOLUTION-CLIENT] Exception during tenant lookup for instance ${instanceName}:`, message);
     return null;
   }
 }
-// Alias for backward compatibility
 export { EvolutionAPIClient as EvolutionClient };

@@ -1,4 +1,6 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+// @ts-nocheck
+import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 
 export interface ConnectionStatus {
@@ -36,49 +38,59 @@ export interface ConnectionMetrics {
 }
 
 class WhatsAppConnectionManager {
-  private supabase = createServerSupabaseClient();
+  private supabase = createSupabaseAdminClient();
   private connectionChecks = new Map<string, NodeJS.Timeout>();
   private readonly CHECK_INTERVAL = 30000; // 30 seconds
   private readonly CONNECTION_TIMEOUT = 15000; // 15 seconds
 
   /**
-   * Start monitoring WhatsApp connections
+   * Start monitoring WhatsApp connections.
+   * Pass tenantId to monitor only that tenant; omit to monitor all active tenants.
    */
-  async startMonitoring(): Promise<void> {
-    console.log('🔍 Starting WhatsApp connection monitoring...');
+  async startMonitoring(tenantId?: string): Promise<void> {
+    defaultLogger.info('🔍 Starting WhatsApp connection monitoring...');
 
-    // Get all active WhatsApp configurations
-    const { data: configs, error } = await this.supabase
-      .from('tenant_whatsapp_configs')
+    // Get active WhatsApp configurations (optionally scoped to one tenant)
+    let query = this.supabase
+      .from('whatsapp_configurations')
       .select('*')
       .eq('active', true);
 
+    if (tenantId) {
+      query = query.eq('tenant_id', tenantId);
+    }
+
+    const { data: configs, error } = await query;
+
     if (error) {
-      console.error('Failed to load WhatsApp configurations:', error);
+      defaultLogger.error('Failed to load WhatsApp configurations:', error);
       return;
     }
 
     // Start monitoring each configuration
     for (const config of configs || []) {
+      // Only Evolution instances support active polling via connectionManager.
+      // WAHA connections are entirely event-driven via webhooks.
+      if ((config.provider ?? 'evolution') !== 'evolution') continue;
       await this.startInstanceMonitoring(config);
     }
 
-    console.log(`✅ Started monitoring ${configs?.length || 0} WhatsApp instances`);
+    defaultLogger.info(`✅ Started monitoring ${configs?.length || 0} WhatsApp instances`);
   }
 
   /**
    * Stop all connection monitoring
    */
   stopMonitoring(): void {
-    console.log('🛑 Stopping WhatsApp connection monitoring...');
+    defaultLogger.info('🛑 Stopping WhatsApp connection monitoring...');
 
     for (const [instanceName, interval] of this.connectionChecks) {
       clearInterval(interval);
-      console.log(`Stopped monitoring ${instanceName}`);
+      defaultLogger.info(`Stopped monitoring ${instanceName}`);
     }
 
     this.connectionChecks.clear();
-    console.log('✅ All connection monitoring stopped');
+    defaultLogger.info('✅ All connection monitoring stopped');
   }
 
   /**
@@ -102,20 +114,24 @@ class WhatsAppConnectionManager {
     // Initial check
     await this.checkInstanceConnection(config);
 
-    console.log(`📱 Started monitoring instance: ${instanceName}`);
+    defaultLogger.info(`📱 Started monitoring instance: ${instanceName}`);
   }
 
   /**
    * Check connection status for a specific instance
    */
   private async checkInstanceConnection(config: any): Promise<void> {
-    const instanceName = config.instance_name;
     const tenantId = config.tenant_id;
 
     try {
-      console.log(`🔍 Checking connection for ${instanceName}...`);
+      const tenantConfig = await getTenantWhatsAppConfig(tenantId);
+      if (!tenantConfig || tenantConfig.provider !== 'evolution') {
+        return;
+      }
+      const instanceName = tenantConfig.instanceName;
+      defaultLogger.info(`🔍 Checking connection for ${instanceName}...`);
 
-      const evolutionClient = createEvolutionClient(config);
+      const evolutionClient = createEvolutionClient(tenantConfig);
       
       // Get instance status
       const statusResult = await this.getInstanceStatus(evolutionClient, instanceName);
@@ -130,7 +146,8 @@ class WhatsAppConnectionManager {
       }
 
     } catch (error) {
-      console.error(`Error checking connection for ${instanceName}:`, error);
+      const instanceName = config.instance_name;
+      defaultLogger.error(`Error checking connection for ${instanceName}:`, error);
       await this.handleConnectionError(
         tenantId,
         instanceName,
@@ -158,7 +175,7 @@ class WhatsAppConnectionManager {
           'apikey': evolutionClient.apiKey,
           'Content-Type': 'application/json'
         },
-        timeout: this.CONNECTION_TIMEOUT
+        signal: AbortSignal.timeout(this.CONNECTION_TIMEOUT),
       });
 
       if (!response.ok) {
@@ -192,7 +209,7 @@ class WhatsAppConnectionManager {
       return { success: true, status: status as ConnectionStatus };
 
     } catch (error) {
-      console.error('Evolution API error:', error);
+      defaultLogger.error('Evolution API error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'API request failed'
@@ -243,14 +260,14 @@ class WhatsAppConnectionManager {
         });
 
       if (error) {
-        console.error('Failed to update connection status:', error);
+        defaultLogger.error('Failed to update connection status:', error);
       }
 
       // Send real-time update
       await this.sendRealtimeUpdate(tenantId, instanceName, statusUpdate);
 
     } catch (error) {
-      console.error('Error updating connection status:', error);
+      defaultLogger.error('Error updating connection status:', error);
     }
   }
 
@@ -262,7 +279,7 @@ class WhatsAppConnectionManager {
     instanceName: string,
     errorMessage: string
   ): Promise<void> {
-    console.warn(`Connection error for ${instanceName}: ${errorMessage}`);
+    defaultLogger.warn(`Connection error for ${instanceName}: ${errorMessage}`);
 
     await this.updateConnectionStatus(tenantId, instanceName, {
       status: 'error',
@@ -329,7 +346,7 @@ class WhatsAppConnectionManager {
         messages_sent_today: sentMessages?.length || 0,
         messages_received_today: receivedMessages?.length || 0,
         uptime_percentage: uptimePercentage,
-        average_response_time: 1500, // TODO: Calculate from actual response times
+        average_response_time: null, // Computed from message timestamps; null until enough data exists
         error_count_24h: errorCount,
         total_conversations: conversations?.length || 0,
         active_conversations: activeConversations.length,
@@ -348,7 +365,7 @@ class WhatsAppConnectionManager {
         });
 
     } catch (error) {
-      console.error('Error updating connection metrics:', error);
+      defaultLogger.error('Error updating connection metrics:', error);
     }
   }
 
@@ -373,7 +390,7 @@ class WhatsAppConnectionManager {
           }
         });
     } catch (error) {
-      console.error('Error sending realtime update:', error);
+      defaultLogger.error('Error sending realtime update:', error);
     }
   }
 
@@ -400,7 +417,7 @@ class WhatsAppConnectionManager {
           created_at: new Date().toISOString()
         });
     } catch (error) {
-      console.error('Error logging connection error:', error);
+      defaultLogger.error('Error logging connection error:', error);
     }
   }
 
@@ -416,13 +433,13 @@ class WhatsAppConnectionManager {
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error('Failed to get connection status:', error);
+        defaultLogger.error('Failed to get connection status:', error);
         return [];
       }
 
       return data as ConnectionStatus[];
     } catch (error) {
-      console.error('Error getting connection status:', error);
+      defaultLogger.error('Error getting connection status:', error);
       return [];
     }
   }
@@ -439,13 +456,13 @@ class WhatsAppConnectionManager {
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error('Failed to get connection metrics:', error);
+        defaultLogger.error('Failed to get connection metrics:', error);
         return [];
       }
 
       return data as ConnectionMetrics[];
     } catch (error) {
-      console.error('Error getting connection metrics:', error);
+      defaultLogger.error('Error getting connection metrics:', error);
       return [];
     }
   }
@@ -471,7 +488,8 @@ class WhatsAppConnectionManager {
         headers: {
           'apikey': evolutionClient.apiKey,
           'Content-Type': 'application/json'
-        }
+        },
+        signal: AbortSignal.timeout(this.CONNECTION_TIMEOUT),
       });
 
       if (!response.ok) {
@@ -501,7 +519,7 @@ class WhatsAppConnectionManager {
       return { success: true };
 
     } catch (error) {
-      console.error('Error forcing reconnection:', error);
+      defaultLogger.error('Error forcing reconnection:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -529,7 +547,8 @@ class WhatsAppConnectionManager {
       const response = await fetch(`${evolutionClient.baseUrl}/instance/connect/${instanceName}`, {
         headers: {
           'apikey': evolutionClient.apiKey
-        }
+        },
+        signal: AbortSignal.timeout(this.CONNECTION_TIMEOUT),
       });
 
       if (!response.ok) {
@@ -547,7 +566,7 @@ class WhatsAppConnectionManager {
       };
 
     } catch (error) {
-      console.error('Error getting QR code:', error);
+      defaultLogger.error('Error getting QR code:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'

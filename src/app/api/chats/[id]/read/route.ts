@@ -1,6 +1,8 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { NextResponse } from 'next/server';
+import { defaultLogger } from '@/lib/logger';
 
 /**
  * POST /api/chats/{id}/read
@@ -37,7 +39,7 @@ export const POST = createHttpHandler(
       .eq('tenant_id', chat.tenant_id);
 
     if (updateChatError) {
-      console.warn(`Failed to update unread_count for chat ${chatId}:`, updateChatError.message);
+      defaultLogger.warn(`Failed to update unread_count for chat ${chatId}:`, updateChatError.message);
     }
 
     // Mark all inbound messages in this chat as read (best-effort)
@@ -49,7 +51,7 @@ export const POST = createHttpHandler(
       .is('read_at', null);
 
     if (updateMessagesError) {
-      console.warn(`Failed to update messages' read_at for chat ${chatId}:`, updateMessagesError.message);
+      defaultLogger.warn(`Failed to update messages' read_at for chat ${chatId}:`, updateMessagesError.message);
     }
 
     // Return 204 No Content
