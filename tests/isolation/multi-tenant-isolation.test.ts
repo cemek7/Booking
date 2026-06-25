@@ -10,10 +10,53 @@
  */
 
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { GET as customersGET, POST as customersPOST } from '@/app/api/customers/route';
 
 const TENANT_A = 'tenant-A';
 const TENANT_B = 'tenant-B';
+
+/**
+ * Build an admin client mock for a given tenant/role.
+ *
+ * The route-handler (createApiHandler) uses createSupabaseAdminClient for:
+ *   1. auth.getUser(token)              — JWT verification
+ *   2. from('admins')…maybeSingle()     — superadmin check (returns null = not admin)
+ *   3. from('tenant_users')…maybeSingle() — membership validation
+ *   4. from('tenants')…maybeSingle()    — lifecycle gate (fail-open on null)
+ *
+ * tenantId / role come from (3) and are passed into ctx.user so the handler
+ * uses server-verified values — never the caller-supplied header.
+ */
+function makeAdminClient(tenantId: string, role = 'owner') {
+  return {
+    auth: {
+      getUser: jest.fn().mockResolvedValue({
+        data: { user: { id: 'user-in-tenant-a', email: 'user@tenant-a.com' } },
+        error: null,
+      }),
+    },
+    from: jest.fn().mockImplementation((table: string) => {
+      if (table === 'tenant_users') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { tenant_id: tenantId, role },
+            error: null,
+          }),
+        };
+      }
+      // admins table (superadmin check) and tenants table (lifecycle gate):
+      // return null so we're not a superadmin and lifecycle passes fail-open.
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    }),
+  };
+}
 
 /** Build a bearer client mock that authenticates as a user in the given tenant */
 function makeBearerClient(tenantId: string, role = 'owner') {

@@ -47,13 +47,12 @@ This documentation provides a complete matrix of all API endpoints with their ro
 
 | Endpoint | Method | SuperAdmin | Owner | Manager | Staff | Public | Auth Function |
 |----------|--------|------------|--------|---------|--------|--------|--------------|
-| `/api/auth/enhanced/login` | POST | ✅ | ✅ | ✅ | ✅ | 🌐 | None (Public) |
-| `/api/auth/enhanced/logout` | POST | ✅ | ✅ | ✅ | ✅ | 🌐 | None (Public) |
-| `/api/auth/enhanced/mfa` | GET/POST | ✅ | ✅ | ✅ | ✅ | ❌ | `requireStaffAccess()` |
-| `/api/auth/enhanced/api-keys` | GET/POST/DELETE | ✅ | 🔄 | ❌ | ❌ | ❌ | `requireOwnerAccess()` |
-| `/api/auth/enhanced/security` | GET/PUT | ✅ | 🔄 | 🔄 | ❌ | ❌ | `requireManagerAccess()` |
+| `/api/auth/admin-check` | POST | ✅ | ✅ | ✅ | ✅ | 🌐 | None (Public) |
+| `/api/auth/dev-magic-link` | POST | ✅ | ✅ | ✅ | ✅ | 🌐 | None (Public) |
 | `/api/auth/me` | GET | ✅ | ✅ | ✅ | ✅ | ❌ | `requireStaffAccess()` |
 | `/api/auth/finish` | POST | ✅ | ✅ | ✅ | ✅ | ❌ | `requireStaffAccess()` |
+
+> Legacy enhanced auth endpoints were retired. The current auth surface is the canonical `admin-check`, `dev-magic-link`, `me`, and `finish` routes.
 
 ### 🏢 **Superadmin APIs**
 
@@ -221,106 +220,6 @@ Authorization: Bearer your_jwt_token
 # API key
 X-API-Key: your_api_key
 Authorization: Bearer your_api_key
-```
-
-### Login
-
-#### POST `/api/auth/enhanced/login`
-
-Authenticate a user with email and password, optionally with MFA.
-
-**Request Body:**
-```json
-{
-  "email": "user@example.com",
-  "password": "secure_password",
-  "mfa_code": "123456",
-  "remember_me": false,
-  "device_fingerprint": "unique_device_id"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "user": {
-    "id": "user_id",
-    "email": "user@example.com",
-    "tenant_id": "tenant_id"
-  },
-  "session": {
-    "id": "session_id",
-    "expires_at": "2024-01-01T00:00:00.000Z"
-  },
-  "mfa_required": false,
-  "mfa_verified": true
-}
-```
-
-### MFA (Multi-Factor Authentication)
-
-#### Setup TOTP
-
-**POST** `/api/auth/enhanced/mfa`
-
-```json
-{
-  "method": "totp"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "setup": {
-    "secret": "SECRET_KEY",
-    "qr_code_url": "data:image/png;base64,...",
-    "backup_codes": ["code1", "code2", ...]
-  }
-}
-```
-
-#### Verify MFA
-
-**PUT** `/api/auth/enhanced/mfa`
-
-```json
-{
-  "code": "123456",
-  "method": "totp"
-}
-```
-
-### API Keys
-
-#### Create API Key
-
-**POST** `/api/auth/enhanced/api-keys`
-
-```json
-{
-  "name": "Integration Key",
-  "description": "For external system integration",
-  "scopes": ["api:read", "api:write"],
-  "rate_limit_per_hour": 1000,
-  "expires_in_days": 365
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "api_key": {
-    "key_id": "key_12345",
-    "api_key": "key_12345.secret_token_here",
-    "name": "Integration Key",
-    "scopes": ["api:read", "api:write"]
-  },
-  "warning": "This is the only time you will see the full API key."
-}
 ```
 
 ## Core API Endpoints
@@ -613,14 +512,6 @@ bookings = client.bookings.list(
 ### cURL
 
 ```bash
-# Authenticate
-curl -X POST https://api.your-domain.com/api/auth/enhanced/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "password": "password"
-  }'
-
 # Create booking
 curl -X POST https://api.your-domain.com/api/v1/bookings \
   -H "Authorization: Bearer your_token" \

@@ -16,7 +16,7 @@
 
 | File | Responsibility |
 |---|---|
-| `db/migrations/070_tenant_brand_identity.sql` | Add brand columns to `tenants`, `last_inbound_at`/`opted_out_at` to `whatsapp_conversations` |
+| `db/migrations/081_tenant_brand_identity.sql` | Add brand columns to `tenants`, `last_inbound_at`/`opted_out_at` to `whatsapp_conversations` (renumbered from 070 — collision with existing 070_whatsapp_provider) |
 | `src/lib/whatsapp/v2/brandIdentity.ts` *(new)* | Pure: `resolveBrandContext`, `applyBrandIdentity` + types |
 | `src/lib/whatsapp/v2/optOut.ts` *(new)* | Pure: `detectOptOutKeyword`, `isOptedOut` |
 | `src/lib/whatsapp/v2/outboundBranding.ts` *(new)* | I/O seam: `brandCustomerText` (fetch + gate + compose) |
