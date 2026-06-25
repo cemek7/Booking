@@ -6,12 +6,22 @@
 
 BEGIN;
 
--- Drop the old two-column primary key constraint and add the correct three-column one.
--- The constraint name defaults to 'staff_services_pkey' in PostgreSQL.
-ALTER TABLE staff_services
-  DROP CONSTRAINT IF EXISTS staff_services_pkey;
+-- Drop the old primary key constraint (any name) and replace with the correct three-column one.
+DO $$
+DECLARE
+  existing_pk TEXT;
+BEGIN
+  -- Find the current PK constraint name (if any)
+  SELECT conname INTO existing_pk
+  FROM pg_constraint
+  WHERE conrelid = 'staff_services'::regclass AND contype = 'p';
 
-ALTER TABLE staff_services
-  ADD PRIMARY KEY (tenant_id, staff_user_id, service_id);
+  IF existing_pk IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE staff_services DROP CONSTRAINT %I', existing_pk);
+  END IF;
+
+  -- Add the correct three-column primary key
+  ALTER TABLE staff_services ADD PRIMARY KEY (tenant_id, staff_user_id, service_id);
+END $$;
 
 COMMIT;

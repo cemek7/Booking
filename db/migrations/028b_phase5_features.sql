@@ -146,91 +146,101 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
 );
 
 -- Indexes for Performance
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tenant_modules_tenant_id 
+CREATE INDEX IF NOT EXISTS idx_tenant_modules_tenant_id
   ON tenant_modules(tenant_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_analytics_metrics_tenant_period 
+CREATE INDEX IF NOT EXISTS idx_analytics_metrics_tenant_period
   ON analytics_metrics_cache(tenant_id, metric_type, period_start, period_end);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_analytics_metrics_expires 
+CREATE INDEX IF NOT EXISTS idx_analytics_metrics_expires
   ON analytics_metrics_cache(expires_at);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ml_models_tenant_type 
+CREATE INDEX IF NOT EXISTS idx_ml_models_tenant_type
   ON ml_models(tenant_id, model_type, status);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ml_predictions_tenant_type 
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_tenant_type
   ON ml_predictions(tenant_id, prediction_type, created_at);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ml_predictions_expires 
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_expires
   ON ml_predictions(expires_at);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anomaly_detections_tenant_status 
+CREATE INDEX IF NOT EXISTS idx_anomaly_detections_tenant_status
   ON anomaly_detections(tenant_id, status, created_at);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_customer_analytics_tenant_customer 
+CREATE INDEX IF NOT EXISTS idx_customer_analytics_tenant_customer
   ON customer_analytics(tenant_id, customer_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_customer_analytics_expires 
+CREATE INDEX IF NOT EXISTS idx_customer_analytics_expires
   ON customer_analytics(expires_at);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_revenue_optimizations_tenant_status 
+CREATE INDEX IF NOT EXISTS idx_revenue_optimizations_tenant_status
   ON revenue_optimizations(tenant_id, status, expires_at);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_module_feature_usage_tenant_module 
+CREATE INDEX IF NOT EXISTS idx_module_feature_usage_tenant_module
   ON module_feature_usage(tenant_id, module_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_performance_metrics_tenant_name 
+CREATE INDEX IF NOT EXISTS idx_performance_metrics_tenant_name
   ON performance_metrics(tenant_id, metric_name, recorded_at);
 
 -- RLS Policies
 
 -- Tenant Modules
 ALTER TABLE tenant_modules ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_modules_tenant_isolation ON tenant_modules;
 CREATE POLICY tenant_modules_tenant_isolation ON tenant_modules
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- Analytics Metrics Cache
 ALTER TABLE analytics_metrics_cache ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS analytics_metrics_tenant_isolation ON analytics_metrics_cache;
 CREATE POLICY analytics_metrics_tenant_isolation ON analytics_metrics_cache
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- ML Models
 ALTER TABLE ml_models ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ml_models_tenant_isolation ON ml_models;
 CREATE POLICY ml_models_tenant_isolation ON ml_models
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- ML Predictions
 ALTER TABLE ml_predictions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ml_predictions_tenant_isolation ON ml_predictions;
 CREATE POLICY ml_predictions_tenant_isolation ON ml_predictions
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- Anomaly Detections
 ALTER TABLE anomaly_detections ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS anomaly_detections_tenant_isolation ON anomaly_detections;
 CREATE POLICY anomaly_detections_tenant_isolation ON anomaly_detections
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- Customer Analytics
 ALTER TABLE customer_analytics ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS customer_analytics_tenant_isolation ON customer_analytics;
 CREATE POLICY customer_analytics_tenant_isolation ON customer_analytics
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- Revenue Optimizations
 ALTER TABLE revenue_optimizations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS revenue_optimizations_tenant_isolation ON revenue_optimizations;
 CREATE POLICY revenue_optimizations_tenant_isolation ON revenue_optimizations
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- Module Feature Usage
 ALTER TABLE module_feature_usage ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS module_feature_usage_tenant_isolation ON module_feature_usage;
 CREATE POLICY module_feature_usage_tenant_isolation ON module_feature_usage
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- BI Dashboards
 ALTER TABLE bi_dashboards ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS bi_dashboards_tenant_isolation ON bi_dashboards;
 CREATE POLICY bi_dashboards_tenant_isolation ON bi_dashboards
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
 -- Performance Metrics
 ALTER TABLE performance_metrics ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS performance_metrics_tenant_isolation ON performance_metrics;
 CREATE POLICY performance_metrics_tenant_isolation ON performance_metrics
   FOR ALL USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
@@ -385,6 +395,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_update_customer_analytics_on_booking ON reservations;
 CREATE TRIGGER trigger_update_customer_analytics_on_booking
   AFTER INSERT OR UPDATE ON reservations
   FOR EACH ROW

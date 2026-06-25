@@ -14,6 +14,12 @@ CREATE TABLE IF NOT EXISTS faqs (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Ensure columns exist in case the table was created by an earlier migration
+ALTER TABLE faqs ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE faqs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE faqs ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0;
+ALTER TABLE faqs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 CREATE INDEX IF NOT EXISTS idx_faqs_tenant_id ON faqs(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_faqs_tenant_active ON faqs(tenant_id, is_active);
 
@@ -32,6 +38,13 @@ CREATE TABLE IF NOT EXISTS reviews (
   is_published BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure columns exist in case the table was created by an earlier migration
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS customer_email TEXT;
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS rating INTEGER;
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS comment TEXT;
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT true;
 
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_id ON reviews(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_published ON reviews(tenant_id, is_published);
