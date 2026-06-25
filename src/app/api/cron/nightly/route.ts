@@ -49,6 +49,27 @@ export async function runOffboardingSweep(): Promise<{ teardown: number; operati
 
 const WHATSAPP_SEND_CACHE = new Map<string, Promise<WhatsAppProviderClient | null>>();
 
+function normalizeTenantSettings(
+  metadata: unknown,
+  toneConfig: unknown,
+): Record<string, unknown> {
+  const settings =
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? { ...(metadata as Record<string, unknown>) }
+      : {};
+
+  if (
+    toneConfig &&
+    typeof toneConfig === 'object' &&
+    !Array.isArray(toneConfig) &&
+    settings.tone_config === undefined
+  ) {
+    settings.tone_config = toneConfig;
+  }
+
+  return settings;
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   const authHeader = request.headers.get('authorization');
   if (
@@ -62,8 +83,8 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   // ── Task 1: Aggregate insights ─────────────────────────────────────────────
   try {
-    const tenantsAggregated = await aggregateInsights();
-    results.insights = { tenants_processed: tenantsAggregated };
+    const aggregation = await aggregateInsights();
+    results.insights = aggregation;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[cron/nightly] insights aggregation failed', err);
@@ -200,7 +221,14 @@ async function loadConversationFlags(
 
 // ─── Insights aggregation ─────────────────────────────────────────────────────
 
-async function aggregateInsights(): Promise<number> {
+async function aggregateInsights(): Promise<{
+  tenants_processed: number;
+  tenant_daily_summary_rows: number;
+  customer_profile_summary_rows: number;
+  service_performance_summary_rows: number;
+  staff_performance_summary_rows: number;
+  availability_snapshot_rows: number;
+}> {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const dateStr = yesterday.toISOString().slice(0, 10);
@@ -211,13 +239,40 @@ async function aggregateInsights(): Promise<number> {
     .select('id')
     .eq('v2_enabled', true);
 
-  if (!tenants?.length) return 0;
+  if (!tenants?.length) {
+    return {
+      tenants_processed: 0,
+      tenant_daily_summary_rows: 0,
+      customer_profile_summary_rows: 0,
+      service_performance_summary_rows: 0,
+      staff_performance_summary_rows: 0,
+      availability_snapshot_rows: 0,
+    };
+  }
+
+  let tenantDailySummaryRows = 0;
+  let customerProfileSummaryRows = 0;
+  let servicePerformanceSummaryRows = 0;
+  let staffPerformanceSummaryRows = 0;
+  let availabilitySnapshotRows = 0;
 
   for (const tenant of tenants) {
     await aggregateTenantDay(tenant.id, dateStr);
+    tenantDailySummaryRows += await aggregateTenantDailySummary(tenant.id, dateStr);
+    customerProfileSummaryRows += await aggregateCustomerProfiles(tenant.id);
+    servicePerformanceSummaryRows += await aggregateServicePerformance(tenant.id);
+    staffPerformanceSummaryRows += await aggregateStaffPerformance(tenant.id);
+    availabilitySnapshotRows += await aggregateAvailabilitySnapshots(tenant.id, 3);
   }
 
-  return tenants.length;
+  return {
+    tenants_processed: tenants.length,
+    tenant_daily_summary_rows: tenantDailySummaryRows,
+    customer_profile_summary_rows: customerProfileSummaryRows,
+    service_performance_summary_rows: servicePerformanceSummaryRows,
+    staff_performance_summary_rows: staffPerformanceSummaryRows,
+    availability_snapshot_rows: availabilitySnapshotRows,
+  };
 }
 
 async function aggregateTenantDay(tenantId: string, date: string): Promise<void> {
@@ -248,13 +303,13 @@ async function aggregateTenantDay(tenantId: string, date: string): Promise<void>
   if (completedIds.length) {
     const { data: services } = await supabaseAdmin
       .from('services')
-      .select('id, price_cents')
+      .select('id, price')
       .in('id', completedIds);
 
-    const priceMap = Object.fromEntries((services ?? []).map((s) => [s.id, s.price_cents ?? 0]));
+    const priceMap = Object.fromEntries((services ?? []).map((s) => [s.id, Number(s.price ?? 0)]));
     revenue = reservations
       .filter((r) => r.status === 'completed')
-      .reduce((sum, r) => sum + Math.round((priceMap[r.service_id] ?? 0) / 100), 0);
+      .reduce((sum, r) => sum + Number(priceMap[r.service_id] ?? 0), 0);
   }
 
   // Busiest hour
@@ -290,6 +345,496 @@ async function aggregateTenantDay(tenantId: string, date: string): Promise<void>
     );
 }
 
+async function aggregateTenantDailySummary(tenantId: string, date: string): Promise<number> {
+  const startOfDay = `${date}T00:00:00`;
+  const endOfDay = `${date}T23:59:59`;
+
+  const { data: reservations } = await supabaseAdmin
+    .from('reservations')
+    .select('status, service_id, staff_id, tenant_staff_id, start_at')
+    .eq('tenant_id', tenantId)
+    .gte('start_at', startOfDay)
+    .lte('start_at', endOfDay);
+
+  if (!reservations) return 0;
+
+  const total = reservations.length;
+  const completed = reservations.filter((r) => r.status === 'completed').length;
+  const cancelled = reservations.filter((r) => r.status === 'cancelled').length;
+  const noShows = reservations.filter((r) => r.status === 'no_show').length;
+
+  const serviceIds = reservations
+    .map((reservation) => reservation.service_id)
+    .filter((value): value is string => typeof value === 'string');
+
+  const staffIds = reservations
+    .map((reservation) => reservation.staff_id)
+    .filter((value): value is string => typeof value === 'string');
+
+  const [{ data: services }, { data: staffRows }] = await Promise.all([
+    serviceIds.length
+      ? supabaseAdmin
+          .from('services')
+          .select('id, name, price')
+          .in('id', serviceIds)
+      : Promise.resolve({ data: [] }),
+    staffIds.length
+      ? supabaseAdmin
+          .from('tenant_users')
+          .select('id, user_id, name, phone')
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const serviceMap = new Map((services ?? []).map((service) => [service.id, service]));
+  const staffMap = new Map((staffRows ?? []).map((staff) => [staff.id, staff]));
+
+  let estimatedRevenue = 0;
+  const serviceCounts = new Map<string, number>();
+  const staffCounts = new Map<string, number>();
+
+  for (const reservation of reservations) {
+    const service = typeof reservation.service_id === 'string'
+      ? serviceMap.get(reservation.service_id)
+      : null;
+    if (reservation.status === 'completed') {
+      estimatedRevenue += Number(service?.price ?? 0);
+    }
+
+    const serviceName = service?.name ?? null;
+    if (serviceName) {
+      serviceCounts.set(serviceName, (serviceCounts.get(serviceName) ?? 0) + 1);
+    }
+
+    const reservationStaffId = typeof reservation.tenant_staff_id === 'string'
+      ? reservation.tenant_staff_id
+      : typeof reservation.staff_id === 'string'
+        ? reservation.staff_id
+        : null;
+    if (reservationStaffId) {
+      const staff = staffMap.get(reservationStaffId) ?? [...staffMap.values()].find((row) => row.user_id === reservationStaffId);
+      const staffName = staff?.name ?? staff?.phone ?? reservationStaffId;
+      staffCounts.set(staffName, (staffCounts.get(staffName) ?? 0) + 1);
+    }
+  }
+
+  const topService = [...serviceCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const topStaff = [...staffCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+  await supabaseAdmin
+    .from('tenant_daily_summary')
+    .upsert({
+      tenant_id: tenantId,
+      date,
+      bookings_count: total,
+      completed_count: completed,
+      cancelled_count: cancelled,
+      no_show_count: noShows,
+      estimated_revenue: estimatedRevenue,
+      top_service: topService,
+      top_staff: topStaff,
+      generated_at: new Date().toISOString(),
+    }, { onConflict: 'tenant_id,date' });
+
+  return 1;
+}
+
+async function aggregateCustomerProfiles(tenantId: string): Promise<number> {
+  const { data: customers } = await supabaseAdmin
+    .from('customers')
+    .select('id, name, customer_name, phone, phone_number')
+    .eq('tenant_id', tenantId);
+
+  if (!customers?.length) return 0;
+
+  const { data: reservations } = await supabaseAdmin
+    .from('reservations')
+    .select('customer_id, service_id, tenant_staff_id, staff_id, status, start_at')
+    .eq('tenant_id', tenantId)
+    .order('start_at', { ascending: false });
+
+  const byCustomer = new Map<string, Array<Record<string, unknown>>>();
+  for (const reservation of reservations ?? []) {
+    const customerId = typeof reservation.customer_id === 'string' ? reservation.customer_id : null;
+    if (!customerId) continue;
+    const current = byCustomer.get(customerId) ?? [];
+    current.push(reservation as Record<string, unknown>);
+    byCustomer.set(customerId, current);
+  }
+
+  const serviceIds = [...new Set((reservations ?? []).map((reservation) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
+  const [{ data: staffRows }, { data: services }] = await Promise.all([
+    supabaseAdmin
+      .from('tenant_users')
+      .select('id, user_id, name, phone')
+      .eq('tenant_id', tenantId),
+    serviceIds.length
+      ? supabaseAdmin
+          .from('services')
+          .select('id, name')
+          .in('id', serviceIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const staffMap = new Map((staffRows ?? []).map((staff) => [staff.id, staff.name ?? staff.phone ?? staff.id]));
+  const staffUserMap = new Map((staffRows ?? []).flatMap((staff) => typeof staff.user_id === 'string' ? [[staff.user_id, staff.name ?? staff.phone ?? staff.user_id]] : []));
+  const serviceMap = new Map((services ?? []).map((service) => [service.id, service.name ?? service.id]));
+
+  const rows = customers.map((customer) => {
+    const history = byCustomer.get(customer.id) ?? [];
+    const favoriteService = mostFrequentString(
+      history.map((entry) => {
+        const serviceId = typeof entry.service_id === 'string' ? entry.service_id : null;
+        return serviceId ? String(serviceMap.get(serviceId) ?? serviceId) : null;
+      })
+    );
+    const favoriteStaff = mostFrequentString(
+      history.map((entry) => {
+        const staffId = typeof entry.tenant_staff_id === 'string'
+          ? entry.tenant_staff_id
+          : typeof entry.staff_id === 'string'
+            ? entry.staff_id
+            : null;
+        if (!staffId) return null;
+        return typeof entry.tenant_staff_id === 'string'
+          ? String(staffMap.get(staffId) ?? staffId)
+          : String(staffUserMap.get(staffId) ?? staffId);
+      })
+    );
+
+    const completedHistory = history.filter((entry) => entry.status === 'completed');
+    const lastVisit = typeof completedHistory[0]?.start_at === 'string' ? completedHistory[0].start_at : null;
+    const daysSinceVisit = lastVisit ? diffDays(lastVisit, new Date().toISOString()) : null;
+    const lifetimeBookings = history.length;
+
+    return {
+      tenant_id: tenantId,
+      customer_id: customer.id,
+      customer_name: customer.name ?? customer.customer_name ?? null,
+      customer_phone: customer.phone ?? customer.phone_number ?? null,
+      lifetime_bookings: lifetimeBookings,
+      last_visit: lastVisit,
+      favorite_service: favoriteService,
+      favorite_staff: favoriteStaff,
+      days_since_visit: daysSinceVisit,
+      risk_score: deriveCustomerRisk(lifetimeBookings, daysSinceVisit),
+      generated_at: new Date().toISOString(),
+    };
+  });
+
+  if (rows.length > 0) {
+    await supabaseAdmin
+      .from('customer_profile_summary')
+      .upsert(rows, { onConflict: 'tenant_id,customer_id' });
+  }
+
+  return rows.length;
+}
+
+async function aggregateServicePerformance(tenantId: string): Promise<number> {
+  const { data: services } = await supabaseAdmin
+    .from('services')
+    .select('id, price')
+    .eq('tenant_id', tenantId);
+
+  if (!services?.length) return 0;
+
+  const { data: reservations } = await supabaseAdmin
+    .from('reservations')
+    .select('service_id, status')
+    .eq('tenant_id', tenantId);
+
+  const rows = services.map((service) => {
+    const related = (reservations ?? []).filter((reservation) => reservation.service_id === service.id);
+    const bookings = related.length;
+    const completed = related.filter((reservation) => reservation.status === 'completed').length;
+    const cancellations = related.filter((reservation) => reservation.status === 'cancelled').length;
+    const revenue = completed * Number(service.price ?? 0);
+
+    return {
+      tenant_id: tenantId,
+      service_id: service.id,
+      bookings,
+      revenue,
+      cancellations,
+      completion_rate: bookings > 0 ? completed / bookings : 0,
+      generated_at: new Date().toISOString(),
+    };
+  });
+
+  if (rows.length > 0) {
+    await supabaseAdmin
+      .from('service_performance_summary')
+      .upsert(rows, { onConflict: 'tenant_id,service_id' });
+  }
+
+  return rows.length;
+}
+
+async function aggregateStaffPerformance(tenantId: string): Promise<number> {
+  const { data: staff } = await supabaseAdmin
+    .from('tenant_users')
+    .select('id, user_id')
+    .eq('tenant_id', tenantId)
+    .in('role', ['owner', 'staff']);
+
+  if (!staff?.length) return 0;
+
+  const { data: reservations } = await supabaseAdmin
+    .from('reservations')
+    .select('staff_id, tenant_staff_id, service_id, status')
+    .eq('tenant_id', tenantId);
+
+  const serviceIds = [...new Set((reservations ?? []).map((reservation) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
+  const { data: services } = serviceIds.length
+      ? await supabaseAdmin
+        .from('services')
+        .select('id, price')
+        .in('id', serviceIds)
+    : { data: [] };
+  const servicePriceMap = new Map((services ?? []).map((service) => [service.id, Number(service.price ?? 0)]));
+
+  const rows = staff.map((staffMember) => {
+    const related = (reservations ?? []).filter((reservation) =>
+      reservation.tenant_staff_id === staffMember.id ||
+      (reservation.tenant_staff_id == null && reservation.staff_id === staffMember.user_id)
+    );
+    const bookings = related.length;
+    const completed = related.filter((reservation) => reservation.status === 'completed').length;
+    const estimatedRevenue = related
+      .filter((reservation) => reservation.status === 'completed')
+      .reduce((sum, reservation) => sum + (typeof reservation.service_id === 'string' ? (servicePriceMap.get(reservation.service_id) ?? 0) : 0), 0);
+
+    return {
+      tenant_id: tenantId,
+      staff_id: staffMember.id,
+      bookings,
+      completion_rate: bookings > 0 ? completed / bookings : 0,
+      estimated_revenue: estimatedRevenue,
+      generated_at: new Date().toISOString(),
+    };
+  });
+
+  if (rows.length > 0) {
+    await supabaseAdmin
+      .from('staff_performance_summary')
+      .upsert(rows, { onConflict: 'tenant_id,staff_id' });
+  }
+
+  return rows.length;
+}
+
+async function aggregateAvailabilitySnapshots(tenantId: string, daysAhead: number): Promise<number> {
+  const { data: staff } = await supabaseAdmin
+    .from('tenant_users')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .in('role', ['owner', 'staff']);
+
+  if (!staff?.length) return 0;
+
+  const { data: services } = await supabaseAdmin
+    .from('services')
+    .select('id, duration')
+    .eq('tenant_id', tenantId)
+    .eq('is_active', true);
+
+  if (!services?.length) return 0;
+
+  const { data: staffServices } = await supabaseAdmin
+    .from('staff_services')
+    .select('staff_user_id, service_id')
+    .eq('tenant_id', tenantId);
+
+  const serviceMap = new Map((services ?? []).map((service) => [service.id, service.duration ?? 60]));
+  const mappedServicesByStaff = new Map<string, string[]>();
+  for (const row of staffServices ?? []) {
+    const current = mappedServicesByStaff.get(row.staff_user_id) ?? [];
+    current.push(row.service_id);
+    mappedServicesByStaff.set(row.staff_user_id, current);
+  }
+
+  const rows: Array<Record<string, unknown>> = [];
+
+  for (const staffMember of staff) {
+    const serviceIds = mappedServicesByStaff.get(staffMember.id) ?? services.map((service) => service.id);
+    for (let offset = 0; offset < daysAhead; offset++) {
+      const date = new Date();
+      date.setDate(date.getDate() + offset);
+      const dateStr = date.toISOString().slice(0, 10);
+      const dayContext = await loadAvailabilityDayContext(tenantId, staffMember.id, dateStr);
+
+      for (const serviceId of serviceIds) {
+        const availableSlots = calculateAvailabilityForDuration(
+          dayContext,
+          serviceMap.get(serviceId) ?? 60,
+        );
+
+        rows.push({
+          tenant_id: tenantId,
+          staff_id: staffMember.id,
+          service_id: serviceId,
+          date: dateStr,
+          available_slots: availableSlots,
+          generated_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  if (rows.length > 0) {
+    for (let index = 0; index < rows.length; index += 500) {
+      await supabaseAdmin
+        .from('availability_snapshot')
+        .upsert(rows.slice(index, index + 500), { onConflict: 'tenant_id,staff_id,service_id,date' });
+    }
+  }
+
+  return rows.length;
+}
+
+async function loadAvailabilityDayContext(
+  tenantId: string,
+  staffId: string,
+  date: string
+): Promise<{
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  blockedRanges: Array<{ start: number; end: number }>;
+}> {
+  const dayOfWeek = new Date(date).getDay();
+
+  const [{ data: tenant }, { data: override }, { data: scheduleRows }, { data: reservations }, { data: locks }] = await Promise.all([
+    supabaseAdmin
+      .from('tenants')
+      .select('buffer_minutes')
+      .eq('id', tenantId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('schedule_overrides')
+      .select('is_blocked, custom_start, custom_end')
+      .eq('tenant_staff_id', staffId)
+      .eq('date', date)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('staff_schedules')
+      .select('start_time, end_time, break_start, break_end')
+      .eq('tenant_user_id', staffId)
+      .eq('day_of_week', dayOfWeek)
+      .eq('is_active', true),
+    supabaseAdmin
+      .from('reservations')
+      .select('start_at, end_at')
+      .eq('tenant_staff_id', staffId)
+      .gte('start_at', `${date}T00:00:00`)
+      .lt('start_at', `${date}T23:59:59`)
+      .not('status', 'in', '("cancelled","no_show")'),
+    supabaseAdmin
+      .from('slot_locks')
+      .select('start_time, end_time')
+      .eq('tenant_staff_id', staffId)
+      .eq('date', date)
+      .gt('expires_at', new Date().toISOString()),
+  ]);
+
+  if (override?.is_blocked) {
+    return { shiftStart: null, shiftEnd: null, blockedRanges: [] };
+  }
+  if (!scheduleRows || scheduleRows.length === 0) {
+    return { shiftStart: null, shiftEnd: null, blockedRanges: [] };
+  }
+
+  const schedule = scheduleRows[0];
+  const shiftStart = override?.custom_start ?? schedule.start_time;
+  const shiftEnd = override?.custom_end ?? schedule.end_time;
+  if (!shiftStart || !shiftEnd) {
+    return { shiftStart: null, shiftEnd: null, blockedRanges: [] };
+  }
+
+  const bufferMinutes = tenant?.buffer_minutes ?? 15;
+  const blockedRanges: Array<{ start: number; end: number }> = [];
+
+  for (const reservation of reservations ?? []) {
+    blockedRanges.push({
+      start: timeToMinutes(String(reservation.start_at).slice(11, 16)),
+      end: timeToMinutes(String(reservation.end_at).slice(11, 16)) + bufferMinutes,
+    });
+  }
+
+  for (const lock of locks ?? []) {
+    blockedRanges.push({
+      start: timeToMinutes(String(lock.start_time)),
+      end: timeToMinutes(String(lock.end_time)) + bufferMinutes,
+    });
+  }
+
+  if (schedule.break_start && schedule.break_end) {
+    blockedRanges.push({
+      start: timeToMinutes(schedule.break_start),
+      end: timeToMinutes(schedule.break_end),
+    });
+  }
+
+  return { shiftStart, shiftEnd, blockedRanges };
+}
+
+function calculateAvailabilityForDuration(
+  context: {
+    shiftStart: string | null;
+    shiftEnd: string | null;
+    blockedRanges: Array<{ start: number; end: number }>;
+  },
+  durationMinutes: number
+): string[] {
+  if (!context.shiftStart || !context.shiftEnd) return [];
+
+  const slots: string[] = [];
+  let current = timeToMinutes(context.shiftStart);
+  const shiftEndMinutes = timeToMinutes(context.shiftEnd);
+
+  while (current + durationMinutes <= shiftEndMinutes) {
+    const slotEnd = current + durationMinutes;
+    const blocked = context.blockedRanges.some((range) => current < range.end && slotEnd > range.start);
+    if (!blocked) {
+      slots.push(minutesToTime(current));
+    }
+    current += 30;
+  }
+
+  return slots;
+}
+
+function mostFrequentString(values: Array<string | null>): string | null {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    if (!value) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
+function deriveCustomerRisk(lifetimeBookings: number, daysSinceVisit: number | null): 'low' | 'medium' | 'high' {
+  if (daysSinceVisit === null) return 'high';
+  if (daysSinceVisit > 120) return 'high';
+  if (daysSinceVisit > 60 || lifetimeBookings <= 1) return 'medium';
+  return 'low';
+}
+
+function diffDays(olderIso: string, newerIso: string): number {
+  const older = new Date(olderIso).getTime();
+  const newer = new Date(newerIso).getTime();
+  return Math.max(0, Math.floor((newer - older) / (1000 * 60 * 60 * 24)));
+}
+
+function timeToMinutes(time: string): number {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + (minutes ?? 0);
+}
+
+function minutesToTime(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+}
+
 // ─── Rebooking engine ─────────────────────────────────────────────────────────
 
 /**
@@ -310,11 +855,12 @@ export async function sendRebookingFollowUps(): Promise<number> {
     .select(`
       id,
       tenant_id,
-      customer_phone,
-      customer_name,
+      customer_id,
+      customer_number,
+      start_at,
       service_id,
       services ( name, rebooking_interval_days ),
-      tenants ( v2_enabled, settings )
+      tenants ( v2_enabled, metadata, tone_config )
     `)
     .eq('status', 'completed')
     .gte('start_at', fourDaysAgo)
@@ -329,9 +875,9 @@ export async function sendRebookingFollowUps(): Promise<number> {
     const reservation = res as {
       id: string;
       services?: { name?: string; rebooking_interval_days?: number | null } | null;
-      tenants?: { v2_enabled?: boolean; settings?: { ai_personality?: string } | null } | null;
-      customer_phone?: string | null;
-      customer_name?: string | null;
+      tenants?: { v2_enabled?: boolean; metadata?: Record<string, unknown> | null; tone_config?: Record<string, unknown> | null } | null;
+      customer_id?: string | null;
+      customer_number?: string | null;
       service_id?: string | null;
       tenant_id: string;
       start_at?: string;
@@ -341,32 +887,38 @@ export async function sendRebookingFollowUps(): Promise<number> {
 
     if (!tenant?.v2_enabled) continue;
     if (!service?.rebooking_interval_days) continue;
-    if (!reservation.customer_phone) continue;
+    if (!reservation.customer_number) continue;
 
-    const recipientPhone = reservation.customer_phone;
+    const recipientPhone = reservation.customer_number;
     const serviceId = reservation.service_id as string;
 
-    // Check if follow-up was already sent for this customer + service
-    const { data: customer } = await supabaseAdmin
-      .from('customers')
-      .select('id, metadata')
+    const { data: customer } = reservation.customer_id
+      ? await supabaseAdmin
+          .from('customers')
+          .select('id, name, customer_name')
+          .eq('tenant_id', reservation.tenant_id)
+          .eq('id', reservation.customer_id)
+          .maybeSingle()
+      : { data: null };
+
+    const { data: priorFollowUp } = await supabaseAdmin
+      .from('sias_campaign_runs')
+      .select('id')
       .eq('tenant_id', reservation.tenant_id)
-      .eq('phone', recipientPhone)
-      .maybeSingle();
+      .eq('target_phone', recipientPhone)
+      .eq('source_event', 'cron.rebooking_followup')
+      .contains('metadata', { service_id: serviceId })
+      .in('status', ['sent', 'retry_scheduled'])
+      .limit(1);
 
-    if (!customer) continue;
-
-    const meta = (customer.metadata ?? {}) as Record<string, unknown>;
-    const followupKey = `rebooking_followup_sent_at`;
-    const sentMap = (meta[followupKey] ?? {}) as Record<string, string>;
-    if (sentMap[serviceId]) continue; // Already sent
+    if (priorFollowUp?.length) continue;
 
     // Check no newer reservation exists for same customer + service
     const { count: newerCount } = await supabaseAdmin
       .from('reservations')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', reservation.tenant_id)
-      .eq('customer_phone', recipientPhone)
+      .eq('customer_number', recipientPhone)
       .eq('service_id', serviceId)
       .gt('start_at', reservation.start_at ?? threeDaysAgo);
 
@@ -377,9 +929,11 @@ export async function sendRebookingFollowUps(): Promise<number> {
     if (!client) continue;
 
     const serviceName = service.name as string;
-    const greeting = tenant.settings?.ai_personality?.includes('casual')
+    const tenantSettings = normalizeTenantSettings(tenant.metadata, tenant.tone_config);
+    const customerName = customer?.name ?? customer?.customer_name ?? '';
+    const greeting = String(tenantSettings.ai_personality ?? '').includes('casual')
       ? `How are your ${serviceName} looking? 😊`
-      : `Hi${reservation.customer_name ? ` ${reservation.customer_name}` : ''}! How are you enjoying your ${serviceName}? 😊`;
+      : `Hi${customerName ? ` ${customerName}` : ''}! How are you enjoying your ${serviceName}? 😊`;
 
     const conv = await loadConversationFlags(reservation.tenant_id, recipientPhone);
     const sendRes = await sendGovernedInitiated(supabaseAdmin as never, {
@@ -453,13 +1007,6 @@ export async function sendRebookingFollowUps(): Promise<number> {
       },
     });
 
-    // Mark as sent
-    sentMap[serviceId] = now.toISOString();
-    await supabaseAdmin
-      .from('customers')
-      .update({ metadata: { ...meta, [followupKey]: sentMap } })
-      .eq('id', customer.id);
-
     sent++;
   }
 
@@ -479,7 +1026,7 @@ export async function sendRebookingNudges(): Promise<number> {
   // Find v2-enabled tenants with at least one service with rebooking enabled
   const { data: tenants } = await supabaseAdmin
     .from('tenants')
-    .select('id, settings')
+    .select('id')
     .eq('v2_enabled', true);
 
   if (!tenants?.length) return 0;
@@ -507,7 +1054,7 @@ export async function sendRebookingNudges(): Promise<number> {
       // Find customers whose last booking for this service is older than the interval
       const { data: reservations } = await supabaseAdmin
         .from('reservations')
-        .select('customer_phone, customer_name, start_at')
+        .select('id, customer_id, customer_number, start_at')
         .eq('tenant_id', tenant.id)
         .eq('service_id', service.id)
         .eq('status', 'completed')
@@ -516,12 +1063,12 @@ export async function sendRebookingNudges(): Promise<number> {
       if (!reservations?.length) continue;
 
       // Deduplicate — take the most recent reservation per customer
-      const latestByPhone = new Map<string, (typeof reservations)[number] & { id: string }>();
+      const latestByPhone = new Map<string, (typeof reservations)[number]>();
       for (const r of reservations) {
-        if (!r.customer_phone) continue;
-        const existing = latestByPhone.get(r.customer_phone);
+        if (!r.customer_number) continue;
+        const existing = latestByPhone.get(r.customer_number);
         if (!existing || r.start_at > existing.start_at) {
-          latestByPhone.set(r.customer_phone, r as (typeof reservations)[number] & { id: string });
+          latestByPhone.set(r.customer_number, r);
         }
       }
 
@@ -531,26 +1078,34 @@ export async function sendRebookingNudges(): Promise<number> {
           .from('reservations')
           .select('id', { count: 'exact', head: true })
           .eq('tenant_id', tenant.id)
-          .eq('customer_phone', phone)
+          .eq('customer_number', phone)
           .eq('service_id', service.id)
           .gt('start_at', lastRes.start_at);
 
         if ((newerCount ?? 0) > 0) continue;
 
         // Load customer metadata to check throttle
-        const { data: customer } = await supabaseAdmin
-          .from('customers')
-          .select('id, metadata')
+        const { data: customer } = lastRes.customer_id
+          ? await supabaseAdmin
+              .from('customers')
+              .select('name, customer_name')
+              .eq('tenant_id', tenant.id)
+              .eq('id', lastRes.customer_id)
+              .maybeSingle()
+          : { data: null };
+
+        const { data: priorNudges } = await supabaseAdmin
+          .from('sias_campaign_runs')
+          .select('created_at')
           .eq('tenant_id', tenant.id)
-          .eq('phone', phone)
-          .maybeSingle();
+          .eq('target_phone', phone)
+          .eq('source_event', 'cron.rebooking_nudge')
+          .contains('metadata', { service_id: service.id })
+          .in('status', ['sent', 'retry_scheduled'])
+          .order('created_at', { ascending: false })
+          .limit(1);
 
-        if (!customer) continue;
-
-        const meta = (customer.metadata ?? {}) as Record<string, unknown>;
-        const nudgeKey = 'rebooking_nudge_sent_at';
-        const nudgeMap = (meta[nudgeKey] ?? {}) as Record<string, string>;
-        const lastNudge = nudgeMap[service.id];
+        const lastNudge = priorNudges?.[0]?.created_at as string | undefined;
 
         // Throttle: don't re-nudge within interval / 2 days
         if (lastNudge) {
@@ -559,7 +1114,7 @@ export async function sendRebookingNudges(): Promise<number> {
           if (new Date(lastNudge) > throttleCutoff) continue;
         }
 
-        const customerName = lastRes.customer_name ?? '';
+        const customerName = customer?.name ?? customer?.customer_name ?? '';
         const nudge = `Hi${customerName ? ` ${customerName}` : ''}! Time for your next ${service.name}? 📅 Reply *BOOK* to get started.`;
 
         const conv = await loadConversationFlags(tenant.id, phone);
@@ -629,13 +1184,6 @@ export async function sendRebookingNudges(): Promise<number> {
           },
         });
 
-        // Record nudge timestamp
-        nudgeMap[service.id] = now.toISOString();
-        await supabaseAdmin
-          .from('customers')
-          .update({ metadata: { ...meta, [nudgeKey]: nudgeMap } })
-          .eq('id', customer.id);
-
         sent++;
       }
     }
@@ -660,7 +1208,7 @@ export async function sendOwnerWeeklyDigest(): Promise<number> {
 
   const { data: tenants } = await supabaseAdmin
     .from('tenants')
-    .select('id, name, settings')
+    .select('id, name')
     .eq('v2_enabled', true);
 
   if (!tenants?.length) return 0;
@@ -745,33 +1293,33 @@ export async function sendAtRiskClientsAlert(): Promise<number> {
 
     const { data: completedReservations } = await supabaseAdmin
       .from('reservations')
-      .select('customer_phone, customer_name, service_id, start_at')
+      .select('customer_id, customer_number, service_id, start_at')
       .eq('tenant_id', tenant.id)
       .eq('status', 'completed')
       .lt('start_at', cutoffIso)
-      .not('customer_phone', 'is', null);
+      .not('customer_number', 'is', null);
 
     if (!completedReservations?.length) continue;
 
     const { data: upcomingReservations } = await supabaseAdmin
       .from('reservations')
-      .select('customer_phone')
+      .select('customer_number')
       .eq('tenant_id', tenant.id)
       .gt('start_at', new Date().toISOString())
-      .not('customer_phone', 'is', null)
+      .not('customer_number', 'is', null)
       .not('status', 'in', '("cancelled","no_show")');
 
-    const upcomingPhones = new Set((upcomingReservations ?? []).map((row) => row.customer_phone as string));
-    const lastCompletedByPhone = new Map<string, { customer_name: string | null; service_id: string | null; start_at: string }>();
+    const upcomingPhones = new Set((upcomingReservations ?? []).map((row) => row.customer_number as string));
+    const lastCompletedByPhone = new Map<string, { customer_id: string | null; service_id: string | null; start_at: string }>();
 
     for (const reservation of completedReservations) {
-      const phone = reservation.customer_phone as string | null;
+      const phone = reservation.customer_number as string | null;
       if (!phone || upcomingPhones.has(phone)) continue;
 
       const existing = lastCompletedByPhone.get(phone);
       if (!existing || reservation.start_at > existing.start_at) {
         lastCompletedByPhone.set(phone, {
-          customer_name: (reservation.customer_name as string | null) ?? null,
+          customer_id: (reservation.customer_id as string | null) ?? null,
           service_id: (reservation.service_id as string | null) ?? null,
           start_at: reservation.start_at as string,
         });
@@ -788,6 +1336,20 @@ export async function sendAtRiskClientsAlert(): Promise<number> {
 
     const serviceIds = [...new Set(atRisk.map((item) => item.service_id).filter(Boolean) as string[])];
     const serviceNameMap = await getServiceNameMap(serviceIds);
+    const customerIds = [...new Set(atRisk.map((item) => item.customer_id).filter(Boolean) as string[])];
+    const customerMap = new Map<string, { name: string | null; customer_name: string | null }>();
+    if (customerIds.length) {
+      const { data: customers } = await supabaseAdmin
+        .from('customers')
+        .select('id, name, customer_name')
+        .in('id', customerIds);
+      for (const customer of customers ?? []) {
+        customerMap.set(customer.id as string, {
+          name: (customer.name as string | null) ?? null,
+          customer_name: (customer.customer_name as string | null) ?? null,
+        });
+      }
+    }
     const client = await getTenantProviderClient(tenant.id);
     if (!client) continue;
 
@@ -797,7 +1359,8 @@ export async function sendAtRiskClientsAlert(): Promise<number> {
         month: 'short',
       });
       const serviceName = item.service_id ? (serviceNameMap.get(item.service_id) ?? 'their service') : 'their service';
-      const customerName = item.customer_name ?? item.phone;
+      const customer = item.customer_id ? customerMap.get(item.customer_id) : null;
+      const customerName = customer?.name ?? customer?.customer_name ?? item.phone;
       return `• ${customerName} — last visit: ${visitDate} (${serviceName})`;
     });
 
@@ -885,15 +1448,15 @@ async function getNoShowRevenue(tenantId: string, startDate: string, endDate: st
   const serviceIds = [...new Set(reservations.map((row) => row.service_id as string))];
   const { data: services } = await supabaseAdmin
     .from('services')
-    .select('id, price_cents')
+    .select('id, price')
     .in('id', serviceIds);
 
   const priceMap = new Map<string, number>();
   for (const service of services ?? []) {
-    priceMap.set(service.id as string, Number(service.price_cents ?? 0));
+    priceMap.set(service.id as string, Number(service.price ?? 0));
   }
 
-  return reservations.reduce((sum, row) => sum + Math.round((priceMap.get(row.service_id as string) ?? 0) / 100), 0);
+  return reservations.reduce((sum, row) => sum + Number(priceMap.get(row.service_id as string) ?? 0), 0);
 }
 
 function isMondayInLagos(): boolean {

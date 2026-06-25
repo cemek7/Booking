@@ -18,13 +18,11 @@ import { sendDisclosureIfNeeded } from './aiDisclosure';
 import { wantsHuman, createHumanHandoff } from './humanHandoff';
 import { buildOptInProofPatch } from './optInProof';
 import { claimBatch } from './messageBatcher';
-import { validateAction, AIResponse } from './actionValidator';
+import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
 import type { ProviderConfig } from '@/lib/whatsapp/providers';
-import { callGoogleAI } from '@/lib/google-ai';
-import { callOpenRouter } from '@/lib/openrouter';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
 import { looksLikeShowcaseRequest, sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
 import { handleOwnerCommand } from './flows/ownerCommands';
@@ -33,6 +31,13 @@ import { handleCustomerBooking } from './flows/customerBooking';
 import { detectOptOutKeyword, type OptOutSignal } from './optOut';
 import { brandCustomerText } from './outboundBranding';
 import type { ConvState } from './conversationState';
+import { routeIntent } from '@/lib/ai/intent-router';
+import { getGroundingData } from '@/lib/ai/grounding-service';
+import { buildFrontDeskPrompt } from '@/lib/ai/context-builder';
+import { getAIProvider } from '@/lib/ai/providers';
+import { recordAITrainingEvent } from '@/lib/ai/training-events';
+import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
+import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -148,7 +153,7 @@ async function handleOwnerOrStaffMessage(
   }
 
   // L2 for owner commands
-  const aiReply = await callAIWithRetry(tenantId, message, conv!, 'owner', messageId);
+  const aiReply = await callAIWithRetry(tenantId, message, conv!, 'owner', messageId, channel);
   if (!aiReply) {
     await sendReplyByChannel(
       providerConfig,
@@ -245,7 +250,7 @@ async function handleCustomerMessage(
   }
 
   // L2
-  const aiReply = await callAIWithRetry(tenantId, message, conv!, 'customer', messageId);
+  const aiReply = await callAIWithRetry(tenantId, message, conv!, 'customer', messageId, channel);
   if (!aiReply) {
     await sendReplyByChannel(
       providerConfig,
@@ -299,19 +304,32 @@ async function callAIWithRetry(
   message: string,
   conv: NonNullable<Awaited<ReturnType<typeof getConversation>>>,
   userRole: 'owner' | 'customer',
-  messageId: string
+  messageId: string,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<AIResponse | null> {
+  const cap = await checkCaps(supabaseAdmin, tenantId);
+  if (!cap.allowed) {
+    if (cap.reason !== 'ok') {
+      await maybeAlertCap(supabaseAdmin, tenantId, cap.reason);
+    }
+    return null;
+  }
+  if (cap.softWarn) {
+    await maybeAlertCap(supabaseAdmin, tenantId, 'soft_warn');
+  }
+
   // Check quota — if exceeded, return null (caller uses button menu fallback)
   if (await isQuotaExceeded('lite')) {
     if (await isQuotaExceeded('flash')) return null;
     // Flash budget remaining — go straight to L3
-    return callFlash(tenantId, message, conv, userRole, messageId);
+    return callFlash(tenantId, message, conv, userRole, messageId, channel);
   }
 
   // Try L2 first
   for (let attempt = 0; attempt < MAX_AI_RETRIES; attempt++) {
     try {
-      const prompt = await buildPrompt(tenantId, message, conv, userRole, null);
+      const promptContext = await buildPromptContext(tenantId, message, conv, userRole, null);
+      const prompt = promptContext.prompt;
       const result = await withTenantWalletSpend(
         supabaseAdmin,
         tenantId,
@@ -328,6 +346,7 @@ async function callAIWithRetry(
             message_id: messageId,
             attempt,
           },
+          skipCapCheck: true,
         },
         () => callAIProviderWithFallback(
           [{ role: 'user', content: prompt }],
@@ -341,14 +360,41 @@ async function callAIWithRetry(
       // Validate the AI's proposed action
       const validation = await validateAction(tenantId, parsed);
       if (!validation.valid) {
+        await recordAITrainingEvent({
+          tenantId,
+          messageId,
+          channel,
+          userRole,
+          message,
+          intent: promptContext.route.intent,
+          groundedContext: promptContext.grounding,
+          llmResponse: parsed,
+          backendAction: parsed.action,
+          success: false,
+          correction: validation.retryContext ?? validation.error ?? null,
+        });
         // Retry with error context
         if (attempt < MAX_AI_RETRIES - 1) {
-          const retryPrompt = await buildPrompt(tenantId, message, conv, userRole, validation.retryContext ?? null);
+          const retryPromptContext = await buildPromptContext(tenantId, message, conv, userRole, validation.retryContext ?? null);
+          const retryPrompt = retryPromptContext.prompt;
           const retryResult = await callAIProviderWithFallback([{ role: 'user', content: retryPrompt }], FLASH_LITE_MODEL);
           const retryParsed = parseAIResponse(retryResult.json);
           if (retryParsed) {
             const retryValidation = await validateAction(tenantId, retryParsed);
             if (retryValidation.valid) {
+              await recordAITrainingEvent({
+                tenantId,
+                messageId,
+                channel,
+                userRole,
+                message,
+                intent: retryPromptContext.route.intent,
+                groundedContext: retryPromptContext.grounding,
+                llmResponse: retryParsed,
+                backendAction: retryParsed.action,
+                success: true,
+                correction: validation.retryContext ?? null,
+              });
               await recordUsage(result, messageId, 'lite');
               return retryParsed;
             }
@@ -357,11 +403,24 @@ async function callAIWithRetry(
         continue;
       }
 
+      await recordAITrainingEvent({
+        tenantId,
+        messageId,
+        channel,
+        userRole,
+        message,
+        intent: promptContext.route.intent,
+        groundedContext: promptContext.grounding,
+        llmResponse: parsed,
+        backendAction: parsed.action,
+        success: true,
+        correction: null,
+      });
       await recordUsage(result, messageId, 'lite');
 
       // Escalate low-confidence responses to L3
       if (parsed.confidence === 'low' || parsed.action === 'escalate') {
-        return callFlash(tenantId, message, conv, userRole, messageId);
+        return callFlash(tenantId, message, conv, userRole, messageId, channel);
       }
 
       return parsed;
@@ -371,7 +430,7 @@ async function callAIWithRetry(
   }
 
   // L2 failed — try L3
-  return callFlash(tenantId, message, conv, userRole, messageId);
+  return callFlash(tenantId, message, conv, userRole, messageId, channel);
 }
 
 async function callFlash(
@@ -379,10 +438,12 @@ async function callFlash(
   message: string,
   conv: NonNullable<Awaited<ReturnType<typeof getConversation>>>,
   userRole: 'owner' | 'customer',
-  messageId: string
+  messageId: string,
+  channel: ConvChannel = 'whatsapp'
 ): Promise<AIResponse | null> {
   try {
-    const prompt = await buildPrompt(tenantId, message, conv, userRole, null);
+    const promptContext = await buildPromptContext(tenantId, message, conv, userRole, null);
+    const prompt = promptContext.prompt;
     const result = await withTenantWalletSpend(
       supabaseAdmin,
       tenantId,
@@ -398,11 +459,31 @@ async function callFlash(
           user_role: userRole,
           message_id: messageId,
         },
+        skipCapCheck: true,
       },
       () => callAIProviderWithFallback([{ role: 'user', content: prompt }], FLASH_MODEL)
     );
     const parsed = parseAIResponse(result.json);
-    if (parsed) await recordUsage(result, messageId, 'flash');
+    if (!parsed) return null;
+
+    const validation = await validateAction(tenantId, parsed);
+    await recordAITrainingEvent({
+      tenantId,
+      messageId,
+      channel,
+      userRole,
+      message,
+      intent: promptContext.route.intent,
+      groundedContext: promptContext.grounding,
+      llmResponse: parsed,
+      backendAction: parsed.action,
+      success: validation.valid,
+      correction: validation.retryContext ?? validation.error ?? null,
+    });
+
+    if (!validation.valid) return null;
+
+    await recordUsage(result, messageId, 'flash');
     return parsed;
   } catch (err) {
     console.error('[pipeline] L3 Flash call failed', err);
@@ -410,69 +491,56 @@ async function callFlash(
   }
 }
 
-function isGoogleQuotaOrRateError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /429|quota|rate/i.test(msg);
-}
-
-function getOpenRouterModelChain(): string[] {
-  const defaults = [
-    OPENROUTER_V2_MODEL,
-    process.env.OPENROUTER_FALLBACK_MODEL || '',
-    'openai/gpt-4o-mini',
-  ];
-
-  return [...defaults, ...OPENROUTER_V2_FALLBACK_MODELS]
-    .map((m) => m.trim())
-    .filter(Boolean)
-    .filter((m, idx, arr) => arr.indexOf(m) === idx);
-}
-
-async function callOpenRouterWithModelChain(
-  messages: Array<{ role: string; content: string }>
-): Promise<{ json: unknown; usage: unknown }> {
-  const models = getOpenRouterModelChain();
-  let lastErr: unknown = null;
-
-  for (const model of models) {
-    try {
-      return await callOpenRouter(messages, model, 1);
-    } catch (err) {
-      lastErr = err;
-      console.warn('[pipeline] OpenRouter model attempt failed', { model, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  throw lastErr ?? new Error('All OpenRouter model attempts failed');
-}
-
 async function callAIProviderWithFallback(
   messages: Array<{ role: string; content: string }>,
   googleModel: string
 ): Promise<{ json: unknown; usage: unknown }> {
-  if (V2_AI_PROVIDER === 'openrouter' || V2_DISABLE_GOOGLE) {
-    if (!process.env.OPENROUTER_API_KEY) {
-      throw new Error('WHATSAPP_V2_AI_PROVIDER=openrouter but OPENROUTER_API_KEY is not set');
-    }
-    return callOpenRouterWithModelChain(messages);
-  }
-
-  if (V2_AI_PROVIDER === 'google') {
-    return callGoogleAI(messages, googleModel);
-  }
-
-  try {
-    return await callGoogleAI(messages, googleModel);
-  } catch (err) {
-    // v2 historically used Gemini directly; when that quota/rate-limits,
-    // fall back to OpenRouter so tenant messaging does not stall.
-    if (!process.env.OPENROUTER_API_KEY) throw err;
-    if (!isGoogleQuotaOrRateError(err)) throw err;
-    return callOpenRouterWithModelChain(messages);
-  }
+  return getAIProvider({
+    mode: V2_AI_PROVIDER,
+    openRouterModel: OPENROUTER_V2_MODEL,
+    openRouterFallbackModels: [
+      process.env.OPENROUTER_FALLBACK_MODEL || '',
+      'openai/gpt-4o-mini',
+      ...OPENROUTER_V2_FALLBACK_MODELS,
+    ],
+    disableGoogle: V2_DISABLE_GOOGLE,
+  }).complete({
+    messages: messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    model: googleModel,
+  });
 }
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────
+
+async function buildPromptContext(
+  tenantId: string,
+  message: string,
+  conv: NonNullable<Awaited<ReturnType<typeof getConversation>>>,
+  userRole: 'owner' | 'customer',
+  retryContext: string | null
+): Promise<{
+  route: Awaited<ReturnType<typeof routeIntent>>;
+  grounding: Awaited<ReturnType<typeof getGroundingData>>;
+  prompt: string;
+}> {
+  const route = await routeIntent(message, {
+    tenantId,
+    userRole,
+  });
+  const grounding = await getGroundingData(tenantId, message, conv, route);
+
+  return {
+    route,
+    grounding,
+    prompt: buildFrontDeskPrompt({
+      grounding,
+      message,
+      conv,
+      userRole,
+      retryContext,
+    }),
+  };
+}
 
 async function buildPrompt(
   tenantId: string,
@@ -481,90 +549,8 @@ async function buildPrompt(
   userRole: 'owner' | 'customer',
   retryContext: string | null
 ): Promise<string> {
-  // Load tenant + settings
-  const { data: tenant } = await supabaseAdmin
-    .from('tenants')
-    .select('name, location, settings, buffer_minutes, timezone')
-    .eq('id', tenantId)
-    .single();
-
-  const settings = tenant?.settings ?? {};
-  const vertical = settings.vertical ?? 'general';
-  const staffTitle = settings.staff_title ?? 'staff';
-  const staffTitlePlural = settings.staff_title_plural ?? 'staff members';
-  const bookingNoun = settings.booking_noun ?? 'booking';
-  const sessionNoun = settings.session_noun ?? 'session';
-  const personality = settings.ai_personality ?? 'friendly and professional';
-  const customInstructions = settings.custom_ai_instructions ?? '';
-
-  // Load services
-  const { data: services } = await supabaseAdmin
-    .from('services')
-    .select('name, price_cents, duration_minutes')
-    .eq('tenant_id', tenantId)
-    .eq('is_active', true)
-    .order('sort_order');
-
-  const servicesList = (services ?? [])
-    .map((s) => `${s.name} — ₦${Math.round((s.price_cents ?? 0) / 100).toLocaleString()} (${s.duration_minutes ?? 60}min)`)
-    .join(', ');
-
-  // Load staff
-  const { data: staff } = await supabaseAdmin
-    .from('tenant_users')
-    .select('id, phone')
-    .eq('tenant_id', tenantId)
-    .in('role', ['staff', 'owner'])
-    .eq('status', 'active');
-
-  const staffList = (staff ?? []).map((s) => s.phone ?? s.id).join(', ');
-
-  const ownerInstructions = userRole === 'owner' ? `
-This ${staffTitle} owner manages ${tenant?.name ?? 'this business'} (${vertical} business).
-They can ask you to: check schedules, block time, mark staff unavailable, cancel/reschedule ${bookingNoun}s,
-add/edit services and prices, add staff, get daily summaries, and record walk-in customers.
-When the owner asks for a change that affects customers, confirm before executing.
-For walk-in requests (e.g. "walk-in Ada haircut"), use action "walk_in" with staff_name and service_name params — no confirmation needed.
-Resolve staff names from the staff list above.` : '';
-
-  const retryNote = retryContext ? `\nPrevious attempt failed: ${retryContext}\nPlease correct and try again.\n` : '';
-
-  return `You are a booking assistant for ${tenant?.name ?? 'this business'}, a ${vertical} business${tenant?.location ? ` in ${tenant.location}` : ''}.
-
-Business context:
-- Services: ${servicesList || 'no services set up yet'}
-- ${staffTitlePlural}: ${staffList || 'none yet'}
-- Buffer between ${bookingNoun}s: ${tenant?.buffer_minutes ?? 15} minutes
-- Timezone: ${tenant?.timezone ?? 'Africa/Lagos'}
-
-Language rules:
-- Refer to staff as "${staffTitle}" (plural: "${staffTitlePlural}")
-- Call bookings a "${bookingNoun}"
-- Call visits a "${sessionNoun}"
-- Tone: ${personality}
-${customInstructions}
-${ownerInstructions}
-
-Current context:
-- Flow: ${conv.current_flow} / step ${conv.flow_step}
-- Booking in progress: ${JSON.stringify(conv.flow_data?.booking_in_progress ?? null)}
-${retryNote}
-User message: "${message}"
-
-Respond ONLY with valid JSON (no markdown, no explanation):
-{
-  "action": "create_booking | get_availability | list_services | list_staff | get_price | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
-  "params": {},
-  "reply": "the message to send the user in natural language matching the business tone",
-  "confidence": "high | medium | low"
-}
-
-Rules:
-- Never invent services, prices, or staff not listed above
-- If confidence is low or the situation is complex, use action "escalate"
-- If you need more info, use action "needs_info" and ask clearly in "reply"
-- For write actions (cancel, reschedule, update), confirm with the user first in "reply"
-- If asked something outside scope, use "general_reply"`;
+  const context = await buildPromptContext(tenantId, message, conv, userRole, retryContext);
+  return context.prompt;
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

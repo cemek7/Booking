@@ -9,7 +9,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
-import { executeAction, AIResponse } from '../actionValidator';
+import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 
@@ -17,6 +17,13 @@ const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
+  return {
+    ...((row?.metadata as Record<string, unknown> | null) ?? {}),
+    tone_config: row?.tone_config ?? null,
+  };
+}
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -159,12 +166,12 @@ async function executeReadAction(
     case 'list_services': {
       const { data } = await supabaseAdmin
         .from('services')
-        .select('name, price_cents, duration_minutes')
+        .select('name, price, duration')
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
         .order('sort_order');
       if (!data?.length) return 'No services found. Add one with: "Add [service] at [price]"';
-      const lines = data.map((s) => `  • ${s.name} — ₦${Math.round((s.price_cents ?? 0) / 100).toLocaleString()} (${s.duration_minutes ?? 60}min)`);
+      const lines = data.map((s) => `  • ${s.name} — ₦${Math.round(Number(s.price ?? 0)).toLocaleString()} (${s.duration ?? 60}min)`);
       return `Your services:\n${lines.join('\n')}`;
     }
 
@@ -196,7 +203,7 @@ function isWriteAction(action: string): boolean {
 async function getOwnerGreeting(tenantId: string): Promise<string> {
   const { data } = await supabaseAdmin
     .from('tenants')
-    .select('name, settings')
+    .select('name, metadata, tone_config')
     .eq('id', tenantId)
     .maybeSingle();
   const name = data?.name ?? 'your business';
@@ -206,11 +213,12 @@ async function getOwnerGreeting(tenantId: string): Promise<string> {
 async function getOwnerHelp(tenantId: string): Promise<string> {
   const { data } = await supabaseAdmin
     .from('tenants')
-    .select('settings')
+    .select('metadata, tone_config')
     .eq('id', tenantId)
     .maybeSingle();
-  const bookingNoun = data?.settings?.booking_noun ?? 'booking';
-  const staffTitle = data?.settings?.staff_title ?? 'staff';
+  const settings = getTenantSettings(data);
+  const bookingNoun = String(settings.booking_noun ?? 'booking');
+  const staffTitle = String(settings.staff_title ?? 'staff');
 
   return `Here's what you can ask me:\n\n*Schedule*\n  • "Who's booked today/tomorrow/this week?"\n  • "What's [${staffTitle}]'s schedule this week?"\n  • "Block [date/time] for [${staffTitle}]"\n  • "Walk-in [${staffTitle}] [service]"\n\n*${bookingNoun.charAt(0).toUpperCase() + bookingNoun.slice(1)}s*\n  • "Cancel [customer]'s ${bookingNoun}"\n  • "Move [customer] to [new time]"\n  • "Mark [customer] as no-show"\n\n*Services & ${staffTitle}s*\n  • "Change [service] price to [amount]"\n  • "Add [service] at [price]"\n  • "Add a new ${staffTitle} named [name]"\n\n*Reports*\n  • "How was today/this week?"\n  • "Who are my top customers?"`;
 }

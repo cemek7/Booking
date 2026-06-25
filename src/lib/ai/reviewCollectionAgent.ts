@@ -6,8 +6,10 @@
  * extract ratings, and gather detailed reviews.
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { createEvolutionClient } from '@/lib/whatsapp/evolutionClient';
+import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getProviderClient } from '@/lib/whatsapp/providers';
 
 interface ReviewRequest {
   reservationId: string;
@@ -40,7 +42,6 @@ interface ReviewConversationState {
 
 export class ReviewCollectionAgent {
   private supabase = createServerSupabaseClient();
-  private evolutionClient = createEvolutionClient();
 
   /**
    * Initiate review collection for a completed booking
@@ -55,7 +56,7 @@ export class ReviewCollectionAgent {
         .single();
 
       if (existingReview) {
-        console.log(`Review already exists for reservation ${request.reservationId}`);
+        defaultLogger.info(`Review already exists for reservation ${request.reservationId}`);
         return false;
       }
 
@@ -85,7 +86,7 @@ export class ReviewCollectionAgent {
 
       // Send initial review request message
       const message = this.generateInitialMessage(request);
-      await this.sendMessage(request.customerPhone, message);
+      await this.sendMessage(request.tenantId, request.customerPhone, message);
 
       // Log the review request
       await this.supabase
@@ -104,7 +105,7 @@ export class ReviewCollectionAgent {
 
       return true;
     } catch (error) {
-      console.error('Error initiating review request:', error);
+      defaultLogger.error('Error initiating review request:', error);
       return false;
     }
   }
@@ -153,7 +154,7 @@ export class ReviewCollectionAgent {
           };
       }
     } catch (error) {
-      console.error('Error processing review response:', error);
+      defaultLogger.error('Error processing review response:', error);
       return {
         reply: 'Sorry, there was an error processing your response. Please try again.',
         completed: false,
@@ -335,7 +336,7 @@ export class ReviewCollectionAgent {
         .single();
 
       if (!reservation) {
-        console.error('Reservation not found for review:', state.reservationId);
+        defaultLogger.error('Reservation not found for review:', state.reservationId);
         return;
       }
 
@@ -358,7 +359,7 @@ export class ReviewCollectionAgent {
         });
 
       if (error) {
-        console.error('Error saving review:', error);
+        defaultLogger.error('Error saving review:', error);
         return;
       }
 
@@ -387,9 +388,9 @@ export class ReviewCollectionAgent {
         p_period_type: 'month',
       });
 
-      console.log('Review saved successfully for reservation:', state.reservationId);
+      defaultLogger.info('Review saved successfully for reservation:', state.reservationId);
     } catch (error) {
-      console.error('Error in saveReview:', error);
+      defaultLogger.error('Error in saveReview:', error);
     }
   }
 
@@ -424,13 +425,19 @@ export class ReviewCollectionAgent {
   }
 
   /**
-   * Send WhatsApp message
+   * Send WhatsApp message via per-tenant Evolution client
    */
-  private async sendMessage(phone: string, message: string): Promise<void> {
+  private async sendMessage(tenantId: string, phone: string, message: string): Promise<void> {
     try {
-      await this.evolutionClient.sendMessage(phone, message);
+      const waConfig = await getTenantWhatsAppConfig(tenantId);
+      if (!waConfig) {
+        defaultLogger.warn('No WhatsApp config for tenant, skipping message:', tenantId);
+        return;
+      }
+      const client = getProviderClient(waConfig);
+      await client.sendTextMessage(phone, message);
     } catch (error) {
-      console.error('Error sending WhatsApp message:', error);
+      defaultLogger.error('Error sending WhatsApp message:', error);
       throw error;
     }
   }
@@ -449,24 +456,41 @@ export class ReviewCollectionAgent {
       // Get reservation details
       const { data: reservation } = await supabase
         .from('reservations')
-        .select(`
-          id,
-          tenant_id,
-          customer_id,
-          staff_id,
-          service_id,
-          start_at,
-          metadata,
-          customers(customer_name, customer_phone),
-          users!reservations_staff_id_fkey(full_name),
-          services(name)
-        `)
+        .select('id, tenant_id, customer_id, staff_id, tenant_staff_id, service_id, start_at, metadata')
         .eq('id', reservationId)
         .eq('status', 'completed')
         .single();
 
-      if (!reservation || !reservation.customers || !reservation.users) {
-        console.log('Reservation not found or incomplete data:', reservationId);
+      if (!reservation) {
+        defaultLogger.info('Reservation not found or incomplete data:', reservationId);
+        return;
+      }
+      const res = reservation as any;
+      const [{ data: customer }, { data: staff }, { data: service }] = await Promise.all([
+        res.customer_id
+          ? supabase
+              .from('customers')
+              .select('name, customer_name, phone, phone_number')
+              .eq('id', res.customer_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase
+          .from('tenant_users')
+          .select('id, user_id, name')
+          .eq('tenant_id', res.tenant_id)
+          .or(`id.eq.${res.tenant_staff_id ?? '00000000-0000-0000-0000-000000000000'},user_id.eq.${res.staff_id ?? '00000000-0000-0000-0000-000000000000'}`)
+          .maybeSingle(),
+        res.service_id
+          ? supabase.from('services').select('name').eq('id', res.service_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      const customerPhone = customer?.phone ?? customer?.phone_number;
+      const customerName = customer?.name ?? customer?.customer_name;
+      const staffName = staff?.name ?? 'our team';
+
+      if (!customerPhone || !customerName) {
+        defaultLogger.info('Reservation missing customer contact info:', reservationId);
         return;
       }
 
@@ -476,20 +500,20 @@ export class ReviewCollectionAgent {
       await supabase
         .from('whatsapp_message_queue')
         .insert({
-          tenant_id: reservation.tenant_id,
+          tenant_id: res.tenant_id,
           message_id: `review_req_${reservationId}_${Date.now()}`,
           from_number: 'system', // Will be replaced with tenant's WhatsApp number
-          to_number: reservation.customers.customer_phone,
+          to_number: customerPhone,
           content: JSON.stringify({
             type: 'review_request',
             reservation_id: reservationId,
-            customer_id: reservation.customer_id,
-            customer_name: reservation.customers.customer_name,
-            staff_id: reservation.staff_id,
-            staff_name: reservation.users.full_name,
-            service_id: reservation.service_id,
-            service_name: reservation.services?.name,
-            completed_at: reservation.start_at,
+            customer_id: res.customer_id,
+            customer_name: customerName,
+            staff_id: res.staff_id,
+            staff_name: staffName,
+            service_id: res.service_id,
+            service_name: service?.name,
+            completed_at: res.start_at,
           }),
           priority: 'normal',
           status: 'pending',
@@ -502,9 +526,9 @@ export class ReviewCollectionAgent {
           },
         });
 
-      console.log(`Review request scheduled for ${scheduledAt.toISOString()}`);
+      defaultLogger.info(`Review request scheduled for ${scheduledAt.toISOString()}`);
     } catch (error) {
-      console.error('Error scheduling review request:', error);
+      defaultLogger.error('Error scheduling review request:', error);
     }
   }
 }

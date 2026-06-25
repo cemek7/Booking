@@ -16,7 +16,16 @@
     "test:coverage": "jest --coverage",
     "test:integration": "jest --config jest.integration.config.cjs --runInBand",
     "test:e2e:cypress": "cypress run",
-    "test:e2e:cypress:open": "cypress open"
+    "test:e2e:cypress:open": "cypress open",
+    "db:apply:ai-front-desk-stage-b": "psql \"$DATABASE_URL\" -f scripts/sql/apply_ai_front_desk_stage_b.sql",
+    "db:verify:ai-front-desk-stage-b": "bash deployment/scripts/verify-ai-front-desk-stage-b.sh",
+    "deploy:post:ai-front-desk": "bash deployment/scripts/post-deploy-ai-front-desk.sh",
+    "db:apply:ai-front-desk-stage-c": "psql \"$DATABASE_URL\" -f scripts/sql/apply_ai_front_desk_stage_c.sql",
+    "db:verify:ai-front-desk-stage-c": "bash deployment/scripts/verify-ai-front-desk-stage-c.sh",
+    "deploy:post:ai-front-desk-stage-c": "bash deployment/scripts/post-deploy-ai-front-desk-stage-c.sh",
+    "db:apply:ai-front-desk-stage-d": "psql \"$DATABASE_URL\" -f scripts/sql/apply_ai_front_desk_stage_d.sql",
+    "db:verify:ai-front-desk-stage-d": "bash deployment/scripts/verify-ai-front-desk-stage-d.sh",
+    "deploy:post:ai-front-desk-stage-d": "bash deployment/scripts/post-deploy-ai-front-desk-stage-d.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

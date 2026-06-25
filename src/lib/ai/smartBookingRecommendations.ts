@@ -1,4 +1,4 @@
-import { getSupabaseServerComponentClient } from '@/lib/supabase/server';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 interface CustomerProfile {
   id: string;
@@ -80,7 +80,7 @@ interface StaffRecommendation {
 }
 
 class SmartBookingRecommendations {
-  private get supabase() { return getSupabaseServerComponentClient(); }
+  private get supabase() { return createServerSupabaseClient(); }
   private customerProfiles = new Map<string, CustomerProfile>();
 
   /**
@@ -667,11 +667,11 @@ class SmartBookingRecommendations {
 
   private async getCustomerBookingHistory(tenantId: string, customerPhone: string): Promise<any[]> {
     const { data: bookings } = await this.supabase
-      .from('bookings')
-      .select('*')
+      .from('reservations')
+      .select('id, service_id, status, start_at, created_at')
       .eq('tenant_id', tenantId)
-      .eq('customer_phone', customerPhone)
-      .order('created_at', { ascending: false })
+      .eq('customer_number', customerPhone)
+      .order('start_at', { ascending: false })
       .limit(20);
 
     return bookings || [];
@@ -835,8 +835,7 @@ class SmartBookingRecommendations {
         .from('tenant_users')
         .select('user_id, name, email, role')
         .eq('tenant_id', tenantId)
-        .in('user_id', staffIds)
-        .eq('status', 'active');
+        .in('user_id', staffIds);
       return (staff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
     }
 
@@ -845,8 +844,7 @@ class SmartBookingRecommendations {
       .from('tenant_users')
       .select('user_id, name, email, role')
       .eq('tenant_id', tenantId)
-      .eq('role', 'staff')
-      .eq('status', 'active');
+      .eq('role', 'staff');
     return (allStaff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
   }
 

@@ -28,6 +28,13 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
+  return {
+    ...((row?.metadata as Record<string, unknown> | null) ?? {}),
+    tone_config: row?.tone_config ?? null,
+  };
+}
+
 const FLASH_LITE_MODEL = 'gemini-2.0-flash-lite';
 
 type LLMChatCompletionResponse = {
@@ -43,7 +50,7 @@ function getChatContent(result: LLMChatCompletionResponse | null | undefined): s
   return String(result?.choices?.[0]?.message?.content ?? result?.choices?.[0]?.text ?? '');
 }
 
-// Vertical presets — used to seed tenants.settings on business type detection
+// Vertical presets — stored under tenants.metadata on business type detection
 const VERTICAL_PRESETS: Record<string, Record<string, string>> = {
   beauty: { staff_title: 'stylist', staff_title_plural: 'stylists', booking_noun: 'appointment', session_noun: 'styling session', ai_personality: 'warm and expressive' },
   fitness: { staff_title: 'trainer', staff_title_plural: 'trainers', booking_noun: 'booking', session_noun: 'session', ai_personality: 'energetic and motivating' },
@@ -138,9 +145,8 @@ Return JSON only:
       .from('tenants')
       .insert({
         name: businessName,
-        location: parsed.location,
         v2_enabled: false, // enabled at step 5
-        settings: { vertical, ...preset },
+        metadata: { vertical, ...preset, location: parsed.location },
       })
       .select('id')
       .single();
@@ -246,8 +252,8 @@ Prices are in local currency (no currency symbol needed).`;
   const rows = services.map((s) => ({
     tenant_id: resolvedTenantId,
     name: s.name,
-    price_cents: Math.round(s.price * 100),
-    duration_minutes: s.duration_minutes ?? 60,
+    price: s.price,
+    duration: s.duration_minutes ?? 60,
     is_active: true,
   }));
 
@@ -262,8 +268,13 @@ Prices are in local currency (no currency symbol needed).`;
   }, convChannel2);
 
   const serviceLines = services.map((s) => `  • ${s.name} — ₦${s.price.toLocaleString()}`).join('\n');
-  const { data: tenantData } = await supabaseAdmin.from('tenants').select('settings').eq('id', resolvedTenantId).single();
-  const staffTitle = tenantData?.settings?.staff_title ?? 'staff';
+  const { data: tenantData } = await supabaseAdmin
+    .from('tenants')
+    .select('metadata, tone_config')
+    .eq('id', resolvedTenantId)
+    .single();
+  const tenantSettings = getTenantSettings(tenantData);
+  const staffTitle = String(tenantSettings.staff_title ?? 'staff');
   const staffTitleQuestion = staffTitle === 'stylist' ? 'Are you the only stylist, or do you have a team?' :
     staffTitle === 'doctor' ? 'Are you the only doctor, or are there other consultants?' :
     staffTitle === 'technician' ? 'Do you work alone or do you have technicians on your team?' :
@@ -416,7 +427,7 @@ Only include days that are open.`;
   // ── Activation ────────────────────────────────────────────────────────────
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
-    .select('name, settings')
+    .select('name, metadata, tone_config')
     .eq('id', resolvedTenantId)
     .single();
 
@@ -438,7 +449,8 @@ Only include days that are open.`;
   const waNumber = process.env.EVOLUTION_DEFAULT_PHONE ?? '2348000000000';
   const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
   const businessName = tenantData?.name ?? 'your business';
-  const bookingNoun = tenantData?.settings?.booking_noun ?? 'booking';
+  const activationSettings = getTenantSettings(tenantData);
+  const bookingNoun = String(activationSettings.booking_noun ?? 'booking');
 
   return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.\n\nTo manage your business, just message me any time:\n  • "Who's booked tomorrow?"\n  • "Block Thursday afternoon"\n  • "Change braids price to 6000"\n  • "How was this week?"\n\nYou're all set! 🎉`;
 }

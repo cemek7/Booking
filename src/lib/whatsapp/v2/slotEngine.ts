@@ -26,7 +26,7 @@ export interface TimeSlot {
 
 /**
  * Returns the list of time slots for a given staff member on a given date.
- * Slot interval is derived from the service's duration_minutes.
+ * Slot interval is derived from the service's duration.
  */
 export async function getAvailableSlots(
   tenantId: string,
@@ -39,12 +39,12 @@ export async function getAvailableSlots(
   // ── Service duration ───────────────────────────────────────────────────────
   const { data: service } = await supabaseAdmin
     .from('services')
-    .select('duration_minutes')
+    .select('duration')
     .eq('id', serviceId)
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
-  const durationMinutes = service?.duration_minutes ?? 60;
+  const durationMinutes = service?.duration ?? 60;
 
   // ── Tenant buffer ──────────────────────────────────────────────────────────
   const { data: tenant } = await supabaseAdmin

@@ -13,7 +13,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 import PaymentService from '@/lib/paymentService';
-import { executeAction, AIResponse } from '../actionValidator';
+import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
+import { createReservation } from '@/lib/reservationService';
 import { updateConversation, resetConversation, ConvState, ConvChannel } from '../conversationState';
 import { getAvailableSlots, lockSlot, releaseLock } from '../slotEngine';
 import { addToWaitlist } from '../waitlist';
@@ -24,6 +25,13 @@ const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
+  return {
+    ...((row?.metadata as Record<string, unknown> | null) ?? {}),
+    tone_config: row?.tone_config ?? null,
+  };
+}
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -217,7 +225,7 @@ async function handleCreateBooking(
 
   // Get service + staff details for confirmation message
   const [{ data: service }, { data: staff }] = await Promise.all([
-    supabaseAdmin.from('services').select('name, price_cents').eq('id', service_id).maybeSingle(),
+    supabaseAdmin.from('services').select('name, price').eq('id', service_id).maybeSingle(),
     tenant_staff_id
       ? supabaseAdmin.from('tenant_users').select('phone').eq('id', tenant_staff_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -225,26 +233,41 @@ async function handleCreateBooking(
 
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
-    .select('settings, name')
+    .select('metadata, tone_config, name')
     .eq('id', tenantId)
     .maybeSingle();
 
-  const bookingNoun = tenantData?.settings?.booking_noun ?? 'appointment';
-  const price = service ? `₦${Math.round((service.price_cents ?? 0) / 100).toLocaleString()}` : '';
-  const depositConfig = getDepositConfig(tenantData?.settings);
-  const { data: customerProfile } = await supabaseAdmin
+  const tenantSettings: Record<string, unknown> = {
+    ...((tenantData?.metadata as Record<string, unknown> | null) ?? {}),
+    tone_config: tenantData?.tone_config ?? null,
+  };
+  const bookingNoun = String(tenantSettings.booking_noun ?? 'appointment');
+  const servicePrice = Number(service?.price ?? 0);
+  const price = service ? `₦${Math.round(servicePrice).toLocaleString()}` : '';
+  const depositConfig = getDepositConfig(tenantSettings);
+  const { data: customerRow } = await supabaseAdmin
     .from('customers')
-    .select('email, risk_score')
+    .select('id')
     .eq('tenant_id', tenantId)
     .eq('phone', phone)
     .maybeSingle();
+
+  const { data: customerProfile } = customerRow?.id
+    ? await supabaseAdmin
+        .from('customer_profile_summary')
+        .select('risk_score')
+        .eq('tenant_id', tenantId)
+        .eq('customer_id', customerRow.id)
+        .maybeSingle()
+    : { data: null };
+
   const riskScore = ((customerProfile?.risk_score as string | undefined) ?? 'low') as 'low' | 'medium' | 'high';
   const requiresDeposit = riskScore === 'high' || Boolean(depositConfig?.enabled);
   const depositAmountCents =
     requiresDeposit
       ? (depositConfig?.amount_cents && depositConfig.amount_cents > 0
           ? depositConfig.amount_cents
-          : Math.max(service?.price_cents ?? 0, 2500))
+          : Math.max(Math.round(servicePrice * 100), 2500))
       : 0;
   const dateFormatted = new Date(date).toLocaleDateString('en-NG', {
     weekday: 'short', day: 'numeric', month: 'long',
@@ -339,21 +362,30 @@ async function confirmBooking(
   const endAt = end_time ? `${date}T${end_time}:00` : startAt;
   const reservationStatus = requiresDeposit ? 'deposit_pending' : 'confirmed';
 
-  const { data: reservation, error } = await supabaseAdmin.from('reservations').insert({
-    tenant_id: tenantId,
-    tenant_staff_id,
-    service_id,
-    customer_id: customer?.id ?? null,
-    customer_name: customer_name ?? phone,
-    customer_phone: phone,
-    start_at: startAt,
-    end_at: endAt,
-    status: reservationStatus,
-    confirmed_at: requiresDeposit ? null : new Date().toISOString(),
-  }).select('id').single();
-
-  if (error) {
+  let reservation: { id: string } | null = null;
+  try {
+    reservation = await createReservation(supabaseAdmin as never, {
+      tenant_id: tenantId,
+      customer_id: customer?.id ?? null,
+      customer_name: customer_name ?? phone,
+      phone,
+      service_id,
+      service: service_id,
+      start_at: startAt,
+      end_at: endAt,
+      status: reservationStatus,
+      metadata: {
+        source: 'whatsapp_v2_confirm',
+        lock_id: lock_id ?? null,
+      },
+      staff_id: tenant_staff_id,
+    }) as { id: string } | null;
+  } catch (error) {
     console.error('[customerBooking] confirmBooking error', error);
+    return 'Sorry, something went wrong confirming your booking. Please try again.';
+  }
+
+  if (!reservation) {
     return 'Sorry, something went wrong confirming your booking. Please try again.';
   }
 
@@ -415,11 +447,12 @@ async function confirmBooking(
 
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
-    .select('name, settings')
+    .select('name, metadata, tone_config')
     .eq('id', tenantId)
     .maybeSingle();
 
-  const bookingNoun = tenantData?.settings?.booking_noun ?? 'appointment';
+  const tenantSettings = getTenantSettings(tenantData);
+  const bookingNoun = String(tenantSettings.booking_noun ?? 'appointment');
   const dateFormatted = new Date(date).toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'long' });
 
   return `Booked! ✅ Your ${bookingNoun} at *${tenantData?.name ?? 'the salon'}* is confirmed for ${dateFormatted} at ${formatTime(start_time)}.\n\nI'll send you a reminder 24 hours and 2 hours before. See you then!`;
@@ -445,22 +478,32 @@ async function handleCancelBooking(
 async function getCustomerGreeting(tenantId: string, externalId: string): Promise<string> {
   const { data: tenant } = await supabaseAdmin
     .from('tenants')
-    .select('name, settings')
+    .select('name, metadata, tone_config')
     .eq('id', tenantId)
     .maybeSingle();
 
   const { data: customer } = await supabaseAdmin
     .from('customers')
-    .select('name, total_bookings')
+    .select('id, name, customer_name')
     .eq('tenant_id', tenantId)
     .eq('phone', externalId)
     .maybeSingle();
 
   const salonName = tenant?.name ?? 'us';
-  const bookingNoun = tenant?.settings?.booking_noun ?? 'appointment';
+  const tenantSettings = getTenantSettings(tenant);
+  const bookingNoun = String(tenantSettings.booking_noun ?? 'appointment');
+  const customerName = customer?.name ?? customer?.customer_name ?? null;
+  const { data: customerProfile } = customer?.id
+    ? await supabaseAdmin
+        .from('customer_profile_summary')
+        .select('lifetime_bookings')
+        .eq('tenant_id', tenantId)
+        .eq('customer_id', customer.id)
+        .maybeSingle()
+    : { data: null };
 
-  if (customer?.name && (customer.total_bookings ?? 0) > 0) {
-    return `Hi ${customer.name}! Welcome back to *${salonName}* 😊\nWould you like to book another ${bookingNoun}?`;
+  if (customerName && Number(customerProfile?.lifetime_bookings ?? 0) > 0) {
+    return `Hi ${customerName}! Welcome back to *${salonName}* 😊\nWould you like to book another ${bookingNoun}?`;
   }
 
   return `Hi! Welcome to *${salonName}* 😊\nI can help you book a ${bookingNoun}. What service are you interested in?`;
@@ -469,11 +512,12 @@ async function getCustomerGreeting(tenantId: string, externalId: string): Promis
 async function getCustomerHelp(tenantId: string): Promise<string> {
   const { data: tenant } = await supabaseAdmin
     .from('tenants')
-    .select('settings')
+    .select('metadata, tone_config')
     .eq('id', tenantId)
     .maybeSingle();
 
-  const bookingNoun = tenant?.settings?.booking_noun ?? 'appointment';
+  const tenantSettings = getTenantSettings(tenant);
+  const bookingNoun = String(tenantSettings.booking_noun ?? 'appointment');
   return `I can help you:\n  • Book a ${bookingNoun}\n  • Check service prices\n  • Cancel or reschedule\n\nJust tell me what you need!`;
 }
 

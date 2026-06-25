@@ -802,7 +802,7 @@ class PredictiveAnalyticsEngine {
       const [{ data: reservations }, { data: transactions }] = await Promise.all([
         this.supabase
           .from('reservations')
-          .select('id, status, start_at, service, created_at')
+          .select('id, status, start_at, service_id, created_at')
           .eq('tenant_id', tenantId)
           .eq('customer_id', customerId)
           .order('created_at', { ascending: false }),
@@ -840,9 +840,21 @@ class PredictiveAnalyticsEngine {
         .map(([h]) => `${String(h).padStart(2, '0')}:00`);
 
       // Extract preferred services
+      const serviceIds = [...new Set((reservations || []).map((r: any) => r.service_id).filter(Boolean))];
+      const serviceMap = new Map<string, string>();
+      if (serviceIds.length > 0) {
+        const { data: services } = await this.supabase
+          .from('services')
+          .select('id, name')
+          .in('id', serviceIds as string[]);
+        for (const service of services || []) {
+          serviceMap.set(service.id as string, String(service.name ?? service.id));
+        }
+      }
       const svcCounts: Record<string, number> = {};
       for (const r of (reservations || [])) {
-        if (r.service) svcCounts[r.service] = (svcCounts[r.service] || 0) + 1;
+        const serviceName = r.service_id ? (serviceMap.get(r.service_id) ?? r.service_id) : null;
+        if (serviceName) svcCounts[serviceName] = (svcCounts[serviceName] || 0) + 1;
       }
       const preferredServices = Object.entries(svcCounts).sort(([, a], [, b]) => b - a).slice(0, 3).map(([s]) => s);
 
