@@ -12,8 +12,10 @@
  * - Consistent error handling
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { MiddlewareContext, MiddlewareHandler } from '../orchestrator';
 import { PROTECTED_ROUTES } from '@/middleware';
@@ -64,11 +66,32 @@ export interface AuthenticatedUserRoleResult {
   tenantId: string | null;
 }
 
+async function isSuperadminUser(userId: string, email?: string | null): Promise<boolean> {
+  try {
+    const admin = createSupabaseAdminClient();
+    const normalizedEmail = email?.trim().toLowerCase() ?? '';
+
+    if (normalizedEmail) {
+      const { data: adminByEmail } = await admin
+        .from('admins')
+        .select('email, status')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+
+      if (adminByEmail) return true;
+    }
+    return false;
+  } catch (error) {
+    defaultLogger.error('[Auth] Superadmin lookup failed:', error);
+    return false;
+  }
+}
+
 export async function getAuthenticatedUserRole(
   request: NextRequest
 ): Promise<AuthenticatedUserRoleResult> {
   try {
-    const supabase = getSupabaseRouteHandlerClient();
+    const supabase = createServerSupabaseClient();
 
     const { data: { user: sessionUser }, error: sessionError } =
       await supabase.auth.getUser();
@@ -89,6 +112,10 @@ export async function getAuthenticatedUserRole(
       return { role: null, isAuthenticated: false, tenantId: null };
     }
 
+    if (await isSuperadminUser(user.id, user.email)) {
+      return { role: 'superadmin', isAuthenticated: true, tenantId: 'global' };
+    }
+
     const tenantId = request.headers.get('x-tenant-id') || null;
     if (tenantId) {
       const { data: membership, error: membershipError } = await supabase
@@ -99,12 +126,12 @@ export async function getAuthenticatedUserRole(
         .maybeSingle();
 
       if (membershipError) {
-        console.error('[Auth] Tenant membership query failed:', membershipError.message);
+        defaultLogger.error('[Auth] Tenant membership query failed:', membershipError.message);
         return { role: null, isAuthenticated: true, tenantId };
       }
 
       if (!membership) {
-        console.warn('[Auth] Tenant membership missing for tenant:', tenantId);
+        defaultLogger.warn('[Auth] Tenant membership missing for tenant:', tenantId);
         return { role: null, isAuthenticated: true, tenantId };
       }
 
@@ -112,31 +139,37 @@ export async function getAuthenticatedUserRole(
       return { role: membership.role, isAuthenticated: true, tenantId };
     }
 
-    // Fallback: When no tenantId header is provided, get any tenant membership
-    // Orders by tenant_id for deterministic selection if user has multiple memberships
-    const { data: tenantUser, error: roleError } = await supabase
+    // Fallback: When no tenantId header is provided, auto-select only if user
+    // has exactly one membership. If multiple, require explicit x-tenant-id header.
+    const { data: tenantMemberships, error: roleError } = await supabase
       .from('tenant_users')
       .select('role, tenant_id')
       .eq('user_id', user.id)
       .order('tenant_id', { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(2);
 
     if (roleError) {
-      console.error('[Auth] Role query failed:', roleError.message);
+      defaultLogger.error('[Auth] Role query failed:', roleError.message);
       return { role: null, isAuthenticated: true, tenantId: null };
     }
 
-    if (tenantUser) {
+    if (tenantMemberships && tenantMemberships.length === 1) {
       return {
-        role: tenantUser.role ?? null,
+        role: tenantMemberships[0].role ?? null,
         isAuthenticated: true,
-        tenantId: tenantUser.tenant_id ?? null,
+        tenantId: tenantMemberships[0].tenant_id ?? null,
       };
     }
+
+    if (tenantMemberships && tenantMemberships.length > 1) {
+      // Ambiguous: user belongs to multiple tenants and didn't specify which one
+      defaultLogger.warn('[Auth] User has multiple tenant memberships but no x-tenant-id header');
+      return { role: null, isAuthenticated: true, tenantId: null };
+    }
+
     return { role: null, isAuthenticated: true, tenantId: null };
   } catch (error) {
-    console.error('[Auth] Failed to resolve user role:', error);
+    defaultLogger.error('[Auth] Failed to resolve user role:', error);
     return { role: null, isAuthenticated: false, tenantId: null };
   }
 }
@@ -146,12 +179,28 @@ export async function getAuthenticatedUserRole(
  */
 export function isPublicPath(pathname: string): boolean {
   const publicPaths = [
+    '/',
+    '/booka',
+    '/products',
+    '/booka/auth/signin',
+    '/booka/auth/signup',
+    '/booka/auth/onboarding',
+    '/booka/auth/callback',
+    '/booka/auth/select-tenant',
+    '/booka/auth/forbidden',
+    '/booka/auth/unauthorized',
     '/auth/signin',
     '/auth/signup',
+    '/auth/callback',
+    '/auth/onboarding',
+    '/auth/select-tenant',
+    '/auth/forbidden',
+    '/auth/unauthorized',
     '/auth/forgot-password',
     '/auth/reset-password',
     '/api/auth/signin',
     '/api/auth/signup',
+    '/api/auth/callback',
     '/api/auth/verify',
     '/api/health',
     '/book/',
@@ -199,14 +248,14 @@ function extractTenantId(request: NextRequest): string | null {
  * Parse user role from database with tenant-aware query
  */
 async function parseUserRole(
-  supabase: any,
+  supabase: SupabaseClient,
   userId: string,
   tenantId?: string
 ): Promise<{ role: string; permissions: string[] } | null> {
   try {
     // Validate tenantId before querying
     if (!tenantId || tenantId.trim() === '') {
-      console.debug('[Auth] No valid tenantId provided, cannot look up role');
+      defaultLogger.debug('[Auth] No valid tenantId provided, cannot look up role');
       return null;
     }
 
@@ -220,12 +269,12 @@ async function parseUserRole(
       .maybeSingle(); // Use maybeSingle instead of single to handle not found gracefully
 
     if (error) {
-      console.error('[Auth] Role query failed:', error.message);
+      defaultLogger.error('[Auth] Role query failed:', error.message);
       return null;
     }
 
     if (!data) {
-      console.warn('[Auth] No role found for user in tenant', { userId, tenantId });
+      defaultLogger.warn('[Auth] No role found for user in tenant', { userId, tenantId });
       return null;
     }
 
@@ -234,7 +283,7 @@ async function parseUserRole(
       permissions: [], // Permissions can be added later if needed
     };
   } catch (error) {
-    console.error('[Auth] Parse role error:', error);
+    defaultLogger.error('[Auth] Parse role error:', error);
     return null;
   }
 }
@@ -243,6 +292,7 @@ async function parseUserRole(
  * Unified authentication handler
  */
 export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler => {
+  void _config;
   return async (context: MiddlewareContext): Promise<MiddlewareContext | NextResponse> => {
     const { request } = context;
     const pathname = new URL(request.url).pathname;
@@ -255,7 +305,7 @@ export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler =>
 
     try {
       // Get Supabase client
-      const supabase = getSupabaseRouteHandlerClient();
+      const supabase = createServerSupabaseClient();
 
       // FIRST: Try to get user from Supabase session (via cookies)
       // This is the primary auth method for Server Components
@@ -266,9 +316,12 @@ export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler =>
         // ✅ Session found in cookies - user is authenticated
         // Extract tenant ID from request for role lookup
         const tenantId = extractTenantId(request);
+        const isSuperadmin = await isSuperadminUser(authUser.id, authUser.email);
 
         // Parse user role from database (tenant-aware)
-        const roleData = await parseUserRole(supabase, authUser.id, tenantId || undefined);
+        const roleData = isSuperadmin
+          ? { role: 'superadmin', permissions: [] }
+          : await parseUserRole(supabase, authUser.id, tenantId || undefined);
 
         context.user = {
           id: authUser.id,
@@ -300,9 +353,12 @@ export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler =>
           // ✅ Token is valid - user is authenticated
           // Extract tenant ID from request for role lookup
           const tenantId = extractTenantId(request);
+          const isSuperadmin = await isSuperadminUser(tokenUser.id, tokenUser.email);
 
           // Parse user role from database (tenant-aware)
-          const roleData = await parseUserRole(supabase, tokenUser.id, tenantId || undefined);
+          const roleData = isSuperadmin
+            ? { role: 'superadmin', permissions: [] }
+            : await parseUserRole(supabase, tokenUser.id, tenantId || undefined);
 
           context.user = {
             id: tokenUser.id,
@@ -329,7 +385,7 @@ export const createAuthMiddleware = (_config?: AuthConfig): MiddlewareHandler =>
       const error = ApiErrorFactory.missingAuthorization();
       return error.toResponse();
     } catch (error) {
-      console.error('[Auth] Authentication failed:', error);
+      defaultLogger.error('[Auth] Authentication failed:', error);
       const apiError = ApiErrorFactory.internalServerError(
         error instanceof Error ? error : undefined
       );
@@ -392,6 +448,6 @@ export function getAuthConfigForRoute(pathname: string): AuthConfig | null {
     return null;
   }
 
-  const [, config] = route;
-  return config as AuthConfig;
+  const [, requiredRoles] = route;
+  return { required: true, requiredRoles };
 }

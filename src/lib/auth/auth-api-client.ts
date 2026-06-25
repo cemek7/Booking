@@ -16,6 +16,7 @@
  */
 
 import { buildAuthHeaders } from './auth-headers';
+import { setStoredAccessToken } from './token-storage';
 
 export interface ApiError {
   message: string;
@@ -35,6 +36,7 @@ export interface ApiResponse<T> {
 export interface AuthFetchOptions extends Omit<RequestInit, 'headers' | 'body'> {
   headers?: Record<string, string>;
   body?: unknown;
+  tenantId?: string;
 }
 
 /**
@@ -115,14 +117,50 @@ async function fetchWithAuth<T = unknown>(
   options: AuthFetchOptions = {}
 ): Promise<ApiResponse<T>> {
   try {
+    function normalizeHeaderKeys(headers: Record<string, string | undefined>): Record<string, string | undefined> {
+      const normalized: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(headers)) {
+        if (value === undefined) continue;
+        const normalizedKey = key.toLowerCase() === 'x-tenant-id' ? 'x-tenant-id' : key;
+        normalized[normalizedKey] = value;
+      }
+      return normalized;
+    }
+
+    async function ensureAuthorizationHeader(): Promise<Record<string, string | undefined>> {
+      const authHeaders = buildAuthHeaders();
+      if (authHeaders.Authorization || typeof window === 'undefined') {
+        return authHeaders;
+      }
+
+      try {
+        const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
+        const supabase = getSupabaseBrowserClient();
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+
+        if (accessToken) {
+          setStoredAccessToken(accessToken);
+          return {
+            ...authHeaders,
+            Authorization: `Bearer ${accessToken}`,
+          };
+        }
+      } catch (error) {
+        console.warn('[AuthAPIClient] Failed to recover access token from Supabase session', error);
+      }
+
+      return authHeaders;
+    }
+
     // Build auth headers
-    const authHeaders = buildAuthHeaders();
+    const authHeaders = await ensureAuthorizationHeader();
     
     // DEBUG: Log what headers are being built
     if (typeof window !== 'undefined') {
       console.debug('[fetchWithAuth] Building headers for:', url);
       console.debug('[fetchWithAuth] Auth header present:', !!authHeaders.Authorization);
-      console.debug('[fetchWithAuth] Tenant header present:', !!authHeaders['X-Tenant-ID']);
+      console.debug('[fetchWithAuth] Tenant header present:', !!authHeaders['x-tenant-id']);
       if (!authHeaders.Authorization) {
         console.warn('[fetchWithAuth] ⚠️ NO AUTHORIZATION HEADER - token not in localStorage?');
         const token = localStorage.getItem('boka_auth_access_token');
@@ -134,11 +172,11 @@ async function fetchWithAuth<T = unknown>(
       }
     }
 
-    // Merge with custom headers (custom takes precedence)
-    const headers: HeadersInit = {
-      ...authHeaders,
-      ...options.headers,
-    };
+    // Merge with custom headers (custom takes precedence), filter out undefined values
+    const mergedHeaders = normalizeHeaderKeys({ ...authHeaders, ...(options.headers ?? {}) });
+    const headers: HeadersInit = Object.fromEntries(
+      Object.entries(mergedHeaders).filter(([, v]) => v !== undefined)
+    ) as Record<string, string>;
 
     // Prepare body
     let body: string | undefined;
@@ -157,12 +195,15 @@ async function fetchWithAuth<T = unknown>(
     });
 
     // Parse response
-    const contentType = response.headers.get('content-type');
+    const contentType =
+      typeof (response as Response).headers?.get === 'function'
+        ? (response as Response).headers.get('content-type')
+        : undefined;
     let data: T | undefined;
 
-    if (contentType?.includes('application/json')) {
+    if (contentType?.includes('application/json') || typeof (response as Response).json === 'function') {
       try {
-        data = await response.json();
+        data = await (response as Response).json();
       } catch {
         // Response is not JSON
       }
@@ -176,9 +217,9 @@ async function fetchWithAuth<T = unknown>(
       }
       return {
         error: {
-          message: `HTTP ${response.status}: ${response.statusText}`,
+          message: `HTTP ${response.status}: ${response.statusText || ''}`.trim(),
           status: response.status,
-          statusText: response.statusText,
+          statusText: response.statusText || '',
         },
         status: response.status,
       };

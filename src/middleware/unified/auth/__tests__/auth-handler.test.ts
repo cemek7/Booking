@@ -14,14 +14,14 @@ jest.mock('@/lib/supabase/server', () => ({
 
 interface MockSupabase {
   auth: {
-    getUser: jest.Mock;
+    getUser: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
   };
   from: jest.Mock;
   select: jest.Mock;
   eq: jest.Mock;
   order: jest.Mock;
   limit: jest.Mock;
-  maybeSingle: jest.Mock;
+  maybeSingle: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
 }
 
 describe('getAuthenticatedUserRole', () => {
@@ -34,14 +34,14 @@ describe('getAuthenticatedUserRole', () => {
     // Setup mock Supabase client
     mockSupabase = {
       auth: {
-        getUser: jest.fn(),
+        getUser: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
       },
       from: jest.fn(() => mockSupabase),
       select: jest.fn(() => mockSupabase),
       eq: jest.fn(() => mockSupabase),
       order: jest.fn(() => mockSupabase),
       limit: jest.fn(() => mockSupabase),
-      maybeSingle: jest.fn(),
+      maybeSingle: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
     };
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports

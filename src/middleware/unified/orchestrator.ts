@@ -12,6 +12,7 @@
  * - Type-safe middleware definitions
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
@@ -154,7 +155,7 @@ export class MiddlewareOrchestrator {
         // Update context with result
         Object.assign(context, result);
       } catch (error) {
-        console.error(`[Middleware] "${middleware.config.name}" error:`, error);
+        defaultLogger.error(`[Middleware] "${middleware.config.name}" error:`, error);
 
         // Use middleware-specific error handler if available
         if (middleware.config.errorHandler) {
@@ -164,7 +165,7 @@ export class MiddlewareOrchestrator {
               context
             );
           } catch (handlerError) {
-            console.error(`[Middleware] Error handler for "${middleware.config.name}" failed:`, handlerError);
+            defaultLogger.error(`[Middleware] Error handler for "${middleware.config.name}" failed:`, handlerError);
           }
         }
 

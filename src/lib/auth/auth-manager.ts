@@ -10,6 +10,7 @@
  * Single source of truth for all auth operations
  */
 
+import { defaultLogger } from '@/lib/logger';
 import {
   getStoredAccessToken,
   getStoredUserData,
@@ -17,10 +18,6 @@ import {
   getStoredRole,
   getStoredIsAdmin,
   setStoredAccessToken,
-  setStoredUserData,
-  setStoredTenantId,
-  setStoredRole,
-  setStoredIsAdmin,
   storeAllAuthData,
   clearAllAuthData,
   StoredUserData,
@@ -58,9 +55,9 @@ export function getAuthState(): AuthState {
   return {
     isAuthenticated: !!token && !!userData,
     userType: determineUserType(isAdmin, role),
-    userData,
-    tenantId,
-    role,
+    userData: userData ?? undefined,
+    tenantId: tenantId ?? undefined,
+    role: role ?? undefined,
     isAdmin,
     accessToken: token || undefined,
   };
@@ -87,13 +84,13 @@ export function determineUserType(
 /**
  * Get redirect URL based on user type and role
  * 
- * Admin: /admin/dashboard
+ * Superadmin: /dashboard/superadmin
  * Owner: /dashboard
  * Manager: /dashboard?role=manager
  * Staff: /dashboard?role=staff
  */
 export function getRedirectUrl(userType: UserType, role?: string | null): string {
-  if (userType === 'admin') return '/admin/dashboard';
+  if (userType === 'admin') return '/dashboard/superadmin';
 
   if (userType === 'unknown') return '/';
 
@@ -128,8 +125,13 @@ export function storeSignInData(params: {
   email: string;
   user_id: string;
 }): void {
-  console.log('[AuthManager] Storing sign-in data for:', params.email);
-  console.log('[AuthManager] User type:', params.admin ? 'admin' : `tenant-${params.role || 'staff'}`);
+  defaultLogger.info('[AuthManager] Storing sign-in data for:', params.email);
+  const userTypeLabel = params.admin
+    ? 'admin'
+    : params.tenant_id && params.role
+      ? `tenant-${params.role}`
+      : 'onboarding-pending';
+  defaultLogger.info('[AuthManager] User type:', userTypeLabel);
   
   const userData: StoredUserData = {
     email: params.email,
@@ -147,7 +149,7 @@ export function storeSignInData(params: {
     isAdmin: params.admin || false,
   });
 
-  console.log('[AuthManager] ✓ Sign-in data stored successfully');
+  defaultLogger.info('[AuthManager] ✓ Sign-in data stored successfully');
 }
 
 /**
@@ -196,7 +198,7 @@ export function getUserId(): string | undefined {
  * Get current tenant ID
  */
 export function getTenantId(): string | undefined {
-  return getStoredTenantId();
+  return getStoredTenantId() ?? undefined;
 }
 
 /**
@@ -228,12 +230,12 @@ export function verifyAuthDataIntegrity(): boolean {
   const userData = getStoredUserData();
 
   if (!token) {
-    console.warn('[AuthManager] Missing access token');
+    defaultLogger.warn('[AuthManager] Missing access token');
     return false;
   }
 
   if (!userData?.email || !userData?.user_id) {
-    console.warn('[AuthManager] Missing user data');
+    defaultLogger.warn('[AuthManager] Missing user data');
     return false;
   }
 

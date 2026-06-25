@@ -2,16 +2,22 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
+type AuthUser = {
+  id?: string;
+  email?: string | null;
+} | null;
+
 type AuthContextType = {
-  user: any | null;
+  user: AuthUser;
   loading: boolean;
   signOut: () => Promise<void>;
+  signIn?: (credentials: { email: string; password: string }) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<AuthUser>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -22,11 +28,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // dynamically import browser-only helper to avoid SSR-time evaluation
         const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
         const supabase = getSupabaseBrowserClient();
-        const { data } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.getUser();
         if (!mounted) return;
-        setUser(data?.session?.user ?? null);
-      } catch (e) {
-        console.warn('auth init failed', e);
+        setUser(data?.user ?? null);
+      } catch (error) {
+        console.warn('auth init failed', error);
         if (!mounted) return;
         setUser(null);
       } finally {
@@ -37,16 +43,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     init();
 
     // subscribe to auth changes
-    let listener: any = null;
+    let listener: { data?: { subscription?: { unsubscribe?: () => void } } } | (() => void) | null = null;
     (async () => {
       try {
         const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
         const sb = typeof window !== 'undefined' ? getSupabaseBrowserClient() : null;
         if (!sb) return;
-        listener = sb.auth.onAuthStateChange((event: any, session: any) => {
+        listener = sb.auth.onAuthStateChange((_: unknown, session: { user?: AuthUser }) => {
           setUser(session?.user ?? null);
         });
-      } catch (e) {
+      } catch {
         // ignore subscription failures in non-browser runtimes
       }
     })();
@@ -55,11 +61,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       try {
         // unsubscribe if listener exists
-        // @ts-ignore
-        listener?.data?.subscription?.unsubscribe?.();
-        // @ts-ignore
+        if (listener && typeof listener === 'object' && 'data' in listener) {
+          listener.data?.subscription?.unsubscribe?.();
+        }
         if (typeof listener === 'function') listener();
-      } catch (e) {
+      } catch {
         // ignore
       }
     };
@@ -72,8 +78,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseBrowserClient();
       await supabase.auth.signOut();
       setUser(null);
-    } catch (e) {
-      console.warn('signOut failed', e);
+      if (typeof window !== 'undefined') {
+        window.location.href = '/booka/auth/signin';
+      }
+    } catch (error) {
+      console.warn('signOut failed', error);
     } finally {
       setLoading(false);
     }

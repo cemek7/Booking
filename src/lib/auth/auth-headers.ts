@@ -12,7 +12,7 @@ import { getStoredAccessToken, getStoredTenantId } from './token-storage';
 export interface FetchHeaders {
   'Content-Type': string;
   'Authorization'?: string;
-  'X-Tenant-ID'?: string;
+  'x-tenant-id'?: string;
   [key: string]: string | undefined;
 }
 
@@ -29,15 +29,13 @@ export function buildAuthHeaders(): FetchHeaders {
   const token = getStoredAccessToken();
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
-    console.debug('[AuthHeaders] ✓ Authorization header included (token length:', token.length, ')');
   } else {
-    console.warn('[AuthHeaders] ✗ No access token found in localStorage');
+    // No access token - API calls will fail with 401
   }
 
   const tenantId = getStoredTenantId();
   if (tenantId) {
-    headers['X-Tenant-ID'] = tenantId;
-    console.debug('[AuthHeaders] ✓ X-Tenant-ID header included');
+    headers['x-tenant-id'] = tenantId;
   }
 
   return headers;

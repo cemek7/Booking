@@ -30,6 +30,16 @@ const STORAGE_KEYS = {
   IS_ADMIN: 'boka_auth_is_admin',
 };
 
+function setBrowserCookie(name: string, value: string, maxAgeSeconds = 60 * 60 * 24 * 7): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax`;
+}
+
+function clearBrowserCookie(name: string): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
 /**
  * Get the stored access token from localStorage
  */
@@ -108,7 +118,8 @@ export function setStoredUserData(userData: StoredUserData): void {
 export function getStoredTenantId(): string | null {
   try {
     if (typeof window === 'undefined') return null;
-    return localStorage.getItem(STORAGE_KEYS.TENANT_ID);
+    const tenantId = localStorage.getItem(STORAGE_KEYS.TENANT_ID);
+    return tenantId === 'global' ? null : tenantId;
   } catch (err) {
     console.error('[TokenStorage] Failed to get tenant ID:', err);
     return null;
@@ -118,10 +129,16 @@ export function getStoredTenantId(): string | null {
 /**
  * Store tenant ID
  */
-export function setStoredTenantId(tenantId: string): void {
+export function setStoredTenantId(tenantId?: string | null): void {
   try {
     if (typeof window === 'undefined') return;
-    localStorage.setItem(STORAGE_KEYS.TENANT_ID, tenantId);
+    if (tenantId && tenantId !== 'global') {
+      localStorage.setItem(STORAGE_KEYS.TENANT_ID, tenantId);
+      setBrowserCookie(STORAGE_KEYS.TENANT_ID, tenantId);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.TENANT_ID);
+      clearBrowserCookie(STORAGE_KEYS.TENANT_ID);
+    }
   } catch (err) {
     console.error('[TokenStorage] Failed to set tenant ID:', err);
   }
@@ -134,7 +151,10 @@ export function getStoredRole(): 'owner' | 'manager' | 'staff' | null {
   try {
     if (typeof window === 'undefined') return null;
     const role = localStorage.getItem(STORAGE_KEYS.ROLE);
-    return role as 'owner' | 'manager' | 'staff' | null;
+    if (role === 'owner' || role === 'manager' || role === 'staff') {
+      return role;
+    }
+    return null;
   } catch (err) {
     console.error('[TokenStorage] Failed to get role:', err);
     return null;
@@ -149,8 +169,10 @@ export function setStoredRole(role: 'owner' | 'manager' | 'staff' | null): void 
     if (typeof window === 'undefined') return;
     if (role) {
       localStorage.setItem(STORAGE_KEYS.ROLE, role);
+      setBrowserCookie(STORAGE_KEYS.ROLE, role);
     } else {
       localStorage.removeItem(STORAGE_KEYS.ROLE);
+      clearBrowserCookie(STORAGE_KEYS.ROLE);
     }
   } catch (err) {
     console.error('[TokenStorage] Failed to set role:', err);
@@ -177,6 +199,7 @@ export function setStoredIsAdmin(isAdmin: boolean): void {
   try {
     if (typeof window === 'undefined') return;
     localStorage.setItem(STORAGE_KEYS.IS_ADMIN, String(isAdmin));
+    setBrowserCookie(STORAGE_KEYS.IS_ADMIN, String(isAdmin));
   } catch (err) {
     console.error('[TokenStorage] Failed to set admin flag:', err);
   }
@@ -190,6 +213,7 @@ export function clearAllAuthData(): void {
     if (typeof window === 'undefined') return;
     Object.values(STORAGE_KEYS).forEach(key => {
       localStorage.removeItem(key);
+      clearBrowserCookie(key);
     });
   } catch (err) {
     console.error('[TokenStorage] Failed to clear auth data:', err);
@@ -227,7 +251,7 @@ export function storeAllAuthData(params: {
 }): void {
   setStoredAccessToken(params.token);
   setStoredUserData(params.userData);
-  if (params.tenantId) setStoredTenantId(params.tenantId);
-  if (params.role) setStoredRole(params.role);
-  if (params.isAdmin) setStoredIsAdmin(params.isAdmin);
+  setStoredTenantId(params.tenantId ?? null);
+  setStoredRole(params.role ?? null);
+  setStoredIsAdmin(!!params.isAdmin);
 }

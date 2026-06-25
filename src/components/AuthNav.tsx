@@ -41,6 +41,7 @@ export default function AuthNav() {
     try {
   const sb3 = getSupabaseBrowserClient() as unknown as SupabaseLite;
   await sb3.auth?.signOut?.();
+      window.location.href = '/booka/auth/signin';
       // client will update via onAuthStateChange
       setEmail(null);
     } catch (err) {
@@ -64,7 +65,7 @@ export default function AuthNav() {
           </button>
         </>
       ) : (
-        <Link href="/auth/signin" className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md shadow-sm">
+        <Link href="/booka/auth/signin" className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md shadow-sm">
           Sign in
         </Link>
       )}

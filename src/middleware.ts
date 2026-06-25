@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { middlewareOrchestrator } from '@/middleware/unified/orchestrator';
 import { initializeUnifiedMiddleware } from '@/middleware/unified/middleware-adapter';
-import { getRoleDashboardPath } from './lib/permissions/unified-permissions';
+import { getRoleDashboardPath } from '@/types/unified-permissions';
 import { isValidRole } from '@/types/roles';
 import { getAuthenticatedUserRole } from '@/middleware/unified/auth/auth-handler';
 
@@ -10,28 +10,98 @@ export const runtime = 'nodejs';
 
 // Role-based route protection patterns
 // Exported for use by auth middleware
+// NOTE: Object.entries().find() returns the FIRST matching key, so more-specific
+// prefixes must be listed BEFORE less-specific ones (e.g. /dashboard/staff/management
+// before /dashboard/staff before /dashboard).
 export const PROTECTED_ROUTES: Record<string, string[]> = {
+  // Top-level role sections
   '/owner': ['owner'],
   '/manager': ['manager', 'owner'],
-  '/staff': ['staff', 'manager', 'owner'], 
-  '/superadmin': ['superadmin'],
-  '/admin': ['superadmin'],
+  '/staff': ['staff', 'manager', 'owner'],
+
+  // Superadmin
+  '/dashboard/superadmin': ['superadmin'],
+
+  // Owner-only
   '/dashboard/owner': ['owner'],
-  '/dashboard/manager': ['manager', 'owner'], 
-  '/dashboard/staff-dashboard': ['staff', 'manager', 'owner'],
-  '/dashboard/settings': ['owner'],
+  '/dashboard/usage': ['owner'],
   '/dashboard/billing': ['owner'],
+  '/dashboard/settings': ['owner'],
+
+  // Manager + owner (more-specific staff sub-paths first)
   '/dashboard/staff/management': ['manager', 'owner'],
-  '/dashboard/staff/scheduling': ['manager', 'owner']
+  '/dashboard/staff/scheduling': ['manager', 'owner'],
+  '/dashboard/staff': ['manager', 'owner'],
+  '/dashboard/manager': ['manager', 'owner'],
+  '/dashboard/customers': ['manager', 'owner'],
+  '/dashboard/faqs': ['manager', 'owner'],
+  '/dashboard/products': ['manager', 'owner'],
+  '/dashboard/reports': ['manager', 'owner'],
+  '/dashboard/services': ['manager', 'owner'],
+  '/dashboard/analytics': ['owner', 'manager', 'superadmin'],
+
+  // Staff + manager + owner
+  '/dashboard/bookings': ['owner', 'manager', 'staff'],
+  '/dashboard/chats': ['owner', 'manager', 'staff'],
+  '/dashboard/schedule': ['owner', 'manager', 'staff'],
+  '/dashboard/staff-dashboard': ['staff', 'manager', 'owner'],
+  '/dashboard/tasks': ['owner', 'manager', 'staff'],
+
+  // Catch-all: any authenticated user (must be last)
+  '/dashboard': ['owner', 'manager', 'staff', 'superadmin'],
 };
 
-// Initialize middleware on first run
-let middlewareInitialized = false;
+// Initialize middleware on first run — use a promise gate to prevent concurrent cold-start races
+let middlewareInitPromise: Promise<void> | null = null;
 async function ensureMiddlewareInitialized() {
-  if (!middlewareInitialized) {
-    await initializeUnifiedMiddleware();
-    middlewareInitialized = true;
+  if (!middlewareInitPromise) {
+    middlewareInitPromise = initializeUnifiedMiddleware();
   }
+  await middlewareInitPromise;
+}
+
+function makeNonce(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function isLocalHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.endsWith('.ngrok-free.app') ||
+    hostname.endsWith('.ngrok.app') ||
+    hostname.endsWith('.ngrok.io')
+  );
+}
+
+function buildContentSecurityPolicy(nonce: string, local: boolean): string {
+  if (local) {
+    return [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: https:",
+      "font-src 'self' data:",
+      "connect-src 'self' http://localhost:* https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.paystack.co",
+      "frame-ancestors 'none'",
+    ].join('; ');
+  }
+
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.paystack.co",
+    "frame-ancestors 'none'",
+  ].join('; ');
 }
 
 /**
@@ -42,6 +112,38 @@ async function ensureMiddlewareInitialized() {
  * @returns The HTTP response produced by the unified middleware orchestrator, or a redirect response to a role-specific dashboard when applicable.
  */
 export async function middleware(request: NextRequest) {
+  const nonce = makeNonce();
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
+  const csp = buildContentSecurityPolicy(nonce, isLocalHost(request.nextUrl.hostname));
+
+  // Redirect legacy /login route
+  if (request.nextUrl.pathname === '/login') {
+    const response = NextResponse.redirect(new URL('/booka/auth/signin', request.url));
+    response.headers.set('Content-Security-Policy', csp);
+    return response;
+  }
+  // Redirect legacy /onboarding route to new location
+  if (request.nextUrl.pathname.startsWith('/onboarding')) {
+    const response = NextResponse.redirect(new URL(request.nextUrl.pathname.replace('/onboarding', '/booka/auth/onboarding'), request.url));
+    response.headers.set('Content-Security-Policy', csp);
+    return response;
+  }
+  // Redirect old /admin/* routes to /dashboard/superadmin/*
+  if (request.nextUrl.pathname === '/admin' || request.nextUrl.pathname.startsWith('/admin/')) {
+    const newPath = request.nextUrl.pathname.replace(/^\/admin/, '/dashboard/superadmin');
+    const response = NextResponse.redirect(new URL(newPath + request.nextUrl.search, request.url));
+    response.headers.set('Content-Security-Policy', csp);
+    return response;
+  }
+  // Redirect old /superadmin route to /dashboard/superadmin
+  if (request.nextUrl.pathname === '/superadmin' || request.nextUrl.pathname.startsWith('/superadmin/')) {
+    const newPath = request.nextUrl.pathname.replace(/^\/superadmin/, '/dashboard/superadmin');
+    const response = NextResponse.redirect(new URL(newPath + request.nextUrl.search, request.url));
+    response.headers.set('Content-Security-Policy', csp);
+    return response;
+  }
+
   // Initialize middleware system (runs once)
   await ensureMiddlewareInitialized();
 
@@ -62,8 +164,19 @@ export async function middleware(request: NextRequest) {
     }
     // If no authenticated user is available, skip redirect.
   }
+  const isPassThrough = response.status === 200 && !response.headers.get('location');
+  const finalResponse = isPassThrough
+    ? NextResponse.next({ request: { headers: requestHeaders } })
+    : response;
 
-  return response;
+  if (isPassThrough) {
+    response.headers.forEach((value, key) => {
+      finalResponse.headers.set(key, value);
+    });
+  }
+
+  finalResponse.headers.set('Content-Security-Policy', csp);
+  return finalResponse;
 }
 
 export const config = {

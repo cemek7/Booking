@@ -1,7 +1,6 @@
 /**
  * Tests for PHASE 2D: Simplified server-auth.ts
- * Validates that server-auth functions delegate correctly to UnifiedAuthOrchestrator
- * and maintain backward compatibility
+ * Validates that server-auth functions delegate correctly to the canonical auth layer.
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
@@ -37,53 +36,13 @@ jest.mock('next/headers', () => ({
 }));
 
 describe('PHASE 2D: Simplified server-auth.ts', () => {
-  let mockSupabase: any;
-  let mockGetSession: jest.Mock;
-  let mockFromQuery: jest.Mock;
-
   beforeEach(() => {
     jest.clearAllMocks();
-    
-    // Setup default mock behavior
-    mockGetSession = jest.fn().mockResolvedValue({
-      data: {
-        session: {
-          user: {
-            id: 'user-123',
-            email: 'test@example.com',
-            created_at: '2024-01-01T00:00:00Z'
-          }
-        },
-        error: null
-      }
-    });
-
-    mockFromQuery = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        eq: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({
-            data: {
-              user_id: 'user-123',
-              role: 'manager' as Role,
-              tenant_id: 'tenant-123'
-            },
-            error: null
-          })
-        })
-      })
-    });
-
-    mockSupabase = {
-      auth: {
-        getSession: mockGetSession
-      },
-      from: mockFromQuery
-    };
   });
 
   describe('Type Exports', () => {
     it('should export AuthenticatedUser type', async () => {
-      // This test verifies that the type is exported for backward compatibility
+      // This test verifies that the type is exported from the canonical surface
       const user: AuthenticatedUser = {
         id: 'user-123',
         email: 'test@example.com',
@@ -225,7 +184,7 @@ describe('PHASE 2D: Simplified server-auth.ts', () => {
     });
   });
 
-  describe('Backward Compatibility', () => {
+  describe('Consolidated Auth API', () => {
     it('should maintain all exported functions from original server-auth', () => {
       const expectedExports = [
         'requireAuth',
@@ -238,15 +197,14 @@ describe('PHASE 2D: Simplified server-auth.ts', () => {
         'getRoleFromHeaders'
       ];
 
-      // These should all be exported from the simplified server-auth.ts
+      // These should all be exported from the canonical server-auth.ts
       expectedExports.forEach(exportName => {
         expect(exportName).toBeDefined();
       });
     });
 
-    it('should support importing from auth-middleware wrapper', () => {
-      // auth-middleware.ts re-exports from middleware.ts for backward compat
-      // and server-auth should have same exports
+    it('should support importing from middleware wrapper', () => {
+      // middleware.ts is the canonical export surface for route guards
       const authExports = [
         'validateDashboardAccess',
         'withAuth',
@@ -273,7 +231,6 @@ describe('PHASE 2D: Simplified server-auth.ts', () => {
 
     it('should check permissions with inheritance', () => {
       // When requireExact=false, should allow inherited roles
-      const userRole: Role = 'manager';
       const effectiveRoles: Role[] = ['manager', 'staff'];
       const allowedRoles: Role[] = ['staff'];
 
