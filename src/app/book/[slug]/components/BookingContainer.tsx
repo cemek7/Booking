@@ -29,6 +29,7 @@ interface BookingData {
     email: string;
     phone: string;
     notes?: string;
+    marketingConsent?: boolean;
   };
 }
 
@@ -68,10 +69,10 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
   );
 
   const handleCustomerInfo = useCallback(
-    (name: string, email: string, phone: string, notes?: string) => {
+    (name: string, email: string, phone: string, notes: string | undefined, marketingConsent: boolean) => {
       setBookingData((prev) => ({
         ...prev,
-        customer: { name, email, phone, notes },
+        customer: { name, email, phone, notes, marketingConsent },
       }));
       setCurrentStep('summary');
     },
@@ -101,6 +102,7 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
         customerEmail: bookingData.customer.email,
         customerPhone: bookingData.customer.phone,
         notes: bookingData.customer.notes,
+        marketingConsent: bookingData.customer.marketingConsent,
       });
 
       toast({

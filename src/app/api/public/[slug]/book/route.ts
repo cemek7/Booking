@@ -10,6 +10,8 @@ import publicBookingService from '@/lib/publicBookingService';
 import { sendBookingConfirmation, sendEmail } from '@/lib/integrations/email-service';
 import type { RouteContext } from '@/lib/error-handling/route-handler';
 import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { recordMessagingConsent } from '@/lib/optin/messagingConsent';
 
 /** Escape HTML entities to prevent injection in email templates */
 function escapeHtml(str: string): string {
@@ -71,6 +73,7 @@ export const POST = createHttpHandler(
       customer_email: z.string().email(),
       customer_phone: z.string().min(10).max(20),
       notes: z.string().max(500).optional(),
+      marketing_consent: z.boolean().optional(),
     });
 
     const parseResult = bookingSchema.safeParse(body);
@@ -95,6 +98,24 @@ export const POST = createHttpHandler(
         time: validated.time,
       }
     );
+
+    // Record explicit opt-in for business-initiated messaging (fire-and-forget,
+    // must not block the booking). Uses the admin client to bypass RLS.
+    if (validated.marketing_consent) {
+      const admin = createSupabaseAdminClient();
+      void recordMessagingConsent(admin, {
+        tenantId: tenant.id,
+        recipient: validated.customer_phone,
+        channel: 'whatsapp',
+        source: 'booking_form',
+      }).catch(() => {});
+      void recordMessagingConsent(admin, {
+        tenantId: tenant.id,
+        recipient: validated.customer_email,
+        channel: 'email',
+        source: 'booking_form',
+      }).catch(() => {});
+    }
 
     // Send confirmation email to customer and notify tenant owner.
     // Fire-and-forget — notifications must not block the booking response.

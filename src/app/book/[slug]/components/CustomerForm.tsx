@@ -4,7 +4,13 @@ import { useState } from 'react';
 import { useToast } from '@/hooks/useToast';
 
 interface CustomerFormProps {
-  onSubmit: (name: string, email: string, phone: string, notes?: string) => void;
+  onSubmit: (
+    name: string,
+    email: string,
+    phone: string,
+    notes: string | undefined,
+    marketingConsent: boolean,
+  ) => void;
   onBack: () => void;
 }
 
@@ -15,6 +21,7 @@ export default function CustomerForm({ onSubmit, onBack }: CustomerFormProps) {
     phone: '',
     notes: '',
   });
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { toast } = useToast();
 
@@ -60,7 +67,7 @@ export default function CustomerForm({ onSubmit, onBack }: CustomerFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (validateForm()) {
-      onSubmit(formData.name, formData.email, formData.phone, formData.notes);
+      onSubmit(formData.name, formData.email, formData.phone, formData.notes, marketingConsent);
     }
   };
 
@@ -148,6 +155,22 @@ export default function CustomerForm({ onSubmit, onBack }: CustomerFormProps) {
           rows={4}
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors resize-none"
         />
+      </div>
+
+      {/* Marketing / messaging consent */}
+      <div className="flex items-start gap-2">
+        <input
+          id="marketingConsent"
+          name="marketingConsent"
+          type="checkbox"
+          checked={marketingConsent}
+          onChange={(e) => setMarketingConsent(e.target.checked)}
+          className="mt-1"
+        />
+        <label htmlFor="marketingConsent" className="text-sm text-slate-600">
+          I agree to receive appointment reminders and updates from this business via WhatsApp and
+          email. You can opt out anytime.
+        </label>
       </div>
 
       {/* Action Buttons */}

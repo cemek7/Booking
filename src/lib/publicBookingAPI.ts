@@ -65,6 +65,7 @@ class PublicBookingAPI {
     customerEmail,
     customerPhone,
     notes,
+    marketingConsent,
   }: {
     slug: string;
     serviceId: string;
@@ -74,6 +75,7 @@ class PublicBookingAPI {
     customerEmail: string;
     customerPhone: string;
     notes?: string;
+    marketingConsent?: boolean;
   }): Promise<{ id: string }> {
     const res = await fetch(`/api/public/${slug}/book`, {
       method: 'POST',
@@ -86,6 +88,7 @@ class PublicBookingAPI {
         customer_email: customerEmail,
         customer_phone: customerPhone,
         notes,
+        marketing_consent: marketingConsent ?? false,
       }),
     });
 
