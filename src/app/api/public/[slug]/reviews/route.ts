@@ -36,6 +36,7 @@ export const GET = createHttpHandler(
       .select('id,customer_name,rating,comment,created_at')
       .eq('tenant_id', tenant.id)
       .eq('is_published', true)
+      .eq('hidden', false)
       .order('created_at', { ascending: false })
       .limit(50);
 
