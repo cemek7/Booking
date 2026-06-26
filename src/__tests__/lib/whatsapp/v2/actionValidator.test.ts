@@ -50,6 +50,22 @@ jest.mock('@/lib/whatsapp/showcasePackService', () => ({
   sendShowcasePack: mockSendShowcasePack,
 }));
 
+const mockGetTenantWhatsAppConfig = jest.fn();
+jest.mock('@/lib/whatsapp/evolutionClient', () => ({
+  getTenantWhatsAppConfig: mockGetTenantWhatsAppConfig,
+}));
+
+const mockSendProductList = jest.fn();
+const mockSendProductDetails = jest.fn();
+const mockSendRecommendations = jest.fn();
+jest.mock('@/lib/whatsapp/product-service', () => ({
+  WhatsAppProductService: jest.fn(() => ({
+    sendProductList: mockSendProductList,
+    sendProductDetails: mockSendProductDetails,
+    sendRecommendations: mockSendRecommendations,
+  })),
+}));
+
 import { executeAction, validateAction } from '@/lib/whatsapp/v2/actionValidator';
 import type { AIResponse } from '@/lib/whatsapp/v2/actionValidator';
 
@@ -172,6 +188,10 @@ describe('executeAction — sales actions', () => {
   beforeEach(() => {
     responses.length = 0;
     jest.clearAllMocks();
+    mockGetTenantWhatsAppConfig.mockResolvedValue(null);
+    mockSendProductList.mockResolvedValue(true);
+    mockSendProductDetails.mockResolvedValue(true);
+    mockSendRecommendations.mockResolvedValue(true);
   });
 
   it('sends a showcase pack through the showcase service', async () => {
@@ -227,6 +247,40 @@ describe('executeAction — sales actions', () => {
     expect((result.data as { products: Array<{ id: string }> }).products[0]?.id).toBe('prd-1');
   });
 
+  it('uses interactive product details for a single meta-backed catalog result', async () => {
+    mockGetTenantWhatsAppConfig.mockResolvedValueOnce({
+      provider: 'meta',
+      apiKey: 'token',
+      baseUrl: 'https://graph.facebook.com/v18.0',
+      instanceName: '123456789',
+    });
+    pushDb([
+      {
+        id: 'prd-1',
+        name: 'Hair Growth Oil',
+        short_description: 'Best for dry scalp',
+        category: 'hair care',
+        price_cents: 12000,
+        currency: 'NGN',
+        is_featured: true,
+        stock_quantity: 5,
+        track_inventory: true,
+      },
+    ]);
+
+    const result = await executeAction(TENANT, showCatalog({ query: 'growth oil' }), {
+      customerPhone: '+2348000000000',
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.data as { delivery: string }).delivery).toBe('interactive');
+    expect(mockSendProductDetails).toHaveBeenCalledWith(
+      '+2348000000000',
+      expect.objectContaining({ id: 'prd-1', name: 'Hair Growth Oil' }),
+      true,
+    );
+  });
+
   it('returns related products for recommend_products', async () => {
     pushDb([
       {
@@ -273,5 +327,49 @@ describe('executeAction — sales actions', () => {
     });
     expect((result.data as { products: Array<{ id: string }> }).products).toHaveLength(1);
     expect((result.data as { products: Array<{ id: string }> }).products[0]?.id).toBe('prd-2');
+  });
+
+  it('uses interactive recommendation sending when meta-backed delivery is available', async () => {
+    mockGetTenantWhatsAppConfig.mockResolvedValueOnce({
+      provider: 'meta',
+      apiKey: 'token',
+      baseUrl: 'https://graph.facebook.com/v18.0',
+      instanceName: '123456789',
+    });
+    pushDb([
+      {
+        id: 'prd-1',
+        name: 'Hair Growth Oil',
+        short_description: 'Best for dry scalp',
+        category: 'hair care',
+        price_cents: 12000,
+        currency: 'NGN',
+        is_featured: true,
+        stock_quantity: 5,
+        track_inventory: true,
+      },
+      {
+        id: 'prd-2',
+        name: 'Scalp Serum',
+        short_description: 'Supports healthy growth',
+        category: 'hair care',
+        price_cents: 15000,
+        currency: 'NGN',
+        is_featured: false,
+        stock_quantity: 6,
+        track_inventory: true,
+      },
+    ]);
+
+    const result = await executeAction(TENANT, recommendProducts({ product_ids: ['prd-1'] }), {
+      customerPhone: '+2348000000000',
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.data as { delivery: string }).delivery).toBe('interactive');
+    expect(mockSendRecommendations).toHaveBeenCalledWith(
+      '+2348000000000',
+      expect.arrayContaining([expect.objectContaining({ id: 'prd-2' })]),
+    );
   });
 });

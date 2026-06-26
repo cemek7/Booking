@@ -9,6 +9,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { cancelReservation, createReservation, rescheduleReservation } from '@/lib/reservationService';
 import { sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
+import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { WhatsAppProductService } from '@/lib/whatsapp/product-service';
+import type { Product } from '@/types/product-catalogue';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -412,9 +415,15 @@ export async function executeAction(
         if (products.length === 0) {
           return { success: false, error: 'No matching active products found' };
         }
+
+        const interactiveSent = context.customerPhone
+          ? await sendCatalogInteractively(tenantId, context.customerPhone, products, params)
+          : false;
+
         return {
           success: true,
           data: {
+            delivery: interactiveSent ? 'interactive' : 'text',
             mode: 'catalog',
             products,
             title: typeof params.category === 'string'
@@ -429,9 +438,15 @@ export async function executeAction(
         if (products.length === 0) {
           return { success: false, error: 'No suitable product recommendations found' };
         }
+
+        const interactiveSent = context.customerPhone
+          ? await sendRecommendationsInteractively(tenantId, context.customerPhone, products)
+          : false;
+
         return {
           success: true,
           data: {
+            delivery: interactiveSent ? 'interactive' : 'text',
             mode: 'recommendations',
             products,
             title: typeof params.reason === 'string'
@@ -542,6 +557,12 @@ type ProductSelection = {
   track_inventory: boolean;
 };
 
+type InteractiveDeliveryConfig = {
+  apiKey: string;
+  baseUrl: string;
+  phoneNumberId: string;
+};
+
 function getShowcaseTriggerText(params: Record<string, any>): string | undefined {
   const candidates = [
     params.trigger_text,
@@ -576,6 +597,78 @@ async function loadActiveProducts(tenantId: string): Promise<ProductSelection[]>
   return data
     .map((row) => normalizeProductSelection(row as Record<string, unknown>))
     .filter((row): row is ProductSelection => row !== null);
+}
+
+async function resolveInteractiveDeliveryConfig(tenantId: string): Promise<InteractiveDeliveryConfig | null> {
+  const config = await getTenantWhatsAppConfig(tenantId);
+  if (!config || config.provider !== 'meta' || !config.apiKey || !config.baseUrl || !config.instanceName) {
+    return null;
+  }
+
+  return {
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    phoneNumberId: config.instanceName,
+  };
+}
+
+function toCatalogProduct(product: ProductSelection): Product {
+  return {
+    id: product.id,
+    tenant_id: '',
+    name: product.name,
+    description: product.description ?? undefined,
+    short_description: product.description ?? undefined,
+    price_cents: product.price_cents ?? 0,
+    currency: product.currency ?? 'NGN',
+    category: product.category ? { id: product.category, name: product.category } : undefined,
+    is_active: true,
+    is_featured: product.is_featured,
+    track_inventory: product.track_inventory,
+    stock_quantity: product.stock_quantity ?? undefined,
+    low_stock_threshold: 0,
+  };
+}
+
+async function sendCatalogInteractively(
+  tenantId: string,
+  customerPhone: string,
+  products: ProductSelection[],
+  params: Record<string, any>
+): Promise<boolean> {
+  const deliveryConfig = await resolveInteractiveDeliveryConfig(tenantId);
+  if (!deliveryConfig) return false;
+
+  const service = new WhatsAppProductService({
+    accessToken: deliveryConfig.apiKey,
+    baseUrl: deliveryConfig.baseUrl,
+    phoneNumberId: deliveryConfig.phoneNumberId,
+  });
+
+  const mapped = products.map(toCatalogProduct);
+  if (mapped.length === 1) {
+    return service.sendProductDetails(customerPhone, mapped[0], true);
+  }
+
+  const categoryName = typeof params.category === 'string' ? params.category : undefined;
+  return service.sendProductList(customerPhone, mapped, categoryName);
+}
+
+async function sendRecommendationsInteractively(
+  tenantId: string,
+  customerPhone: string,
+  products: ProductSelection[],
+): Promise<boolean> {
+  const deliveryConfig = await resolveInteractiveDeliveryConfig(tenantId);
+  if (!deliveryConfig) return false;
+
+  const service = new WhatsAppProductService({
+    accessToken: deliveryConfig.apiKey,
+    baseUrl: deliveryConfig.baseUrl,
+    phoneNumberId: deliveryConfig.phoneNumberId,
+  });
+
+  return service.sendRecommendations(customerPhone, products.map(toCatalogProduct));
 }
 
 function normalizeProductSelection(row: Record<string, unknown>): ProductSelection | null {

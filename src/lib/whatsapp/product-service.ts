@@ -50,10 +50,11 @@ export class WhatsAppProductService {
   private phoneNumberId: string;
   private baseUrl: string;
 
-  constructor() {
-    this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
-    this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
-    this.baseUrl = `https://graph.facebook.com/v18.0/${this.phoneNumberId}/messages`;
+  constructor(config?: { accessToken?: string; phoneNumberId?: string; baseUrl?: string }) {
+    this.accessToken = config?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || '';
+    this.phoneNumberId = config?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+    const rootBaseUrl = (config?.baseUrl || 'https://graph.facebook.com/v18.0').replace(/\/+$/, '');
+    this.baseUrl = `${rootBaseUrl}/${this.phoneNumberId}/messages`;
   }
 
   async sendMessage(message: WhatsAppMessage): Promise<boolean> {

@@ -69,13 +69,13 @@ export async function handleCustomerBooking(
       return handleCancelBooking(convExternalId, tenantId, aiResp, convChannel);
 
     case 'show_catalog':
-      return handleShowCatalog(tenantId, aiResp);
+      return handleShowCatalog(convExternalId, tenantId, aiResp);
 
     case 'show_showcase':
       return handleShowShowcase(convExternalId, tenantId, aiResp);
 
     case 'recommend_products':
-      return handleRecommendProducts(tenantId, aiResp);
+      return handleRecommendProducts(convExternalId, tenantId, aiResp);
 
     case 'general_reply':
     case 'needs_info':
@@ -483,14 +483,19 @@ async function handleCancelBooking(
 }
 
 async function handleShowCatalog(
+  externalId: string,
   tenantId: string,
   aiResp: AIResponse
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, {});
+  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
   if (!execResult.success) {
     return execResult.error
       ? `I couldn't load the catalog right now: ${execResult.error}`
       : 'I couldn’t load the catalog right now.';
+  }
+
+  if ((execResult.data as { delivery?: string } | undefined)?.delivery === 'interactive') {
+    return '';
   }
 
   return formatProductActionReply(aiResp.reply, execResult.data as { title?: string; products?: Array<Record<string, unknown>> } | undefined, {
@@ -516,14 +521,19 @@ async function handleShowShowcase(
 }
 
 async function handleRecommendProducts(
+  externalId: string,
   tenantId: string,
   aiResp: AIResponse
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, {});
+  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
   if (!execResult.success) {
     return execResult.error
       ? `I couldn't pull product recommendations right now: ${execResult.error}`
       : 'I couldn’t pull product recommendations right now.';
+  }
+
+  if ((execResult.data as { delivery?: string } | undefined)?.delivery === 'interactive') {
+    return '';
   }
 
   return formatProductActionReply(aiResp.reply, execResult.data as { title?: string; products?: Array<Record<string, unknown>> } | undefined, {

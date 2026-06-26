@@ -95,6 +95,34 @@ describe('handleCustomerBooking sales actions', () => {
     expect(reply).toContain('₦120');
   });
 
+  it('returns an empty string when interactive catalog delivery succeeds', async () => {
+    mockExecuteAction.mockResolvedValueOnce({
+      success: true,
+      data: {
+        delivery: 'interactive',
+        title: 'Hair care catalog',
+        products: [
+          { id: 'prd-1', name: 'Hair Growth Oil' },
+        ],
+      },
+    });
+
+    const reply = await handleCustomerBooking(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'show_catalog',
+        params: { category: 'hair care' },
+        reply: 'Here are a few products you can choose from.',
+        confidence: 'high',
+      },
+      makeConv(),
+      'show me products',
+    );
+
+    expect(reply).toBe('');
+  });
+
   it('returns an empty string when showcase send succeeds to avoid duplicate text', async () => {
     mockExecuteAction.mockResolvedValueOnce({
       success: true,
@@ -142,5 +170,33 @@ describe('handleCustomerBooking sales actions', () => {
     );
 
     expect(reply).toContain('I couldn\'t pull product recommendations right now');
+  });
+
+  it('returns an empty string when interactive recommendations succeed', async () => {
+    mockExecuteAction.mockResolvedValueOnce({
+      success: true,
+      data: {
+        delivery: 'interactive',
+        title: 'Recommended products',
+        products: [
+          { id: 'prd-2', name: 'Scalp Serum' },
+        ],
+      },
+    });
+
+    const reply = await handleCustomerBooking(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'recommend_products',
+        params: { reason: 'braid aftercare' },
+        reply: 'Here are the products I recommend.',
+        confidence: 'high',
+      },
+      makeConv(),
+      'what should i use after braids?',
+    );
+
+    expect(reply).toBe('');
   });
 });
