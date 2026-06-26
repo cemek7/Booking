@@ -1,9 +1,10 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import type { ApiResponse } from '@/lib/auth/auth-api-client';
 
-const authGet = jest.fn();
-const authPost = jest.fn();
+const authGet = jest.fn<(url: string) => Promise<ApiResponse<unknown>>>();
+const authPost = jest.fn<(url: string, body?: unknown) => Promise<ApiResponse<unknown>>>();
 jest.mock('@/lib/auth/auth-api-client', () => ({
   authGet: (...a: unknown[]) => authGet(...a),
   authPost: (...a: unknown[]) => authPost(...a),
