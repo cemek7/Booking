@@ -6,6 +6,7 @@ export type FrontDeskIntent =
   | 'cancel_booking'
   | 'availability_question'
   | 'price_question'
+  | 'sales_inquiry'
   | 'owner_query'
   | 'customer_support'
   | 'unknown';
@@ -70,6 +71,10 @@ function matchRuleIntent(
     return 'price_question';
   }
 
+  if (/\b(product|products|item|items|sell|selling|buy|purchase|stock|inventory|catalog|catalogue|menu|price list|showcase|portfolio|gallery|retail|merchandise|goods)\b/i.test(normalized)) {
+    return 'sales_inquiry';
+  }
+
   if (/\b(available|availability|free slot|what time|open tomorrow|tomorrow available)\b/i.test(normalized)) {
     return 'availability_question';
   }
@@ -99,6 +104,8 @@ function mapDetectedIntent(
     case 'status':
     case 'inquiry':
       return userRole === 'owner' ? 'owner_query' : 'availability_question';
+    case 'product_inquiry':
+      return 'sales_inquiry';
     case 'business_info':
       return userRole === 'owner' ? 'owner_query' : 'customer_support';
     default:

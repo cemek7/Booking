@@ -68,6 +68,15 @@ export async function handleCustomerBooking(
     case 'cancel_booking':
       return handleCancelBooking(convExternalId, tenantId, aiResp, convChannel);
 
+    case 'show_catalog':
+      return handleShowCatalog(tenantId, aiResp);
+
+    case 'show_showcase':
+      return handleShowShowcase(convExternalId, tenantId, aiResp);
+
+    case 'recommend_products':
+      return handleRecommendProducts(tenantId, aiResp);
+
     case 'general_reply':
     case 'needs_info':
     case 'list_services':
@@ -473,6 +482,55 @@ async function handleCancelBooking(
   return execResult.success ? aiResp.reply : `Couldn't cancel: ${execResult.error ?? 'unknown error'}`;
 }
 
+async function handleShowCatalog(
+  tenantId: string,
+  aiResp: AIResponse
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {});
+  if (!execResult.success) {
+    return execResult.error
+      ? `I couldn't load the catalog right now: ${execResult.error}`
+      : 'I couldn’t load the catalog right now.';
+  }
+
+  return formatProductActionReply(aiResp.reply, execResult.data as { title?: string; products?: Array<Record<string, unknown>> } | undefined, {
+    emptyFallback: 'I couldn’t find any active products to show right now.',
+  });
+}
+
+async function handleShowShowcase(
+  externalId: string,
+  tenantId: string,
+  aiResp: AIResponse
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
+  if (!execResult.success) {
+    return execResult.error
+      ? `I couldn't send the showcase right now: ${execResult.error}`
+      : 'I couldn’t send the showcase right now.';
+  }
+
+  // The showcase pack service already sends the intro, media items, and CTA.
+  // Returning an empty string prevents the pipeline from sending a duplicate text.
+  return '';
+}
+
+async function handleRecommendProducts(
+  tenantId: string,
+  aiResp: AIResponse
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {});
+  if (!execResult.success) {
+    return execResult.error
+      ? `I couldn't pull product recommendations right now: ${execResult.error}`
+      : 'I couldn’t pull product recommendations right now.';
+  }
+
+  return formatProductActionReply(aiResp.reply, execResult.data as { title?: string; products?: Array<Record<string, unknown>> } | undefined, {
+    emptyFallback: 'I couldn’t find any suitable product recommendations right now.',
+  });
+}
+
 // ─── Greetings ────────────────────────────────────────────────────────────────
 
 async function getCustomerGreeting(tenantId: string, externalId: string): Promise<string> {
@@ -579,4 +637,36 @@ function getCustomerEmail(email: string | null, phone: string): string {
   if (email && email.trim()) return email.trim();
   const cleanPhone = phone.replace(/\D/g, '');
   return `noemail+${cleanPhone || 'customer'}@example.com`;
+}
+
+function formatProductActionReply(
+  aiReply: string,
+  payload: { title?: string; products?: Array<Record<string, unknown>> } | undefined,
+  options: { emptyFallback: string }
+): string {
+  const products = Array.isArray(payload?.products) ? payload?.products : [];
+  if (products.length === 0) {
+    return options.emptyFallback;
+  }
+
+  const heading = typeof payload?.title === 'string' && payload.title.trim()
+    ? `\n\n*${payload.title.trim()}*`
+    : '';
+
+  const lines = products.slice(0, 5).map((product, index) => {
+    const name = typeof product.name === 'string' ? product.name : `Product ${index + 1}`;
+    const price = typeof product.price_cents === 'number' && Number.isFinite(product.price_cents)
+      ? `₦${Math.round(product.price_cents / 100).toLocaleString()}`
+      : 'Price on request';
+    const stock = product.track_inventory
+      ? (typeof product.stock_quantity === 'number' && product.stock_quantity > 0 ? 'In stock' : 'Out of stock')
+      : 'Stock status unknown';
+    const description = typeof product.description === 'string' && product.description.trim()
+      ? ` — ${product.description.trim()}`
+      : '';
+
+    return `${index + 1}. *${name}* — ${price} (${stock})${description}`;
+  });
+
+  return `${aiReply}${heading}\n${lines.join('\n')}`.trim();
 }

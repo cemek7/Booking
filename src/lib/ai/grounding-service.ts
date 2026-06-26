@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import type { ConvState } from '@/lib/whatsapp/v2/conversationState';
 import type { FrontDeskIntent, IntentRoute } from './intent-router';
 import { getAvailableSlots } from '@/lib/whatsapp/v2/slotEngine';
+import { getCustomerRecall, type CustomerRecall } from './customerRecall';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,11 +30,36 @@ type StaffContext = {
   name?: string | null;
 };
 
+type ProductContext = {
+  id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  price_cents?: number | null;
+  currency?: string | null;
+  is_featured?: boolean;
+  stock_quantity?: number | null;
+  track_inventory?: boolean;
+};
+
+type ShowcaseContext = {
+  id: string;
+  name: string;
+  template_kind?: string | null;
+  description?: string | null;
+  intro_message?: string | null;
+  fallback_cta?: string | null;
+  trigger_phrases?: string[] | null;
+};
+
 export interface GroundingResult {
   route: IntentRoute;
   tenant: TenantContext | null;
   services: ServiceContext[];
   staff: StaffContext[];
+  products: ProductContext[];
+  showcasePacks: ShowcaseContext[];
+  customerRecall: CustomerRecall | null;
   availableSlots: Array<{ staffId: string; slots: string[] }>;
   bookings: Array<Record<string, unknown>>;
   ownerSummary: Record<string, unknown> | null;
@@ -76,6 +102,10 @@ export async function getGroundingData(
     .eq('tenant_id', tenantId)
     .in('role', ['owner', 'staff']);
 
+  const customerRecall = conv.role === 'customer' && conv.phone_number
+    ? await getCustomerRecall(supabaseAdmin, tenantId, conv.phone_number)
+    : null;
+  const salesGrounding = await getSalesGrounding(tenantId, message, route.intent);
   const dateRange = resolveDateRange(message);
   const bookings = await getRelevantBookings(tenantId, route.intent, dateRange);
   const ownerSummary = route.intent === 'owner_query'
@@ -96,6 +126,9 @@ export async function getGroundingData(
     tenant,
     services,
     staff: (staff as StaffContext[] | null) ?? [],
+    products: salesGrounding.products,
+    showcasePacks: salesGrounding.showcasePacks,
+    customerRecall,
     availableSlots,
     bookings,
     ownerSummary,
@@ -156,6 +189,105 @@ async function getRelevantBookings(
     .order('start_at');
 
   return (data as Array<Record<string, unknown>> | null) ?? [];
+}
+
+async function getSalesGrounding(
+  tenantId: string,
+  message: string,
+  intent: FrontDeskIntent
+): Promise<{ products: ProductContext[]; showcasePacks: ShowcaseContext[] }> {
+  const likelySalesQuestion = intent === 'sales_inquiry'
+    || /\b(product|products|item|items|catalog|catalogue|showcase|portfolio|gallery|price list|retail)\b/i.test(message);
+
+  if (!likelySalesQuestion) {
+    return { products: [], showcasePacks: [] };
+  }
+
+  const [products, showcasePacks] = await Promise.all([
+    getProductsForGrounding(tenantId, message),
+    getShowcasePacksForGrounding(tenantId, message),
+  ]);
+
+  return { products, showcasePacks };
+}
+
+async function getProductsForGrounding(
+  tenantId: string,
+  message: string
+): Promise<ProductContext[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('products')
+      .select('id, name, description, short_description, price_cents, currency, is_featured, stock_quantity, track_inventory')
+      .eq('tenant_id', tenantId)
+      .eq('is_active', true)
+      .order('is_featured', { ascending: false })
+      .order('name', { ascending: true })
+      .limit(12);
+
+    if (error || !data) return [];
+
+    const normalizedMessage = message.toLowerCase();
+    const rows = (data as Array<Record<string, unknown>>)
+      .map((row) => ({
+        id: String(row.id),
+        name: String(row.name ?? 'Unnamed Product'),
+        description: typeof row.short_description === 'string'
+          ? row.short_description
+          : (typeof row.description === 'string' ? row.description : null),
+        category: null,
+        price_cents: typeof row.price_cents === 'number' ? row.price_cents : Number(row.price_cents ?? 0),
+        currency: typeof row.currency === 'string' ? row.currency : null,
+        is_featured: Boolean(row.is_featured),
+        stock_quantity: typeof row.stock_quantity === 'number' ? row.stock_quantity : Number(row.stock_quantity ?? 0),
+        track_inventory: typeof row.track_inventory === 'boolean' ? row.track_inventory : Boolean(row.track_inventory),
+      }))
+      .filter((row) => row.id);
+
+    const matched = rows.filter((row) =>
+      normalizedMessage.includes(row.name.toLowerCase())
+      || (row.description ? normalizedMessage.includes(row.description.toLowerCase()) : false)
+    );
+
+    return (matched.length > 0 ? matched : rows).slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
+async function getShowcasePacksForGrounding(
+  tenantId: string,
+  message: string
+): Promise<ShowcaseContext[]> {
+  const normalizedMessage = message.toLowerCase();
+  const { data, error } = await supabaseAdmin
+    .from('whatsapp_showcase_packs')
+    .select('id, name, template_kind, description, intro_message, fallback_cta, trigger_phrases')
+    .eq('tenant_id', tenantId)
+    .eq('active', true)
+    .order('is_default', { ascending: false })
+    .order('sort_order', { ascending: true })
+    .limit(6);
+
+  if (error || !data) return [];
+
+  const rows = (data as Array<Record<string, unknown>>).map((row) => ({
+    id: String(row.id),
+    name: String(row.name ?? 'Showcase Pack'),
+    template_kind: typeof row.template_kind === 'string' ? row.template_kind : null,
+    description: typeof row.description === 'string' ? row.description : null,
+    intro_message: typeof row.intro_message === 'string' ? row.intro_message : null,
+    fallback_cta: typeof row.fallback_cta === 'string' ? row.fallback_cta : null,
+    trigger_phrases: Array.isArray(row.trigger_phrases) ? row.trigger_phrases.map(String) : null,
+  }));
+
+  const matched = rows.filter((row) =>
+    normalizedMessage.includes(row.name.toLowerCase())
+    || (row.template_kind ? normalizedMessage.includes(row.template_kind.toLowerCase()) : false)
+    || row.trigger_phrases?.some((phrase) => normalizedMessage.includes(phrase.toLowerCase()))
+  );
+
+  return (matched.length > 0 ? matched : rows).slice(0, 4);
 }
 
 async function getOwnerSummary(

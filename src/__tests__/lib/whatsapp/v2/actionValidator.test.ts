@@ -11,19 +11,22 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 // Each DB call shifts the next response off the queue in the order it was pushed.
 
 type DbRow = Record<string, unknown> | null;
-const responses: Array<{ data: DbRow; error: null }> = [];
+const responses: Array<{ data: unknown; error: null }> = [];
 
-function pushDb(data: DbRow) {
+function pushDb(data: unknown) {
   responses.push({ data, error: null });
 }
 
 function makeChain() {
   const chain: Record<string, unknown> = {};
-  const filters = ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not'];
+  const filters = ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order'];
   filters.forEach(m => {
     (chain as any)[m] = jest.fn().mockReturnValue(chain);
   });
   (chain as any).maybeSingle = jest.fn().mockImplementation(() =>
+    Promise.resolve(responses.shift() ?? { data: null, error: null })
+  );
+  (chain as any).limit = jest.fn().mockImplementation(() =>
     Promise.resolve(responses.shift() ?? { data: null, error: null })
   );
   (chain as any).insert = jest.fn().mockResolvedValue({ data: null, error: null });
@@ -42,7 +45,12 @@ jest.mock('@/lib/booking/engine', () => ({
   bookingEngine: { createBooking: jest.fn() },
 }));
 
-import { validateAction } from '@/lib/whatsapp/v2/actionValidator';
+const mockSendShowcasePack = jest.fn();
+jest.mock('@/lib/whatsapp/showcasePackService', () => ({
+  sendShowcasePack: mockSendShowcasePack,
+}));
+
+import { executeAction, validateAction } from '@/lib/whatsapp/v2/actionValidator';
 import type { AIResponse } from '@/lib/whatsapp/v2/actionValidator';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -51,6 +59,18 @@ const TENANT = 'tenant_test_abc';
 
 function walkIn(params: Record<string, unknown> = {}): AIResponse {
   return { action: 'walk_in', params, reply: 'Walk-in recorded', confidence: 'high' };
+}
+
+function showCatalog(params: Record<string, unknown> = {}): AIResponse {
+  return { action: 'show_catalog', params, reply: 'Here are a few products you can choose from.', confidence: 'high' };
+}
+
+function showShowcase(params: Record<string, unknown> = {}): AIResponse {
+  return { action: 'show_showcase', params, reply: 'Sending our showcase now.', confidence: 'high' };
+}
+
+function recommendProducts(params: Record<string, unknown> = {}): AIResponse {
+  return { action: 'recommend_products', params, reply: 'Here are the products I recommend.', confidence: 'high' };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -83,11 +103,11 @@ describe('validateAction — walk_in', () => {
   it('returns invalid with conflict details when staff has an active booking', async () => {
     // tenant_staff_id provided directly — no staff lookup
     // service_id provided directly — fetch duration
-    pushDb({ duration_minutes: 45 }); // services
+    pushDb({ duration: 45 }); // services
 
     // Conflict found
     const conflictEndAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    pushDb({ start_at: new Date().toISOString(), end_at: conflictEndAt, customer_name: 'Chisom' }); // reservations
+    pushDb({ start_at: new Date().toISOString(), end_at: conflictEndAt, customer_number: 'Chisom' }); // reservations
 
     const result = await validateAction(TENANT, walkIn({
       tenant_staff_id: 'staff_1',
@@ -100,7 +120,7 @@ describe('validateAction — walk_in', () => {
   });
 
   it('returns valid and mutates params when no conflict (pre-resolved IDs)', async () => {
-    pushDb({ duration_minutes: 30 }); // services duration
+    pushDb({ duration: 30 }); // services duration
     pushDb(null); // reservations conflict → none
 
     const params: Record<string, unknown> = { tenant_staff_id: 'staff_1', service_id: 'svc_1' };
@@ -121,7 +141,7 @@ describe('validateAction — walk_in', () => {
 
   it('resolves staff and service by name and returns valid', async () => {
     pushDb({ id: 'staff_resolved' }); // tenant_users
-    pushDb({ id: 'svc_resolved', duration_minutes: 60 }); // services
+    pushDb({ id: 'svc_resolved', duration: 60 }); // services
     pushDb(null); // conflict → none
 
     const params: Record<string, unknown> = { staff_name: 'Ada', service_name: 'Trim' };
@@ -145,5 +165,113 @@ describe('validateAction — walk_in', () => {
       new Date(params.walk_in_start_at as string).getTime();
     expect(durationMs).toBeGreaterThanOrEqual(59 * 60 * 1000);
     expect(durationMs).toBeLessThanOrEqual(61 * 60 * 1000);
+  });
+});
+
+describe('executeAction — sales actions', () => {
+  beforeEach(() => {
+    responses.length = 0;
+    jest.clearAllMocks();
+  });
+
+  it('sends a showcase pack through the showcase service', async () => {
+    mockSendShowcasePack.mockResolvedValueOnce({ success: true, sentCount: 3, pack: { id: 'pack-1' } });
+
+    const result = await executeAction(TENANT, showShowcase({ showcase_id: 'pack-1' }), {
+      customerPhone: '+2348000000000',
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockSendShowcasePack).toHaveBeenCalledWith(
+      TENANT,
+      '+2348000000000',
+      'pack-1',
+      undefined,
+    );
+  });
+
+  it('returns matching catalog products for show_catalog', async () => {
+    pushDb([
+      {
+        id: 'prd-1',
+        name: 'Hair Growth Oil',
+        short_description: 'Best for dry scalp',
+        category: 'hair care',
+        price_cents: 12000,
+        currency: 'NGN',
+        is_featured: true,
+        stock_quantity: 5,
+        track_inventory: true,
+      },
+      {
+        id: 'prd-2',
+        name: 'Edge Control',
+        short_description: 'Strong hold',
+        category: 'styling',
+        price_cents: 6500,
+        currency: 'NGN',
+        is_featured: false,
+        stock_quantity: 9,
+        track_inventory: true,
+      },
+    ]);
+
+    const result = await executeAction(TENANT, showCatalog({ query: 'growth oil' }), {});
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      mode: 'catalog',
+      title: 'Catalog results for "growth oil"',
+    });
+    expect((result.data as { products: Array<{ id: string }> }).products).toHaveLength(1);
+    expect((result.data as { products: Array<{ id: string }> }).products[0]?.id).toBe('prd-1');
+  });
+
+  it('returns related products for recommend_products', async () => {
+    pushDb([
+      {
+        id: 'prd-1',
+        name: 'Hair Growth Oil',
+        short_description: 'Best for dry scalp',
+        category: 'hair care',
+        price_cents: 12000,
+        currency: 'NGN',
+        is_featured: true,
+        stock_quantity: 5,
+        track_inventory: true,
+      },
+      {
+        id: 'prd-2',
+        name: 'Scalp Serum',
+        short_description: 'Supports healthy growth',
+        category: 'hair care',
+        price_cents: 15000,
+        currency: 'NGN',
+        is_featured: false,
+        stock_quantity: 6,
+        track_inventory: true,
+      },
+      {
+        id: 'prd-3',
+        name: 'Edge Control',
+        short_description: 'Strong hold',
+        category: 'styling',
+        price_cents: 6500,
+        currency: 'NGN',
+        is_featured: true,
+        stock_quantity: 9,
+        track_inventory: true,
+      },
+    ]);
+
+    const result = await executeAction(TENANT, recommendProducts({ product_ids: ['prd-1'] }), {});
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      mode: 'recommendations',
+      title: 'Recommended products',
+    });
+    expect((result.data as { products: Array<{ id: string }> }).products).toHaveLength(1);
+    expect((result.data as { products: Array<{ id: string }> }).products[0]?.id).toBe('prd-2');
   });
 });

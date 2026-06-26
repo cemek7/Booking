@@ -8,6 +8,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { cancelReservation, createReservation, rescheduleReservation } from '@/lib/reservationService';
+import { sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -20,6 +21,9 @@ export type AIAction =
   | 'list_services'
   | 'list_staff'
   | 'get_price'
+  | 'show_catalog'
+  | 'show_showcase'
+  | 'recommend_products'
   | 'cancel_booking'
   | 'reschedule_booking'
   | 'mark_no_show'
@@ -90,6 +94,9 @@ export async function validateAction(
     case 'list_services':
     case 'list_staff':
     case 'get_price':
+    case 'show_catalog':
+    case 'show_showcase':
+    case 'recommend_products':
     case 'get_insights':
     case 'owner_query':
     case 'general_reply':
@@ -381,6 +388,59 @@ export async function executeAction(
         return { success: !!reservation, data: reservation, error: reservation ? undefined : 'Reservation not found' };
       }
 
+      case 'show_showcase': {
+        if (!context.customerPhone) {
+          return { success: false, error: 'Customer phone is required to send a showcase pack' };
+        }
+
+        const showcase = await sendShowcasePack(
+          tenantId,
+          context.customerPhone,
+          typeof params.showcase_id === 'string' ? params.showcase_id : undefined,
+          getShowcaseTriggerText(params)
+        );
+
+        return {
+          success: showcase.success,
+          data: showcase,
+          error: showcase.success ? undefined : showcase.reason ?? 'Unable to send showcase pack',
+        };
+      }
+
+      case 'show_catalog': {
+        const products = await resolveCatalogProducts(tenantId, params);
+        if (products.length === 0) {
+          return { success: false, error: 'No matching active products found' };
+        }
+        return {
+          success: true,
+          data: {
+            mode: 'catalog',
+            products,
+            title: typeof params.category === 'string'
+              ? `${params.category} catalog`
+              : (typeof params.query === 'string' ? `Catalog results for "${params.query}"` : 'Product catalog'),
+          },
+        };
+      }
+
+      case 'recommend_products': {
+        const products = await resolveRecommendedProducts(tenantId, params);
+        if (products.length === 0) {
+          return { success: false, error: 'No suitable product recommendations found' };
+        }
+        return {
+          success: true,
+          data: {
+            mode: 'recommendations',
+            products,
+            title: typeof params.reason === 'string'
+              ? `Recommended products for ${params.reason}`
+              : 'Recommended products',
+          },
+        };
+      }
+
       case 'add_service': {
         const { error } = await supabaseAdmin
           .from('services')
@@ -468,4 +528,150 @@ export async function executeAction(
     console.error('[actionValidator] executeAction error', { action, tenantId, error: message });
     return { success: false, error: message };
   }
+}
+
+type ProductSelection = {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  price_cents: number | null;
+  currency: string | null;
+  is_featured: boolean;
+  stock_quantity: number | null;
+  track_inventory: boolean;
+};
+
+function getShowcaseTriggerText(params: Record<string, any>): string | undefined {
+  const candidates = [
+    params.trigger_text,
+    params.showcase_name,
+    params.query,
+    params.category,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+async function loadActiveProducts(tenantId: string): Promise<ProductSelection[]> {
+  const { data, error } = await supabaseAdmin
+    .from('products')
+    .select('id, name, description, short_description, category, price_cents, currency, is_featured, stock_quantity, track_inventory')
+    .eq('tenant_id', tenantId)
+    .eq('is_active', true)
+    .order('is_featured', { ascending: false })
+    .order('name', { ascending: true })
+    .limit(24);
+
+  if (error || !Array.isArray(data)) {
+    return [];
+  }
+
+  return data
+    .map((row) => normalizeProductSelection(row as Record<string, unknown>))
+    .filter((row): row is ProductSelection => row !== null);
+}
+
+function normalizeProductSelection(row: Record<string, unknown>): ProductSelection | null {
+  if (!row.id || !row.name) return null;
+
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    description: typeof row.short_description === 'string'
+      ? row.short_description
+      : (typeof row.description === 'string' ? row.description : null),
+    category: typeof row.category === 'string' ? row.category : null,
+    price_cents: typeof row.price_cents === 'number' ? row.price_cents : Number(row.price_cents ?? 0),
+    currency: typeof row.currency === 'string' ? row.currency : null,
+    is_featured: Boolean(row.is_featured),
+    stock_quantity: typeof row.stock_quantity === 'number' ? row.stock_quantity : Number(row.stock_quantity ?? 0),
+    track_inventory: typeof row.track_inventory === 'boolean' ? row.track_inventory : Boolean(row.track_inventory),
+  };
+}
+
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function matchesSearchTerm(product: ProductSelection, term: string): boolean {
+  if (!term) return true;
+
+  return [
+    product.name,
+    product.description,
+    product.category,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .some((value) => value.toLowerCase().includes(term));
+}
+
+function parseIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim());
+}
+
+async function resolveCatalogProducts(
+  tenantId: string,
+  params: Record<string, any>
+): Promise<ProductSelection[]> {
+  const rows = await loadActiveProducts(tenantId);
+  if (rows.length === 0) return [];
+
+  const productIds = parseIdList(params.product_ids);
+  if (productIds.length > 0) {
+    const selected = rows.filter((row) => productIds.includes(row.id));
+    if (selected.length > 0) return selected.slice(0, 6);
+  }
+
+  const query = normalizeText(params.query ?? params.product_name ?? params.category);
+  if (query) {
+    const matched = rows.filter((row) => matchesSearchTerm(row, query));
+    if (matched.length > 0) return matched.slice(0, 6);
+  }
+
+  return rows.slice(0, 6);
+}
+
+async function resolveRecommendedProducts(
+  tenantId: string,
+  params: Record<string, any>
+): Promise<ProductSelection[]> {
+  const rows = await loadActiveProducts(tenantId);
+  if (rows.length === 0) return [];
+
+  const productIds = parseIdList(params.product_ids);
+  const query = normalizeText(params.query ?? params.product_name ?? params.reason);
+  const anchors = productIds.length > 0
+    ? rows.filter((row) => productIds.includes(row.id))
+    : (query ? rows.filter((row) => matchesSearchTerm(row, query)) : []);
+
+  const anchorIds = new Set(anchors.map((row) => row.id));
+  const preferredCategories = new Set(
+    anchors
+      .map((row) => row.category)
+      .filter((category): category is string => typeof category === 'string' && category.length > 0)
+  );
+
+  const recommendations = rows.filter((row) => {
+    if (anchorIds.has(row.id)) return false;
+    if (preferredCategories.size === 0) return row.is_featured;
+    return row.category ? preferredCategories.has(row.category) : false;
+  });
+
+  if (recommendations.length > 0) {
+    return recommendations.slice(0, 5);
+  }
+
+  return rows
+    .filter((row) => !anchorIds.has(row.id))
+    .slice(0, 5);
 }

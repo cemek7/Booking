@@ -36,6 +36,30 @@ export function buildFrontDeskPrompt(input: {
         .join('\n')
     : '- No precomputed slots available for this request';
 
+  const recallBlock = userRole === 'customer' && grounding.customerRecall
+    ? `Returning customer context:\n${formatCustomerRecall(grounding.customerRecall)}\n`
+    : '';
+
+  const productsBlock = grounding.products.length > 0
+    ? grounding.products
+        .map((product) => {
+          const price = typeof product.price_cents === 'number' && Number.isFinite(product.price_cents)
+            ? `₦${Math.round(product.price_cents / 100).toLocaleString()}`
+            : 'Price on request';
+          const stock = product.track_inventory
+            ? (typeof product.stock_quantity === 'number' && product.stock_quantity > 0 ? 'In stock' : 'Out of stock')
+            : 'Stock status unknown';
+          return `- ${product.name} [id=${product.id}]: ${price} (${stock})${product.description ? ` — ${product.description}` : ''}`;
+        })
+        .join('\n')
+    : '- No product catalog context loaded for this request';
+
+  const showcaseBlock = grounding.showcasePacks.length > 0
+    ? grounding.showcasePacks
+        .map((pack) => `- ${pack.name} [id=${pack.id}]${pack.template_kind ? ` [${pack.template_kind}]` : ''}${pack.description ? ` — ${pack.description}` : ''}`)
+        .join('\n')
+    : '- No showcase packs loaded for this request';
+
   const ownerBlock = userRole === 'owner'
     ? `Owner summary:\n${formatOwnerSummary(grounding.ownerSummary)}\n`
     : '';
@@ -69,6 +93,12 @@ ${staffBlock}
 Available slots:
 ${slotBlock}
 
+${recallBlock}Products / retail context:
+${productsBlock}
+
+Showcase / portfolio context:
+${showcaseBlock}
+
 ${ownerBlock}Conversation state:
 - Flow: ${conv.current_flow}
 - Step: ${conv.flow_step}
@@ -79,7 +109,7 @@ ${retryBlock}Customer message:
 
 Respond ONLY with valid JSON:
 {
-  "action": "create_booking | get_availability | list_services | list_staff | get_price | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
+  "action": "create_booking | get_availability | list_services | list_staff | get_price | show_catalog | show_showcase | recommend_products | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
   "params": {},
   "reply": "natural language reply",
   "confidence": "high | medium | low"
@@ -87,7 +117,14 @@ Respond ONLY with valid JSON:
 
 Rules:
 - Never invent services, staff, prices, or availability.
+- Never invent products, stock, showcase packs, or customer history.
 - The backend decides truth; you only interpret and propose actions.
+- Use returning-customer recall as a soft hint only. Do not claim certainty beyond the grounded data.
+- Use "show_showcase" when the customer explicitly wants a portfolio, gallery, lookbook, catalog media, or before/after examples.
+- Use "show_catalog" when the customer wants a concrete list of products, prices, or stock-aware retail options.
+- Use "recommend_products" when the customer wants product suggestions, add-ons, or "what should I buy/use" guidance.
+- For "show_catalog" and "recommend_products", prefer product IDs from the grounded context when possible. You may also pass "product_name", "query", or "category".
+- For "show_showcase", prefer a grounded showcase pack ID when possible. You may also pass "showcase_name" or "trigger_text".
 - If required details are missing, use "needs_info".
 - If confidence is low or the case is ambiguous, use "escalate".`;
 }
@@ -127,4 +164,52 @@ function formatOwnerSummaryValue(value: unknown): string {
   }
 
   return String(value);
+}
+
+function formatCustomerRecall(
+  recall: GroundingResult['customerRecall']
+): string {
+  if (!recall) return '- No known recall context';
+
+  const lines = [
+    `- They have visited ${recall.visitCount} ${recall.visitCount === 1 ? 'time' : 'times'}.`,
+  ];
+
+  if (recall.lastService) {
+    lines.push(`- Their last recorded service was ${recall.lastService}.`);
+  }
+  if (recall.usualStaff) {
+    lines.push(`- They often book with ${recall.usualStaff}.`);
+  }
+  if (recall.lastVisitAt) {
+    lines.push(`- Their last visit was ${humanizeSince(recall.lastVisitAt)}.`);
+  }
+  if (recall.rebookingDue) {
+    lines.push('- They may be due for a rebook based on their last service interval.');
+  }
+
+  lines.push('- Greet them warmly, you may suggest their usual, but confirm what they actually want before assuming details.');
+
+  return lines.join('\n');
+}
+
+function humanizeSince(isoTimestamp: string): string {
+  const parsed = Date.parse(isoTimestamp);
+  if (Number.isNaN(parsed)) return isoTimestamp;
+
+  const diffMs = Math.max(0, Date.now() - parsed);
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 1) return 'today';
+  if (diffDays === 1) return 'about 1 day ago';
+  if (diffDays < 7) return `about ${diffDays} days ago`;
+
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks < 5) return `about ${diffWeeks} ${diffWeeks === 1 ? 'week' : 'weeks'} ago`;
+
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `about ${diffMonths} ${diffMonths === 1 ? 'month' : 'months'} ago`;
+
+  const diffYears = Math.floor(diffDays / 365);
+  return `about ${diffYears} ${diffYears === 1 ? 'year' : 'years'} ago`;
 }
