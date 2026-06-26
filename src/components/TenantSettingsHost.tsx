@@ -16,10 +16,14 @@ const TenantSettings = dynamic(() => import('./TenantSettingsClient'), {
 // here without editing the heavily-iterated TenantSettingsClient.
 const CloseAccount = dynamic(() => import('./settings/CloseAccountLoader'), { ssr: false });
 
+// DSAR (per-customer data export / erasure) loads its own tenant, same pattern.
+const CustomerDsar = dynamic(() => import('./dsar/CustomerDsarLoader'), { ssr: false });
+
 export default function TenantSettingsHost() {
   return (
     <>
       <TenantSettings />
+      <CustomerDsar />
       <CloseAccount />
     </>
   );
