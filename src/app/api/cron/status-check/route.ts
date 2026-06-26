@@ -22,6 +22,15 @@ export async function GET(request: NextRequest) {
   }
 
   const base = process.env.APP_URL || process.env.NEXT_PUBLIC_BASE_URL || '';
+  // Without an absolute base URL, fetch() would throw on a relative path and we
+  // would falsely report every probe as "down". Skip rather than false-alert.
+  if (!base) {
+    return NextResponse.json(
+      { ok: false, skipped: true, reason: 'APP_URL / NEXT_PUBLIC_BASE_URL not configured' },
+      { status: 200 },
+    );
+  }
+
   const results = await Promise.all(
     ENDPOINTS.map(async (e) => {
       try {

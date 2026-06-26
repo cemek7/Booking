@@ -44,7 +44,8 @@ export default function CustomerDsarControl({ tenantId }: { tenantId: string }) 
     try {
       const res = await authGet<{ export: unknown }>(endpoint());
       if (res.status === 200) {
-        downloadJson(res.data, `dsar-export-${customerId}.json`);
+        // Download just the export payload, not the { success, export } envelope.
+        downloadJson(res.data?.export ?? res.data, `dsar-export-${customerId}.json`);
         setMessage('Export downloaded.');
       } else {
         setMessage('Export failed.');
