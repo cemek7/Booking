@@ -4,6 +4,11 @@ import { createHttpHandler, parseJsonBody } from '@/lib/error-handling/route-han
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { flagReview } from '@/lib/moderation/reviews';
+import { isRedisConfigured, cacheGet, cacheSet } from '@/lib/redis';
+import { defaultLogger } from '@/lib/logger';
+
+/** Max review reports accepted per IP per hour (abuse guard on a public endpoint). */
+const FLAG_RATE_LIMIT = 10;
 
 /**
  * POST /api/reviews/[id]/flag  { reason, reporter? }
@@ -21,6 +26,26 @@ export const POST = createHttpHandler(
     }>(ctx.request).catch(() => ({}));
     if (!body.reason || !body.reason.trim()) {
       throw ApiErrorFactory.validationError({ reason: 'reason is required' });
+    }
+
+    // IP-based rate limit (mirrors the public review-submission route). Degrades
+    // gracefully if Redis is unavailable — never blocks on infra failure.
+    if (isRedisConfigured()) {
+      let rateLimited = false;
+      try {
+        const ip = ctx.request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown';
+        const rateKey = `rate:reviewflag:${ip}`;
+        const current = ((await cacheGet(rateKey)) as number | null) ?? 0;
+        if (current >= FLAG_RATE_LIMIT) rateLimited = true;
+        else await cacheSet(rateKey, current + 1, 3600);
+      } catch (redisErr) {
+        defaultLogger.warn('Review-flag rate-limit check failed (Redis error), allowing', {
+          error: String(redisErr),
+        });
+      }
+      if (rateLimited) {
+        throw ApiErrorFactory.badRequest('Too many reports submitted. Please try again later.');
+      }
     }
 
     const admin = createSupabaseAdminClient();
