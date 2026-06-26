@@ -1,5 +1,6 @@
 // @ts-nocheck
 // Jest globals are available without import
+import { NextRequest } from 'next/server';
 import { GET as authMeGET } from '@/app/api/auth/me/route';
 
 // Supabase stub — returns mock data for users and tenant_users
@@ -53,18 +54,20 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
 jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: jest.fn().mockImplementation(() => makeSupabase()),
   getSupabaseRouteHandlerClient: jest.fn().mockImplementation(() => makeSupabase()),
+  // auth:true routes verify the JWT + tenant membership via the admin client.
+  createSupabaseAdminClient: jest.fn().mockImplementation(() => makeSupabase()),
 }));
 
 describe('auth/me API route', () => {
   it('returns 401 without auth header', async () => {
-    const res: any = await authMeGET(new Request('http://x/api/auth/me', { headers: { 'x-test-bypass-skip': '1' } }));
+    const res: any = await authMeGET(new NextRequest('http://x/api/auth/me', { headers: { 'x-test-bypass-skip': '1' } }));
     expect(res.status).toBe(401);
     const json = await res.json();
     expect(json).toHaveProperty('error');
   });
 
   it('returns identity with highest role', async () => {
-    const req = new Request('http://x/api/auth/me', {
+    const req = new NextRequest('http://x/api/auth/me', {
       headers: {
         'Authorization': 'Bearer fake-test-token',
         'x-tenant-id': 't1',
