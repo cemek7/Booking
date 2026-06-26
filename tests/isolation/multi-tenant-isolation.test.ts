@@ -9,9 +9,22 @@
  *   - Writes use server-verified tenantId (not a caller-supplied tenantId)
  */
 
+import { NextRequest } from 'next/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { GET as customersGET, POST as customersPOST } from '@/app/api/customers/route';
+
+// Activate the factory mocks. Without these jest.mock calls, the real Supabase
+// factories run and the per-test mockReturnValue* calls below are no-ops, so the
+// route's auth path (createSupabaseAdminClient().auth.getUser) fails with 401.
+jest.mock('@/lib/supabase/bearer-client', () => ({
+  createSupabaseBearerClient: jest.fn(),
+}));
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(),
+  getSupabaseRouteHandlerClient: jest.fn(),
+  createServerSupabaseClient: jest.fn(),
+}));
 
 const TENANT_A = 'tenant-A';
 const TENANT_B = 'tenant-B';
@@ -125,6 +138,7 @@ describe('Multi-Tenant Data Isolation', () => {
     it('passes authenticated tenant-A id to the Supabase filter (not a header-supplied id)', async () => {
       const bearerClient = makeBearerClient(TENANT_A);
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(bearerClient);
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminClient(TENANT_A));
 
       const req = new Request(
         'http://localhost/api/customers?page=1&limit=10',
@@ -145,6 +159,7 @@ describe('Multi-Tenant Data Isolation', () => {
       // The handler's .eq('tenant_id', TENANT_A) filter is what isolates data.
       // In production the DB enforces this; here we verify the filter is passed.
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(bearerClient);
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminClient(TENANT_A));
 
       const req = new Request(
         'http://localhost/api/customers',
@@ -166,6 +181,7 @@ describe('Multi-Tenant Data Isolation', () => {
     it('creates customer under tenant-A even when request body contains tenant_id = tenant-B', async () => {
       const bearerClient = makeBearerClient(TENANT_A);
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(bearerClient);
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminClient(TENANT_A));
 
       const req = new Request('http://localhost/api/customers', {
         method: 'POST',
