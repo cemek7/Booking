@@ -140,7 +140,7 @@ describe('Multi-Tenant Data Isolation', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(bearerClient);
       (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminClient(TENANT_A));
 
-      const req = new Request(
+      const req = new NextRequest(
         'http://localhost/api/customers?page=1&limit=10',
         { headers: { authorization: 'Bearer test-token', 'x-tenant-id': TENANT_A } }
       );
@@ -161,7 +161,7 @@ describe('Multi-Tenant Data Isolation', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(bearerClient);
       (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminClient(TENANT_A));
 
-      const req = new Request(
+      const req = new NextRequest(
         'http://localhost/api/customers',
         { headers: { authorization: 'Bearer test-token', 'x-tenant-id': TENANT_A } }
       );
@@ -183,7 +183,7 @@ describe('Multi-Tenant Data Isolation', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(bearerClient);
       (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminClient(TENANT_A));
 
-      const req = new Request('http://localhost/api/customers', {
+      const req = new NextRequest('http://localhost/api/customers', {
         method: 'POST',
         headers: {
           authorization: 'Bearer test-token',
