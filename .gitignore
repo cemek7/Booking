@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local generated state
+/.tsbuild/
+/logs/
+/.design-sync-stage/
+/.codex
