@@ -52,6 +52,15 @@ type ShowcaseContext = {
   trigger_phrases?: string[] | null;
 };
 
+type LeadContext = {
+  id: string;
+  status?: string | null;
+  intent?: string | null;
+  notes?: string | null;
+  follow_up_at?: string | null;
+  followed_up_at?: string | null;
+};
+
 export interface GroundingResult {
   route: IntentRoute;
   tenant: TenantContext | null;
@@ -60,6 +69,7 @@ export interface GroundingResult {
   products: ProductContext[];
   showcasePacks: ShowcaseContext[];
   customerRecall: CustomerRecall | null;
+  leadContext: LeadContext | null;
   availableSlots: Array<{ staffId: string; slots: string[] }>;
   bookings: Array<Record<string, unknown>>;
   ownerSummary: Record<string, unknown> | null;
@@ -105,6 +115,9 @@ export async function getGroundingData(
   const customerRecall = conv.role === 'customer' && conv.phone_number
     ? await getCustomerRecall(supabaseAdmin, tenantId, conv.phone_number)
     : null;
+  const leadContext = conv.role === 'customer' && conv.phone_number
+    ? await getLeadContext(tenantId, conv.phone_number)
+    : null;
   const salesGrounding = await getSalesGrounding(tenantId, message, route.intent);
   const dateRange = resolveDateRange(message);
   const bookings = await getRelevantBookings(tenantId, route.intent, dateRange);
@@ -129,6 +142,7 @@ export async function getGroundingData(
     products: salesGrounding.products,
     showcasePacks: salesGrounding.showcasePacks,
     customerRecall,
+    leadContext,
     availableSlots,
     bookings,
     ownerSummary,
@@ -197,6 +211,9 @@ async function getSalesGrounding(
   intent: FrontDeskIntent
 ): Promise<{ products: ProductContext[]; showcasePacks: ShowcaseContext[] }> {
   const likelySalesQuestion = intent === 'sales_inquiry'
+    || intent === 'lead_qualification'
+    || intent === 'upsell_opportunity'
+    || intent === 'lead_recovery'
     || /\b(product|products|item|items|catalog|catalogue|showcase|portfolio|gallery|price list|retail)\b/i.test(message);
 
   if (!likelySalesQuestion) {
@@ -209,6 +226,30 @@ async function getSalesGrounding(
   ]);
 
   return { products, showcasePacks };
+}
+
+async function getLeadContext(
+  tenantId: string,
+  phone: string
+): Promise<LeadContext | null> {
+  const { data } = await supabaseAdmin
+    .from('leads')
+    .select('id, status, intent, notes, follow_up_at, followed_up_at')
+    .eq('tenant_id', tenantId)
+    .eq('phone', phone)
+    .order('created_at', { ascending: false })
+    .maybeSingle();
+
+  if (!data?.id) return null;
+
+  return {
+    id: String(data.id),
+    status: typeof data.status === 'string' ? data.status : null,
+    intent: typeof data.intent === 'string' ? data.intent : null,
+    notes: typeof data.notes === 'string' ? data.notes : null,
+    follow_up_at: typeof data.follow_up_at === 'string' ? data.follow_up_at : null,
+    followed_up_at: typeof data.followed_up_at === 'string' ? data.followed_up_at : null,
+  };
 }
 
 async function getProductsForGrounding(

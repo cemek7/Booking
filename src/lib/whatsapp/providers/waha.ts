@@ -1,5 +1,10 @@
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
-import type { ProviderConfig, WhatsAppProviderClient } from './types';
+import type {
+  InteractiveMessagePayload,
+  ProviderConfig,
+  ProviderSendResult,
+  WhatsAppProviderClient,
+} from './types';
 
 export class WahaAdapter implements WhatsAppProviderClient {
   constructor(private cfg: ProviderConfig) {}
@@ -165,5 +170,9 @@ export class WahaAdapter implements WhatsAppProviderClient {
     } catch {
       return { success: false };
     }
+  }
+
+  async sendInteractiveMessage(_to: string, _payload: InteractiveMessagePayload): Promise<ProviderSendResult> {
+    return { success: false, reason: 'interactive_not_supported' };
   }
 }

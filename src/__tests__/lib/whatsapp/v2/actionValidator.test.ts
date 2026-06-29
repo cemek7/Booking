@@ -50,20 +50,20 @@ jest.mock('@/lib/whatsapp/showcasePackService', () => ({
   sendShowcasePack: mockSendShowcasePack,
 }));
 
-const mockGetTenantWhatsAppConfig = jest.fn();
-jest.mock('@/lib/whatsapp/evolutionClient', () => ({
-  getTenantWhatsAppConfig: mockGetTenantWhatsAppConfig,
+const mockSendInteractiveMessage = jest.fn();
+const mockSendMediaMessage = jest.fn();
+const mockGetTenantWhatsAppProviderClient = jest.fn();
+jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
+  getTenantWhatsAppProviderClient: mockGetTenantWhatsAppProviderClient,
 }));
 
-const mockSendProductList = jest.fn();
-const mockSendProductDetails = jest.fn();
-const mockSendRecommendations = jest.fn();
-jest.mock('@/lib/whatsapp/product-service', () => ({
-  WhatsAppProductService: jest.fn(() => ({
-    sendProductList: mockSendProductList,
-    sendProductDetails: mockSendProductDetails,
-    sendRecommendations: mockSendRecommendations,
-  })),
+jest.mock('@/lib/ai/front-desk-events', () => ({
+  recordFrontDeskEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('@/lib/ai/front-desk-sales', () => ({
+  upsertLeadRecord: jest.fn().mockResolvedValue({ id: 'lead-1', status: 'qualified' }),
+  scheduleLeadRecoveryCampaign: jest.fn().mockResolvedValue('campaign-1'),
 }));
 
 import { executeAction, validateAction } from '@/lib/whatsapp/v2/actionValidator';
@@ -87,6 +87,14 @@ function showShowcase(params: Record<string, unknown> = {}): AIResponse {
 
 function recommendProducts(params: Record<string, unknown> = {}): AIResponse {
   return { action: 'recommend_products', params, reply: 'Here are the products I recommend.', confidence: 'high' };
+}
+
+function sendQuote(params: Record<string, unknown> = {}): AIResponse {
+  return { action: 'send_quote', params, reply: 'Here is the quote I prepared.', confidence: 'high' };
+}
+
+function qualifyLead(params: Record<string, unknown> = {}): AIResponse {
+  return { action: 'qualify_lead', params, reply: 'Let me understand what you need first.', confidence: 'high' };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -188,10 +196,12 @@ describe('executeAction — sales actions', () => {
   beforeEach(() => {
     responses.length = 0;
     jest.clearAllMocks();
-    mockGetTenantWhatsAppConfig.mockResolvedValue(null);
-    mockSendProductList.mockResolvedValue(true);
-    mockSendProductDetails.mockResolvedValue(true);
-    mockSendRecommendations.mockResolvedValue(true);
+    mockGetTenantWhatsAppProviderClient.mockResolvedValue({
+      sendInteractiveMessage: mockSendInteractiveMessage,
+      sendMediaMessage: mockSendMediaMessage,
+    });
+    mockSendInteractiveMessage.mockResolvedValue({ success: true, messageId: 'msg-1' });
+    mockSendMediaMessage.mockResolvedValue({ success: true, messageId: 'media-1' });
   });
 
   it('sends a showcase pack through the showcase service', async () => {
@@ -248,12 +258,6 @@ describe('executeAction — sales actions', () => {
   });
 
   it('uses interactive product details for a single meta-backed catalog result', async () => {
-    mockGetTenantWhatsAppConfig.mockResolvedValueOnce({
-      provider: 'meta',
-      apiKey: 'token',
-      baseUrl: 'https://graph.facebook.com/v18.0',
-      instanceName: '123456789',
-    });
     pushDb([
       {
         id: 'prd-1',
@@ -274,10 +278,9 @@ describe('executeAction — sales actions', () => {
 
     expect(result.success).toBe(true);
     expect((result.data as { delivery: string }).delivery).toBe('interactive');
-    expect(mockSendProductDetails).toHaveBeenCalledWith(
+    expect(mockSendInteractiveMessage).toHaveBeenCalledWith(
       '+2348000000000',
-      expect.objectContaining({ id: 'prd-1', name: 'Hair Growth Oil' }),
-      true,
+      expect.objectContaining({ type: 'button' }),
     );
   });
 
@@ -330,12 +333,6 @@ describe('executeAction — sales actions', () => {
   });
 
   it('uses interactive recommendation sending when meta-backed delivery is available', async () => {
-    mockGetTenantWhatsAppConfig.mockResolvedValueOnce({
-      provider: 'meta',
-      apiKey: 'token',
-      baseUrl: 'https://graph.facebook.com/v18.0',
-      instanceName: '123456789',
-    });
     pushDb([
       {
         id: 'prd-1',
@@ -367,9 +364,48 @@ describe('executeAction — sales actions', () => {
 
     expect(result.success).toBe(true);
     expect((result.data as { delivery: string }).delivery).toBe('interactive');
-    expect(mockSendRecommendations).toHaveBeenCalledWith(
+    expect(mockSendInteractiveMessage).toHaveBeenCalledWith(
       '+2348000000000',
-      expect.arrayContaining([expect.objectContaining({ id: 'prd-2' })]),
+      expect.objectContaining({ type: 'list' }),
     );
+  });
+
+  it('builds a service quote for consultative selling', async () => {
+    pushDb({
+      id: 'svc-1',
+      name: 'Signature Braids',
+      price: 25000,
+      duration: 180,
+    });
+
+    const result = await executeAction(TENANT, sendQuote({ service_name: 'Braids' }), {
+      customerPhone: '+2348000000000',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      quote: {
+        id: 'svc-1',
+        name: 'Signature Braids',
+        price: 25000,
+        duration: 180,
+      },
+    });
+  });
+
+  it('qualifies a lead without breaking the action path', async () => {
+    const result = await executeAction(TENANT, qualifyLead({
+      desired_outcome: 'knotless braids',
+      budget: '25000',
+      preferred_timing: 'next weekend',
+    }), {
+      customerPhone: '+2348000000000',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      stage: 'qualified',
+      lead: { id: 'lead-1' },
+    });
   });
 });

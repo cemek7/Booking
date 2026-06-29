@@ -1,7 +1,12 @@
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { createEvolutionClient } from '@/lib/whatsapp/evolutionClient';
 import type { MessageTemplate } from '@/lib/whatsapp/evolutionClient';
-import type { ProviderConfig, WhatsAppProviderClient } from './types';
+import type {
+  InteractiveMessagePayload,
+  ProviderConfig,
+  ProviderSendResult,
+  WhatsAppProviderClient,
+} from './types';
 
 export class EvolutionAdapter implements WhatsAppProviderClient {
   constructor(private cfg: ProviderConfig) {}
@@ -104,5 +109,9 @@ export class EvolutionAdapter implements WhatsAppProviderClient {
     type: 'image' | 'document' | 'audio' | 'video' = 'image'
   ) {
     return this.client.sendMediaMessage(to, media, caption, type);
+  }
+
+  async sendInteractiveMessage(_to: string, _payload: InteractiveMessagePayload): Promise<ProviderSendResult> {
+    return { success: false, reason: 'interactive_not_supported' };
   }
 }

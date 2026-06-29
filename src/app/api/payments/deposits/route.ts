@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import PaymentService from '@/lib/paymentService';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 
 interface DepositRequest {
   amount: number;
@@ -108,6 +109,25 @@ export const POST = createHttpHandler(
     if (!result.success) {
       throw ApiErrorFactory.databaseError(new Error(result.error || 'Deposit initialization failed'));
     }
+
+    await recordFrontDeskEvent({
+      tenantId: tenantUser.tenant_id,
+      eventType: 'payment_requested',
+      eventCategory: 'payment',
+      channel: 'dashboard',
+      actorRole: 'owner',
+      actorId: ctx.user!.id,
+      reservationId,
+      correlationId: result.transactionId,
+      amount,
+      currency,
+      statusTo: 'initiated',
+      metadata: {
+        provider,
+        payment_type: 'deposit',
+        authorization_url: result.authorizationUrl ?? null,
+      },
+    });
 
     return {
       success: true,

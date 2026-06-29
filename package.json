@@ -25,7 +25,13 @@
     "deploy:post:ai-front-desk-stage-c": "bash deployment/scripts/post-deploy-ai-front-desk-stage-c.sh",
     "db:apply:ai-front-desk-stage-d": "psql \"$DATABASE_URL\" -f scripts/sql/apply_ai_front_desk_stage_d.sql",
     "db:verify:ai-front-desk-stage-d": "bash deployment/scripts/verify-ai-front-desk-stage-d.sh",
-    "deploy:post:ai-front-desk-stage-d": "bash deployment/scripts/post-deploy-ai-front-desk-stage-d.sh"
+    "deploy:post:ai-front-desk-stage-d": "bash deployment/scripts/post-deploy-ai-front-desk-stage-d.sh",
+    "db:apply:ai-front-desk-stage-e": "psql \"$DATABASE_URL\" -f scripts/sql/apply_ai_front_desk_stage_e.sql",
+    "db:verify:ai-front-desk-stage-e": "bash deployment/scripts/verify-ai-front-desk-stage-e.sh",
+    "deploy:post:ai-front-desk-stage-e": "bash deployment/scripts/post-deploy-ai-front-desk-stage-e.sh",
+    "db:apply:ai-front-desk-stage-f": "psql \"$DATABASE_URL\" -f scripts/sql/apply_ai_front_desk_stage_f.sql",
+    "db:verify:ai-front-desk-stage-f": "bash deployment/scripts/verify-ai-front-desk-stage-f.sh",
+    "deploy:post:ai-front-desk-stage-f": "bash deployment/scripts/post-deploy-ai-front-desk-stage-f.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

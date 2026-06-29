@@ -1,6 +1,11 @@
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { defaultLogger } from '@/lib/logger';
-import type { ProviderConfig, WhatsAppProviderClient } from './types';
+import type {
+  InteractiveMessagePayload,
+  ProviderConfig,
+  ProviderSendResult,
+  WhatsAppProviderClient,
+} from './types';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -120,5 +125,9 @@ export class InstagramAdapter implements WhatsAppProviderClient {
     } catch {
       return { success: false };
     }
+  }
+
+  async sendInteractiveMessage(_to: string, _payload: InteractiveMessagePayload): Promise<ProviderSendResult> {
+    return { success: false, reason: 'interactive_not_supported' };
   }
 }

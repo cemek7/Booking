@@ -1,4 +1,5 @@
 import { defaultLogger } from '@/lib/logger';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace, metrics } from '@opentelemetry/api';
 import { dialogBookingBridge } from './dialogBookingBridge';
@@ -769,8 +770,21 @@ export class EnhancedJobManager {
               if (result.success) {
                 await this.supabase
                   .from('leads')
-                  .update({ status: 'contacted', followed_up_at: now })
+                  .update({ status: 'contacted', followed_up_at: now, last_contacted_at: now })
                   .eq('id', lead.id);
+                await recordFrontDeskEvent({
+                  tenantId: lead.tenant_id,
+                  eventType: 'follow_up_sent',
+                  eventCategory: 'retention',
+                  channel: 'whatsapp',
+                  actorRole: 'system',
+                  correlationId: lead.id,
+                  metadata: {
+                    lead_id: lead.id,
+                    phone: lead.phone,
+                    source: 'jobs.lead_followup',
+                  },
+                });
                 sent++;
               }
             }

@@ -7,6 +7,9 @@ export type FrontDeskIntent =
   | 'availability_question'
   | 'price_question'
   | 'sales_inquiry'
+  | 'lead_qualification'
+  | 'upsell_opportunity'
+  | 'lead_recovery'
   | 'owner_query'
   | 'customer_support'
   | 'unknown';
@@ -69,6 +72,18 @@ function matchRuleIntent(
 
   if (/\b(price|cost|fee|how much)\b/i.test(normalized)) {
     return 'price_question';
+  }
+
+  if (/\b(not ready|later|another day|think about it|need to decide|need to ask|not now|follow up|reach out later|check back)\b/i.test(normalized)) {
+    return 'lead_recovery';
+  }
+
+  if (/\b(recommend|suggest|best for me|what should i do|which one fits|what do you advise|based on my budget|for my hair|for my skin)\b/i.test(normalized)) {
+    return 'lead_qualification';
+  }
+
+  if (/\b(add on|addon|add-on|extra|upgrade|bundle|aftercare|what else should i buy|what else do i need|complement)\b/i.test(normalized)) {
+    return 'upsell_opportunity';
   }
 
   if (/\b(product|products|item|items|sell|selling|buy|purchase|stock|inventory|catalog|catalogue|menu|price list|showcase|portfolio|gallery|retail|merchandise|goods)\b/i.test(normalized)) {

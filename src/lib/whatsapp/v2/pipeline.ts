@@ -36,6 +36,7 @@ import { getGroundingData } from '@/lib/ai/grounding-service';
 import { buildFrontDeskPrompt } from '@/lib/ai/context-builder';
 import { getAIProvider } from '@/lib/ai/providers';
 import { recordAITrainingEvent } from '@/lib/ai/training-events';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 
@@ -210,6 +211,16 @@ async function handleCustomerMessage(
 
   // Explicit "reach a human" request → create an escalation ticket and stop.
   if (wantsHuman(message)) {
+    await recordFrontDeskEvent({
+      tenantId,
+      eventType: 'handoff_requested',
+      eventCategory: 'support',
+      channel,
+      actorRole: 'customer',
+      messageId,
+      correlationId: messageId,
+      metadata: { reason: 'customer_requested_human' },
+    });
     await createHumanHandoff(supabaseAdmin, {
       tenantId,
       customerPhone: externalId,
@@ -226,6 +237,20 @@ async function handleCustomerMessage(
     await markMessagesProcessed(allMessageIds);
     return;
   }
+
+  await recordFrontDeskEvent({
+    tenantId,
+    eventType: 'inquiry_received',
+    eventCategory: 'conversation',
+    channel,
+    actorRole: 'customer',
+    messageId,
+    correlationId: messageId,
+    metadata: {
+      current_flow: conv!.current_flow,
+      awaiting_selection: conv!.flow_data?.awaiting_selection ?? false,
+    },
+  });
 
   // L1 check
   const l1Match = matchRule(message, {

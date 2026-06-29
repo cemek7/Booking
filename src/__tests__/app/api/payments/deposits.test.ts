@@ -32,10 +32,14 @@ jest.mock('@/lib/logger/api-logger', () => ({
     warn: jest.fn(),
   })),
 }));
+jest.mock('@/lib/ai/front-desk-events', () => ({
+  recordFrontDeskEvent: jest.fn().mockResolvedValue(undefined),
+}));
 
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import PaymentService from '@/lib/paymentService';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { POST } from '@/app/api/payments/deposits/route';
 
 // ─── Admin client mock ────────────────────────────────────────────────────────
@@ -145,6 +149,13 @@ describe('deposit init (auth:true)', () => {
       amount: 10000,
       email: 'salon@test.com',
       tenantId: 'ten_1',
+    }));
+    expect(recordFrontDeskEvent).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'ten_1',
+      eventType: 'payment_requested',
+      reservationId: 'res_1',
+      amount: 10000,
+      currency: 'NGN',
     }));
   });
 

@@ -7,10 +7,16 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
+import { scheduleLeadRecoveryCampaign, upsertLeadRecord } from '@/lib/ai/front-desk-sales';
 import { cancelReservation, createReservation, rescheduleReservation } from '@/lib/reservationService';
 import { sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
-import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
-import { WhatsAppProductService } from '@/lib/whatsapp/product-service';
+import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+import {
+  buildProductDetailsMessage,
+  buildProductListMessage,
+  buildRecommendationsMessage,
+} from '@/lib/whatsapp/product-service';
 import type { Product } from '@/types/product-catalogue';
 
 const supabaseAdmin = createClient(
@@ -24,9 +30,14 @@ export type AIAction =
   | 'list_services'
   | 'list_staff'
   | 'get_price'
+  | 'send_quote'
+  | 'qualify_lead'
   | 'show_catalog'
   | 'show_showcase'
   | 'recommend_products'
+  | 'offer_upsell'
+  | 'offer_cross_sell'
+  | 'recover_lead'
   | 'cancel_booking'
   | 'reschedule_booking'
   | 'mark_no_show'
@@ -84,6 +95,16 @@ export async function validateAction(
         ? { valid: true }
         : { valid: false, error: 'add_staff requires name', retryContext: 'The staff member must have a name.' };
 
+    case 'send_quote':
+      return params.service_id || params.service_name
+        ? { valid: true }
+        : { valid: false, error: 'send_quote requires a service identifier', retryContext: 'Please specify which service you are quoting.' };
+
+    case 'recover_lead':
+      return params.reason || params.follow_up_at || params.customer_phone
+        ? { valid: true }
+        : { valid: false, error: 'recover_lead requires a reason or follow-up timing', retryContext: 'Explain why the lead should be recovered and when to follow up.' };
+
     case 'update_schedule':
     case 'block_slot':
       return params.tenant_staff_id || params.staff_name
@@ -97,9 +118,14 @@ export async function validateAction(
     case 'list_services':
     case 'list_staff':
     case 'get_price':
+    case 'send_quote':
+    case 'qualify_lead':
     case 'show_catalog':
     case 'show_showcase':
     case 'recommend_products':
+    case 'offer_upsell':
+    case 'offer_cross_sell':
+    case 'recover_lead':
     case 'get_insights':
     case 'owner_query':
     case 'general_reply':
@@ -309,10 +335,63 @@ async function resolveCustomerIdForNoShow(
   return typeof data?.customer_id === 'string' ? data.customer_id : null;
 }
 
+async function lookupServiceQuote(
+  tenantId: string,
+  params: Record<string, any>
+): Promise<{ id: string; name: string; price: number; duration: number } | null> {
+  if (typeof params.service_id === 'string') {
+    const { data } = await supabaseAdmin
+      .from('services')
+      .select('id, name, price, duration')
+      .eq('tenant_id', tenantId)
+      .eq('id', params.service_id)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (data?.id) {
+      return {
+        id: String(data.id),
+        name: String(data.name ?? 'Service'),
+        price: Number(data.price ?? 0),
+        duration: Number(data.duration ?? 60),
+      };
+    }
+  }
+
+  if (typeof params.service_name === 'string' && params.service_name.trim()) {
+    const { data } = await supabaseAdmin
+      .from('services')
+      .select('id, name, price, duration')
+      .eq('tenant_id', tenantId)
+      .eq('is_active', true)
+      .ilike('name', `%${params.service_name.trim()}%`)
+      .order('sort_order', { ascending: true })
+      .maybeSingle();
+
+    if (data?.id) {
+      return {
+        id: String(data.id),
+        name: String(data.name ?? 'Service'),
+        price: Number(data.price ?? 0),
+        duration: Number(data.duration ?? 60),
+      };
+    }
+  }
+
+  return null;
+}
+
 export async function executeAction(
   tenantId: string,
   aiResponse: AIResponse,
-  context: { customerPhone?: string; tenantStaffId?: string; customerId?: string }
+  context: {
+    customerPhone?: string;
+    tenantStaffId?: string;
+    customerId?: string;
+    messageId?: string;
+    channel?: string;
+    userRole?: 'owner' | 'staff' | 'customer';
+  }
 ): Promise<{ success: boolean; data?: unknown; error?: string }> {
   const { action, params } = aiResponse;
 
@@ -321,6 +400,9 @@ export async function executeAction(
       case 'create_booking': {
         const startAt = params.start_at;
         const endAt = params.end_at ?? new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+        const quotedService = params.service_id
+          ? await lookupServiceQuote(tenantId, { service_id: params.service_id })
+          : null;
         const reservation = await createReservation(supabaseAdmin as any, {
           tenant_id: tenantId,
           customer_id: params.customer_id ?? context.customerId ?? null,
@@ -337,6 +419,27 @@ export async function executeAction(
           },
           staff_id: params.staff_id ?? params.tenant_staff_id ?? null,
         });
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: 'booking_created',
+          eventCategory: 'booking',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: typeof reservation?.customer_id === 'string' ? reservation.customer_id : (params.customer_id ?? context.customerId ?? null),
+          reservationId: typeof reservation?.id === 'string' ? reservation.id : null,
+          serviceId: params.service_id ?? null,
+          staffId: params.staff_id ?? params.tenant_staff_id ?? null,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          amount: quotedService?.price ?? null,
+          currency: 'NGN',
+          statusTo: 'confirmed',
+          metadata: {
+            source: 'ai_front_desk',
+            action: 'create_booking',
+            service_name: quotedService?.name ?? params.service_name ?? null,
+          },
+        });
         return { success: true, data: { reservation } };
       }
 
@@ -346,6 +449,22 @@ export async function executeAction(
           reservation_id: params.reservation_id,
           reason: params.reason ?? null,
         });
+        if (reservation) {
+          await recordFrontDeskEvent({
+            tenantId,
+            eventType: 'booking_cancelled',
+            eventCategory: 'booking',
+            channel: context.channel ?? 'whatsapp',
+            actorRole: context.userRole ?? 'customer',
+            customerId: typeof reservation.customer_id === 'string' ? reservation.customer_id : (context.customerId ?? null),
+            reservationId: params.reservation_id ?? null,
+            messageId: context.messageId ?? null,
+            correlationId: context.messageId ?? null,
+            statusFrom: 'confirmed',
+            statusTo: 'cancelled',
+            metadata: { reason: params.reason ?? null },
+          });
+        }
         return { success: !!reservation, data: reservation, error: reservation ? undefined : 'Reservation not found' };
       }
 
@@ -375,6 +494,18 @@ export async function executeAction(
               })
               .eq('id', customerId);
           }
+          await recordFrontDeskEvent({
+            tenantId,
+            eventType: 'booking_no_show',
+            eventCategory: 'booking',
+            channel: context.channel ?? 'whatsapp',
+            actorRole: context.userRole ?? 'customer',
+            customerId: customerId ?? context.customerId ?? null,
+            reservationId: params.reservation_id ?? null,
+            messageId: context.messageId ?? null,
+            correlationId: context.messageId ?? null,
+            statusTo: 'no_show',
+          });
         }
         return { success: !error, error: error?.message };
       }
@@ -388,7 +519,105 @@ export async function executeAction(
           staff_id: params.staff_id ?? params.tenant_staff_id ?? null,
           reason: params.reason ?? null,
         });
+        if (reservation) {
+          await recordFrontDeskEvent({
+            tenantId,
+            eventType: 'booking_rescheduled',
+            eventCategory: 'booking',
+            channel: context.channel ?? 'whatsapp',
+            actorRole: context.userRole ?? 'customer',
+            customerId: typeof reservation.customer_id === 'string' ? reservation.customer_id : (context.customerId ?? null),
+            reservationId: params.reservation_id ?? null,
+            serviceId: typeof reservation.service_id === 'string' ? reservation.service_id : null,
+            staffId: params.staff_id ?? params.tenant_staff_id ?? null,
+            messageId: context.messageId ?? null,
+            correlationId: context.messageId ?? null,
+            statusFrom: 'confirmed',
+            statusTo: 'confirmed',
+            metadata: { reason: params.reason ?? null, new_start_at: params.new_start_at ?? null },
+          });
+        }
         return { success: !!reservation, data: reservation, error: reservation ? undefined : 'Reservation not found' };
+      }
+
+      case 'qualify_lead': {
+        const lead = await upsertLeadRecord({
+          tenantId,
+          phone: params.customer_phone ?? context.customerPhone ?? null,
+          name: params.customer_name ?? null,
+          intent: params.intent ?? params.desired_outcome ?? 'consultation',
+          notes: [
+            params.desired_outcome ? `Outcome: ${params.desired_outcome}` : null,
+            params.budget ? `Budget: ${params.budget}` : null,
+            params.preferred_timing ? `Timing: ${params.preferred_timing}` : null,
+            params.urgency ? `Urgency: ${params.urgency}` : null,
+            params.previous_experience ? `Previous experience: ${params.previous_experience}` : null,
+            params.objection ? `Objection: ${params.objection}` : null,
+          ].filter(Boolean).join('\n'),
+          status: 'qualified',
+          stage: 'qualified',
+          source: 'ai_front_desk',
+        });
+
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: lead ? 'lead_qualified' : 'inquiry_received',
+          eventCategory: lead ? 'lead' : 'conversation',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: context.customerId ?? null,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          metadata: {
+            lead_id: lead?.id ?? null,
+            desired_outcome: params.desired_outcome ?? null,
+            budget: params.budget ?? null,
+            preferred_timing: params.preferred_timing ?? null,
+            urgency: params.urgency ?? null,
+            previous_experience: params.previous_experience ?? null,
+          },
+        });
+
+        return { success: true, data: { lead, stage: 'qualified' } };
+      }
+
+      case 'send_quote': {
+        const quote = await lookupServiceQuote(tenantId, params);
+        if (!quote) {
+          return { success: false, error: 'Could not find a service to quote' };
+        }
+
+        const lead = await upsertLeadRecord({
+          tenantId,
+          phone: params.customer_phone ?? context.customerPhone ?? null,
+          name: params.customer_name ?? null,
+          intent: `quote:${quote.name}`,
+          notes: params.quote_notes ?? `Quoted ${quote.name} for ₦${Math.round(quote.price).toLocaleString()}`,
+          status: 'quoted',
+          stage: 'proposal',
+          source: 'ai_front_desk',
+        });
+
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: 'quote_sent',
+          eventCategory: 'sales',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: context.customerId ?? null,
+          serviceId: quote.id,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          amount: quote.price,
+          currency: 'NGN',
+          metadata: {
+            lead_id: lead?.id ?? null,
+            service_name: quote.name,
+            duration_minutes: quote.duration,
+          },
+        });
+
+        return { success: true, data: { quote, lead } };
       }
 
       case 'show_showcase': {
@@ -402,6 +631,24 @@ export async function executeAction(
           typeof params.showcase_id === 'string' ? params.showcase_id : undefined,
           getShowcaseTriggerText(params)
         );
+
+        if (showcase.success) {
+          await recordFrontDeskEvent({
+            tenantId,
+            eventType: 'showcase_sent',
+            eventCategory: 'sales',
+            channel: context.channel ?? 'whatsapp',
+            actorRole: context.userRole ?? 'customer',
+            customerId: context.customerId ?? null,
+            messageId: context.messageId ?? null,
+            correlationId: context.messageId ?? null,
+            metadata: {
+              showcase_id: typeof params.showcase_id === 'string' ? params.showcase_id : showcase.pack?.id ?? null,
+              trigger_text: getShowcaseTriggerText(params) ?? null,
+              sent_count: showcase.sentCount,
+            },
+          });
+        }
 
         return {
           success: showcase.success,
@@ -420,6 +667,23 @@ export async function executeAction(
           ? await sendCatalogInteractively(tenantId, context.customerPhone, products, params)
           : false;
 
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: 'catalog_sent',
+          eventCategory: 'sales',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: context.customerId ?? null,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          metadata: {
+            delivery: interactiveSent ? 'interactive' : 'text',
+            product_ids: products.map((product) => product.id),
+            query: params.query ?? null,
+            category: params.category ?? null,
+          },
+        });
+
         return {
           success: true,
           data: {
@@ -434,7 +698,7 @@ export async function executeAction(
       }
 
       case 'recommend_products': {
-        const products = await resolveRecommendedProducts(tenantId, params);
+        const products = await resolveRecommendedProducts(tenantId, params, 'recommendation');
         if (products.length === 0) {
           return { success: false, error: 'No suitable product recommendations found' };
         }
@@ -442,6 +706,22 @@ export async function executeAction(
         const interactiveSent = context.customerPhone
           ? await sendRecommendationsInteractively(tenantId, context.customerPhone, products)
           : false;
+
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: 'recommendation_sent',
+          eventCategory: 'sales',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: context.customerId ?? null,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          metadata: {
+            delivery: interactiveSent ? 'interactive' : 'text',
+            product_ids: products.map((product) => product.id),
+            reason: params.reason ?? null,
+          },
+        });
 
         return {
           success: true,
@@ -454,6 +734,95 @@ export async function executeAction(
               : 'Recommended products',
           },
         };
+      }
+
+      case 'offer_upsell':
+      case 'offer_cross_sell': {
+        const products = await resolveRecommendedProducts(
+          tenantId,
+          params,
+          action === 'offer_upsell' ? 'upsell' : 'cross_sell',
+        );
+        if (products.length === 0) {
+          return { success: false, error: 'No suitable products found for this offer' };
+        }
+
+        const interactiveSent = context.customerPhone
+          ? await sendRecommendationsInteractively(tenantId, context.customerPhone, products)
+          : false;
+
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: action === 'offer_upsell' ? 'upsell_sent' : 'cross_sell_sent',
+          eventCategory: 'sales',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: context.customerId ?? null,
+          serviceId: params.service_id ?? null,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          metadata: {
+            delivery: interactiveSent ? 'interactive' : 'text',
+            product_ids: products.map((product) => product.id),
+            reason: params.reason ?? null,
+          },
+        });
+
+        return {
+          success: true,
+          data: {
+            delivery: interactiveSent ? 'interactive' : 'text',
+            mode: action === 'offer_upsell' ? 'upsell' : 'cross_sell',
+            products,
+            title: action === 'offer_upsell' ? 'Recommended add-ons' : 'Recommended complementary products',
+          },
+        };
+      }
+
+      case 'recover_lead': {
+        const lead = await upsertLeadRecord({
+          tenantId,
+          phone: params.customer_phone ?? context.customerPhone ?? null,
+          name: params.customer_name ?? null,
+          intent: params.intent ?? 'lead_recovery',
+          notes: params.reason ?? 'Lead recovery scheduled by AI front desk',
+          status: 'recovery_scheduled',
+          stage: 'followup',
+          source: 'ai_front_desk',
+          followUpAt: typeof params.follow_up_at === 'string'
+            ? params.follow_up_at
+            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        });
+
+        const campaignRunId = await scheduleLeadRecoveryCampaign({
+          tenantId,
+          phone: params.customer_phone ?? context.customerPhone ?? null,
+          customerId: context.customerId ?? null,
+          leadId: lead?.id ?? null,
+          message: params.recovery_message ?? params.offer_text ?? null,
+          reason: params.reason ?? 'lead_recovery',
+          scheduledFor: typeof params.follow_up_at === 'string' ? params.follow_up_at : null,
+        });
+
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: 'follow_up_scheduled',
+          eventCategory: 'retention',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: context.userRole ?? 'customer',
+          customerId: context.customerId ?? null,
+          campaignRunId,
+          messageId: context.messageId ?? null,
+          correlationId: context.messageId ?? null,
+          metadata: {
+            lead_id: lead?.id ?? null,
+            follow_up_at: params.follow_up_at ?? null,
+            reason: params.reason ?? null,
+            recovery_message: params.recovery_message ?? null,
+          },
+        });
+
+        return { success: true, data: { lead, campaignRunId } };
       }
 
       case 'add_service': {
@@ -557,12 +926,6 @@ type ProductSelection = {
   track_inventory: boolean;
 };
 
-type InteractiveDeliveryConfig = {
-  apiKey: string;
-  baseUrl: string;
-  phoneNumberId: string;
-};
-
 function getShowcaseTriggerText(params: Record<string, any>): string | undefined {
   const candidates = [
     params.trigger_text,
@@ -599,19 +962,6 @@ async function loadActiveProducts(tenantId: string): Promise<ProductSelection[]>
     .filter((row): row is ProductSelection => row !== null);
 }
 
-async function resolveInteractiveDeliveryConfig(tenantId: string): Promise<InteractiveDeliveryConfig | null> {
-  const config = await getTenantWhatsAppConfig(tenantId);
-  if (!config || config.provider !== 'meta' || !config.apiKey || !config.baseUrl || !config.instanceName) {
-    return null;
-  }
-
-  return {
-    apiKey: config.apiKey,
-    baseUrl: config.baseUrl,
-    phoneNumberId: config.instanceName,
-  };
-}
-
 function toCatalogProduct(product: ProductSelection): Product {
   return {
     id: product.id,
@@ -636,22 +986,28 @@ async function sendCatalogInteractively(
   products: ProductSelection[],
   params: Record<string, any>
 ): Promise<boolean> {
-  const deliveryConfig = await resolveInteractiveDeliveryConfig(tenantId);
-  if (!deliveryConfig) return false;
-
-  const service = new WhatsAppProductService({
-    accessToken: deliveryConfig.apiKey,
-    baseUrl: deliveryConfig.baseUrl,
-    phoneNumberId: deliveryConfig.phoneNumberId,
-  });
+  const client = await getTenantWhatsAppProviderClient(tenantId);
+  if (!client) return false;
 
   const mapped = products.map(toCatalogProduct);
   if (mapped.length === 1) {
-    return service.sendProductDetails(customerPhone, mapped[0], true);
+    if (mapped[0]?.images?.[0]) {
+      await client.sendMediaMessage(customerPhone, {
+        url: mapped[0].images[0],
+        mimetype: 'image/jpeg',
+      }, `✨ ${mapped[0].name}`, 'image');
+    }
+    const result = await client.sendInteractiveMessage(customerPhone, buildProductDetailsMessage(mapped[0], true));
+    return result.success;
   }
 
   const categoryName = typeof params.category === 'string' ? params.category : undefined;
-  return service.sendProductList(customerPhone, mapped, categoryName);
+  const chunk = mapped.slice(0, 10);
+  const result = await client.sendInteractiveMessage(
+    customerPhone,
+    buildProductListMessage(chunk, categoryName),
+  );
+  return result.success;
 }
 
 async function sendRecommendationsInteractively(
@@ -659,16 +1015,13 @@ async function sendRecommendationsInteractively(
   customerPhone: string,
   products: ProductSelection[],
 ): Promise<boolean> {
-  const deliveryConfig = await resolveInteractiveDeliveryConfig(tenantId);
-  if (!deliveryConfig) return false;
-
-  const service = new WhatsAppProductService({
-    accessToken: deliveryConfig.apiKey,
-    baseUrl: deliveryConfig.baseUrl,
-    phoneNumberId: deliveryConfig.phoneNumberId,
-  });
-
-  return service.sendRecommendations(customerPhone, products.map(toCatalogProduct));
+  const client = await getTenantWhatsAppProviderClient(tenantId);
+  if (!client) return false;
+  const result = await client.sendInteractiveMessage(
+    customerPhone,
+    buildRecommendationsMessage(products.map(toCatalogProduct)),
+  );
+  return result.success;
 }
 
 function normalizeProductSelection(row: Record<string, unknown>): ProductSelection | null {
@@ -736,7 +1089,8 @@ async function resolveCatalogProducts(
 
 async function resolveRecommendedProducts(
   tenantId: string,
-  params: Record<string, any>
+  params: Record<string, any>,
+  mode: 'recommendation' | 'upsell' | 'cross_sell' = 'recommendation',
 ): Promise<ProductSelection[]> {
   const rows = await loadActiveProducts(tenantId);
   if (rows.length === 0) return [];
@@ -756,12 +1110,23 @@ async function resolveRecommendedProducts(
 
   const recommendations = rows.filter((row) => {
     if (anchorIds.has(row.id)) return false;
-    if (preferredCategories.size === 0) return row.is_featured;
-    return row.category ? preferredCategories.has(row.category) : false;
+    if (preferredCategories.size === 0) {
+      return mode === 'cross_sell' ? !row.is_featured : row.is_featured;
+    }
+    if (!row.category) return false;
+    if (mode === 'cross_sell') {
+      return !preferredCategories.has(row.category);
+    }
+    return preferredCategories.has(row.category);
   });
 
-  if (recommendations.length > 0) {
-    return recommendations.slice(0, 5);
+  const ranked = recommendations.sort((a, b) => {
+    if (a.is_featured !== b.is_featured) return Number(b.is_featured) - Number(a.is_featured);
+    return (b.price_cents ?? 0) - (a.price_cents ?? 0);
+  });
+
+  if (ranked.length > 0) {
+    return ranked.slice(0, 5);
   }
 
   return rows

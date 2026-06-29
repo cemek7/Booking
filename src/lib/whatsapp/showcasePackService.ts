@@ -227,8 +227,38 @@ export async function sendShowcasePack(
   }
 
   try {
-    await client.sendTextMessage(customerPhone, pack.fallback_cta || 'Reply BOOK to continue.');
-    sentCount += 1;
+    const interactiveResult = await client.sendInteractiveMessage(customerPhone, {
+      type: 'button',
+      body: {
+        text: pack.fallback_cta || 'What would you like to do next?'
+      },
+      footer: {
+        text: 'Booka AI Front Desk'
+      },
+      action: {
+        buttons: [
+          {
+            type: 'reply',
+            reply: { id: 'showcase_book', title: '📅 Book' }
+          },
+          {
+            type: 'reply',
+            reply: { id: 'showcase_prices', title: '💬 Get Quote' }
+          },
+          {
+            type: 'reply',
+            reply: { id: 'showcase_help', title: '❓ Ask Question' }
+          },
+        ],
+      },
+    });
+
+    if (interactiveResult.success) {
+      sentCount += 1;
+    } else {
+      await client.sendTextMessage(customerPhone, pack.fallback_cta || 'Reply BOOK to continue.');
+      sentCount += 1;
+    }
   } catch (error) {
     defaultLogger.warn('showcase: closing CTA failed', error);
   }

@@ -40,6 +40,10 @@ export function buildFrontDeskPrompt(input: {
     ? `Returning customer context:\n${formatCustomerRecall(grounding.customerRecall)}\n`
     : '';
 
+  const leadBlock = userRole === 'customer' && grounding.leadContext
+    ? `Existing lead context:\n${formatLeadContext(grounding.leadContext)}\n`
+    : '';
+
   const productsBlock = grounding.products.length > 0
     ? grounding.products
         .map((product) => {
@@ -93,7 +97,7 @@ ${staffBlock}
 Available slots:
 ${slotBlock}
 
-${recallBlock}Products / retail context:
+${recallBlock}${leadBlock}Products / retail context:
 ${productsBlock}
 
 Showcase / portfolio context:
@@ -103,13 +107,14 @@ ${ownerBlock}Conversation state:
 - Flow: ${conv.current_flow}
 - Step: ${conv.flow_step}
 - Booking in progress: ${JSON.stringify(conv.flow_data?.booking_in_progress ?? null)}
+- Sales journey: ${JSON.stringify(conv.flow_data?.sales_journey ?? null)}
 
 ${retryBlock}Customer message:
 "${message}"
 
 Respond ONLY with valid JSON:
 {
-  "action": "create_booking | get_availability | list_services | list_staff | get_price | show_catalog | show_showcase | recommend_products | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
+  "action": "create_booking | get_availability | list_services | list_staff | get_price | send_quote | qualify_lead | show_catalog | show_showcase | recommend_products | offer_upsell | offer_cross_sell | recover_lead | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
   "params": {},
   "reply": "natural language reply",
   "confidence": "high | medium | low"
@@ -120,11 +125,17 @@ Rules:
 - Never invent products, stock, showcase packs, or customer history.
 - The backend decides truth; you only interpret and propose actions.
 - Use returning-customer recall as a soft hint only. Do not claim certainty beyond the grounded data.
+- Use "qualify_lead" when the customer is exploring options and you need to capture outcome, budget, timing, urgency, previous experience, or objections before guiding them.
+- Use "send_quote" when you can confidently quote a grounded service and move the customer toward booking.
 - Use "show_showcase" when the customer explicitly wants a portfolio, gallery, lookbook, catalog media, or before/after examples.
 - Use "show_catalog" when the customer wants a concrete list of products, prices, or stock-aware retail options.
 - Use "recommend_products" when the customer wants product suggestions, add-ons, or "what should I buy/use" guidance.
+- Use "offer_upsell" for a higher-value add-on, upgrade, or aftercare recommendation linked to the customer's interest.
+- Use "offer_cross_sell" for a complementary service or retail recommendation.
+- Use "recover_lead" when the customer is interested but not ready, has objections, or wants a follow-up later. Include reason and optionally follow_up_at.
 - For "show_catalog" and "recommend_products", prefer product IDs from the grounded context when possible. You may also pass "product_name", "query", or "category".
 - For "show_showcase", prefer a grounded showcase pack ID when possible. You may also pass "showcase_name" or "trigger_text".
+- Do not interrupt an active booking flow with sales actions unless the customer explicitly pivots or the sales action directly supports conversion.
 - If required details are missing, use "needs_info".
 - If confidence is low or the case is ambiguous, use "escalate".`;
 }
@@ -190,6 +201,20 @@ function formatCustomerRecall(
 
   lines.push('- Greet them warmly, you may suggest their usual, but confirm what they actually want before assuming details.');
 
+  return lines.join('\n');
+}
+
+function formatLeadContext(
+  lead: GroundingResult['leadContext']
+): string {
+  if (!lead) return '- No prior lead context';
+
+  const lines = [`- Existing lead id: ${lead.id}.`];
+  if (lead.status) lines.push(`- Lead status: ${lead.status}.`);
+  if (lead.intent) lines.push(`- Last known intent: ${lead.intent}.`);
+  if (lead.follow_up_at) lines.push(`- Follow-up scheduled for: ${lead.follow_up_at}.`);
+  if (lead.followed_up_at) lines.push(`- Last follow-up sent at: ${lead.followed_up_at}.`);
+  if (lead.notes) lines.push(`- Notes: ${lead.notes.slice(0, 240)}.`);
   return lines.join('\n');
 }
 

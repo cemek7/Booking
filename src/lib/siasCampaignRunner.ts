@@ -1,4 +1,5 @@
 import { defaultLogger } from '@/lib/logger';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
 import { siasOperations } from '@/lib/sias-operations';
 
@@ -109,6 +110,22 @@ async function executeCampaignRow(campaign: CampaignRow, tenantId: string) {
     metadata: {
       campaign_type: campaign.campaign_type,
       action: campaign.action,
+    },
+  });
+
+  await recordFrontDeskEvent({
+    tenantId,
+    eventType: campaign.action === 'send_reactivation' ? 'recovery_sent' : 'follow_up_sent',
+    eventCategory: campaign.action === 'send_reactivation' ? 'retention' : 'sales',
+    channel: 'whatsapp',
+    actorRole: 'system',
+    campaignRunId: campaign.id,
+    correlationId: campaign.id,
+    metadata: {
+      action: campaign.action,
+      campaign_type: campaign.campaign_type,
+      target_phone: campaign.target_phone,
+      source_event: campaign.source_event,
     },
   });
 

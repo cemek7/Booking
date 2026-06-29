@@ -15,6 +15,7 @@ import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { getEventBus } from '../eventbus/eventBus';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 
 // ===============================
 // PAYMENT SCHEMAS & TYPES
@@ -1324,7 +1325,7 @@ export interface PaymentSuccessInput {
  */
 export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<void> {
   const supabase = createServerSupabaseClient();
-  const { tenantId, reference, provider, reservationId } = input;
+  const { tenantId, reference, provider, reservationId, amountMinor, currency } = input;
 
   try {
     // 1. Resolve reservation
@@ -1367,6 +1368,22 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
       .update({ status: 'success', updated_at: new Date().toISOString() })
       .eq('provider_reference', reference)
       .eq('tenant_id', tenantId);
+
+    await recordFrontDeskEvent({
+      tenantId,
+      eventType: 'payment_completed',
+      eventCategory: 'payment',
+      channel: provider,
+      reservationId: bookingId,
+      correlationId: reference,
+      amount: typeof amountMinor === 'number' ? amountMinor / 100 : null,
+      currency: currency ?? null,
+      statusTo: 'success',
+      metadata: {
+        provider,
+        source: 'handlePaymentSuccess',
+      },
+    });
 
     if (!reservation) return;
 
