@@ -53,15 +53,15 @@ async function loadCategorySummary(
   }
 
   const createdAtValues = products
-    .map((row) => (typeof (row as Record<string, unknown>).created_at === 'string'
-      ? (row as Record<string, unknown>).created_at as string
+    .map((row) => (typeof (row as unknown as Record<string, unknown>).created_at === 'string'
+      ? (row as unknown as Record<string, unknown>).created_at as string
       : null))
     .filter((value): value is string => Boolean(value))
     .sort();
 
   const updatedAtValues = products
-    .map((row) => (typeof (row as Record<string, unknown>).updated_at === 'string'
-      ? (row as Record<string, unknown>).updated_at as string
+    .map((row) => (typeof (row as unknown as Record<string, unknown>).updated_at === 'string'
+      ? (row as unknown as Record<string, unknown>).updated_at as string
       : null))
     .filter((value): value is string => Boolean(value))
     .sort();

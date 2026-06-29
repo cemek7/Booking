@@ -118,7 +118,7 @@ export default function BookingProductList({
                   )}
                   
                   {item.product.category && (
-                    <span>Category: {item.product.category.name}</span>
+                    <span>Category: {item.product.category}</span>
                   )}
 
                   {item.variant && (

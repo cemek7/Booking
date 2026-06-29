@@ -13,9 +13,10 @@ BEGIN;
 
 -- 1. products.category (flat text label)
 --    action-validator.loadActiveProducts selects a scalar `category` (same pattern as
---    services.category). 114 only created the normalized category_id/product_categories.
---    Keep both: category_id powers the management API's joined read; category is the
---    denormalized label the AI sales path reads.
+--    services.category). 114 created products with category_id; this adds the flat label.
+--    NOTE: migration 116 (Stage G) later finalizes the FLAT model -- it backfills this
+--    column and DROPS category_id + the product_categories table. So category is the
+--    single source of truth; category_id no longer exists after 116.
 ALTER TABLE products
   ADD COLUMN IF NOT EXISTS category TEXT;
 
