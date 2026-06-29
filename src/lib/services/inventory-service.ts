@@ -84,7 +84,7 @@ export class InventoryService {
     tenantIds: string[],
     filters?: {
       productId?: string;
-      categoryId?: string;
+      category?: string;
       lowStockOnly?: boolean;
       outOfStockOnly?: boolean;
     }
@@ -94,7 +94,7 @@ export class InventoryService {
         .from('products')
         .select(`
           id, name, sku, stock_quantity, low_stock_threshold, track_inventory,
-          category:product_categories!category_id(id, name),
+          category,
           variants:product_variants!product_id(
             id, variant_name, variant_type, stock_quantity, is_active
           )
@@ -103,8 +103,8 @@ export class InventoryService {
         .eq('is_active', true)
         .eq('track_inventory', true);
 
-      if (filters?.categoryId) {
-        query = query.eq('category_id', filters.categoryId);
+      if (filters?.category) {
+        query = query.eq('category', filters.category);
       }
 
       if (filters?.productId) {
@@ -181,7 +181,7 @@ export class InventoryService {
         .from('products')
         .select(`
           id, name, sku, stock_quantity, low_stock_threshold,
-          category:product_categories!category_id(name),
+          category,
           variants:product_variants!product_id(
             id, variant_name, variant_type, stock_quantity, is_active
           )

@@ -77,7 +77,6 @@ export const POST = createHttpHandler(
       .from('products')
       .select(`
         *,
-        category:categories(name, slug),
         variants:product_variants(*)
       `)
       .eq('tenant_id', tenantId)
@@ -285,26 +284,26 @@ async function addProductAffinityRecommendations(
   // Get category and tags of viewed products
   const { data: viewedProducts } = await supabase
     .from('products')
-    .select('category_id, tags')
+    .select('category, tags')
     .eq('tenant_id', tenantId)
     .in('id', productIds);
 
   if (!viewedProducts) return;
 
-  const categoryIds = [...new Set(viewedProducts.map((p: { category_id?: string | null; tags?: string[] }) => p.category_id).filter(Boolean))];
-  const allTags = [...new Set(viewedProducts.flatMap((p: { category_id?: string | null; tags?: string[] }) => p.tags || []))];
+  const categories = [...new Set(viewedProducts.map((p: { category?: string | null; tags?: string[] }) => p.category).filter(Boolean))];
+  const allTags = [...new Set(viewedProducts.flatMap((p: { category?: string | null; tags?: string[] }) => p.tags || []))];
 
   // Boost products in same categories
-  if (categoryIds.length > 0) {
+  if (categories.length > 0) {
     for (const [productId, score] of scores.entries()) {
       const { data: productDetail } = await supabase
         .from('products')
-        .select('category_id, tags')
+        .select('category, tags')
         .eq('id', productId)
         .single();
 
       if (productDetail) {
-        if (categoryIds.includes(productDetail.category_id)) {
+        if (productDetail.category && categories.includes(productDetail.category)) {
           score.score += 15;
           score.reasons.push('Same category as viewed product');
         }

@@ -2,92 +2,117 @@ export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { PG_ERROR_CODES } from '@/lib/constants';
 
-// Zod schema for GET query parameters
 const GetCategoryQuerySchema = z.object({
-  include_children: z.preprocess((val) => val === 'true', z.boolean()).optional(),
   include_products: z.preprocess((val) => val === 'true', z.boolean()).optional(),
 });
 
-// Zod schema for PUT request body
 const UpdateCategoryBodySchema = z.object({
   name: z.string().trim().min(1).optional(),
-  description: z.string().trim().nullable().optional(),
-  parent_id: z.string().uuid().nullable().optional(),
-  display_order: z.number().int().optional(),
-  is_active: z.boolean().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  merge_into: z.string().trim().min(1).nullable().optional(),
 }).strict();
 
-// Zod schema for DELETE query parameters
 const DeleteCategoryQuerySchema = z.object({
-  force: z.preprocess((val) => val === 'true', z.boolean()).optional(),
   move_products: z.preprocess((val) => val === 'true', z.boolean()).optional(),
-  new_category_id: z.string().uuid().optional(),
+  new_category: z.string().trim().min(1).optional(),
 });
 
-interface CategoryWithChildren {
-  children?: unknown[];
-  [key: string]: unknown;
+function normalizeCategoryLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function decodeCategoryId(value: string | undefined): string | null {
+  if (!value) return null;
+  return normalizeCategoryLabel(decodeURIComponent(value));
+}
+
+async function loadCategorySummary(
+  ctx: Parameters<typeof createHttpHandler>[0] extends (arg: infer T) => unknown ? T : never,
+  tenantId: string,
+  categoryName: string,
+  includeProducts = false,
+) {
+  const selectFields = includeProducts
+    ? 'id, name, price_cents, is_active, category, created_at, updated_at'
+    : 'category, created_at, updated_at';
+
+  const { data: products, error } = await ctx.supabase
+    .from('products')
+    .select(selectFields)
+    .eq('tenant_id', tenantId)
+    .eq('category', categoryName);
+
+  if (error) {
+    throw ApiErrorFactory.databaseError(error);
+  }
+
+  if (!products || products.length === 0) {
+    return null;
+  }
+
+  const createdAtValues = products
+    .map((row) => (typeof (row as Record<string, unknown>).created_at === 'string'
+      ? (row as Record<string, unknown>).created_at as string
+      : null))
+    .filter((value): value is string => Boolean(value))
+    .sort();
+
+  const updatedAtValues = products
+    .map((row) => (typeof (row as Record<string, unknown>).updated_at === 'string'
+      ? (row as Record<string, unknown>).updated_at as string
+      : null))
+    .filter((value): value is string => Boolean(value))
+    .sort();
+
+  return {
+    category: {
+      id: categoryName,
+      name: categoryName,
+      product_count: products.length,
+      created_at: createdAtValues[0] ?? null,
+      updated_at: updatedAtValues.at(-1) ?? null,
+      _count: { products: products.length },
+      products: includeProducts ? products : undefined,
+    },
+  };
 }
 
 /**
  * GET /api/categories/[id]
- * Get a specific product category by ID.
+ * Get a derived product category label by name.
  */
 export const GET = createHttpHandler(
   async (ctx) => {
     const tenantId = ctx.user?.tenantId;
-    const categoryId = ctx.params?.id;
+    const categoryName = decodeCategoryId(ctx.params?.id);
 
     if (!tenantId) {
       throw ApiErrorFactory.forbidden('Tenant ID required');
     }
-    if (!categoryId) {
-      throw ApiErrorFactory.validationError({ id: 'Category ID is required' });
+    if (!categoryName) {
+      throw ApiErrorFactory.validationError({ id: 'Category name is required' });
     }
 
     const url = new URL(ctx.request.url);
     const queryValidation = GetCategoryQuerySchema.safeParse(Object.fromEntries(url.searchParams));
-
     if (!queryValidation.success) {
       throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
-    const { include_children, include_products } = queryValidation.data;
 
-    const selectFields = include_products
-      ? '*, parent:product_categories!parent_id(id, name), products(id, name, price_cents, is_active), product_count:products(count)'
-      : '*, parent:product_categories!parent_id(id, name), product_count:products(count)';
+    const result = await loadCategorySummary(
+      ctx as never,
+      tenantId,
+      categoryName,
+      queryValidation.data.include_products === true,
+    );
 
-    const { data: category, error } = await ctx.supabase
-      .from('product_categories')
-      .select(selectFields)
-      .eq('id', categoryId)
-      .eq('tenant_id', tenantId)
-      .single();
-
-    if (error || !category) {
+    if (!result) {
       throw ApiErrorFactory.notFound('Category');
     }
 
-    const result: CategoryWithChildren = { ...(category as unknown as CategoryWithChildren) };
-
-    if (include_children) {
-      const { data: children, error: childrenError } = await ctx.supabase
-        .from('product_categories')
-        .select('*, product_count:products(count)')
-        .eq('parent_id', categoryId)
-        .eq('tenant_id', tenantId)
-        .order('display_order', { ascending: true });
-
-      if (childrenError) {
-        throw ApiErrorFactory.databaseError(childrenError);
-      }
-      result.children = children || [];
-    }
-
-    return { category: result };
+    return result;
   },
   'GET',
   { auth: true, roles: ['owner', 'manager', 'staff'] }
@@ -95,89 +120,67 @@ export const GET = createHttpHandler(
 
 /**
  * PUT /api/categories/[id]
- * Update a specific product category.
+ * Rename or merge a derived category label by updating products.category.
  */
 export const PUT = createHttpHandler(
   async (ctx) => {
     const tenantId = ctx.user?.tenantId;
-    const categoryId = ctx.params?.id;
+    const currentCategoryName = decodeCategoryId(ctx.params?.id);
 
     if (!tenantId) {
       throw ApiErrorFactory.forbidden('Tenant ID required');
     }
-    if (!categoryId) {
-      throw ApiErrorFactory.validationError({ id: 'Category ID is required' });
+    if (!currentCategoryName) {
+      throw ApiErrorFactory.validationError({ id: 'Category name is required' });
     }
 
     const body = await ctx.request.json();
     const bodyValidation = UpdateCategoryBodySchema.safeParse(body);
-
     if (!bodyValidation.success) {
       throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
-    const updateData = bodyValidation.data;
 
-    if (Object.keys(updateData).length === 0) {
-      throw ApiErrorFactory.validationError({ body: 'Request body cannot be empty' });
+    const nextName = normalizeCategoryLabel(bodyValidation.data.name);
+    const mergeInto = normalizeCategoryLabel(bodyValidation.data.merge_into);
+    const targetName = mergeInto ?? nextName;
+
+    if (!targetName) {
+      throw ApiErrorFactory.validationError({ name: 'A new category name is required' });
     }
 
-    // Check category exists
-    const { data: existingCategory, error: existingError } = await ctx.supabase
-      .from('product_categories')
-      .select('id, name, parent_id')
-      .eq('id', categoryId)
-      .eq('tenant_id', tenantId)
-      .single();
-
-    if (existingError || !existingCategory) {
+    const existing = await loadCategorySummary(ctx as never, tenantId, currentCategoryName, false);
+    if (!existing) {
       throw ApiErrorFactory.notFound('Category');
     }
 
-    // Check name uniqueness if name is being updated
-    if (updateData.name && updateData.name !== existingCategory.name) {
-      const { count } = await ctx.supabase
-        .from('product_categories')
-        .select('*', { count: 'exact', head: true })
-        .eq('tenant_id', tenantId)
-        .eq('name', updateData.name)
-        .neq('id', categoryId);
-
-      if (count && count > 0) {
-        throw ApiErrorFactory.conflict('Category name already exists');
-      }
+    if (targetName === currentCategoryName) {
+      return existing;
     }
 
-    // Validate parent_id if being updated
-    if (updateData.parent_id && updateData.parent_id !== existingCategory.parent_id) {
-      if (updateData.parent_id === categoryId) {
-        throw ApiErrorFactory.validationError({ parent_id: 'Category cannot be its own parent' });
-      }
-
-      const { data: parentCategory } = await ctx.supabase
-        .from('product_categories')
-        .select('id, parent_id')
-        .eq('id', updateData.parent_id)
-        .eq('tenant_id', tenantId)
-        .single();
-
-      if (!parentCategory) {
-        throw ApiErrorFactory.validationError({ parent_id: 'Parent category not found' });
-      }
-    }
-
-    const { data: updatedCategory, error: updateError } = await ctx.supabase
-      .from('product_categories')
-      .update({ ...updateData, updated_at: new Date().toISOString() })
-      .eq('id', categoryId)
+    const { error } = await ctx.supabase
+      .from('products')
+      .update({
+        category: targetName,
+        updated_at: new Date().toISOString(),
+      })
       .eq('tenant_id', tenantId)
-      .select('*, parent:product_categories!parent_id(id, name), product_count:products(count)')
-      .single();
+      .eq('category', currentCategoryName);
 
-    if (updateError) {
-      throw ApiErrorFactory.databaseError(updateError);
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
     }
 
-    return { message: 'Category updated successfully', category: updatedCategory };
+    const updated = await loadCategorySummary(ctx as never, tenantId, targetName, false);
+    if (!updated) {
+      throw ApiErrorFactory.internalServerError(new Error('Failed to reload updated category'));
+    }
+
+    return {
+      message: mergeInto
+        ? 'Category merged successfully'
+        : 'Category renamed successfully',
+      category: updated.category,
+    };
   },
   'PUT',
   { auth: true, roles: ['owner', 'manager'] }
@@ -185,89 +188,59 @@ export const PUT = createHttpHandler(
 
 /**
  * DELETE /api/categories/[id]
- * Delete a specific product category.
+ * Clear a category label or move products into another label.
  */
 export const DELETE = createHttpHandler(
   async (ctx) => {
     const tenantId = ctx.user?.tenantId;
-    const categoryId = ctx.params?.id;
+    const categoryName = decodeCategoryId(ctx.params?.id);
 
     if (!tenantId) {
       throw ApiErrorFactory.forbidden('Tenant ID required');
     }
-    if (!categoryId) {
-      throw ApiErrorFactory.validationError({ id: 'Category ID is required' });
+    if (!categoryName) {
+      throw ApiErrorFactory.validationError({ id: 'Category name is required' });
     }
 
     const url = new URL(ctx.request.url);
     const queryValidation = DeleteCategoryQuerySchema.safeParse(Object.fromEntries(url.searchParams));
-
     if (!queryValidation.success) {
       throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
-    const { force, move_products, new_category_id } = queryValidation.data;
 
-    // Check category exists
-    const { data: category, error: categoryError } = await ctx.supabase
-      .from('product_categories')
-      .select('id, parent_id')
-      .eq('id', categoryId)
-      .eq('tenant_id', tenantId)
-      .single();
+    const nextCategory = queryValidation.data.move_products
+      ? normalizeCategoryLabel(queryValidation.data.new_category)
+      : null;
 
-    if (categoryError || !category) {
+    const existing = await loadCategorySummary(ctx as never, tenantId, categoryName, false);
+    if (!existing) {
       throw ApiErrorFactory.notFound('Category');
     }
 
-    // Check for products and children
-    const { count: productCount } = await ctx.supabase
+    if (nextCategory === categoryName) {
+      throw ApiErrorFactory.validationError({ new_category: 'Target category must be different' });
+    }
+
+    const { error } = await ctx.supabase
       .from('products')
-      .select('*', { count: 'exact', head: true })
-      .eq('category_id', categoryId);
+      .update({
+        category: nextCategory,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('tenant_id', tenantId)
+      .eq('category', categoryName);
 
-    const { count: childCount } = await ctx.supabase
-      .from('product_categories')
-      .select('*', { count: 'exact', head: true })
-      .eq('parent_id', categoryId);
-
-    if ((productCount || 0) > 0 || (childCount || 0) > 0) {
-      if (!force) {
-        throw ApiErrorFactory.conflict('Category has children or products. Use force=true to delete.');
-      }
-
-      // Move products if requested
-      if (move_products && new_category_id) {
-        const { data: newCategory } = await ctx.supabase
-          .from('product_categories')
-          .select('id')
-          .eq('id', new_category_id)
-          .eq('tenant_id', tenantId)
-          .single();
-
-        if (!newCategory) {
-          throw ApiErrorFactory.validationError({ new_category_id: 'Target category not found' });
-        }
-        await ctx.supabase.from('products').update({ category_id: new_category_id }).eq('category_id', categoryId);
-      } else if ((productCount || 0) > 0) {
-        await ctx.supabase.from('products').update({ category_id: null }).eq('category_id', categoryId);
-      }
-
-      // Re-parent children
-      if ((childCount || 0) > 0) {
-        await ctx.supabase.from('product_categories').update({ parent_id: category.parent_id }).eq('parent_id', categoryId);
-      }
+    if (error) {
+      throw ApiErrorFactory.databaseError(error);
     }
 
-    const { error: deleteError } = await ctx.supabase
-      .from('product_categories')
-      .delete()
-      .eq('id', categoryId);
-
-    if (deleteError) {
-      throw ApiErrorFactory.databaseError(deleteError);
-    }
-
-    return { message: 'Category deleted successfully', category_id: categoryId };
+    return {
+      message: nextCategory
+        ? 'Category cleared by moving products successfully'
+        : 'Category cleared successfully',
+      category: categoryName,
+      moved_to: nextCategory,
+    };
   },
   'DELETE',
   { auth: true, roles: ['owner', 'manager'] }

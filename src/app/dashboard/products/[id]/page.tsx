@@ -123,6 +123,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
       name: product.name,
       description: product.description,
       short_description: product.short_description,
+      category: product.category,
       price_cents: product.price_cents,
       cost_price_cents: product.cost_price_cents,
       brand: product.brand,
@@ -324,7 +325,17 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                  <p className="text-sm text-gray-900">{product.category?.name || 'Uncategorized'}</p>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editData.category ?? product.category ?? ''}
+                      onChange={(e) => handleInputChange('category', e.target.value || null)}
+                      className="w-full px-3 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder="Enter category label"
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-900">{product.category || 'Uncategorized'}</p>
+                  )}
                 </div>
 
                 <div>

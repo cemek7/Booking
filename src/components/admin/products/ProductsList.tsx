@@ -66,7 +66,7 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
         </div>
       </TD>
       <TD>
-        {product.category?.name || <span className="text-gray-400">Uncategorized</span>}
+        {product.category || <span className="text-gray-400">Uncategorized</span>}
       </TD>
       <TD>
         <div>

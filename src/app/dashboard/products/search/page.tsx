@@ -16,7 +16,7 @@ function ProductSearchPageInner() {
   // Initialize search query from URL params
   const initialQuery: Partial<ProductListQuery> = {
     search: searchParams.get('search') || undefined,
-    category_id: searchParams.get('category_id') || undefined,
+    category: searchParams.get('category') || searchParams.get('category_id') || undefined,
     status: (searchParams.get('status') as any) || 'all',
     tags: searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
     price_min: searchParams.get('price_min') ? parseFloat(searchParams.get('price_min')!) : undefined,
@@ -31,7 +31,7 @@ function ProductSearchPageInner() {
   const [hasSearched, setHasSearched] = useState(() => {
     // Check if we have any search parameters
     return Array.from(searchParams.keys()).some(key => 
-      ['search', 'category_id', 'tags', 'price_min', 'price_max'].includes(key)
+      ['search', 'category', 'category_id', 'tags', 'price_min', 'price_max'].includes(key)
     );
   });
 
@@ -57,7 +57,7 @@ function ProductSearchPageInner() {
   const handleClear = () => {
     const clearedQuery: ProductListQuery = {
       search: '',
-      category_id: undefined,
+      category: undefined,
       status: 'all',
       tags: undefined,
       price_min: undefined,

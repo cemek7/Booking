@@ -28,7 +28,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
   
   const [searchQuery, setSearchQuery] = useState<ProductListQuery>({
     search: initialQuery?.search || '',
-    category_id: initialQuery?.category_id || undefined,
+    category: initialQuery?.category || undefined,
     status: initialQuery?.status || 'all',
     tags: initialQuery?.tags || undefined,
     price_min: initialQuery?.price_min || undefined,
@@ -86,7 +86,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     enabled: !!tenant?.id,
   });
 
-  const categories = (categoriesData as any)?.categories || [];
+  const categories = ((categoriesData as any)?.categories || []).map((category: any) => category.name);
   const popularTags = (tagsData as any)?.tags || [];
 
   const handleSearch = () => {
@@ -122,7 +122,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
   const handleClear = () => {
     setSearchQuery({
       search: '',
-      category_id: undefined,
+      category: undefined,
       status: 'all',
       tags: undefined,
       price_min: undefined,
@@ -220,9 +220,9 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
                 Search: "{searchQuery.search}"
               </span>
             )}
-            {searchQuery.category_id && (
+            {searchQuery.category && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
-                Category: {categories.find((c: any) => c.id === searchQuery.category_id)?.name}
+                Category: {searchQuery.category}
               </span>
             )}
             {searchQuery.tags && (Array.isArray(searchQuery.tags) ? searchQuery.tags.length > 0 : true) && (
@@ -251,21 +251,22 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
             {/* Category Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <select
-                value={searchQuery.category_id || ''}
-                onChange={(e) => setSearchQuery(prev => ({ 
-                  ...prev, 
-                  category_id: e.target.value || undefined 
+              <input
+                type="text"
+                list="advanced-search-categories"
+                value={searchQuery.category || ''}
+                onChange={(e) => setSearchQuery(prev => ({
+                  ...prev,
+                  category: e.target.value || undefined
                 }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">All Categories</option>
-                {categories.map((category: any) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
+                placeholder="All Categories"
+              />
+              <datalist id="advanced-search-categories">
+                {categories.map((category: string) => (
+                  <option key={category} value={category} />
                 ))}
-              </select>
+              </datalist>
             </div>
 
             {/* Status Filter */}

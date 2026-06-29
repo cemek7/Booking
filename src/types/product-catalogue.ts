@@ -15,8 +15,7 @@ export interface Product {
   currency?: string;
   sku?: string;
   brand?: string;
-  category_id?: string;
-  category?: { id: string; name: string; description?: string };
+  category?: string | null;
   images?: string[];
   is_active: boolean;
   is_featured?: boolean;
@@ -35,7 +34,6 @@ export interface Product {
 /** Product with all related data fully hydrated */
 export type ProductWithDetails = Product & {
   variants?: ProductVariant[];
-  category?: { id: string; name: string; description?: string };
   inventory?: { stock_quantity: number; reserved: number; available: number };
 };
 
@@ -68,7 +66,7 @@ export interface CreateProductRequest {
   price_cents: number;
   cost_price_cents?: number;
   currency?: string;
-  category_id?: string;
+  category?: string | null;
   images?: string[];
   is_active?: boolean;
   is_featured?: boolean;
@@ -93,7 +91,7 @@ export interface UpdateProductRequest {
   price_cents?: number;
   cost_price_cents?: number;
   currency?: string;
-  category_id?: string;
+  category?: string | null;
   images?: string[];
   is_active?: boolean;
   is_featured?: boolean;
@@ -161,7 +159,7 @@ export interface ProductListQuery {
   page?: number;
   limit?: number;
   search?: string;
-  category_id?: string;
+  category?: string;
   is_active?: boolean;
   is_featured?: boolean;
   is_digital?: boolean;
@@ -200,22 +198,11 @@ export type UpdateVariantRequest = UpdateProductVariantRequest;
 
 export interface CreateCategoryRequest {
   name: string;
-  description?: string;
-  slug?: string;
-  parent_id?: string | null;
-  display_order?: number;
-  sort_order?: number;
-  is_active?: boolean;
-  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateCategoryRequest {
   name?: string;
-  description?: string;
-  parent_id?: string | null;
-  display_order?: number;
-  is_active?: boolean;
-  metadata?: Record<string, unknown>;
+  merge_into?: string | null;
 }
 
 export interface InventoryMovement {
@@ -246,14 +233,8 @@ export interface CreateInventoryMovementRequest {
 export interface ProductCategory {
   id: string;
   name: string;
-  slug?: string;
-  parent_id?: string | null;
-  description?: string;
-  is_active?: boolean;
-  sort_order?: number;
-  display_order?: number;
-  metadata?: Record<string, unknown>;
-  created_at?: string;
-  updated_at?: string;
+  product_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
   _count?: { products?: number };
 }

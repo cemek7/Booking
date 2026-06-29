@@ -35,8 +35,7 @@ export const GET = createHttpHandler(
       .select(`
         *,
         product:products!product_id(
-          id, name, price_cents, currency, tenant_id,
-          category:product_categories!category_id(id, name)
+          id, name, price_cents, currency, tenant_id, category
         ),
         product_inventory(
           current_stock,

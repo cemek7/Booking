@@ -131,7 +131,7 @@ export default function SearchResults({
         {!isLoading && searchQuery.search && (
           <div className="text-sm text-gray-600">
             Showing results for "{searchQuery.search}"
-            {searchQuery.category_id && ` in selected category`}
+            {searchQuery.category && ` in ${searchQuery.category}`}
             {searchQuery.tags && (Array.isArray(searchQuery.tags) ? searchQuery.tags.length > 0 : true) && ` with tags: ${Array.isArray(searchQuery.tags) ? searchQuery.tags.join(', ') : searchQuery.tags}`}
           </div>
         )}
@@ -326,7 +326,7 @@ function SearchResultsTable({ products, searchQuery, onProductClick }: SearchRes
                 {highlightText(product.sku || '-', searchQuery.search)}
               </TD>
               <TD className="text-gray-600">
-                {product.category?.name || 'Uncategorized'}
+                {product.category || 'Uncategorized'}
               </TD>
               <TD>
                 <span className="font-medium text-green-600">

@@ -34,7 +34,6 @@ export const GET = createHttpHandler(
       .from('products')
       .select(`
         *,
-        category:product_categories!category_id(id, name, description),
         variants:product_variants!product_id(*),
         stock_info:get_product_stock(product_id)
       `)
@@ -142,24 +141,11 @@ export const PUT = createHttpHandler(
       }
     }
 
-    // Validate category if being updated, and capture its name to mirror into
-    // the denormalized `category` label the AI sales read uses.
-    let categoryName: string | null = null;
-    if (body.category_id) {
-      const { data: category } = await ctx.supabase
-        .from('product_categories')
-        .select('id, name')
-        .eq('id', body.category_id)
-        .eq('tenant_id', existingProduct.tenant_id)
-        .eq('is_active', true)
-        .limit(1)
-        .single();
-
-      if (!category) {
-        throw ApiErrorFactory.badRequest('Category not found or inactive');
-      }
-      categoryName = typeof category.name === 'string' ? category.name : null;
-    }
+    const normalizedCategory = typeof body.category === 'string'
+      ? body.category.trim() || null
+      : body.category === null
+        ? null
+        : undefined;
 
     // Prepare update data (only include provided fields)
     const updateData: Record<string, unknown> = {
@@ -182,10 +168,8 @@ export const PUT = createHttpHandler(
     if (body.description !== undefined) updateData.description = body.description?.trim();
     if (body.short_description !== undefined) updateData.short_description = body.short_description?.trim();
     if (body.sku !== undefined) updateData.sku = body.sku?.trim().toUpperCase();
-    if (body.category_id !== undefined) {
-      updateData.category_id = body.category_id;
-      // Keep the denormalized label in sync (null when category is cleared).
-      updateData.category = body.category_id ? categoryName : null;
+    if (normalizedCategory !== undefined) {
+      updateData.category = normalizedCategory;
     }
     if (body.brand !== undefined) updateData.brand = body.brand?.trim();
     if (body.weight_grams !== undefined) updateData.weight_grams = body.weight_grams;
@@ -239,7 +223,6 @@ export const PUT = createHttpHandler(
       .eq('id', id)
       .select(`
         *,
-        category:product_categories!category_id(id, name, description),
         variants:product_variants!product_id(*)
       `)
       .single();

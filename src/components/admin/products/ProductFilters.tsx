@@ -31,7 +31,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
     enabled: !!tenant?.id,
   });
 
-  const categories = (categoriesData as any)?.categories || [];
+  const categories = ((categoriesData as any)?.categories || []).map((category: any) => category.name);
 
   useEffect(() => {
     setLocalFilters(filters);
@@ -63,7 +63,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
   const hasActiveFilters = () => {
     return (
       localFilters.search ||
-      localFilters.category_id ||
+      localFilters.category ||
       localFilters.status !== 'all' ||
       localFilters.price_min ||
       localFilters.price_max ||
@@ -94,18 +94,19 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Category
           </label>
-          <select
-            value={localFilters.category_id || ''}
-            onChange={(e) => handleInputChange('category_id', e.target.value || undefined)}
+          <input
+            type="text"
+            list="product-filter-categories"
+            value={localFilters.category || ''}
+            onChange={(e) => handleInputChange('category', e.target.value || undefined)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            <option value="">All Categories</option>
-            {categories.map((category: any) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
+            placeholder="All Categories"
+          />
+          <datalist id="product-filter-categories">
+            {categories.map((category: string) => (
+              <option key={category} value={category} />
             ))}
-          </select>
+          </datalist>
         </div>
 
         {/* Status Filter */}

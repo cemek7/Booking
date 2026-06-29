@@ -53,7 +53,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     enabled: !!tenant?.id && isOpen,
   });
 
-  const categories = (categoriesData as any)?.categories || [];
+  const categories = ((categoriesData as any)?.categories || []).map((category: any) => category.name);
 
   // Create product mutation
   const createProductMutation = useMutation({
@@ -249,18 +249,19 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Category
                   </label>
-                  <select
-                    value={formData.category_id || ''}
-                    onChange={(e) => handleInputChange('category_id', e.target.value || undefined)}
+                  <input
+                    type="text"
+                    list="product-category-suggestions"
+                    value={formData.category || ''}
+                    onChange={(e) => handleInputChange('category', e.target.value || undefined)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    <option value="">Select Category</option>
-                    {categories.map((category: any) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
+                    placeholder="Enter or choose a category"
+                  />
+                  <datalist id="product-category-suggestions">
+                    {categories.map((category: string) => (
+                      <option key={category} value={category} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
 
                 <div className="md:col-span-2">

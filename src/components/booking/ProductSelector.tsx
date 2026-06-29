@@ -194,7 +194,7 @@ export default function ProductSelector({
                   </div>
                 </TD>
                 <TD className="text-gray-600">
-                  {product.category?.name || 'Uncategorized'}
+                  {product.category || 'Uncategorized'}
                 </TD>
                 <TD>
                   {product.track_inventory ? (

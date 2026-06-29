@@ -108,7 +108,7 @@ const ProductCard = memo<ProductCardProps>(function ProductCard({
         {/* Product Name & Category */}
         <div className="mb-2">
           <h3 className="font-medium text-gray-900 truncate">{product.name}</h3>
-          <p className="text-sm text-gray-500">{product.category?.name || 'Uncategorized'}</p>
+          <p className="text-sm text-gray-500">{product.category || 'Uncategorized'}</p>
         </div>
 
         {/* SKU */}

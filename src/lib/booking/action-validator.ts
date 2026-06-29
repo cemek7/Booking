@@ -971,7 +971,7 @@ function toCatalogProduct(product: ProductSelection): Product {
     short_description: product.description ?? undefined,
     price_cents: product.price_cents ?? 0,
     currency: product.currency ?? 'NGN',
-    category: product.category ? { id: product.category, name: product.category } : undefined,
+    category: product.category ?? undefined,
     is_active: true,
     is_featured: product.is_featured,
     track_inventory: product.track_inventory,

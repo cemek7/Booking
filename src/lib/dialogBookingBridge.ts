@@ -1579,7 +1579,7 @@ export class DialogBookingBridge {
           stock_quantity,
           track_inventory,
           images,
-          product_categories(name)
+          category
         `)
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
@@ -1601,16 +1601,16 @@ export class DialogBookingBridge {
         short_description?: string;
         price_cents?: number;
         currency?: string;
+        category?: string | null;
         is_featured?: boolean;
         stock_quantity?: number;
         track_inventory?: boolean;
         images?: unknown[];
-        product_categories?: { name?: string | null } | null;
       }> | undefined) || [];
 
       return products.map((p) => ({
         ...p,
-        category: p.product_categories?.name ?? undefined
+        category: typeof p.category === 'string' ? p.category : undefined
       }));
     } catch (error) {
       defaultLogger.error('Error in getProducts:', error);

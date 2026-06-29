@@ -23,7 +23,7 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
     const query: ProductListQuery = {
-      category_id: url.searchParams.get('category_id') || undefined,
+      category: url.searchParams.get('category') || url.searchParams.get('category_id') || undefined,
       status: (url.searchParams.get('status') as string | undefined) || 'all',
       search: url.searchParams.get('search') || undefined,
       tags: url.searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
@@ -68,15 +68,14 @@ export const GET = createHttpHandler(
       .from('products')
       .select(`
         *,
-        category:product_categories!category_id(id, name, description),
         ${query.include_variants ? 'variants:product_variants!product_id(*)' : ''},
         ${query.include_stock_info ? 'stock_info:get_product_stock(product_id)' : ''}
       `)
       .in('tenant_id', tenantIds);
 
     // Apply filters
-    if (query.category_id) {
-      queryBuilder = queryBuilder.eq('category_id', query.category_id);
+    if (query.category) {
+      queryBuilder = queryBuilder.eq('category', query.category);
     }
 
     if (query.status && query.status !== 'all') {
@@ -208,24 +207,9 @@ export const POST = createHttpHandler(
       }
     }
 
-    // Validate category if provided, and capture its name to mirror into the
-    // denormalized `category` label the AI sales read uses.
-    let categoryName: string | null = null;
-    if (body.category_id) {
-      const { data: category } = await ctx.supabase
-        .from('product_categories')
-        .select('id, name')
-        .eq('id', body.category_id)
-        .eq('tenant_id', tenantUsers.tenant_id)
-        .eq('is_active', true)
-        .limit(1)
-        .single();
-
-      if (!category) {
-        throw ApiErrorFactory.badRequest('Category not found or inactive');
-      }
-      categoryName = typeof category.name === 'string' ? category.name : null;
-    }
+    const normalizedCategory = typeof body.category === 'string'
+      ? body.category.trim() || null
+      : null;
 
     // Prepare product data
     const productData = {
@@ -234,8 +218,7 @@ export const POST = createHttpHandler(
       description: body.description?.trim(),
       short_description: body.short_description?.trim(),
       sku: body.sku?.trim().toUpperCase(),
-      category_id: body.category_id,
-      category: categoryName,
+      category: normalizedCategory,
       price_cents: body.price_cents,
       currency: body.currency || 'USD',
       cost_price_cents: body.cost_price_cents || 0,
@@ -258,10 +241,7 @@ export const POST = createHttpHandler(
     const { data: product, error } = await ctx.supabase
       .from('products')
       .insert(productData)
-      .select(`
-        *,
-        category:product_categories!category_id(id, name, description)
-      `)
+      .select(`*`)
       .single();
 
     if (error) {
