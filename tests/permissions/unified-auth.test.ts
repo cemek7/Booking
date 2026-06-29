@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from '@jest/globals';
 import { createApiHandler } from '@/lib/error-handling/route-handler';
+import { NextRequest } from 'next/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 
 // Simple echo handler used in tests
@@ -59,7 +60,7 @@ describe('Unified Authentication System - Integration Tests', () => {
   describe('Basic Authentication Flow', () => {
     it('should authenticate valid users (global bearer mock defaults to owner)', async () => {
       // TestRequest wrapper injects Bearer test-token + x-tenant-id: test-tenant-id
-      const req = new Request('http://localhost:3000/api/test');
+      const req = new NextRequest('http://localhost:3000/api/test');
       const res: any = await echoHandler(req);
       expect(res.status).toBe(200);
       const json = await res.json();
@@ -69,7 +70,7 @@ describe('Unified Authentication System - Integration Tests', () => {
     });
 
     it('should reject unauthenticated requests', async () => {
-      const req = new Request('http://localhost:3000/api/test', {
+      const req = new NextRequest('http://localhost:3000/api/test', {
         headers: { 'x-test-bypass-skip': '1' }
       });
       const res: any = await echoHandler(req);
@@ -79,7 +80,7 @@ describe('Unified Authentication System - Integration Tests', () => {
     });
 
     it('should inject auth headers automatically (TestRequest wrapper)', async () => {
-      const req = new Request('http://localhost:3000/api/test');
+      const req = new NextRequest('http://localhost:3000/api/test');
       const res: any = await echoHandler(req);
       expect(res.status).toBe(200);
     });
@@ -88,7 +89,7 @@ describe('Unified Authentication System - Integration Tests', () => {
   describe('Role-Based Authentication', () => {
     it('should allow owner to access owner-only routes', async () => {
       // Global mock returns 'owner' — no override needed
-      const req = new Request('http://x/api/test');
+      const req = new NextRequest('http://x/api/test');
       const res: any = await ownerOnlyHandler(req);
       expect(res.status).toBe(200);
     });
@@ -97,7 +98,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
         makeBearerClient('staff')
       );
-      const req = new Request('http://x/api/test', {
+      const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
       const res: any = await ownerOnlyHandler(req);
@@ -108,7 +109,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
         makeBearerClient('manager')
       );
-      const req = new Request('http://x/api/test', {
+      const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
       const res: any = await managerOrOwnerHandler(req);
@@ -119,7 +120,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
         makeBearerClient('staff')
       );
-      const req = new Request('http://x/api/test', {
+      const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
       const res: any = await managerOrOwnerHandler(req);
@@ -132,7 +133,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
         makeBearerClient('owner', 'my-tenant')
       );
-      const req = new Request('http://x/api/test', {
+      const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'my-tenant' }
       });
       const res: any = await echoHandler(req);
@@ -143,7 +144,7 @@ describe('Unified Authentication System - Integration Tests', () => {
 
   describe('Error Response Format', () => {
     it('should return 401 with error field for unauthenticated', async () => {
-      const req = new Request('http://x/api/test', {
+      const req = new NextRequest('http://x/api/test', {
         headers: { 'x-test-bypass-skip': '1' }
       });
       const res: any = await echoHandler(req);
@@ -156,7 +157,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
         makeBearerClient('staff')
       );
-      const req = new Request('http://x/api/test', {
+      const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
       const res: any = await ownerOnlyHandler(req);

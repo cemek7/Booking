@@ -92,6 +92,37 @@ function makeSupabaseClientMock(): any {
   void resolved; // suppress unused warning
 }
 
+// A Supabase client mock that resolves to a default authenticated owner.
+// Used for BOTH the admin client (createHttpHandler auth:true verifies the JWT +
+// tenant membership via createSupabaseAdminClient) and the bearer client. Without
+// the authed defaults on the admin client, every auth:true route test 401s.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeAuthedClientMock(): any {
+  const client = makeSupabaseClientMock();
+  client.auth.getUser = jest.fn().mockResolvedValue({
+    data: { user: { id: 'test-user-id', email: 'test@example.com' } },
+    error: null,
+  });
+  const originalFrom = client.from;
+  client.from = jest.fn().mockImplementation((table: string) => {
+    if (table === 'tenant_users') {
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({
+          data: { tenant_id: 'test-tenant-id', role: 'owner' },
+          error: null,
+        }),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ tenant_id: 'test-tenant-id', role: 'owner' }], error: null });
+        },
+      };
+    }
+    return originalFrom.call(client, table);
+  });
+  return client;
+}
+
 jest.mock('@/lib/supabase/server', () => {
   const client = makeSupabaseClientMock();
   return {
@@ -99,7 +130,9 @@ jest.mock('@/lib/supabase/server', () => {
     createServerSupabaseClient: jest.fn().mockReturnValue(client),
     getSupabaseServerComponentClient: jest.fn().mockReturnValue(client),
     getSupabaseRouteHandlerClient: jest.fn().mockReturnValue(client),
-    createSupabaseAdminClient: jest.fn().mockReturnValue(client),
+    // Admin client must default to an authenticated owner — the auth:true route
+    // path verifies the JWT + tenant membership through createSupabaseAdminClient.
+    createSupabaseAdminClient: jest.fn().mockReturnValue(makeAuthedClientMock()),
   };
 });
 

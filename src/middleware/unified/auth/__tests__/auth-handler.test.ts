@@ -48,7 +48,9 @@ function makeServerClientMock(opts?: {
   const proxy: typeof chain = new Proxy(chain, {
     get(_t, prop) {
       if (prop === 'maybeSingle') {
-        return jest.fn().mockResolvedValue(maybeSingleResult);
+        return jest
+          .fn<() => Promise<{ data: unknown; error: unknown }>>()
+          .mockResolvedValue(maybeSingleResult);
       }
       if (prop === 'limit') {
         return jest.fn().mockReturnValue(limitThenable);

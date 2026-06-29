@@ -6,8 +6,8 @@ import type { ApiResponse } from '@/lib/auth/auth-api-client';
 const authGet = jest.fn<(url: string) => Promise<ApiResponse<unknown>>>();
 const authPost = jest.fn<(url: string, body?: unknown) => Promise<ApiResponse<unknown>>>();
 jest.mock('@/lib/auth/auth-api-client', () => ({
-  authGet: (...a: unknown[]) => authGet(...a),
-  authPost: (...a: unknown[]) => authPost(...a),
+  authGet,
+  authPost,
 }));
 
 import CustomerDsarControl from '@/components/dsar/CustomerDsarControl';
