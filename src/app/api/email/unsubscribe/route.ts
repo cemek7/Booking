@@ -52,8 +52,12 @@ export const GET = createHttpHandler(
  */
 export const POST = createHttpHandler(
   async (ctx) => {
+    // RFC 8058 one-click: providers POST `List-Unsubscribe=One-Click` as the
+    // body, so the token rides in the query string. Fall back to a JSON body
+    // (the /unsubscribe page fetch).
+    const queryToken = new URL(ctx.request.url).searchParams.get('token');
     const body: { token?: string } = await parseJsonBody<{ token?: string }>(ctx.request).catch(() => ({}));
-    return processToken(body.token);
+    return processToken(body.token ?? queryToken);
   },
   'POST',
   { auth: false },

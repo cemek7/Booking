@@ -8,6 +8,19 @@
 import { defaultLogger } from '@/lib/logger';
 import sgMail from '@sendgrid/mail';
 import { generateCalendarLinks, type BookingEvent } from './universalCalendar';
+import { makeUnsubscribeToken } from '@/lib/email/unsubscribe';
+import { isUnsubscribed } from '@/lib/email/preferences';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+
+/** Secret for signing unsubscribe tokens (mirrors /api/email/unsubscribe). */
+function unsubscribeSecret(): string {
+  return (
+    process.env.EMAIL_UNSUBSCRIBE_SECRET ||
+    process.env.WEBHOOK_SIGNATURE_SECRET ||
+    process.env.JWT_SECRET ||
+    ''
+  );
+}
 
 /** Escape HTML entities to prevent injection in email templates */
 function escapeHtml(str: string): string {
@@ -26,6 +39,10 @@ interface EmailOptions {
   text?: string;
   replyTo?: string;
   from?: string;
+  /** Marketing (non-transactional) mail — suppressed if the recipient opted out. */
+  marketing?: boolean;
+  /** Enables a one-click List-Unsubscribe header; also drives marketing suppression. */
+  unsubscribe?: { tenantId: string; recipient: string; list: string };
 }
 
 /**
@@ -55,6 +72,35 @@ export async function sendEmail(options: EmailOptions): Promise<any> {
       return { success: false, error: 'missing_from_address' };
     }
 
+    // Never send marketing mail to a recipient who has opted out (CAN-SPAM/GDPR).
+    if (options.marketing && options.unsubscribe) {
+      try {
+        const admin = createSupabaseAdminClient();
+        if (await isUnsubscribed(admin, options.unsubscribe)) {
+          defaultLogger.info(`Email suppressed (unsubscribed): ${options.subject}`);
+          return { success: true, suppressed: true };
+        }
+      } catch (err) {
+        defaultLogger.warn('Unsubscribe check failed, proceeding to send', { error: String(err) });
+      }
+    }
+
+    // One-click List-Unsubscribe header (RFC 8058). The token rides in the query
+    // string so the route can verify it on the provider's one-click POST.
+    let headers: Record<string, string> | undefined;
+    if (options.unsubscribe) {
+      const secret = unsubscribeSecret();
+      if (secret) {
+        const token = makeUnsubscribeToken(options.unsubscribe, secret);
+        const base = process.env.APP_URL || process.env.NEXT_PUBLIC_BASE_URL || '';
+        const url = `${base}/api/email/unsubscribe?token=${encodeURIComponent(token)}`;
+        headers = {
+          'List-Unsubscribe': `<${url}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        };
+      }
+    }
+
     const message = {
       to: options.to,
       from: fromEmail,
@@ -62,6 +108,7 @@ export async function sendEmail(options: EmailOptions): Promise<any> {
       html: options.html,
       text: options.text,
       replyTo: options.replyTo,
+      ...(headers ? { headers } : {}),
     };
 
     // Wrap SendGrid call with a timeout to prevent hanging the booking flow
