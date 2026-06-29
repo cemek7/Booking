@@ -208,11 +208,13 @@ export const POST = createHttpHandler(
       }
     }
 
-    // Validate category if provided
+    // Validate category if provided, and capture its name to mirror into the
+    // denormalized `category` label the AI sales read uses.
+    let categoryName: string | null = null;
     if (body.category_id) {
       const { data: category } = await ctx.supabase
         .from('product_categories')
-        .select('id')
+        .select('id, name')
         .eq('id', body.category_id)
         .eq('tenant_id', tenantUsers.tenant_id)
         .eq('is_active', true)
@@ -222,6 +224,7 @@ export const POST = createHttpHandler(
       if (!category) {
         throw ApiErrorFactory.badRequest('Category not found or inactive');
       }
+      categoryName = typeof category.name === 'string' ? category.name : null;
     }
 
     // Prepare product data
@@ -232,6 +235,7 @@ export const POST = createHttpHandler(
       short_description: body.short_description?.trim(),
       sku: body.sku?.trim().toUpperCase(),
       category_id: body.category_id,
+      category: categoryName,
       price_cents: body.price_cents,
       currency: body.currency || 'USD',
       cost_price_cents: body.cost_price_cents || 0,

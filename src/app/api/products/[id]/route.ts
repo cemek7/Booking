@@ -142,11 +142,13 @@ export const PUT = createHttpHandler(
       }
     }
 
-    // Validate category if being updated
+    // Validate category if being updated, and capture its name to mirror into
+    // the denormalized `category` label the AI sales read uses.
+    let categoryName: string | null = null;
     if (body.category_id) {
       const { data: category } = await ctx.supabase
         .from('product_categories')
-        .select('id')
+        .select('id, name')
         .eq('id', body.category_id)
         .eq('tenant_id', existingProduct.tenant_id)
         .eq('is_active', true)
@@ -156,6 +158,7 @@ export const PUT = createHttpHandler(
       if (!category) {
         throw ApiErrorFactory.badRequest('Category not found or inactive');
       }
+      categoryName = typeof category.name === 'string' ? category.name : null;
     }
 
     // Prepare update data (only include provided fields)
@@ -179,7 +182,11 @@ export const PUT = createHttpHandler(
     if (body.description !== undefined) updateData.description = body.description?.trim();
     if (body.short_description !== undefined) updateData.short_description = body.short_description?.trim();
     if (body.sku !== undefined) updateData.sku = body.sku?.trim().toUpperCase();
-    if (body.category_id !== undefined) updateData.category_id = body.category_id;
+    if (body.category_id !== undefined) {
+      updateData.category_id = body.category_id;
+      // Keep the denormalized label in sync (null when category is cleared).
+      updateData.category = body.category_id ? categoryName : null;
+    }
     if (body.brand !== undefined) updateData.brand = body.brand?.trim();
     if (body.weight_grams !== undefined) updateData.weight_grams = body.weight_grams;
     if (body.dimensions !== undefined) updateData.dimensions = body.dimensions;
