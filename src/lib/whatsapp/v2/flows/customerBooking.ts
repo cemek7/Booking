@@ -13,6 +13,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 import PaymentService from '@/lib/paymentService';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
+import { siasOperations } from '@/lib/sias-operations';
 import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
 import { createReservation } from '@/lib/reservationService';
 import { updateConversation, resetConversation, ConvState, ConvChannel } from '../conversationState';
@@ -71,11 +73,26 @@ export async function handleCustomerBooking(
     case 'show_catalog':
       return handleShowCatalog(convExternalId, tenantId, aiResp);
 
+    case 'send_quote':
+      return handleSendQuote(convExternalId, tenantId, aiResp, conv, convChannel);
+
+    case 'qualify_lead':
+      return handleQualifyLead(convExternalId, tenantId, aiResp, conv, convChannel);
+
     case 'show_showcase':
       return handleShowShowcase(convExternalId, tenantId, aiResp);
 
     case 'recommend_products':
       return handleRecommendProducts(convExternalId, tenantId, aiResp);
+
+    case 'offer_upsell':
+      return handleOfferProducts(convExternalId, tenantId, aiResp, 'upsell', conv, convChannel);
+
+    case 'offer_cross_sell':
+      return handleOfferProducts(convExternalId, tenantId, aiResp, 'cross-sell', conv, convChannel);
+
+    case 'recover_lead':
+      return handleRecoverLead(convExternalId, tenantId, aiResp, conv, convChannel);
 
     case 'general_reply':
     case 'needs_info':
@@ -118,9 +135,13 @@ async function handleCustomerRuleMatch(
       return getCustomerHelp(tenantId);
 
     case 'affirm': {
-      // Confirm a pending booking
+      // Confirm a pending booking (takes priority over an upsell offer)
       if (conv.flow_data?.pending_confirmation) {
         return confirmBooking(externalId, tenantId, conv, channel);
+      }
+      // Accept a pending product upsell/cross-sell → record the conversion
+      if (conv.flow_data?.pending_upsell) {
+        return recordUpsellConversion(externalId, tenantId, conv, channel);
       }
       return 'What would you like to book today?';
     }
@@ -358,6 +379,11 @@ async function confirmBooking(
   const { service_id, tenant_staff_id, date, start_time, end_time, customer_name, lock_id } = pending;
   const requiresDeposit = Boolean(pending.deposit_required);
   const depositAmountCents = Number(pending.deposit_amount_cents ?? 0);
+  const { data: serviceRow } = await supabaseAdmin
+    .from('services')
+    .select('price')
+    .eq('id', service_id)
+    .maybeSingle();
 
   // Upsert customer record
   const { data: customer } = await supabaseAdmin
@@ -398,6 +424,25 @@ async function confirmBooking(
     return 'Sorry, something went wrong confirming your booking. Please try again.';
   }
 
+  await recordFrontDeskEvent({
+    tenantId,
+    eventType: 'booking_created',
+    eventCategory: 'booking',
+    channel,
+    actorRole: 'customer',
+    customerId: customer?.id ?? null,
+    reservationId: reservation.id,
+    serviceId: service_id,
+    staffId: tenant_staff_id ?? null,
+    amount: Number(serviceRow?.price ?? 0),
+    currency: 'NGN',
+    statusTo: reservationStatus,
+    metadata: {
+      source: 'whatsapp_v2_confirm',
+      lock_id: lock_id ?? null,
+    },
+  });
+
   if (requiresDeposit) {
     const paymentService = new PaymentService(supabaseAdmin);
     const customerEmail = getCustomerEmail(customer?.email ?? null, phone);
@@ -430,6 +475,23 @@ async function confirmBooking(
       await resetConversation(externalId, tenantId, channel);
       return 'Sorry, we could not create your deposit link right now. Please try again.';
     }
+
+    await recordFrontDeskEvent({
+      tenantId,
+      eventType: 'payment_requested',
+      eventCategory: 'payment',
+      channel,
+      actorRole: 'system',
+      customerId: customer?.id ?? null,
+      reservationId: reservation.id,
+      serviceId: service_id,
+      amount: depositAmountCents / 100,
+      currency: 'NGN',
+      metadata: {
+        provider: 'paystack',
+        authorization_url: paymentResult.authorizationUrl,
+      },
+    });
 
     if (lock_id) await releaseLock(lock_id);
     await resetConversation(externalId, tenantId, channel);
@@ -477,7 +539,11 @@ async function handleCancelBooking(
 ): Promise<string> {
   // For the cancel action, customerPhone is used to look up reservations.
   // For IG, the IGSID is stored as the phone identifier in the customer record.
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel,
+    userRole: 'customer',
+  });
   await resetConversation(externalId, tenantId, channel);
   return execResult.success ? aiResp.reply : `Couldn't cancel: ${execResult.error ?? 'unknown error'}`;
 }
@@ -487,7 +553,11 @@ async function handleShowCatalog(
   tenantId: string,
   aiResp: AIResponse
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel: 'whatsapp',
+    userRole: 'customer',
+  });
   if (!execResult.success) {
     return execResult.error
       ? `I couldn't load the catalog right now: ${execResult.error}`
@@ -508,7 +578,11 @@ async function handleShowShowcase(
   tenantId: string,
   aiResp: AIResponse
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel: 'whatsapp',
+    userRole: 'customer',
+  });
   if (!execResult.success) {
     return execResult.error
       ? `I couldn't send the showcase right now: ${execResult.error}`
@@ -525,7 +599,11 @@ async function handleRecommendProducts(
   tenantId: string,
   aiResp: AIResponse
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: externalId });
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel: 'whatsapp',
+    userRole: 'customer',
+  });
   if (!execResult.success) {
     return execResult.error
       ? `I couldn't pull product recommendations right now: ${execResult.error}`
@@ -539,6 +617,201 @@ async function handleRecommendProducts(
   return formatProductActionReply(aiResp.reply, execResult.data as { title?: string; products?: Array<Record<string, unknown>> } | undefined, {
     emptyFallback: 'I couldn’t find any suitable product recommendations right now.',
   });
+}
+
+async function handleOfferProducts(
+  externalId: string,
+  tenantId: string,
+  aiResp: AIResponse,
+  mode: 'upsell' | 'cross-sell',
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel,
+    userRole: 'customer',
+  });
+  if (!execResult.success) {
+    return execResult.error
+      ? `I couldn't prepare ${mode} options right now: ${execResult.error}`
+      : `I couldn’t prepare ${mode} options right now.`;
+  }
+
+  // Persist the offered products so a follow-up "yes" can be attributed as a
+  // conversion (see handleCustomerRuleMatch 'affirm' → recordUpsellConversion).
+  const offered = Array.isArray((execResult.data as { products?: Array<Record<string, unknown>> } | undefined)?.products)
+    ? (execResult.data as { products: Array<Record<string, unknown>> }).products
+    : [];
+  if (offered.length > 0) {
+    const productIds = offered.map((p) => String(p.id)).filter(Boolean);
+    const totalCents = offered.reduce(
+      (sum, p) => sum + (typeof p.price_cents === 'number' ? p.price_cents : Number(p.price_cents ?? 0)),
+      0,
+    );
+    await updateConversation(externalId, tenantId, {
+      flow_data: {
+        ...conv.flow_data,
+        pending_upsell: {
+          mode: mode === 'upsell' ? 'upsell' : 'cross_sell',
+          product_ids: productIds,
+          total_cents: totalCents,
+          offered_at: new Date().toISOString(),
+        },
+      },
+    }, channel);
+  }
+
+  if ((execResult.data as { delivery?: string } | undefined)?.delivery === 'interactive') {
+    return '';
+  }
+
+  return formatProductActionReply(
+    aiResp.reply,
+    execResult.data as { title?: string; products?: Array<Record<string, unknown>> } | undefined,
+    {
+      emptyFallback: mode === 'upsell'
+        ? 'I couldn’t find any add-ons to suggest right now.'
+        : 'I couldn’t find any complementary products to suggest right now.',
+    }
+  );
+}
+
+async function recordUpsellConversion(
+  externalId: string,
+  tenantId: string,
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
+): Promise<string> {
+  const pending = conv.flow_data?.pending_upsell as
+    | { mode?: string; product_ids?: string[]; total_cents?: number; offered_at?: string }
+    | undefined;
+  const mode = pending?.mode === 'cross_sell' ? 'cross_sell' : 'upsell';
+  const productIds = Array.isArray(pending?.product_ids) ? pending!.product_ids! : [];
+  const totalCents = typeof pending?.total_cents === 'number' ? pending!.total_cents! : 0;
+
+  // Attribution: monetary value in major units (fallback to 1 if unknown).
+  await siasOperations.recordOutcomeAttribution({
+    tenantId,
+    customerPhone: externalId,
+    signal: 'upsell_conversion',
+    sourceEvent: `frontdesk.${mode}.accepted`,
+    value: totalCents > 0 ? totalCents / 100 : 1,
+    metadata: { product_ids: productIds, mode, offered_at: pending?.offered_at ?? null },
+  }).catch(() => undefined);
+
+  await recordFrontDeskEvent({
+    tenantId,
+    eventType: mode === 'upsell' ? 'upsell_accepted' : 'cross_sell_accepted',
+    eventCategory: 'sales',
+    channel,
+    actorRole: 'customer',
+    amount: totalCents > 0 ? totalCents : null,
+    metadata: { product_ids: productIds, mode },
+  }).catch(() => undefined);
+
+  // Clear the pending offer so the same "yes" isn't counted twice.
+  await updateConversation(externalId, tenantId, {
+    flow_data: { ...conv.flow_data, pending_upsell: null },
+  }, channel);
+
+  return 'Great choice! 🎉 I’ve noted that for you — the team will add it to your order. Anything else I can help with?';
+}
+
+async function handleQualifyLead(
+  externalId: string,
+  tenantId: string,
+  aiResp: AIResponse,
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel,
+    userRole: 'customer',
+  });
+
+  await updateConversation(externalId, tenantId, {
+    current_flow: conv.current_flow === 'booking' ? 'booking' : 'managing',
+    flow_data: {
+      ...conv.flow_data,
+      sales_journey: {
+        stage: 'qualified',
+        desired_outcome: aiResp.params?.desired_outcome ?? null,
+        budget: aiResp.params?.budget ?? null,
+        preferred_timing: aiResp.params?.preferred_timing ?? null,
+        urgency: aiResp.params?.urgency ?? null,
+        previous_experience: aiResp.params?.previous_experience ?? null,
+      },
+    },
+  }, channel);
+
+  return execResult.success ? aiResp.reply : (execResult.error ?? aiResp.reply);
+}
+
+async function handleSendQuote(
+  externalId: string,
+  tenantId: string,
+  aiResp: AIResponse,
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel,
+    userRole: 'customer',
+  });
+  if (!execResult.success) {
+    return execResult.error
+      ? `I couldn't prepare a quote right now: ${execResult.error}`
+      : 'I couldn’t prepare a quote right now.';
+  }
+
+  const data = (execResult.data as { quote?: { name?: string; price?: number; duration?: number } } | undefined)?.quote;
+  await updateConversation(externalId, tenantId, {
+    current_flow: conv.current_flow === 'booking' ? 'booking' : 'managing',
+    flow_data: {
+      ...conv.flow_data,
+      sales_journey: {
+        ...conv.flow_data?.sales_journey,
+        stage: 'quoted',
+        quoted_service: data?.name ?? aiResp.params?.service_name ?? null,
+      },
+    },
+  }, channel);
+
+  if (!data) return aiResp.reply;
+
+  return `${aiResp.reply}\n\n*${data.name ?? 'Service quote'}*\nPrice: ₦${Math.round(Number(data.price ?? 0)).toLocaleString()}\nDuration: ${Number(data.duration ?? 60)} minutes`;
+}
+
+async function handleRecoverLead(
+  externalId: string,
+  tenantId: string,
+  aiResp: AIResponse,
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel,
+    userRole: 'customer',
+  });
+
+  await updateConversation(externalId, tenantId, {
+    current_flow: conv.current_flow === 'booking' ? 'booking' : 'managing',
+    flow_data: {
+      ...conv.flow_data,
+      sales_journey: {
+        ...conv.flow_data?.sales_journey,
+        stage: 'followup_scheduled',
+        follow_up_at: aiResp.params?.follow_up_at ?? null,
+        recovery_reason: aiResp.params?.reason ?? null,
+      },
+    },
+  }, channel);
+
+  return execResult.success ? aiResp.reply : (execResult.error ?? aiResp.reply);
 }
 
 // ─── Greetings ────────────────────────────────────────────────────────────────
@@ -571,10 +844,10 @@ async function getCustomerGreeting(tenantId: string, externalId: string): Promis
     : { data: null };
 
   if (customerName && Number(customerProfile?.lifetime_bookings ?? 0) > 0) {
-    return `Hi ${customerName}! Welcome back to *${salonName}* 😊\nWould you like to book another ${bookingNoun}?`;
+    return `Hi ${customerName}! Welcome back to *${salonName}* 😊\nI can help you book another ${bookingNoun}, recommend the right service, or suggest products that fit your last visit. What would you like today?`;
   }
 
-  return `Hi! Welcome to *${salonName}* 😊\nI can help you book a ${bookingNoun}. What service are you interested in?`;
+  return `Hi! Welcome to *${salonName}* 😊\nI can help you book a ${bookingNoun}, compare options, recommend services, or show you products. What are you trying to get done today?`;
 }
 
 async function getCustomerHelp(tenantId: string): Promise<string> {
@@ -586,7 +859,7 @@ async function getCustomerHelp(tenantId: string): Promise<string> {
 
   const tenantSettings = getTenantSettings(tenant);
   const bookingNoun = String(tenantSettings.booking_noun ?? 'appointment');
-  return `I can help you:\n  • Book a ${bookingNoun}\n  • Check service prices\n  • Cancel or reschedule\n\nJust tell me what you need!`;
+  return `I can help you:\n  • Book a ${bookingNoun}\n  • Check prices or get a quote\n  • Compare services and recommend the best option\n  • Suggest add-ons or products\n  • Cancel or reschedule\n\nTell me what you're trying to achieve and I'll guide you.`;
 }
 
 // ─── Reminder queuing ─────────────────────────────────────────────────────────
