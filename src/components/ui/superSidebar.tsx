@@ -4,6 +4,7 @@ import GlassCard from "@/components/ui/GlassCard";
 
 const nav = [
   { href: "/dashboard/superadmin", label: "Overview" },
+  { href: "/dashboard/superadmin/support", label: "Support" },
   { href: "/dashboard/superadmin/tenants", label: "Tenants" },
   { href: "/dashboard/superadmin/analytics", label: "Analytics" },
   { href: "/dashboard/superadmin/reservations", label: "Reservations" },

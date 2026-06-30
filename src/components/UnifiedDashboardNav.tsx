@@ -78,6 +78,19 @@ const Icons = {
       <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v9a1 1 0 01-1 1H7l-4 3V4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
     </svg>
   ),
+  support: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M10 17.5A7.5 7.5 0 1010 2.5a7.5 7.5 0 000 15z" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M7.5 8.25a2.5 2.5 0 115 0c0 1.5-2.5 1.9-2.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="10" cy="14.2" r="0.8" fill="currentColor" />
+    </svg>
+  ),
+  mentions: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 5.5A1.5 1.5 0 015.5 4h9A1.5 1.5 0 0116 5.5v6A1.5 1.5 0 0114.5 13H9l-3.5 3v-3H5.5A1.5 1.5 0 014 11.5v-6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M7 7.5h6M7 10h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
   settings: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <circle cx="10" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.5" />
@@ -149,6 +162,10 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/showcase', label: 'Showcase', icon: Icons.showcase, roles: ['owner', 'manager'] },
   // Chats
   { href: '/dashboard/chats', label: 'Chats', icon: Icons.chats, roles: ['owner', 'manager', 'staff'] },
+  // Support
+  { href: '/dashboard/support', label: 'Support', icon: Icons.support, roles: ['owner', 'manager', 'staff'] },
+  { href: '/dashboard/superadmin/support', label: 'Support Queue', icon: Icons.support, roles: ['superadmin'] },
+  { href: '/dashboard/mentions', label: 'Mentions', icon: Icons.mentions, roles: ['owner', 'manager'] },
   // Settings
   { href: '/dashboard/settings', label: 'Settings', icon: Icons.settings, roles: ['owner'] },
   // Billing
@@ -184,6 +201,8 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/showcase' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('owner'))!,
       ],
     },
     {
@@ -215,6 +234,8 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,
       ],
     },
     {
@@ -233,6 +254,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       title: 'Communication',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('staff'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/tasks' && i.roles.includes('staff'))!,
       ],
     },
@@ -242,6 +264,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       title: 'System',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
       ],
     },
   ],

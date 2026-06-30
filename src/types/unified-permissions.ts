@@ -662,8 +662,11 @@ export function getRoleDashboardPath(role: Role | string | undefined | null): st
 export function canAccessRoute(userRole: Role, route: string): boolean {
   const routePermissions: Record<string, string[]> = {
     '/dashboard/superadmin': ['superadmin'],
+    '/dashboard/superadmin/support': ['superadmin'],
     '/dashboard/calendar': ['owner', 'manager', 'staff'],
     '/dashboard/bookings': ['owner', 'manager', 'staff'],
+    '/dashboard/mentions': ['owner', 'manager'],
+    '/dashboard/support': ['owner', 'manager', 'staff'],
     '/dashboard/staff/scheduling': ['owner', 'manager'],
     '/dashboard/settings': ['owner'],
     '/dashboard/billing': ['owner'],
