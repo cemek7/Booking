@@ -17,7 +17,7 @@ separate spike; build against a `StubProvider` until then.
 - Cron routes: raw `GET(request: NextRequest)` with `authorization === 'Bearer ${CRON_SECRET}'` else 401 (see `src/app/api/cron/status-check/route.ts`).
 - Dashboard components: `authGet`/`authPost` from `@/lib/auth/auth-api-client` (returns `{ status, data }`).
 - Mock-admin test pattern: a chainable builder recording ops (see `src/lib/dsar/*.test.ts`, `src/lib/moderation/reviews.test.ts`).
-- Migration numbering: use **120** (clear of the active 09x/11x range); additive, idempotent.
+- Migration numbering: **`120` is a placeholder** — a concurrent session is actively adding migrations (already at 117). At build time, run `ls db/migrations | grep -oE '^[0-9]+' | sort -n | tail -1` and use the **next free number**; additive, idempotent (the repo has documented same-prefix collision hazards).
 
 ---
 
