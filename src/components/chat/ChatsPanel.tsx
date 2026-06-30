@@ -5,17 +5,29 @@ import { useChatRealtime } from '@/hooks/useChatRealtime';
 import { ChatSidebar } from './ChatSidebar';
 import { ChatThread } from './ChatThread';
 import { ChatComposer } from './ChatComposer';
+import EscalationBanner from './EscalationBanner';
 
 export default function ChatsPanel() {
   const { tenant } = useTenant();
-  const { chats, activeId, setActiveId, messages, send, loading } = useChatRealtime(tenant?.id);
+  const { chats, activeId, setActiveId, messages, send, release, loading, reloadChats } = useChatRealtime(tenant?.id);
   const [query, setQuery] = useState('');
   const activeChat = useMemo(() => chats.find((c) => c.id === activeId) ?? null, [chats, activeId]);
 
   const totalUnread = useMemo(() => chats.reduce((s, c) => s + (c.unread ?? 0), 0), [chats]);
+  const isHumanHandling = Boolean(
+    activeChat?.humanHandlingUntil && Date.parse(activeChat.humanHandlingUntil) > Date.now()
+  );
 
   const handleSelect = useCallback((id: string) => setActiveId(id), [setActiveId]);
   const handleSend = useCallback(async (text: string) => { await send(text); }, [send]);
+  const handleRelease = useCallback(async () => { await release(); }, [release]);
+  const handleOpenCustomer = useCallback((customerPhone: string) => {
+    const matched = chats.find((chat) => chat.customerPhone === customerPhone);
+    if (matched) {
+      setActiveId(matched.id);
+      void reloadChats();
+    }
+  }, [chats, reloadChats, setActiveId]);
 
   return (
     <>
@@ -45,6 +57,9 @@ export default function ChatsPanel() {
         <div className={`flex flex-col w-[320px] border-r bg-gray-50 ${activeId ? 'hidden' : 'flex'} lg:flex`}>
           <div className="p-3 border-b">
             <h2 className="font-semibold text-sm">Chats</h2>
+          </div>
+          <div className="border-b bg-white px-3 py-2">
+            <EscalationBanner onOpenCustomer={handleOpenCustomer} onClaimed={reloadChats} />
           </div>
           <div className="p-3 border-b">
             <input
@@ -108,7 +123,14 @@ export default function ChatsPanel() {
             />
           </div>
           <div className="border-t bg-white">
-            <ChatComposer onSend={handleSend} disabled={!activeId} channel={activeChat?.channel} />
+            <ChatComposer
+              chatId={activeId}
+              onSend={handleSend}
+              onRelease={handleRelease}
+              disabled={!activeId}
+              channel={activeChat?.channel}
+              humanHandling={isHumanHandling}
+            />
           </div>
         </div>
       </div>

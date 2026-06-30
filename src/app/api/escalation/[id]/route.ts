@@ -4,6 +4,8 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 import { siasOperations } from '@/lib/sias-operations';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
 
 const ActionSchema = z.object({
   action: z.enum(['claim', 'resolve']),
@@ -35,6 +37,25 @@ export const PATCH = createHttpHandler(
 
     if (!escalation) {
       throw ApiErrorFactory.internalServerError(new Error('Failed to update escalation'));
+    }
+
+    if (parsed.data.action === 'claim' && escalation.customer_phone) {
+      const admin = createSupabaseAdminClient();
+      const { data: chat } = await admin
+        .from('chats')
+        .select('customer_phone, metadata')
+        .eq('tenant_id', tenantId)
+        .eq('customer_phone', escalation.customer_phone)
+        .maybeSingle();
+
+      if (chat?.customer_phone) {
+        await setHumanHandling({
+          externalId: chat.customer_phone,
+          tenantId,
+          channel: chat.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
+          minutes: 30,
+        }).catch(() => null);
+      }
     }
 
     return { escalation };

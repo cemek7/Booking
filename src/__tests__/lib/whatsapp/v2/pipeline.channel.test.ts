@@ -84,11 +84,14 @@ jest.mock('@/lib/monitoring/telegramAlert', () => ({
 }));
 
 // Flow handlers — short-circuit to prevent real DB calls
+const mockHandleOwnerCommand = jest.fn().mockResolvedValue('owner reply');
+const mockHandleCustomerBooking = jest.fn().mockResolvedValue('customer reply');
+
 jest.mock('@/lib/whatsapp/v2/flows/ownerCommands', () => ({
-  handleOwnerCommand: jest.fn().mockResolvedValue('owner reply'),
+  handleOwnerCommand: mockHandleOwnerCommand,
 }));
 jest.mock('@/lib/whatsapp/v2/flows/customerBooking', () => ({
-  handleCustomerBooking: jest.fn().mockResolvedValue('customer reply'),
+  handleCustomerBooking: mockHandleCustomerBooking,
 }));
 jest.mock('@/lib/whatsapp/v2/flows/ownerOnboarding', () => ({
   handleOnboarding: jest.fn().mockResolvedValue('onboarding reply'),
@@ -171,5 +174,28 @@ describe('processMessageV2 channel=instagram', () => {
     const result = await processMessageV2('IGSID_42', 'tenant-1', 'hello', 'msg-3', 'instagram');
 
     expect(result).toBe(false);
+  });
+
+  it('pauses AI replies when a human is handling the conversation', async () => {
+    mockClaimBatch.mockResolvedValue({ combined: 'need help', messageIds: ['msg-4'] });
+    const conv = makeConv({
+      flow_data: { human_handling_until: '2999-01-01T00:00:00.000Z' },
+      channel: 'whatsapp',
+      phone_number: '+2348000000000',
+      external_id: '+2348000000000',
+    });
+    mockGetConversation.mockResolvedValue(conv);
+    mockEnsureConversation.mockResolvedValue(conv);
+
+    const result = await processMessageV2(
+      '+2348000000000',
+      'tenant-1',
+      'need help',
+      'msg-4'
+    );
+
+    expect(result).toBe(true);
+    expect(mockGetTenantWhatsAppConfig).not.toHaveBeenCalled();
+    expect(mockHandleCustomerBooking).not.toHaveBeenCalled();
   });
 });

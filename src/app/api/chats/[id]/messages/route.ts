@@ -6,6 +6,7 @@ import { chatMessagesSent } from '@/lib/metrics';
 import { trace } from '@opentelemetry/api';
 import { defaultLogger } from '@/lib/logger';
 import { getTenantChannelProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
 
 const PostMessageBodySchema = z.object({
   text: z.string().trim().min(1, 'Message text cannot be empty'),
@@ -109,6 +110,15 @@ export const POST = createHttpHandler(
 
       try { chatMessagesSent.inc({ tenant: chat.tenant_id }); } catch { /* ignore metrics errors */ }
       span.addEvent('Message inserted into DB');
+
+      if (chat.customer_phone) {
+        await setHumanHandling({
+          externalId: chat.customer_phone,
+          tenantId: chat.tenant_id,
+          channel,
+          minutes: 30,
+        }).catch((e) => defaultLogger.warn('setHumanHandling failed', { error: String(e) }));
+      }
 
       // Fire-and-forget handoff to external messaging provider
       (async () => {
