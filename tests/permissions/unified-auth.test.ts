@@ -8,6 +8,7 @@ import { describe, it, expect } from '@jest/globals';
 import { createApiHandler } from '@/lib/error-handling/route-handler';
 import { NextRequest } from 'next/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 // Simple echo handler used in tests
 const echoHandler = createApiHandler(
@@ -57,6 +58,13 @@ function makeBearerClient(role: string, tenantId = 'test-tenant-id', userId = 't
 }
 
 describe('Unified Authentication System - Integration Tests', () => {
+  // Reset both clients to the default authenticated owner before each test so a
+  // persistent per-test role override (mockReturnValue) cannot leak into the next.
+  beforeEach(() => {
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeBearerClient('owner'));
+    (createSupabaseBearerClient as jest.Mock).mockReturnValue(makeBearerClient('owner'));
+  });
+
   describe('Basic Authentication Flow', () => {
     it('should authenticate valid users (global bearer mock defaults to owner)', async () => {
       // TestRequest wrapper injects Bearer test-token + x-tenant-id: test-tenant-id
@@ -95,7 +103,11 @@ describe('Unified Authentication System - Integration Tests', () => {
     });
 
     it('should deny staff access to owner-only routes', async () => {
+      // Role is resolved from the admin client (membership check), so override it too.
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
+        makeBearerClient('staff')
+      );
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(
         makeBearerClient('staff')
       );
       const req = new NextRequest('http://x/api/test', {
@@ -117,7 +129,11 @@ describe('Unified Authentication System - Integration Tests', () => {
     });
 
     it('should deny staff access to manager-or-owner routes', async () => {
+      // Role is resolved from the admin client (membership check), so override it too.
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
+        makeBearerClient('staff')
+      );
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(
         makeBearerClient('staff')
       );
       const req = new NextRequest('http://x/api/test', {
@@ -131,6 +147,9 @@ describe('Unified Authentication System - Integration Tests', () => {
   describe('Tenant Isolation', () => {
     it('should pass tenant context through to route handler', async () => {
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
+        makeBearerClient('owner', 'my-tenant')
+      );
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(
         makeBearerClient('owner', 'my-tenant')
       );
       const req = new NextRequest('http://x/api/test', {
@@ -154,7 +173,11 @@ describe('Unified Authentication System - Integration Tests', () => {
     });
 
     it('should return 403 with error field for unauthorized role', async () => {
+      // Role is resolved from the admin client (membership check), so override it too.
       (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
+        makeBearerClient('staff')
+      );
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(
         makeBearerClient('staff')
       );
       const req = new NextRequest('http://x/api/test', {
