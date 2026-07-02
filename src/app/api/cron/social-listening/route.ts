@@ -5,7 +5,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getEnabledListeningConfigs } from '@/lib/listening/config';
 import { ingestMentions } from '@/lib/listening/ingest';
 import { notifyNewMentions } from '@/lib/listening/notify';
-import { StubProvider } from '@/lib/listening/provider';
+import { createListeningProvider } from '@/lib/listening/provider';
 
 export async function GET(request: NextRequest) {
   const auth = request.headers.get('authorization');
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const provider = StubProvider;
+  const provider = createListeningProvider();
   const admin = createSupabaseAdminClient();
   const configs = await getEnabledListeningConfigs(admin);
 

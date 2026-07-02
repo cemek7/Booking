@@ -1,15 +1,15 @@
 # Social Listening Provider Spike
 
 **Date:** 2026-07-02  
-**Status:** Updated after a lower-friction provider pass. Real adapter still pending contract/API validation.
+**Status:** Updated after a lower-friction provider pass. The first implemented spike path is `google_pse`; real provider-of-record still pending validation.
 
 ## Recommendation
 
-Use **Social Searcher** as the **first spike target**, and keep **Brandwatch** as the enterprise fallback if the low-friction path proves too weak.
+Use **Google Programmable Search (`google_pse`)** as the **first implemented spike path**, and keep **Brandwatch** as the enterprise fallback if the low-friction path proves too weak.
 
 Why:
-- It is the lowest-friction candidate we found that does not immediately force a sales/demo workflow.
-- Its public site explicitly positions itself as a free social-media search and monitoring tool, which makes it the fastest path to a real-world adapter spike.
+- It gives Booka a documented, no-enterprise-gate API surface.
+- Google documents a free quota of 100 queries/day for the Custom Search JSON API, which is enough for a controlled spike.
 - The repo already has the hard parts built:
   - config
   - query model
@@ -19,35 +19,51 @@ Why:
   - convert-to-lead
 - So the best next decision is not “buy the biggest tool,” it is “validate the cheapest workable integration surface.”
 
-This is a recommendation for the **first adapter experiment**, not yet the final provider-of-record decision. The current MVP should stay on `StubProvider` until the spike proves usable search semantics and stable mention identity.
+This is a recommendation for the **first adapter experiment**, not yet the final provider-of-record decision. The current MVP can now move from `StubProvider` to `google_pse` when envs are supplied.
 
 ## Compared Options
 
-### 1. Social Searcher
+### 1. Google Programmable Search (`google_pse`)
 
-Observed from official pages:
-- Public site is accessible without enterprise gating.
-- The site explicitly describes itself as a free social-media search engine and monitoring tool.
-- This makes it the best immediate candidate for a technical spike, even though its API and operational guarantees still need validation.
+Observed from official docs:
+- Google documents the Custom Search JSON API and its query parameters publicly.
+- Google documents a free tier of 100 search queries/day, then paid usage.
+- Relevant parameters exposed in the official docs include:
+  - `cx`
+  - `q`
+  - `num`
+  - `dateRestrict`
+  - `sort`
 
 Fit for Booka:
 - Best candidate for a **quick proof of integration**.
 - Most attractive when the goal is:
   - fast validation
   - low-friction onboarding
-  - testing whether Booka's current query/ingest/dedup model works against a real provider
+  - testing whether Booka's current query/ingest/dedup model works against a documented provider
 
 Tradeoffs:
-- Still weaker confidence than Brandwatch on:
-  - stable mention IDs
-  - pagination guarantees
-  - API maturity
-  - rate-limit clarity
-  - long-term contract predictability
+- This is still search-index-based, not a dedicated social firehose.
+- Result freshness and platform coverage will be weaker than enterprise listening platforms.
+- URLs are used as external IDs, so cross-provider canonicalization still matters later.
 
-Use it to answer: “Can we make social listening work end-to-end now without enterprise procurement?”
+Use it to answer: “Can we make social listening work end-to-end now without enterprise procurement or brittle HTML scraping?”
 
-### 2. Brandwatch
+### 2. Social Searcher
+
+Observed from public pages:
+- Social Searcher is accessible without enterprise gating and positions itself as free social-media search/monitoring.
+- Its public search experience appears to be Google-backed rather than a clean, documented API surface.
+
+Fit for Booka:
+- Useful as a signal that the low-friction path is viable.
+- Helpful as a product benchmark for query semantics and platform coverage.
+
+Tradeoffs:
+- The public path is not the contract we want to build the adapter against.
+- This is why the implemented spike uses `google_pse` instead of Social Searcher HTML parsing.
+
+### 3. Brandwatch
 
 Observed from official pages:
 - The plans page is enterprise/demo-led rather than self-serve pricing.
@@ -74,7 +90,7 @@ Tradeoffs:
 - Pricing not transparent on the public page.
 - Not the fastest path if the real need is immediate validation rather than enterprise procurement.
 
-### 3. Brand24
+### 4. Brand24
 
 What is known from the current plan/spec and public product positioning:
 - It is a real social listening product and is already on the shortlist in the approved design spec.
@@ -94,10 +110,10 @@ Tradeoffs:
 
 ## Decision
 
-**Pick Social Searcher for the first adapter spike.**
+**Pick `google_pse` for the first adapter spike.**
 
 Reasoning:
-- It avoids the biggest immediate blocker: enterprise form-gating.
+- It avoids both enterprise form-gating and brittle HTML-backed scraping.
 - Booka needs a real provider test now more than it needs a final enterprise vendor decision.
 - Booka already has the product-side primitives:
   - `tenant_listening_config`
@@ -106,7 +122,7 @@ Reasoning:
   - dedup on `(tenant_id, provider, external_id)`
   - cron polling
   - notification + convert-to-lead workflow
-- If Social Searcher fails on API quality or dedup semantics, the next move is to escalate to Brand24 or Brandwatch, not to undo the architecture.
+- If `google_pse` fails on freshness, coverage, or cost, the next move is to escalate to Brand24 or Brandwatch, not to undo the architecture.
 
 ## Required Contract Checks Before Coding The Adapter
 
@@ -160,7 +176,7 @@ Implement against:
 - `src/app/api/cron/social-listening/route.ts`
 
 Expected adapter behavior:
-- `name`: stable provider slug, e.g. `social_searcher`
+- `name`: stable provider slug, e.g. `google_pse`
 - `search(query)`: returns `RawMention[]`
 - normalize each mention to:
   - `externalId`
@@ -183,11 +199,11 @@ Do not bypass the current ingest path.
 
 ## Recommended Execution Order
 
-1. **Spike Social Searcher first**
+1. **Spike `google_pse` first**
 - goal: prove end-to-end viability fast
-- stop quickly if IDs/pagination/rate limits are weak
+- stop quickly if result freshness/coverage/cost are weak
 
-2. **If Social Searcher fails, test Brand24**
+2. **If `google_pse` fails, test Brand24**
 - likely the next best non-enterprise path
 
 3. **Escalate to Brandwatch only if needed**
@@ -196,6 +212,6 @@ Do not bypass the current ingest path.
 ## Final Verdict
 
 - **Architecture:** GO now
-- **Provider spike:** GO now with Social Searcher first
+- **Provider spike:** GO now with `google_pse` first
 - **Enterprise fallback:** Brandwatch
 - **Current production-safe fallback:** keep `StubProvider`
