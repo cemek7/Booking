@@ -24,6 +24,9 @@ const PatchTicketSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('claim'),
   }),
+  z.object({
+    action: z.literal('unassign'),
+  }),
 ]);
 
 export const GET = createHttpHandler(
@@ -35,7 +38,11 @@ export const GET = createHttpHandler(
 
     const admin = createSupabaseAdminClient();
     const tenantId = ctx.user?.role === 'superadmin' ? undefined : ctx.user?.tenantId;
-    const thread = await getTicketThread(admin, { ticketId, tenantId });
+    const thread = await getTicketThread(admin, {
+      ticketId,
+      tenantId,
+      includeInternal: ctx.user?.role === 'superadmin',
+    });
 
     if (!thread) {
       throw ApiErrorFactory.notFound('Support ticket not found');
@@ -62,7 +69,11 @@ export const POST = createHttpHandler(
 
     const admin = createSupabaseAdminClient();
     const tenantId = ctx.user?.role === 'superadmin' ? undefined : ctx.user?.tenantId;
-    const existing = await getTicketThread(admin, { ticketId, tenantId });
+    const existing = await getTicketThread(admin, {
+      ticketId,
+      tenantId,
+      includeInternal: ctx.user?.role === 'superadmin',
+    });
     if (!existing) {
       throw ApiErrorFactory.notFound('Support ticket not found');
     }
@@ -75,7 +86,11 @@ export const POST = createHttpHandler(
       isInternal: ctx.user?.role === 'superadmin' ? parsed.data.isInternal ?? false : false,
     });
 
-    const thread = await getTicketThread(admin, { ticketId, tenantId });
+    const thread = await getTicketThread(admin, {
+      ticketId,
+      tenantId,
+      includeInternal: ctx.user?.role === 'superadmin',
+    });
     if (!thread) {
       throw ApiErrorFactory.notFound('Support ticket not found');
     }
@@ -101,7 +116,11 @@ export const PATCH = createHttpHandler(
 
     const admin = createSupabaseAdminClient();
     const tenantId = ctx.user?.role === 'superadmin' ? undefined : ctx.user?.tenantId;
-    const existing = await getTicketThread(admin, { ticketId, tenantId });
+    const existing = await getTicketThread(admin, {
+      ticketId,
+      tenantId,
+      includeInternal: ctx.user?.role === 'superadmin',
+    });
     if (!existing) {
       throw ApiErrorFactory.notFound('Support ticket not found');
     }
@@ -116,6 +135,20 @@ export const PATCH = createHttpHandler(
         assignedBy: ctx.user.id,
       });
       await setTicketStatus(admin, { ticketId, status: 'pending' });
+    } else if (parsed.data.action === 'unassign') {
+      if (ctx.user?.role !== 'superadmin') {
+        throw ApiErrorFactory.forbidden('Only superadmins can unassign support tickets');
+      }
+      const { error } = await admin
+        .from('support_tickets')
+        .update({
+          assignee_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', ticketId);
+      if (error) {
+        throw error;
+      }
     } else {
       await setTicketStatus(admin, {
         ticketId,
@@ -123,7 +156,11 @@ export const PATCH = createHttpHandler(
       });
     }
 
-    const thread = await getTicketThread(admin, { ticketId, tenantId });
+    const thread = await getTicketThread(admin, {
+      ticketId,
+      tenantId,
+      includeInternal: ctx.user?.role === 'superadmin',
+    });
     if (!thread) {
       throw ApiErrorFactory.notFound('Support ticket not found');
     }

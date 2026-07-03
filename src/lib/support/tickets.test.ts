@@ -93,6 +93,20 @@ describe('support/tickets', () => {
     );
   });
 
+  it('getTicketThread can exclude internal notes for tenant views', async () => {
+    const { admin, ops } = makeAdmin({
+      support_tickets: [{ id: 'tk1', tenant_id: 't1' }],
+      support_messages: [{ id: 'm1' }],
+      support_assignments: [],
+    });
+
+    await getTicketThread(admin, { ticketId: 'tk1', tenantId: 't1', includeInternal: false });
+
+    expect(ops.find((o) => o.table === 'support_messages' && o.kind === 'select')?.filters).toEqual(
+      expect.arrayContaining([['ticket_id', 'tk1'], ['is_internal', false]])
+    );
+  });
+
   it('setTicketStatus updates the ticket row', async () => {
     const { admin, ops } = makeAdmin();
     await setTicketStatus(admin, { ticketId: 'tk1', status: 'resolved' });

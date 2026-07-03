@@ -72,6 +72,8 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  const [internalNote, setInternalNote] = useState(false);
+  const [queueScope, setQueueScope] = useState<'all' | 'mine' | 'unassigned'>('all');
   const [ticketForm, setTicketForm] = useState({
     subject: '',
     description: '',
@@ -91,7 +93,14 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
     try {
       const endpoint =
         mode === 'superadmin'
-          ? `/api/superadmin/support${activeStatus === 'all' ? '' : `?status=${activeStatus}`}`
+          ? `/api/superadmin/support?${new URLSearchParams(
+              Object.fromEntries(
+                Object.entries({
+                  ...(activeStatus === 'all' ? {} : { status: activeStatus }),
+                  ...(queueScope === 'all' ? {} : { assignee: queueScope }),
+                }).filter(([, value]) => value)
+              )
+            ).toString()}`
           : `/api/support/tickets${activeStatus === 'all' ? '' : `?status=${activeStatus}`}`;
       const response = await authGet<{ tickets: TicketSummary[]; counts?: Record<SupportTicketStatus, number> }>(endpoint);
       if (response.error) throw new Error(response.error.message);
@@ -120,7 +129,7 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
     } finally {
       setLoading(false);
     }
-  }, [activeStatus, mode]);
+  }, [activeStatus, mode, queueScope]);
 
   const loadThread = useCallback(async (ticketId: string) => {
     setDetailLoading(true);
@@ -183,11 +192,12 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
     try {
       const response = await authPost<TicketThreadResponse>(`/api/support/tickets/${activeTicketId}`, {
         body: message.trim(),
-        isInternal: false,
+        isInternal: mode === 'superadmin' ? internalNote : false,
       });
       if (response.error) throw new Error(response.error.message);
       setThread(response.data ?? null);
       setMessage('');
+      setInternalNote(false);
       await refreshTickets();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send support reply');
@@ -228,6 +238,24 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
       await refreshTickets();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to claim support ticket');
+    } finally {
+      setSaving(false);
+    }
+  }, [activeTicketId, refreshTickets]);
+
+  const unassignTicket = useCallback(async () => {
+    if (!activeTicketId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await authPatch<TicketThreadResponse>(`/api/support/tickets/${activeTicketId}`, {
+        action: 'unassign',
+      });
+      if (response.error) throw new Error(response.error.message);
+      setThread(response.data ?? null);
+      await refreshTickets();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to unassign support ticket');
     } finally {
       setSaving(false);
     }
@@ -317,6 +345,19 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
           </Button>
         ))}
       </div>
+      {mode === 'superadmin' ? (
+        <div className="flex gap-2 flex-wrap">
+          <Button variant={queueScope === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setQueueScope('all')}>
+            Whole queue
+          </Button>
+          <Button variant={queueScope === 'mine' ? 'default' : 'outline'} size="sm" onClick={() => setQueueScope('mine')}>
+            My tickets
+          </Button>
+          <Button variant={queueScope === 'unassigned' ? 'default' : 'outline'} size="sm" onClick={() => setQueueScope('unassigned')}>
+            Unassigned
+          </Button>
+        </div>
+      ) : null}
 
       <div className="flex h-[calc(100vh-20rem)] overflow-hidden rounded-2xl border bg-white">
         <div className="w-[360px] border-r bg-slate-50">
@@ -372,13 +413,22 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span>{mode === 'superadmin' ? activeTicket.tenants?.name || activeTicket.tenant_id : `Created ${prettyDate(activeTicket.created_at)}`}</span>
                     <Badge variant={statusTone(activeTicket.status)}>{activeTicket.status}</Badge>
+                    {mode === 'superadmin' ? (
+                      <span>{activeTicket.assignee_id ? `Assigned to ${activeTicket.assignee_id}` : 'Unassigned'}</span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {mode === 'superadmin' && !activeTicket.assignee_id ? (
-                    <Button size="sm" variant="outline" onClick={claimTicket} disabled={saving}>
-                      Claim
-                    </Button>
+                  {mode === 'superadmin' ? (
+                    activeTicket.assignee_id ? (
+                      <Button size="sm" variant="outline" onClick={unassignTicket} disabled={saving}>
+                        Unassign
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={claimTicket} disabled={saving}>
+                        Claim
+                      </Button>
+                    )
                   ) : null}
                   {STATUS_OPTIONS.map((status) => (
                     <Button
@@ -418,15 +468,21 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
                   <div
                     key={item.id}
                     className={`max-w-3xl rounded-2xl px-4 py-3 shadow-sm ${
-                      item.author_role === 'support'
-                        ? 'bg-indigo-600 text-white'
-                        : item.is_internal
-                          ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                      item.is_internal
+                        ? 'border border-amber-200 bg-amber-50 text-amber-900'
+                        : item.author_role === 'support'
+                          ? 'bg-indigo-600 text-white'
                           : 'bg-white text-slate-900'
                     }`}
                   >
                     <div className="mb-1 flex items-center justify-between gap-3 text-xs opacity-80">
-                      <span>{item.author_role === 'support' ? 'Booka Support' : 'Tenant'}</span>
+                      <span>
+                        {item.is_internal
+                          ? 'Internal note'
+                          : item.author_role === 'support'
+                            ? 'Booka Support'
+                            : 'Tenant'}
+                      </span>
                       <span>{prettyDate(item.created_at)}</span>
                     </div>
                     <div className="whitespace-pre-wrap text-sm leading-6">{item.body}</div>
@@ -457,7 +513,13 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
           <div className="border-t bg-white p-4">
             <div className="space-y-3">
               <Textarea
-                placeholder={mode === 'superadmin' ? 'Reply as Booka support' : 'Reply to this support ticket'}
+                placeholder={
+                  mode === 'superadmin'
+                    ? internalNote
+                      ? 'Add an internal note for the support team'
+                      : 'Reply as Booka support'
+                    : 'Reply to this support ticket'
+                }
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
                 disabled={!activeTicketId || saving}
@@ -470,9 +532,22 @@ export default function SupportDesk({ mode, role }: SupportDeskProps) {
                       ? 'You can reply and create tickets. Status changes are also visible to your team.'
                       : 'Use the inbox for tenant-customer support. This desk is only for Booka platform help.'}
                 </div>
-                <Button onClick={sendMessage} disabled={!activeTicketId || !message.trim() || saving}>
-                  {saving ? 'Sending…' : 'Send Reply'}
-                </Button>
+                <div className="flex items-center gap-3">
+                  {mode === 'superadmin' ? (
+                    <label className="flex items-center gap-2 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={internalNote}
+                        onChange={(event) => setInternalNote(event.target.checked)}
+                        disabled={!activeTicketId || saving}
+                      />
+                      Internal note
+                    </label>
+                  ) : null}
+                  <Button onClick={sendMessage} disabled={!activeTicketId || !message.trim() || saving}>
+                    {saving ? 'Sending…' : internalNote ? 'Save Note' : 'Send Reply'}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

@@ -159,7 +159,7 @@ export async function listTickets(
 
 export async function getTicketThread(
   admin: SupabaseClient,
-  input: { ticketId: string; tenantId?: string }
+  input: { ticketId: string; tenantId?: string; includeInternal?: boolean }
 ): Promise<SupportTicketThread | null> {
   let ticketQuery = admin.from('support_tickets').select('*').eq('id', input.ticketId);
   if (input.tenantId) {
@@ -174,8 +174,17 @@ export async function getTicketThread(
     return null;
   }
 
+  let messagesQuery = admin
+    .from('support_messages')
+    .select('*')
+    .eq('ticket_id', input.ticketId);
+
+  if (input.includeInternal === false) {
+    messagesQuery = messagesQuery.eq('is_internal', false);
+  }
+
   const [{ data: messages, error: messagesError }, { data: assignments, error: assignmentsError }] = await Promise.all([
-    admin.from('support_messages').select('*').eq('ticket_id', input.ticketId).order('created_at', { ascending: true }),
+    messagesQuery.order('created_at', { ascending: true }),
     admin.from('support_assignments').select('*').eq('ticket_id', input.ticketId).order('created_at', { ascending: false }),
   ]);
 

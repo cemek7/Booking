@@ -7,7 +7,9 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
     const status = url.searchParams.get('status');
+    const assignee = url.searchParams.get('assignee');
     const admin = createSupabaseAdminClient();
+    const currentUserId = ctx.user?.id ?? null;
 
     let query = admin
       .from('support_tickets')
@@ -16,6 +18,12 @@ export const GET = createHttpHandler(
 
     if (status === 'open' || status === 'pending' || status === 'resolved' || status === 'closed') {
       query = query.eq('status', status);
+    }
+
+    if (assignee === 'mine' && currentUserId) {
+      query = query.eq('assignee_id', currentUserId);
+    } else if (assignee === 'unassigned') {
+      query = query.is('assignee_id', null);
     }
 
     const [{ data: tickets, error }, { data: allTickets, error: allError }] = await Promise.all([

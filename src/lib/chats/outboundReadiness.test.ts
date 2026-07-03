@@ -5,7 +5,7 @@ import {
   isWindowOpen,
 } from '@/lib/chats/outboundReadiness';
 
-const hasMessagingConsent = jest.fn();
+const hasMessagingConsent = jest.fn<(...args: unknown[]) => Promise<boolean>>();
 
 jest.mock('@/lib/optin/messagingConsent', () => ({
   hasMessagingConsent: (...args: unknown[]) => hasMessagingConsent(...args),
