@@ -368,7 +368,7 @@ const ALWAYS_REQUIRED: Array<[string, string]> = [
 // Required in production; warn-only in development/staging
 const PROD_REQUIRED: Array<[string, string]> = [
   ['PAYSTACK_SECRET_KEY', 'Paystack secret key (payments)'],
-  ['SENDGRID_API_KEY',    'SendGrid API key (email)'],
+  ['RESEND_API_KEY',      'Resend API key (email)'],
 ];
 
 function hasWhatsappProviderConfig(): boolean {

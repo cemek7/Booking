@@ -1,16 +1,16 @@
 /**
- * Email Service - SendGrid Integration
- * 
- * Handles sending transactional emails via SendGrid
- * Includes pre-built templates for common use cases
+ * Email Service - Resend transport
+ *
+ * Centralized mail sending for Booka. Keeps the public surface stable while
+ * allowing sender identities and provider choices to evolve through config.
  */
 
 import { defaultLogger } from '@/lib/logger';
-import sgMail from '@sendgrid/mail';
 import { generateCalendarLinks, type BookingEvent } from './universalCalendar';
 import { makeUnsubscribeToken } from '@/lib/email/unsubscribe';
 import { isUnsubscribed } from '@/lib/email/preferences';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { resolveSenderAddress, type EmailSenderKey } from '@/lib/email/senders';
 
 /** Secret for signing unsubscribe tokens (mirrors /api/email/unsubscribe). */
 function unsubscribeSecret(): string {
@@ -32,43 +32,82 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#039;');
 }
 
-interface EmailOptions {
+export interface EmailOptions {
   to: string | string[];
   subject: string;
   html: string;
   text?: string;
   replyTo?: string;
   from?: string;
+  senderKey?: EmailSenderKey;
   /** Marketing (non-transactional) mail — suppressed if the recipient opted out. */
   marketing?: boolean;
   /** Enables a one-click List-Unsubscribe header; also drives marketing suppression. */
   unsubscribe?: { tenantId: string; recipient: string; list: string };
 }
 
-/**
- * Initialize SendGrid client
- */
-const initSendGrid = () => {
-  if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  }
+type EmailSendResult = {
+  success: boolean;
+  error?: string;
+  messageId?: string;
+  suppressed?: boolean;
 };
 
+function getResendApiKey(): string | undefined {
+  return process.env.RESEND_API_KEY || process.env.EMAIL_SERVICE_API_KEY || undefined;
+}
+
+function getEmailBaseUrl(): string {
+  return process.env.APP_URL || process.env.NEXT_PUBLIC_BASE_URL || '';
+}
+
+type ResendPayload = {
+  from: string;
+  to: string[];
+  subject: string;
+  html: string;
+  text?: string;
+  reply_to?: string;
+  headers?: Record<string, string>;
+};
+
+async function sendViaResend(payload: ResendPayload): Promise<{ id?: string }> {
+  const apiKey = getResendApiKey();
+  if (!apiKey) {
+    defaultLogger.warn('⚠️ RESEND_API_KEY not configured');
+    return { id: undefined };
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Resend API error (${response.status}): ${text || response.statusText}`);
+  }
+
+  return (await response.json()) as { id?: string };
+}
+
 /**
- * Send email via SendGrid
+ * Send email via Resend
  */
-export async function sendEmail(options: EmailOptions): Promise<any> {
+export async function sendEmail(options: EmailOptions): Promise<EmailSendResult> {
   try {
-    if (!process.env.SENDGRID_API_KEY) {
-      defaultLogger.warn('⚠️ SENDGRID_API_KEY not configured');
-      return { success: false, error: 'SendGrid not configured' };
+    const apiKey = getResendApiKey();
+    if (!apiKey) {
+      return { success: false, error: 'Resend not configured' };
     }
 
-    initSendGrid();
-
-    const fromEmail = options.from || process.env.SENDGRID_FROM_EMAIL;
+    const fromEmail = options.from || resolveSenderAddress(options.senderKey || 'default');
     if (!fromEmail) {
-      defaultLogger.warn('⚠️ No from address: set SENDGRID_FROM_EMAIL or pass options.from');
+      defaultLogger.warn('⚠️ No from address: set EMAIL_DEFAULT_FROM/RESEND_FROM_EMAIL or pass options.from');
       return { success: false, error: 'missing_from_address' };
     }
 
@@ -92,7 +131,7 @@ export async function sendEmail(options: EmailOptions): Promise<any> {
       const secret = unsubscribeSecret();
       if (secret) {
         const token = makeUnsubscribeToken(options.unsubscribe, secret);
-        const base = process.env.APP_URL || process.env.NEXT_PUBLIC_BASE_URL || '';
+        const base = getEmailBaseUrl();
         const url = `${base}/api/email/unsubscribe?token=${encodeURIComponent(token)}`;
         headers = {
           'List-Unsubscribe': `<${url}>`,
@@ -101,39 +140,59 @@ export async function sendEmail(options: EmailOptions): Promise<any> {
       }
     }
 
-    const message = {
-      to: options.to,
+    const message: ResendPayload = {
+      to: Array.isArray(options.to) ? options.to : [options.to],
       from: fromEmail,
       subject: options.subject,
       html: options.html,
       text: options.text,
-      replyTo: options.replyTo,
+      reply_to: options.replyTo,
       ...(headers ? { headers } : {}),
     };
 
-    // Wrap SendGrid call with a timeout to prevent hanging the booking flow
-    const SENDGRID_TIMEOUT_MS = 10_000;
+    // Wrap provider call with a timeout to prevent hanging the booking flow
+    const EMAIL_TIMEOUT_MS = 10_000;
     const response = await Promise.race([
-      sgMail.send(message),
+      sendViaResend(message),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('SendGrid request timed out')), SENDGRID_TIMEOUT_MS)
+        setTimeout(() => reject(new Error('Resend request timed out')), EMAIL_TIMEOUT_MS)
       ),
     ]);
     const recipient = Array.isArray(options.to) ? `${options.to.length} recipients` : options.to.replace(/(.{2}).*@/, '$1***@');
     defaultLogger.info(`Email sent: ${options.subject} to ${recipient}`);
-    return { success: true, messageId: response[0].headers['x-message-id'] };
+    return { success: true, messageId: response.id };
   } catch (error) {
     defaultLogger.error('❌ Error sending email:', error);
     throw error;
   }
 }
 
+export async function sendTransactionalEmail(options: EmailOptions): Promise<EmailSendResult> {
+  return sendEmail({ ...options, marketing: false });
+}
+
+export async function sendMarketingEmail(options: EmailOptions): Promise<EmailSendResult> {
+  return sendEmail({
+    ...options,
+    marketing: true,
+    senderKey: options.senderKey || 'newsletter',
+  });
+}
+
+export async function sendSupportEmail(options: EmailOptions): Promise<EmailSendResult> {
+  return sendTransactionalEmail({
+    ...options,
+    senderKey: options.senderKey || 'support',
+  });
+}
+
 /**
  * Send welcome email
  */
 export async function sendWelcomeEmail(email: string, name: string) {
-  return sendEmail({
+  return sendTransactionalEmail({
     to: email,
+    senderKey: 'default',
     subject: 'Welcome to Boka!',
     html: `
       <h1>Welcome, ${name}!</h1>
@@ -181,8 +240,9 @@ export async function sendBookingConfirmation(
     }
   }
 
-  return sendEmail({
+  return sendTransactionalEmail({
     to: email,
+    senderKey: 'bookings',
     subject: 'Booking Confirmation - Boka',
     html: `
       <h2>Booking Confirmed!</h2>
@@ -216,8 +276,9 @@ export async function sendBookingReminder(
     time: string;
   }
 ) {
-  return sendEmail({
+  return sendTransactionalEmail({
     to: email,
+    senderKey: 'bookings',
     subject: `Reminder: Your booking in ${hoursUntilBooking} hours - Boka`,
     html: `
       <h2>Booking Reminder</h2>
@@ -248,8 +309,9 @@ export async function sendCancellationEmail(
     time: string;
   }
 ) {
-  return sendEmail({
+  return sendTransactionalEmail({
     to: email,
+    senderKey: 'bookings',
     subject: 'Booking Cancelled - Boka',
     html: `
       <h2>Booking Cancelled</h2>
@@ -281,8 +343,9 @@ export async function sendStaffAssignmentEmail(
     notes?: string;
   }
 ) {
-  return sendEmail({
+  return sendTransactionalEmail({
     to: email,
+    senderKey: 'bookings',
     subject: `New Booking Assignment - ${escapeHtml(bookingDetails.serviceName)}`,
     html: `
       <h2>You've been assigned a new booking</h2>
@@ -320,8 +383,9 @@ export async function sendInvoiceEmail(
     .map((item) => `<tr><td>${escapeHtml(item.description)}</td><td>$${item.amount.toFixed(2)}</td></tr>`)
     .join('');
 
-  return sendEmail({
+  return sendTransactionalEmail({
     to: email,
+    senderKey: 'billing',
     subject: `Invoice #${escapeHtml(invoiceDetails.invoiceNumber)} - Boka`,
     html: `
       <h2>Invoice</h2>
@@ -346,6 +410,31 @@ export async function sendInvoiceEmail(
       </table>
       
       <p>Thank you for your business!</p>
+    `,
+  });
+}
+
+export async function sendTenantInviteEmail(input: {
+  to: string;
+  inviteUrl: string;
+  invitedRole: string;
+  inviterEmail?: string | null;
+  tenantName?: string | null;
+}) {
+  const tenantName = input.tenantName?.trim() || 'Booka';
+  const inviter = input.inviterEmail?.trim();
+  return sendSupportEmail({
+    to: input.to,
+    senderKey: 'support',
+    replyTo: resolveSenderAddress('support'),
+    subject: `You're invited to join ${tenantName} on Booka`,
+    html: `
+      <h2>You're invited to join ${escapeHtml(tenantName)}</h2>
+      <p>You have been invited to join <strong>${escapeHtml(tenantName)}</strong> on Booka as <strong>${escapeHtml(input.invitedRole)}</strong>.</p>
+      ${inviter ? `<p>Invited by: ${escapeHtml(inviter)}</p>` : ''}
+      <p><a href="${escapeHtml(input.inviteUrl)}" style="display:inline-block;padding:10px 16px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;">Accept invite</a></p>
+      <p>If the button does not work, use this link:</p>
+      <p><a href="${escapeHtml(input.inviteUrl)}">${escapeHtml(input.inviteUrl)}</a></p>
     `,
   });
 }

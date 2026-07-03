@@ -263,7 +263,7 @@ export class AlertService {
   }
 
   /**
-   * Send alert via email using SendGrid
+   * Send alert via email using the configured mail transport
    */
   private async sendToEmail(alert: any): Promise<void> {
     if (this.config.emailRecipients.length === 0) {

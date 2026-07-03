@@ -2,6 +2,8 @@ export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { defaultLogger } from '@/lib/logger';
+import { sendTenantInviteEmail } from '@/lib/integrations/email-service';
 
 const InviteBodySchema = z.object({
   email: z.string().email().transform(val => val.trim().toLowerCase()),
@@ -83,7 +85,23 @@ export const POST = createHttpHandler(
     }
 
     const inviteUrl = `/accept-invite?token=${encodeURIComponent(tokenValue)}`;
-    return { ok: true, token: tokenValue, url: inviteUrl };
+    const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_BASE_URL || '';
+    const absoluteInviteUrl = baseUrl ? new URL(inviteUrl, baseUrl).toString() : inviteUrl;
+
+    void sendTenantInviteEmail({
+      to: email,
+      inviteUrl: absoluteInviteUrl,
+      invitedRole,
+      inviterEmail: ctx.user?.email ?? null,
+    }).catch((error) => {
+      defaultLogger.warn('[tenant invites] failed to send invite email', {
+        tenantId,
+        email,
+        error: String(error),
+      });
+    });
+
+    return { ok: true, token: tokenValue, url: inviteUrl, email_sent: true };
   },
   'POST',
   { auth: true, roles: ['owner', 'manager'] }

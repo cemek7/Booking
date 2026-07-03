@@ -1,9 +1,7 @@
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const send = jest.fn<() => Promise<unknown>>(() =>
-  Promise.resolve([{ statusCode: 202, headers: { 'x-message-id': 'id' } }]),
-);
-jest.mock('@sendgrid/mail', () => ({ __esModule: true, default: { setApiKey: jest.fn(), send } }));
+const fetchMock = jest.fn<typeof fetch>();
+global.fetch = fetchMock as typeof fetch;
 
 const isUnsubscribed = jest.fn<() => Promise<boolean>>();
 jest.mock('@/lib/email/preferences', () => ({
@@ -18,10 +16,15 @@ const unsub = { tenantId: 't1', recipient: 'ada@example.com', list: 'marketing' 
 describe('sendEmail — unsubscribe + suppression', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.SENDGRID_API_KEY = 'k';
-    process.env.SENDGRID_FROM_EMAIL = 'noreply@boka.com';
+    process.env.RESEND_API_KEY = 're_test';
+    process.env.EMAIL_DEFAULT_FROM = 'noreply@mail.techclave.cloud';
     process.env.EMAIL_UNSUBSCRIBE_SECRET = 'secret';
     process.env.APP_URL = 'https://app.test';
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'email_123' }),
+      text: async () => '',
+    } as Response);
   });
 
   it('suppresses marketing email to an unsubscribed recipient (no send)', async () => {
@@ -34,21 +37,21 @@ describe('sendEmail — unsubscribe + suppression', () => {
       unsubscribe: unsub,
     })) as { suppressed?: boolean };
     expect(res.suppressed).toBe(true);
-    expect(send).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('adds RFC 8058 List-Unsubscribe headers when unsubscribe context is provided', async () => {
     isUnsubscribed.mockResolvedValue(false);
     await sendEmail({ to: unsub.recipient, subject: 's', html: 'h', unsubscribe: unsub });
-    expect(send).toHaveBeenCalledTimes(1);
-    const msg = send.mock.calls[0][0] as { headers?: Record<string, string> };
-    expect(msg.headers?.['List-Unsubscribe']).toMatch(/\/api\/email\/unsubscribe\?token=/);
-    expect(msg.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { headers?: Record<string, string> };
+    expect(payload.headers?.['List-Unsubscribe']).toMatch(/\/api\/email\/unsubscribe\?token=/);
+    expect(payload.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
   });
 
   it('does not suppress transactional email even if unsubscribed', async () => {
     isUnsubscribed.mockResolvedValue(true);
     await sendEmail({ to: unsub.recipient, subject: 's', html: 'h', unsubscribe: unsub });
-    expect(send).toHaveBeenCalledTimes(1); // marketing flag absent → still sends
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
