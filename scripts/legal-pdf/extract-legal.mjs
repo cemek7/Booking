@@ -4,7 +4,10 @@ const ROOT = '/home/ccemeka/Techclave/Booking/Booking';
 // --- parse LEGAL constants ---
 const csrc = fs.readFileSync(`${ROOT}/src/lib/legal/constants.ts`, 'utf8');
 const LEGAL = {};
-for (const m of csrc.matchAll(/(\w+):\s*'([^']*)'/g)) LEGAL[m[1]] = m[2];
+// Capture single or concatenated ('a' + 'b' + 'c') string values.
+for (const m of csrc.matchAll(/(\w+):\s*((?:'[^']*'\s*\+?\s*)+),/g)) {
+  LEGAL[m[1]] = [...m[2].matchAll(/'([^']*)'/g)].map((x) => x[1]).join('');
+}
 // sub-processors
 const SUBS = [];
 const subBlock = csrc.slice(csrc.indexOf('SUB_PROCESSORS'));

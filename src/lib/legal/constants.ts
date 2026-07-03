@@ -12,8 +12,17 @@ export const LEGAL = {
   privacyEmail: 'privacy@boka.app',
   legalEmail: 'legal@boka.app',
   supportEmail: 'support@boka.app',
+  /**
+   * Single-source product positioning, referenced across the legal pages.
+   * Boka is an AI front desk: it runs customer conversations for service
+   * businesses and also enables selling services/products and taking bookings.
+   */
+  descriptor:
+    'an AI front desk for service businesses. Over WhatsApp and Instagram, Boka runs customer ' +
+    'conversations — answering questions, qualifying and capturing leads, recommending and selling ' +
+    'services and products, and booking appointments',
   /** Single source of truth for the "last updated" date across all pages. */
-  lastUpdated: '2026-06-15',
+  lastUpdated: '2026-07-03',
 } as const;
 
 /** Third parties that may process personal data on Boka's behalf. */

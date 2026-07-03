@@ -24,8 +24,9 @@ export default function DataRetentionPage() {
         <ul>
           <li><strong>Account data</strong> (tenant + staff): for the life of the account, deleted on closure subject to legal holds.</li>
           <li><strong>Bookings &amp; customer contact</strong>: retained while the relationship is active; anonymized on an erasure request (personal fields stripped, the booking record kept).</li>
-          <li><strong>Messages</strong> (WhatsApp/Instagram): retained to provide the service; deleted on erasure request.</li>
-          <li><strong>Transaction records</strong>: retained for accounting/tax obligations (typically up to the period required by local law) with embedded personal data minimized.</li>
+          <li><strong>Messages</strong> (WhatsApp/Instagram): retained to run the AI front desk; deleted on erasure request.</li>
+          <li><strong>Sales &amp; lead data</strong>: retained while the lead is active or being followed up; deleted or anonymized on an erasure request.</li>
+          <li><strong>Order &amp; transaction records</strong>: retained for accounting/tax obligations (typically up to the period required by local law) with embedded personal data minimized.</li>
           <li><strong>Analytics &amp; logs</strong>: retained for a limited window for security and product improvement, then aggregated or purged.</li>
         </ul>
       </LegalSection>

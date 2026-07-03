@@ -26,17 +26,18 @@ export default function TermsPage() {
           <li><strong>Account &amp; eligibility:</strong> you must provide accurate details and be authorized to bind your business.</li>
           <li><strong>Subscription &amp; billing:</strong> fees, billing cycle, and renewal are shown at purchase. Subscriptions auto-renew until cancelled; you can cancel self-serve at any time and retain access until the end of the paid period.</li>
           <li><strong>AI credits:</strong> AI usage is paid from a prepaid credit wallet. Credits are <strong>prepaid, non-refundable for cash</strong>, usable only for {LEGAL.product} AI usage, and expire per the rules shown in your billing settings.</li>
-          <li><strong>Your responsibilities:</strong> you are the merchant of record for payments your customers make through {LEGAL.product}. You are responsible for delivering services, honoring your own cancellation/refund terms, handling customer disputes and chargebacks, and collecting/remitting applicable taxes. {LEGAL.product} only facilitates the payment to your account.</li>
+          <li><strong>Selling services &amp; products:</strong> you may sell your own services and products through {LEGAL.product}. You set and are responsible for prices, descriptions, availability/stock, and the accuracy of your listings.</li>
+          <li><strong>Your responsibilities (merchant of record):</strong> you are the merchant of record for all payments your customers make through {LEGAL.product} — bookings and product purchases. You are responsible for delivering services, fulfilling and shipping product orders, honoring your own cancellation/refund/return terms, product quality and any warranties, complying with consumer-protection law (including distance-selling / right-to-return rules where they apply), handling customer disputes and chargebacks, and collecting/remitting applicable taxes. {LEGAL.product} only facilitates the payment to your account.</li>
           <li><strong>Data:</strong> you are the data controller for your customers&apos; data; {LEGAL.product} processes it under our <Link href="/dpa">DPA</Link>.</li>
           <li><strong>Acceptable use:</strong> you must follow our <Link href="/acceptable-use">Acceptable Use Policy</Link>, including messaging-consent and anti-spam rules.</li>
           <li><strong>Termination:</strong> either party may terminate per these Terms; we may suspend for non-payment or policy violations.</li>
         </ul>
       </LegalSection>
 
-      <LegalSection heading="Part B — Customer booking terms" id="customer">
+      <LegalSection heading="Part B — Customer terms (bookings & purchases)" id="customer">
         <ul>
-          <li><strong>Bookings:</strong> when you book through {LEGAL.product}, your contract for the service is with the <strong>business you are booking</strong>, not with {LEGAL.product}. {LEGAL.product} provides the booking and messaging technology.</li>
-          <li><strong>Payments &amp; deposits:</strong> any deposit or payment is collected on behalf of the business through our payment processors. <strong>Refunds and cancellations are handled by the business</strong> per its policy. See <Link href="/refunds">Refunds &amp; Cancellations</Link>.</li>
+          <li><strong>Bookings &amp; purchases:</strong> when you book or buy through {LEGAL.product}, your contract for that service, appointment, or product is with the <strong>business you are dealing with</strong>, not with {LEGAL.product}. {LEGAL.product} provides the AI front-desk technology (conversations, sales, and booking).</li>
+          <li><strong>Payments:</strong> any deposit, booking fee, or product payment is collected on behalf of the business through our payment processors. <strong>Refunds, cancellations, and product returns are handled by the business</strong> per its policy. See <Link href="/refunds">Refunds &amp; Cancellations</Link>.</li>
           <li><strong>Automated messaging:</strong> you may interact with an automated AI assistant and can ask to reach a human. Standard messaging rates may apply.</li>
           <li><strong>Your content:</strong> reviews and messages you submit are subject to our <Link href="/ugc-policy">UGC Policy</Link>.</li>
         </ul>

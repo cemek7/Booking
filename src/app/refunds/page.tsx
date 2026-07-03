@@ -22,6 +22,17 @@ export default function RefundsPage() {
         </p>
       </LegalSection>
 
+      <LegalSection heading="Products purchased from a business">
+        <p>
+          When you buy a product through {LEGAL.product}, your purchase is from the <strong>business you
+          bought from</strong>, which is the merchant of record. <strong>Returns, exchanges, and refunds
+          for products are governed by that business&apos;s own returns policy</strong> and by any consumer
+          rights you have under local law (for example, distance-selling / right-to-return rules).
+          {LEGAL.product} facilitates the payment but does not set or fund product refunds. Contact the
+          business directly; we can help route your request.
+        </p>
+      </LegalSection>
+
       <LegalSection heading="Business (tenant) subscriptions">
         <p>
           Subscription fees for {LEGAL.product} are billed per the cycle shown at purchase. You can cancel

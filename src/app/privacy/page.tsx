@@ -14,15 +14,16 @@ export default function PrivacyPage() {
     <LegalDocument title="Privacy Policy" lastUpdated={LEGAL.lastUpdated}>
       <LegalSection heading="Who we are">
         <p>
-          {LEGAL.product} is a multi-tenant booking platform operated by {LEGAL.company} ({LEGAL.entity}).
+          {LEGAL.product} is {LEGAL.descriptor}, operated by {LEGAL.company} ({LEGAL.entity}).
           This policy explains how we handle personal data. We aim to comply with the EU/UK GDPR and
           the Nigeria Data Protection Act (NDPA). Contact us at{' '}
           <a href={`mailto:${LEGAL.privacyEmail}`}>{LEGAL.privacyEmail}</a>.
         </p>
         <p>
           {LEGAL.product} serves two groups: <strong>business customers ("tenants")</strong> who use the
-          platform to run bookings, and the tenants&apos; <strong>end-customers</strong> who book and message
-          them. For an end-customer&apos;s booking data, the tenant is the data controller and {LEGAL.product}{' '}
+          platform to run conversations, sell services and products, and take bookings, and the tenants&apos;{' '}
+          <strong>end-customers</strong> who message, buy from, and book them. For an end-customer&apos;s data
+          (conversations, orders, bookings), the tenant is the data controller and {LEGAL.product}{' '}
           acts as a processor under our <Link href="/dpa">Data Processing Agreement</Link>.
         </p>
       </LegalSection>
@@ -31,7 +32,9 @@ export default function PrivacyPage() {
         <ul>
           <li><strong>Account data:</strong> name, email, phone, business details, role.</li>
           <li><strong>Booking data:</strong> appointments, services, staff assignments, customer contact details.</li>
-          <li><strong>Messages:</strong> WhatsApp/Instagram conversations processed to provide the AI front desk.</li>
+          <li><strong>Sales &amp; lead data:</strong> inquiries, product/service interest, lead status and follow-ups.</li>
+          <li><strong>Order data:</strong> products purchased, quantities, amounts, and fulfilment details.</li>
+          <li><strong>Messages:</strong> WhatsApp/Instagram conversations processed to run the AI front desk (answering, recommending, selling, booking).</li>
           <li><strong>Payment data:</strong> handled by our payment processors; we do not store full card numbers.</li>
           <li><strong>Usage &amp; device data:</strong> analytics events and error logs (analytics only with your consent).</li>
         </ul>
@@ -39,9 +42,9 @@ export default function PrivacyPage() {
 
       <LegalSection heading="How we use data and our legal bases">
         <ul>
-          <li>To provide the service and process bookings — performance of a contract.</li>
-          <li>To operate AI messaging and reminders — legitimate interests / contract.</li>
-          <li>To process payments — contract and legal obligation.</li>
+          <li>To provide the service, process bookings, and fulfil product orders — performance of a contract.</li>
+          <li>To operate AI messaging, sales conversations, lead capture, and reminders — legitimate interests / contract.</li>
+          <li>To process payments for bookings and product purchases — contract and legal obligation.</li>
           <li>Product analytics and session replay — only with your <Link href="/cookies">consent</Link>.</li>
           <li>Security, fraud prevention, and error monitoring — legitimate interests.</li>
         </ul>
@@ -49,10 +52,11 @@ export default function PrivacyPage() {
 
       <LegalSection heading="AI processing">
         <p>
-          {LEGAL.product} uses automated AI to read and respond to customer messages. Customers are told
-          they are speaking with an automated assistant and can reach a human. We do not use messages to
-          make solely-automated decisions with legal or similarly significant effects without a human in
-          the loop, and we do not send special-category (e.g. health) data to AI providers.
+          {LEGAL.product} uses automated AI to read and respond to customer messages — answering questions,
+          recommending and selling services and products, capturing leads, and booking appointments.
+          Customers are told they are speaking with an automated assistant and can reach a human. We do
+          not use messages to make solely-automated decisions with legal or similarly significant effects
+          without a human in the loop, and we do not send special-category (e.g. health) data to AI providers.
         </p>
       </LegalSection>
 

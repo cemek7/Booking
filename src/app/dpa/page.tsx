@@ -22,10 +22,10 @@ export default function DpaPage() {
 
       <LegalSection heading="Scope of processing">
         <ul>
-          <li><strong>Subject matter:</strong> providing the {LEGAL.product} booking and messaging service.</li>
+          <li><strong>Subject matter:</strong> providing the {LEGAL.product} AI front-desk service — customer conversations, sales and lead capture, product orders, and bookings.</li>
           <li><strong>Duration:</strong> for the term of the tenant&apos;s subscription.</li>
           <li><strong>Data subjects:</strong> the tenant&apos;s customers and staff.</li>
-          <li><strong>Data types:</strong> contact details, bookings, message content, and related metadata. Tenants must not submit special-category data (e.g. health) unless separately agreed in writing.</li>
+          <li><strong>Data types:</strong> contact details, conversation/message content, sales and lead data, product orders and purchase history, bookings, and related metadata. Tenants must not submit special-category data (e.g. health) unless separately agreed in writing.</li>
         </ul>
       </LegalSection>
 
