@@ -40,4 +40,22 @@ describe('ChatComposer', () => {
 
     await waitFor(() => expect(onRelease).toHaveBeenCalled());
   });
+
+  it('shows outbound readiness guidance and blocks send when outbound is not allowed', async () => {
+    render(
+      <ChatComposer
+        chatId="chat-1"
+        onSend={onSend}
+        outboundReadiness={{
+          allowed: false,
+          mode: 'blocked_consent_required',
+          reason: 'WhatsApp follow-up outside the reply window requires explicit messaging consent.',
+        }}
+      />
+    );
+
+    expect(screen.getByText(/requires explicit messaging consent/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Message composer'), { target: { value: 'Hello there' } });
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
 });

@@ -8,6 +8,11 @@ interface ChatComposerProps {
   disabled?: boolean;
   channel?: 'whatsapp' | 'instagram';
   humanHandling?: boolean;
+  outboundReadiness?: {
+    allowed: boolean;
+    mode: 'reply_window' | 'consented_followup' | 'blocked_instagram_window' | 'blocked_consent_required';
+    reason: string;
+  } | null;
 }
 
 export function ChatComposer({
@@ -17,6 +22,7 @@ export function ChatComposer({
   disabled,
   channel = 'whatsapp',
   humanHandling = false,
+  outboundReadiness = null,
 }: ChatComposerProps) {
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
@@ -64,12 +70,23 @@ export function ChatComposer({
         placeholder={channel === 'instagram' ? 'Reply on Instagram...' : 'Type a message...'}
         value={value}
         onChange={e=>{ setValue(e.target.value); if (error) setError(null); }}
-        disabled={disabled || sending}
+        disabled={disabled || sending || outboundReadiness?.allowed === false}
         aria-label="Message composer"
       />
       {channel === 'instagram' ? (
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
           Instagram replies only work within 24 hours of the customer&apos;s last DM. Use WhatsApp for proactive follow-up.
+        </div>
+      ) : null}
+      {outboundReadiness ? (
+        <div
+          className={`rounded border px-3 py-2 text-[11px] ${
+            outboundReadiness.allowed
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-amber-200 bg-amber-50 text-amber-800'
+          }`}
+        >
+          {outboundReadiness.reason}
         </div>
       ) : null}
       {error ? (
@@ -91,9 +108,9 @@ export function ChatComposer({
           ) : null}
           <button
             onClick={handleSend}
-            disabled={disabled || sending || value.trim().length===0}
+            disabled={disabled || sending || value.trim().length===0 || outboundReadiness?.allowed === false}
             className="px-4 py-1.5 rounded bg-indigo-600 text-white text-sm disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            aria-disabled={disabled || sending}
+            aria-disabled={disabled || sending || outboundReadiness?.allowed === false}
           >{sending ? 'Sending…' : 'Send'}</button>
         </div>
       </div>

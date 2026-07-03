@@ -7,22 +7,11 @@ import { trace } from '@opentelemetry/api';
 import { defaultLogger } from '@/lib/logger';
 import { getTenantChannelProviderClient } from '@/lib/whatsapp/providers/providerSelection';
 import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
+import { computeOutboundReadiness } from '@/lib/chats/outboundReadiness';
 
 const PostMessageBodySchema = z.object({
   text: z.string().trim().min(1, 'Message text cannot be empty'),
 });
-
-function instagramReplyWindowMs(): number {
-  const hours = Number(process.env.META_SERVICE_WINDOW_HOURS ?? 24);
-  return (Number.isFinite(hours) ? hours : 24) * 60 * 60 * 1000;
-}
-
-function isInstagramReplyWindowOpen(lastInboundAt: string | null): boolean {
-  if (!lastInboundAt) return false;
-  const timestamp = Date.parse(lastInboundAt);
-  if (!Number.isFinite(timestamp)) return false;
-  return Date.now() - timestamp < instagramReplyWindowMs();
-}
 
 /**
  * POST /api/chats/{id}/messages
@@ -68,25 +57,18 @@ export const POST = createHttpHandler(
       }
       span.setAttribute('auth.authorized', true);
 
-      if (channel === 'instagram') {
-        const { data: conv, error: convError } = await ctx.supabase
-          .from('whatsapp_conversations')
-          .select('last_inbound_at')
-          .eq('tenant_id', chat.tenant_id)
-          .eq('channel', 'instagram')
-          .eq('external_id', chat.customer_phone)
-          .maybeSingle();
+      if (!chat.customer_phone) {
+        throw ApiErrorFactory.validationError({ customer_phone: 'Chat recipient is missing' });
+      }
 
-        if (convError) {
-          span.recordException(convError);
-          throw ApiErrorFactory.databaseError(convError);
-        }
+      const readiness = await computeOutboundReadiness(ctx.supabase as never, {
+        tenantId: chat.tenant_id,
+        externalId: chat.customer_phone,
+        channel,
+      });
 
-        if (!isInstagramReplyWindowOpen(typeof conv?.last_inbound_at === 'string' ? conv.last_inbound_at : null)) {
-          throw ApiErrorFactory.accountLocked(
-            'Instagram replies are only allowed within 24 hours of the customer’s last message. Continue on WhatsApp for follow-up.'
-          );
-        }
+      if (!readiness.allowed) {
+        throw ApiErrorFactory.accountLocked(readiness.reason);
       }
 
       // Insert the outbound message
@@ -124,7 +106,7 @@ export const POST = createHttpHandler(
       (async () => {
         try {
           const client = await getTenantChannelProviderClient(chat.tenant_id, channel);
-          const number = chat?.customer_phone;
+          const number = chat.customer_phone;
 
           if (client && number) {
             await client.sendTextMessage(number, text);

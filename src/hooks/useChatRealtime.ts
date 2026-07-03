@@ -12,6 +12,16 @@ export type ChatSummary = {
   unread?: number;
   humanHandlingUntil?: string | null;
 };
+export type OutboundReadinessSummary = {
+  allowed: boolean;
+  mode:
+    | 'reply_window'
+    | 'consented_followup'
+    | 'blocked_instagram_window'
+    | 'blocked_consent_required';
+  reason: string;
+  lastInboundAt: string | null;
+};
 export type ChatMessage = { id: string; chatId: string; author: string; content: string; role: 'user'|'assistant'; createdAt: string };
 
 // Database row types for type safety
@@ -44,6 +54,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [outboundReadiness, setOutboundReadiness] = useState<OutboundReadinessSummary | null>(null);
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
   const msgChannel = useRef<RealtimeChannel | null>(null);
   const chatChannel = useRef<RealtimeChannel | null>(null);
@@ -119,6 +130,26 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     setMessages(mapped);
   }, [supabase]);
 
+  const loadOutboundReadiness = useCallback(async (chatId: string | null) => {
+    if (!chatId) {
+      setOutboundReadiness(null);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/chats/${encodeURIComponent(chatId)}/outbound-readiness`);
+      if (!response.ok) {
+        setOutboundReadiness(null);
+        return;
+      }
+
+      const payload = (await response.json()) as { readiness?: OutboundReadinessSummary };
+      setOutboundReadiness(payload.readiness ?? null);
+    } catch {
+      setOutboundReadiness(null);
+    }
+  }, []);
+
   // Subscribe to chats list
   useEffect(() => {
     chatChannel.current?.unsubscribe();
@@ -185,8 +216,9 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       .subscribe();
     msgChannel.current = ch;
     loadMessages(activeId);
+    void loadOutboundReadiness(activeId);
     return () => { ch.unsubscribe(); };
-  }, [supabase, activeId, loadMessages]);
+  }, [supabase, activeId, loadMessages, loadOutboundReadiness]);
 
   const send = useCallback(async (text: string) => {
     if (!activeId) return;
@@ -198,6 +230,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       throw new Error(payload?.message || payload?.error || 'Failed to send message');
     }
     await loadChats();
+    await loadOutboundReadiness(activeId);
   }, [activeId, loadChats]);
 
   const release = useCallback(async () => {
@@ -223,7 +256,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const chatsWithUnread = useMemo(() => chats.map(c => ({ ...c, unread: unreadMap[c.id] ?? c.unread ?? 0 })), [chats, unreadMap]);
 
   return useMemo(
-    () => ({ loading, chats: chatsWithUnread, activeId, setActiveId, messages, send, release, reloadChats: loadChats }),
-    [loading, chatsWithUnread, activeId, messages, send, release, loadChats]
+    () => ({ loading, chats: chatsWithUnread, activeId, setActiveId, messages, send, release, reloadChats: loadChats, outboundReadiness }),
+    [loading, chatsWithUnread, activeId, messages, send, release, loadChats, outboundReadiness]
   );
 }

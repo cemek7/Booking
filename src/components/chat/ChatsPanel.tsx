@@ -9,7 +9,7 @@ import EscalationBanner from './EscalationBanner';
 
 export default function ChatsPanel() {
   const { tenant } = useTenant();
-  const { chats, activeId, setActiveId, messages, send, release, loading, reloadChats } = useChatRealtime(tenant?.id);
+  const { chats, activeId, setActiveId, messages, send, release, loading, reloadChats, outboundReadiness } = useChatRealtime(tenant?.id);
   const [query, setQuery] = useState('');
   const activeChat = useMemo(() => chats.find((c) => c.id === activeId) ?? null, [chats, activeId]);
 
@@ -130,6 +130,7 @@ export default function ChatsPanel() {
               disabled={!activeId}
               channel={activeChat?.channel}
               humanHandling={isHumanHandling}
+              outboundReadiness={outboundReadiness}
             />
           </div>
         </div>
