@@ -2,6 +2,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import { useChatRealtime } from '@/hooks/useChatRealtime';
+import type { ChatSupportStatus } from '@/lib/chats/operations';
 import { ChatSidebar } from './ChatSidebar';
 import { ChatThread } from './ChatThread';
 import { ChatComposer } from './ChatComposer';
@@ -9,9 +10,23 @@ import EscalationBanner from './EscalationBanner';
 
 export default function ChatsPanel() {
   const { tenant } = useTenant();
-  const { chats, activeId, setActiveId, messages, send, release, loading, reloadChats, outboundReadiness } = useChatRealtime(tenant?.id);
+  const {
+    chats,
+    activeId,
+    setActiveId,
+    messages,
+    send,
+    release,
+    claim,
+    unassign,
+    updateStatus,
+    loading,
+    reloadChats,
+    outboundReadiness,
+  } = useChatRealtime(tenant?.id);
   const [query, setQuery] = useState('');
   const activeChat = useMemo(() => chats.find((c) => c.id === activeId) ?? null, [chats, activeId]);
+  const [chatOpsError, setChatOpsError] = useState<string | null>(null);
 
   const totalUnread = useMemo(() => chats.reduce((s, c) => s + (c.unread ?? 0), 0), [chats]);
   const isHumanHandling = Boolean(
@@ -21,6 +36,30 @@ export default function ChatsPanel() {
   const handleSelect = useCallback((id: string) => setActiveId(id), [setActiveId]);
   const handleSend = useCallback(async (text: string) => { await send(text); }, [send]);
   const handleRelease = useCallback(async () => { await release(); }, [release]);
+  const handleClaim = useCallback(async () => {
+    setChatOpsError(null);
+    try {
+      await claim();
+    } catch (error) {
+      setChatOpsError(error instanceof Error ? error.message : 'Failed to claim chat');
+    }
+  }, [claim]);
+  const handleUnassign = useCallback(async () => {
+    setChatOpsError(null);
+    try {
+      await unassign();
+    } catch (error) {
+      setChatOpsError(error instanceof Error ? error.message : 'Failed to unassign chat');
+    }
+  }, [unassign]);
+  const handleStatusChange = useCallback(async (status: ChatSupportStatus) => {
+    setChatOpsError(null);
+    try {
+      await updateStatus(status);
+    } catch (error) {
+      setChatOpsError(error instanceof Error ? error.message : 'Failed to update chat status');
+    }
+  }, [updateStatus]);
   const handleOpenCustomer = useCallback((customerPhone: string) => {
     const matched = chats.find((chat) => chat.customerPhone === customerPhone);
     if (matched) {
@@ -107,13 +146,55 @@ export default function ChatsPanel() {
                         {activeChat.channel === 'instagram' ? 'Instagram' : 'WhatsApp'}
                       </span>
                     ) : null}
+                    {activeChat ? (
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                        {activeChat.status}
+                      </span>
+                    ) : null}
                   </span>
+                  {activeChat ? (
+                    <span className="text-[10px] text-gray-500">
+                      {activeChat.assigneeLabel ? `Assigned to ${activeChat.assigneeLabel}` : 'Unassigned'}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             ) : (
               <span className="text-sm text-gray-500">Select a chat to view messages</span>
             )}
+            {activeChat ? (
+              <div className="flex items-center gap-2">
+                <select
+                  aria-label="Chat status"
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  value={activeChat.status}
+                  onChange={(event) => void handleStatusChange(event.target.value as ChatSupportStatus)}
+                >
+                  <option value="open">Open</option>
+                  <option value="pending">Pending</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+                <button
+                  className="rounded border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => void handleClaim()}
+                >
+                  Claim
+                </button>
+                <button
+                  className="rounded border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => void handleUnassign()}
+                  disabled={!activeChat.assigneeUserId}
+                >
+                  Unassign
+                </button>
+              </div>
+            ) : null}
           </div>
+          {chatOpsError ? (
+            <div className="border-b border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
+              {chatOpsError}
+            </div>
+          ) : null}
           <div className="flex-1 overflow-y-auto p-4" aria-live="polite">
             <ChatThread
               messages={messages.filter((m) => m.chatId === activeId)}

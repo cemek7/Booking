@@ -2,15 +2,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { getChatSupportState, type ChatChannel, type ChatSupportStatus } from '@/lib/chats/operations';
 
 export type ChatSummary = {
   id: string;
   subject: string;
   customerPhone?: string | null;
-  channel: 'whatsapp' | 'instagram';
+  channel: ChatChannel;
   lastMessageAt?: string | null;
   unread?: number;
   humanHandlingUntil?: string | null;
+  status: ChatSupportStatus;
+  assigneeUserId?: string | null;
+  assigneeLabel?: string | null;
 };
 export type OutboundReadinessSummary = {
   allowed: boolean;
@@ -30,7 +34,15 @@ interface ChatRow {
   last_message_at: string | null;
   session_id: string | null;
   customer_phone: string | null;
-  metadata: { subject?: string; channel?: 'whatsapp' | 'instagram' } | null;
+  metadata: {
+    subject?: string;
+    channel?: ChatChannel;
+    support?: {
+      status?: ChatSupportStatus;
+      assigneeUserId?: string | null;
+      assigneeLabel?: string | null;
+    } | null;
+  } | null;
   unread_count?: number;
 }
 
@@ -97,6 +109,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       }
 
       const mapped: ChatSummary[] = rows.map((row) => ({
+        ...getChatSupportState(row.metadata ?? null),
         id: row.id,
         customerPhone: row.customer_phone,
         lastMessageAt: row.last_message_at,
@@ -161,6 +174,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         setChats(prev => {
           const idx = prev.findIndex(c => c.id === row.id);
           const updated: ChatSummary = {
+            ...getChatSupportState(row.metadata ?? null),
             id: row.id,
             customerPhone: row.customer_phone,
             lastMessageAt: row.last_message_at,
@@ -177,7 +191,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         setUnreadMap(prev => {
           const id = row.id;
           const next = { ...prev };
-          next[id] = (id === activeId) ? 0 : ((next[id] ?? 0) + 1);
+          next[id] = id === activeId ? 0 : (row.unread_count ?? next[id] ?? 0);
           return next;
         });
       })
@@ -243,6 +257,32 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     await loadChats();
   }, [activeId, loadChats]);
 
+  const updateChatState = useCallback(async (payload: Record<string, unknown>) => {
+    if (!activeId) return;
+    const response = await fetch(`/api/chats/${encodeURIComponent(activeId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+      throw new Error(data?.message || data?.error || 'Failed to update chat');
+    }
+    await loadChats();
+  }, [activeId, loadChats]);
+
+  const claim = useCallback(async () => {
+    await updateChatState({ action: 'claim' });
+  }, [updateChatState]);
+
+  const unassign = useCallback(async () => {
+    await updateChatState({ action: 'unassign' });
+  }, [updateChatState]);
+
+  const updateStatus = useCallback(async (status: ChatSupportStatus) => {
+    await updateChatState({ action: 'status', status });
+  }, [updateChatState]);
+
   // reset unread when opening a chat
   useEffect(() => {
     if (!activeId) return;
@@ -256,7 +296,20 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const chatsWithUnread = useMemo(() => chats.map(c => ({ ...c, unread: unreadMap[c.id] ?? c.unread ?? 0 })), [chats, unreadMap]);
 
   return useMemo(
-    () => ({ loading, chats: chatsWithUnread, activeId, setActiveId, messages, send, release, reloadChats: loadChats, outboundReadiness }),
-    [loading, chatsWithUnread, activeId, messages, send, release, loadChats, outboundReadiness]
+    () => ({
+      loading,
+      chats: chatsWithUnread,
+      activeId,
+      setActiveId,
+      messages,
+      send,
+      release,
+      claim,
+      unassign,
+      updateStatus,
+      reloadChats: loadChats,
+      outboundReadiness,
+    }),
+    [loading, chatsWithUnread, activeId, messages, send, release, claim, unassign, updateStatus, loadChats, outboundReadiness]
   );
 }

@@ -2,11 +2,20 @@ export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { defaultLogger } from '@/lib/logger';
+import { getChatSupportState, type ChatChannel } from '@/lib/chats/operations';
 
 type ChatRow = {
   id: string;
   customer_phone?: string | null;
-  metadata?: { subject?: string; channel?: 'whatsapp' | 'instagram' } | null;
+  metadata?: {
+    subject?: string;
+    channel?: ChatChannel;
+    support?: {
+      status?: 'open' | 'pending' | 'resolved';
+      assigneeUserId?: string | null;
+      assigneeLabel?: string | null;
+    } | null;
+  } | null;
   last_message_at?: string | null;
   unread_count?: number | null;
 };
@@ -36,7 +45,9 @@ export const GET = createHttpHandler(
     }
 
     const mapped = ((data || []) as ChatRow[]).map((c) => ({
+      ...getChatSupportState(c.metadata ?? null),
       id: c.id,
+      customerPhone: c.customer_phone ?? null,
       subject: c.metadata?.subject || c.customer_phone || String(c.id).slice(0, 6),
       last_message_at: c.last_message_at,
       unread: c.unread_count ?? 0,
