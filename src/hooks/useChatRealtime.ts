@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { getChatSupportState, type ChatChannel, type ChatSupportStatus } from '@/lib/chats/operations';
+import { authGet } from '@/lib/auth/auth-api-client';
 
 export type ChatSummary = {
   id: string;
@@ -15,6 +16,12 @@ export type ChatSummary = {
   status: ChatSupportStatus;
   assigneeUserId?: string | null;
   assigneeLabel?: string | null;
+};
+export type ChatAssigneeOption = {
+  id: string;
+  name: string;
+  email?: string | null;
+  role?: string | null;
 };
 export type OutboundReadinessSummary = {
   allowed: boolean;
@@ -67,6 +74,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [outboundReadiness, setOutboundReadiness] = useState<OutboundReadinessSummary | null>(null);
+  const [assignees, setAssignees] = useState<ChatAssigneeOption[]>([]);
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
   const msgChannel = useRef<RealtimeChannel | null>(null);
   const chatChannel = useRef<RealtimeChannel | null>(null);
@@ -143,6 +151,36 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     setMessages(mapped);
   }, [supabase]);
 
+  const loadAssignees = useCallback(async () => {
+    if (!tenantId) {
+      setAssignees([]);
+      return;
+    }
+
+    try {
+      const response = await authGet<{
+        staff?: Array<{ id?: string | null; name?: string | null; email?: string | null; role?: string | null }>;
+      }>('/api/staff');
+      if (response.error) {
+        setAssignees([]);
+        return;
+      }
+      const payload = response.data ?? {};
+      setAssignees(
+        (payload.staff ?? [])
+          .filter((member): member is { id: string; name?: string | null; email?: string | null; role?: string | null } => Boolean(member.id))
+          .map((member) => ({
+            id: member.id,
+            name: member.name || member.email || member.id,
+            email: member.email ?? null,
+            role: member.role ?? null,
+          }))
+      );
+    } catch {
+      setAssignees([]);
+    }
+  }, [tenantId]);
+
   const loadOutboundReadiness = useCallback(async (chatId: string | null) => {
     if (!chatId) {
       setOutboundReadiness(null);
@@ -198,8 +236,9 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       .subscribe();
     chatChannel.current = ch;
     loadChats();
+    void loadAssignees();
     return () => { ch.unsubscribe(); };
-  }, [supabase, tenantId, loadChats, activeId]);
+  }, [supabase, tenantId, loadChats, loadAssignees, activeId]);
 
   // Subscribe to messages for active chat
   useEffect(() => {
@@ -275,6 +314,10 @@ export function useChatRealtime(tenantId: string | null | undefined) {
     await updateChatState({ action: 'claim' });
   }, [updateChatState]);
 
+  const assign = useCallback(async (assigneeUserId: string) => {
+    await updateChatState({ action: 'assign', assigneeUserId });
+  }, [updateChatState]);
+
   const unassign = useCallback(async () => {
     await updateChatState({ action: 'unassign' });
   }, [updateChatState]);
@@ -305,11 +348,13 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       send,
       release,
       claim,
+      assign,
       unassign,
       updateStatus,
       reloadChats: loadChats,
       outboundReadiness,
+      assignees,
     }),
-    [loading, chatsWithUnread, activeId, messages, send, release, claim, unassign, updateStatus, loadChats, outboundReadiness]
+    [loading, chatsWithUnread, activeId, messages, send, release, claim, assign, unassign, updateStatus, loadChats, outboundReadiness, assignees]
   );
 }

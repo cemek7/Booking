@@ -18,17 +18,33 @@ export default function ChatsPanel() {
     send,
     release,
     claim,
+    assign,
     unassign,
     updateStatus,
     loading,
     reloadChats,
     outboundReadiness,
+    assignees,
   } = useChatRealtime(tenant?.id);
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | ChatSupportStatus>('all');
+  const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'mine' | 'unassigned'>('all');
+  const [channelFilter, setChannelFilter] = useState<'all' | 'whatsapp' | 'instagram'>('all');
   const activeChat = useMemo(() => chats.find((c) => c.id === activeId) ?? null, [chats, activeId]);
   const [chatOpsError, setChatOpsError] = useState<string | null>(null);
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('');
 
-  const totalUnread = useMemo(() => chats.reduce((s, c) => s + (c.unread ?? 0), 0), [chats]);
+  const filteredChats = useMemo(() => {
+    return chats.filter((chat) => {
+      if (statusFilter !== 'all' && chat.status !== statusFilter) return false;
+      if (assignmentFilter === 'mine' && !selectedAssigneeId) return false;
+      if (assignmentFilter === 'mine' && chat.assigneeUserId !== selectedAssigneeId) return false;
+      if (assignmentFilter === 'unassigned' && chat.assigneeUserId) return false;
+      if (channelFilter !== 'all' && chat.channel !== channelFilter) return false;
+      return true;
+    });
+  }, [assignmentFilter, channelFilter, chats, selectedAssigneeId, statusFilter]);
+  const totalUnread = useMemo(() => filteredChats.reduce((s, c) => s + (c.unread ?? 0), 0), [filteredChats]);
   const isHumanHandling = Boolean(
     activeChat?.humanHandlingUntil && Date.parse(activeChat.humanHandlingUntil) > Date.now()
   );
@@ -52,6 +68,15 @@ export default function ChatsPanel() {
       setChatOpsError(error instanceof Error ? error.message : 'Failed to unassign chat');
     }
   }, [unassign]);
+  const handleAssign = useCallback(async (assigneeUserId: string) => {
+    setChatOpsError(null);
+    try {
+      await assign(assigneeUserId);
+      setSelectedAssigneeId((current) => current || assigneeUserId);
+    } catch (error) {
+      setChatOpsError(error instanceof Error ? error.message : 'Failed to assign chat');
+    }
+  }, [assign]);
   const handleStatusChange = useCallback(async (status: ChatSupportStatus) => {
     setChatOpsError(null);
     try {
@@ -74,7 +99,7 @@ export default function ChatsPanel() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-white p-4 rounded border shadow-sm">
           <div className="text-xs text-gray-500 mb-1">Total Conversations</div>
-          <div className="text-2xl font-bold">{loading ? '—' : chats.length}</div>
+          <div className="text-2xl font-bold">{loading ? '—' : filteredChats.length}</div>
         </div>
         <div className="bg-white p-4 rounded border shadow-sm">
           <div className="text-xs text-gray-500 mb-1">Unread Messages</div>
@@ -86,7 +111,7 @@ export default function ChatsPanel() {
         </div>
         <div className="bg-white p-4 rounded border shadow-sm">
           <div className="text-xs text-gray-500 mb-1">Open Chats</div>
-          <div className="text-2xl font-bold">{loading ? '—' : chats.length}</div>
+          <div className="text-2xl font-bold">{loading ? '—' : filteredChats.filter((chat) => chat.status === 'open').length}</div>
         </div>
       </div>
 
@@ -109,8 +134,56 @@ export default function ChatsPanel() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
+          <div className="grid gap-2 border-b bg-white px-3 py-3">
+            <select
+              aria-label="Filter chat status"
+              className="rounded border px-2 py-1 text-xs"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as 'all' | ChatSupportStatus)}
+            >
+              <option value="all">All statuses</option>
+              <option value="open">Open</option>
+              <option value="pending">Pending</option>
+              <option value="resolved">Resolved</option>
+            </select>
+            <select
+              aria-label="Filter chat assignment"
+              className="rounded border px-2 py-1 text-xs"
+              value={assignmentFilter}
+              onChange={(event) => setAssignmentFilter(event.target.value as 'all' | 'mine' | 'unassigned')}
+            >
+              <option value="all">All assignments</option>
+              <option value="mine">Assigned to selected teammate</option>
+              <option value="unassigned">Unassigned</option>
+            </select>
+            {assignmentFilter === 'mine' ? (
+              <select
+                aria-label="Filter assigned teammate"
+                className="rounded border px-2 py-1 text-xs"
+                value={selectedAssigneeId}
+                onChange={(event) => setSelectedAssigneeId(event.target.value)}
+              >
+                <option value="">Choose teammate</option>
+                {assignees.map((assignee) => (
+                  <option key={assignee.id} value={assignee.id}>
+                    {assignee.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <select
+              aria-label="Filter chat channel"
+              className="rounded border px-2 py-1 text-xs"
+              value={channelFilter}
+              onChange={(event) => setChannelFilter(event.target.value as 'all' | 'whatsapp' | 'instagram')}
+            >
+              <option value="all">All channels</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="instagram">Instagram</option>
+            </select>
+          </div>
           <div className="flex-1 overflow-y-auto px-3 py-3">
-            <ChatSidebar chats={chats} activeId={activeId} onSelect={handleSelect} filter={query} />
+            <ChatSidebar chats={filteredChats} activeId={activeId} onSelect={handleSelect} filter={query} />
           </div>
         </div>
 
@@ -180,6 +253,27 @@ export default function ChatsPanel() {
                 >
                   Claim
                 </button>
+                <select
+                  aria-label="Assign chat teammate"
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  value=""
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    if (nextValue) {
+                      void handleAssign(nextValue);
+                    }
+                  }}
+                >
+                  <option value="">Assign teammate…</option>
+                  {activeChat?.assigneeUserId && activeChat.assigneeLabel && !assignees.some((assignee) => assignee.id === activeChat.assigneeUserId) ? (
+                    <option value={activeChat.assigneeUserId}>{activeChat.assigneeLabel}</option>
+                  ) : null}
+                  {assignees.map((assignee) => (
+                    <option key={assignee.id} value={assignee.id}>
+                      {assignee.name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   className="rounded border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                   onClick={() => void handleUnassign()}

@@ -27,7 +27,10 @@ export function ChatSidebar({ chats, activeId, onSelect, filter }: ChatSidebarPr
   const list = chats.filter(c => {
     if (!filter) return true;
     const q = filter.toLowerCase();
-    return c.subject.toLowerCase().includes(q);
+    return (
+      c.subject.toLowerCase().includes(q) ||
+      (c.assigneeLabel || '').toLowerCase().includes(q)
+    );
   });
   return (
     <div className="space-y-3">

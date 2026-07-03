@@ -13,6 +13,7 @@ import {
 
 const ActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('claim') }),
+  z.object({ action: z.literal('assign'), assigneeUserId: z.string().uuid() }),
   z.object({ action: z.literal('unassign') }),
   z.object({ action: z.literal('status'), status: z.enum(CHAT_SUPPORT_STATUSES) }),
 ]);
@@ -59,12 +60,14 @@ export const PATCH = createHttpHandler(
 
     let metadata = (chat as ChatRow).metadata ?? null;
 
-    if (parsed.data.action === 'claim') {
+    if (parsed.data.action === 'claim' || parsed.data.action === 'assign') {
+      const assigneeUserId =
+        parsed.data.action === 'assign' ? parsed.data.assigneeUserId : userId;
       const { data: membership, error: membershipError } = await admin
         .from('tenant_users')
         .select('name,email')
         .eq('tenant_id', tenantId)
-        .eq('user_id', userId)
+        .eq('user_id', assigneeUserId)
         .maybeSingle();
 
       if (membershipError) {
@@ -72,11 +75,14 @@ export const PATCH = createHttpHandler(
           new Error(`Failed to resolve tenant membership: ${membershipError.message}`)
         );
       }
+      if (!membership) {
+        throw ApiErrorFactory.notFound('Tenant team member');
+      }
 
       metadata = mergeChatSupportState(metadata, {
-        assigneeUserId: userId,
+        assigneeUserId,
         assigneeLabel:
-          membership?.name || membership?.email || ctx.user?.email || ctx.user?.role || 'Assigned agent',
+          membership.name || membership.email || 'Assigned agent',
       });
     } else if (parsed.data.action === 'unassign') {
       metadata = mergeChatSupportState(metadata, {
