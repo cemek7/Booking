@@ -1,4 +1,11 @@
 // @ts-nocheck
+// Dummy Supabase env so modules that construct a client at import time
+// (e.g. createClient() at the top of conversationState.ts) don't throw
+// "Invalid supabase URL" during test-file load. Real network is still mocked.
+process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://test.supabase.co';
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'test-anon-key';
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key';
+
 // Optional: @testing-library/jest-dom (install if using React Testing Library)
 import '@testing-library/jest-dom';
 

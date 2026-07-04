@@ -1,5 +1,6 @@
 // Jest globals are available without import
 // @ts-nocheck
+import { NextRequest } from 'next/server';
 import { POST as invitesPOST } from '@/app/api/tenants/[tenantId]/invites/route';
 
 // Configurable stubs — read by the bearer client mock factory via closure
@@ -7,6 +8,44 @@ let callerRole = 'manager';
 let currentSettings = { allowedInviterRoles: ['manager'], allowInvitesFromStaffPage: true };
 type InviteRow = { token: string; tenant_id: string; email: string; role: string };
 const inserted: InviteRow[] = [];
+
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => ({
+    auth: {
+      getUser: jest.fn().mockResolvedValue({
+        data: { user: { id: 'u1', email: 'u1@example.com' } },
+        error: null,
+      }),
+    },
+    from: jest.fn().mockImplementation((table: string) => {
+      if (table === 'tenant_users') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { tenant_id: 't1', role: callerRole },
+            error: null,
+          }),
+        };
+      }
+      if (table === 'tenants') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { lifecycle_state: 'active' },
+            error: null,
+          }),
+        };
+      }
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    }),
+  })),
+}));
 
 jest.mock('@/lib/supabase/bearer-client', () => ({
   createSupabaseBearerClient: jest.fn().mockImplementation(() => ({
@@ -61,7 +100,7 @@ describe('Invites API', () => {
   });
 
   it('requires Authorization bearer token', async () => {
-    const req = new Request('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('http://x/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'x-test-bypass-skip': '1' },
       body: JSON.stringify({ email: 'a@b.com' })
@@ -71,7 +110,7 @@ describe('Invites API', () => {
   });
 
   it('creates invite when allowed', async () => {
-    const req = new Request('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('http://x/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'user@example.com', role: 'staff' })
@@ -86,7 +125,7 @@ describe('Invites API', () => {
 
   it('returns 403 when settings disallow', async () => {
     currentSettings = { allowedInviterRoles: ['owner'], allowInvitesFromStaffPage: false };
-    const req = new Request('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('http://x/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'user@example.com', role: 'staff' })

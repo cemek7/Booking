@@ -1,8 +1,47 @@
 // @ts-nocheck
 // Test: invite route rejects requests without auth and accepts authenticated requests
+import { NextRequest } from 'next/server';
 import { POST as invitesPOST } from '@/app/api/tenants/[tenantId]/invites/route';
 
 const inserted: any[] = [];
+
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => ({
+    auth: {
+      getUser: jest.fn().mockResolvedValue({
+        data: { user: { id: 'u1', email: 'u1@example.com' } },
+        error: null,
+      }),
+    },
+    from: jest.fn().mockImplementation((table: string) => {
+      if (table === 'tenant_users') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { tenant_id: 't1', role: 'manager' },
+            error: null,
+          }),
+        };
+      }
+      if (table === 'tenants') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { lifecycle_state: 'active' },
+            error: null,
+          }),
+        };
+      }
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    }),
+  })),
+}));
 
 jest.mock('@/lib/supabase/bearer-client', () => ({
   createSupabaseBearerClient: jest.fn().mockImplementation(() => ({
@@ -53,7 +92,7 @@ describe('Invites API auth path', () => {
   beforeEach(() => { inserted.length = 0; });
 
   it('rejects request without auth', async () => {
-    const req = new Request('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('http://x/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'x-test-bypass-skip': '1' },
       body: JSON.stringify({ email: 'a@b.com' })
@@ -63,7 +102,7 @@ describe('Invites API auth path', () => {
   });
 
   it('accepts authenticated request with manager role', async () => {
-    const req = new Request('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('http://x/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'staff@example.com' })

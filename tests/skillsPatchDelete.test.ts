@@ -1,5 +1,6 @@
 // @ts-nocheck
 // Jest globals are available without import
+import { NextRequest } from 'next/server';
 import { PATCH as skillPATCH, DELETE as skillDELETE } from '@/app/api/skills/[id]/route';
 
 const skills = [{ id: 's1', name: 'Cut', category: 'Hair', tenant_id: 'test-tenant-id' }];
@@ -60,7 +61,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
 
 describe('skills PATCH/DELETE API route', () => {
   it('PATCH updates name', async () => {
-    const req = new Request('http://x/api/skills/s1', {
+    const req = new NextRequest('http://x/api/skills/s1', {
       method: 'PATCH',
       body: JSON.stringify({ name: 'Styled Cut' }),
     });
@@ -71,7 +72,7 @@ describe('skills PATCH/DELETE API route', () => {
   });
 
   it('DELETE removes skill', async () => {
-    const req = new Request('http://x/api/skills/s1', { method: 'DELETE' });
+    const req = new NextRequest('http://x/api/skills/s1', { method: 'DELETE' });
     const res: any = await skillDELETE(req, { params: { id: 's1' } });
     expect(res.status).toBe(200);
     const json = await res.json();

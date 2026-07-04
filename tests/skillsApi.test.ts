@@ -1,5 +1,6 @@
 // Jest globals are available without import
 // @ts-nocheck
+import { NextRequest } from 'next/server';
 import { GET as skillsGET, POST as skillsPOST } from '@/app/api/skills/route';
 
 const skillsList: any[] = [];
@@ -57,14 +58,14 @@ describe('skills API route', () => {
   });
 
   it('GET returns skills list for authenticated user', async () => {
-    const res = await skillsGET(new Request('http://x/api/skills')) as any;
+    const res = await skillsGET(new NextRequest('http://x/api/skills')) as any;
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json).toHaveProperty('skills');
   });
 
   it('POST creates skill', async () => {
-    const res = await skillsPOST(new Request('http://x/api/skills', {
+    const res = await skillsPOST(new NextRequest('http://x/api/skills', {
       method: 'POST',
       body: JSON.stringify({ name: 'Haircut' })
     }));
