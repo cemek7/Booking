@@ -67,6 +67,11 @@ jest.mock('@/lib/chats/journey-service', () => ({
 
 jest.mock('@/lib/paymentsAdapter', () => ({ PaymentsAdapter: jest.fn() }));
 
+const mockRecordAttribution = jest.fn();
+jest.mock('@/lib/sias-operations', () => ({
+  siasOperations: { recordOutcomeAttribution: (...args: unknown[]) => mockRecordAttribution(...args) },
+}));
+
 import { transitionRetailOrder } from '@/lib/commerce/retail-orders';
 
 describe('retail order inventory on mark_paid', () => {
@@ -74,6 +79,7 @@ describe('retail order inventory on mark_paid', () => {
     jest.clearAllMocks();
     fromTables.length = 0;
     mockUpdateChatJourney.mockResolvedValue(undefined);
+    mockRecordAttribution.mockResolvedValue(undefined);
   });
 
   it('decrements stock via the update_inventory RPC and never queries product_inventory', async () => {
@@ -100,5 +106,25 @@ describe('retail order inventory on mark_paid', () => {
 
     // Regression guard: the phantom table must never be touched.
     expect(fromTables).not.toContain('product_inventory');
+  });
+
+  it('attributes the realized sale to sias_outcome_attributions on mark_paid', async () => {
+    await transitionRetailOrder({
+      tenantId: 'tenant-1',
+      orderId: 'ord-1',
+      actorUserId: 'user-9',
+      action: 'mark_paid',
+    });
+
+    expect(mockRecordAttribution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        signal: 'retail_sale',
+        sourceEvent: 'frontdesk.retail.paid',
+        value: 1850,
+        customerPhone: '+2348000000000',
+        metadata: expect.objectContaining({ retail_order_id: 'ord-1', product_ids: ['prd-1'] }),
+      }),
+    );
   });
 });

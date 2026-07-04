@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { PaymentsAdapter } from '@/lib/paymentsAdapter';
+import { siasOperations } from '@/lib/sias-operations';
 import { defaultLogger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 
@@ -574,6 +575,8 @@ export async function transitionRetailOrder(input: {
   const order = rawOrder as {
     id: string;
     tenant_id: string;
+    customer_id: string | null;
+    external_customer_ref: string | null;
     status: RetailOrderStatus;
     payment_status: RetailPaymentStatus;
     fulfillment_status: RetailFulfillmentStatus;
@@ -584,6 +587,8 @@ export async function transitionRetailOrder(input: {
   };
 
   const metadata = getRetailOrderMetadata(order.metadata);
+  // Attribute the realized sale exactly once (idempotent across repeated mark_paid).
+  const retailSaleAlreadyAttributed = typeof metadata.retailSaleAttributedAt === 'string';
   const now = new Date().toISOString();
   const updates: Record<string, unknown> = {
     updated_at: now,
@@ -632,6 +637,7 @@ export async function transitionRetailOrder(input: {
         inventoryAppliedBy: inventoryAppliedAt ? metadata.inventoryAppliedBy : input.actorUserId,
         paidAt: now,
         paidBy: input.actorUserId,
+        retailSaleAttributedAt: metadata.retailSaleAttributedAt || now,
       };
       if (order.cart_id) {
         await admin
@@ -707,6 +713,32 @@ export async function transitionRetailOrder(input: {
 
   if (orderError) {
     throw new Error(`Failed to transition retail order: ${orderError.message}`);
+  }
+
+  // Realized-sale signal for owner BI / the data moat: attribute the paid retail
+  // order once (the upsell *acceptance* is attributed elsewhere; this is the money).
+  if (input.action === 'mark_paid' && !retailSaleAlreadyAttributed) {
+    const productIds = Array.isArray(order.items)
+      ? order.items
+          .map((it) => (it as { product_id?: unknown }).product_id)
+          .filter((id): id is string => typeof id === 'string')
+      : [];
+    await siasOperations
+      .recordOutcomeAttribution({
+        tenantId: order.tenant_id,
+        customerId: order.customer_id,
+        customerPhone: order.external_customer_ref,
+        signal: 'retail_sale',
+        sourceEvent: 'frontdesk.retail.paid',
+        value: Number(order.total_cents ?? 0) > 0 ? Number(order.total_cents) / 100 : 1,
+        metadata: {
+          retail_order_id: order.id,
+          cart_id: order.cart_id,
+          item_count: productIds.length,
+          product_ids: productIds,
+        },
+      })
+      .catch(() => undefined);
   }
 
   const paymentReference =
