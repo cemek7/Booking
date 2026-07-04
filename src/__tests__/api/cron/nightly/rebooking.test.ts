@@ -24,7 +24,7 @@ function consume(): DbResponse {
 
 function makeChain() {
   const chain: any = {};
-  const filters = ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not'];
+  const filters = ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'contains', 'order', 'limit'];
   filters.forEach(m => {
     chain[m] = jest.fn().mockReturnValue(chain);
   });
@@ -99,12 +99,13 @@ function validReservation(overrides: Record<string, unknown> = {}) {
   return {
     id: 'res_1',
     tenant_id: 'tenant_1',
-    customer_phone: '+2348012345678',
+    customer_id: 'cust_1',
+    customer_number: '+2348012345678',
     customer_name: 'Ada',
     service_id: 'svc_1',
     start_at: FOUR_DAYS_AGO,
     services: { name: 'Trim', rebooking_interval_days: 30 },
-    tenants:  { v2_enabled: true, settings: {} },
+    tenants:  { v2_enabled: true, metadata: {}, tone_config: {} },
     ...overrides,
   };
 }
@@ -139,7 +140,7 @@ describe('sendRebookingFollowUps', () => {
   });
 
   it('skips reservation when tenant is not v2_enabled', async () => {
-    pushDb([validReservation({ tenants: { v2_enabled: false, settings: {} } })]);
+    pushDb([validReservation({ tenants: { v2_enabled: false, metadata: {}, tone_config: {} } })]);
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
   });
@@ -150,31 +151,35 @@ describe('sendRebookingFollowUps', () => {
     expect(sent).toBe(0);
   });
 
-  it('skips reservation when customer_phone is null', async () => {
-    pushDb([validReservation({ customer_phone: null })]);
+  it('skips reservation when customer_number is null', async () => {
+    pushDb([validReservation({ customer_number: null })]);
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
   });
 
-  it('skips when customer is not found in the customers table', async () => {
+  it('still sends when customer is not found in the customers table', async () => {
     pushDb([validReservation()]); // initial query
     pushDb(null);                 // customers → not found (maybeSingle)
+    pushDb([]);                   // no prior follow-up
+    pushDb(null, 0);              // no newer reservation
+    pushDb({ last_inbound_at: null, opted_out_at: null });
     const sent = await sendRebookingFollowUps();
-    expect(sent).toBe(0);
+    expect(sent).toBe(1);
   });
 
   it('skips when a follow-up was already sent for this customer+service', async () => {
     pushDb([validReservation()]);
-    // Customer has follow-up already recorded
-    pushDb({ id: 'cust_1', metadata: { rebooking_followup_sent_at: { svc_1: '2026-01-01T00:00:00Z' } } });
+    pushDb({ id: 'cust_1', name: 'Ada' });
+    pushDb([{ id: 'run_1' }]); // prior follow-up campaign exists
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
   });
 
   it('skips when customer has a newer reservation for the same service', async () => {
     pushDb([validReservation()]);
-    pushDb({ id: 'cust_1', metadata: {} }); // customers (maybeSingle)
-    pushDb(null, 1);                        // newer count (direct-await) → count: 1
+    pushDb({ id: 'cust_1', name: 'Ada' }); // customers (maybeSingle)
+    pushDb([]);                            // no prior follow-up
+    pushDb(null, 1);                       // newer count (direct-await) → count: 1
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
   });
@@ -182,15 +187,17 @@ describe('sendRebookingFollowUps', () => {
   it('skips when no WhatsApp config is found for the tenant', async () => {
     mockedGetTenantWhatsAppProviderClient.mockResolvedValueOnce(null);
     pushDb([validReservation()]);
-    pushDb({ id: 'cust_1', metadata: {} }); // customers
-    pushDb(null, 0);                        // newer count → 0
+    pushDb({ id: 'cust_1', name: 'Ada' }); // customers
+    pushDb([]);                            // no prior follow-up
+    pushDb(null, 0);                       // newer count → 0
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(0);
   });
 
   it('skips and does not update metadata when governed send returns unsent', async () => {
     pushDb([validReservation()]);
-    pushDb({ id: 'cust_1', metadata: {} });
+    pushDb({ id: 'cust_1', name: 'Ada' });
+    pushDb([]);
     pushDb(null, 0);
     pushDb({ last_inbound_at: null, opted_out_at: null });
     mockedSendGovernedInitiated.mockResolvedValue({ sent: false, reason: 'allocation_exhausted' });
@@ -203,11 +210,10 @@ describe('sendRebookingFollowUps', () => {
   it('sends follow-up and updates metadata on happy path', async () => {
     const res = validReservation();
     pushDb([res]);
-    pushDb({ id: 'cust_1', metadata: {} });
+    pushDb({ id: 'cust_1', name: 'Ada' });
+    pushDb([]);        // no prior follow-up
     pushDb(null, 0);   // newer count
     pushDb({ last_inbound_at: null, opted_out_at: null });
-    // Customer update (direct-await)
-    pushDb(null);
 
     const sent = await sendRebookingFollowUps();
     expect(sent).toBe(1);
@@ -246,7 +252,7 @@ describe('sendRebookingNudges', () => {
   });
 
   it('skips tenant when no services have rebooking_interval_days set', async () => {
-    pushDb([{ id: 'tenant_1', settings: {} }]); // tenants
+    pushDb([{ id: 'tenant_1' }]); // tenants
     pushDb([]);                                  // services → empty (direct-await)
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
@@ -254,15 +260,15 @@ describe('sendRebookingNudges', () => {
 
   it('skips tenant when no WhatsApp config is found', async () => {
     mockedGetTenantWhatsAppProviderClient.mockResolvedValueOnce(null);
-    pushDb([{ id: 'tenant_1', settings: {} }]);
-    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
+    pushDb([{ id: 'tenant_1' }]);
+    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30, is_active: true }]);
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
   });
 
   it('skips service when no completed reservations are older than the cutoff', async () => {
-    pushDb([{ id: 'tenant_1', settings: {} }]);
-    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
+    pushDb([{ id: 'tenant_1' }]);
+    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30, is_active: true }]);
     pushDb([]); // reservations before cutoff → empty
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
@@ -270,36 +276,38 @@ describe('sendRebookingNudges', () => {
 
   it('skips customer when a newer booking already exists', async () => {
     const oldStart = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
-    pushDb([{ id: 'tenant_1', settings: {} }]);
-    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
+    pushDb([{ id: 'tenant_1' }]);
+    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30, is_active: true }]);
+    pushDb([{ id: 'res_1', customer_id: 'cust_1', customer_number: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 1); // newer count (direct-await) → count: 1
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
   });
 
-  it('skips customer when customer record is not found', async () => {
+  it('still sends when customer record is not found', async () => {
     const oldStart = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
-    pushDb([{ id: 'tenant_1', settings: {} }]);
-    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
+    pushDb([{ id: 'tenant_1' }]);
+    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30, is_active: true }]);
+    pushDb([{ id: 'res_1', customer_id: 'cust_1', customer_number: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 0); // newer count → 0
     pushDb(null);    // customer (maybeSingle) → not found
+    pushDb([]);      // no prior nudges
+    pushDb({ last_inbound_at: null, opted_out_at: null });
     const sent = await sendRebookingNudges();
-    expect(sent).toBe(0);
+    expect(sent).toBe(1);
   });
 
   it('skips customer when nudge was sent within the throttle window', async () => {
     const intervalDays = 30;
     const oldStart = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
-    // Last nudge sent 10 days ago — within throttle (interval/2 = 15 days)
     const lastNudgeAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
 
-    pushDb([{ id: 'tenant_1', settings: {} }]);
-    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: intervalDays }]);
-    pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
+    pushDb([{ id: 'tenant_1' }]);
+    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: intervalDays, is_active: true }]);
+    pushDb([{ id: 'res_1', customer_id: 'cust_1', customer_number: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 0);
-    pushDb({ id: 'cust_1', metadata: { rebooking_nudge_sent_at: { svc_1: lastNudgeAt } } });
+    pushDb({ id: 'cust_1', name: 'Ada' });
+    pushDb([{ created_at: lastNudgeAt }]);
 
     const sent = await sendRebookingNudges();
     expect(sent).toBe(0);
@@ -308,14 +316,13 @@ describe('sendRebookingNudges', () => {
   it('sends nudge and updates metadata on happy path', async () => {
     const oldStart = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
 
-    pushDb([{ id: 'tenant_1', settings: {} }]);
-    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30 }]);
-    pushDb([{ customer_phone: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
+    pushDb([{ id: 'tenant_1' }]);
+    pushDb([{ id: 'svc_1', name: 'Trim', rebooking_interval_days: 30, is_active: true }]);
+    pushDb([{ id: 'res_1', customer_id: 'cust_1', customer_number: '+2348012345678', customer_name: 'Ada', start_at: oldStart }]);
     pushDb(null, 0); // newer count
-    pushDb({ id: 'cust_1', metadata: {} }); // customer (no prior nudge)
+    pushDb({ id: 'cust_1', name: 'Ada' }); // customer
+    pushDb([]);                            // no prior nudges
     pushDb({ last_inbound_at: null, opted_out_at: null });
-    // customer update (direct-await)
-    pushDb(null);
 
     const sent = await sendRebookingNudges();
     expect(sent).toBe(1);

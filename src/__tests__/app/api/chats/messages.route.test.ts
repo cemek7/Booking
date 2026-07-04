@@ -3,9 +3,16 @@ import { POST } from '@/app/api/chats/[id]/messages/route';
 import { ApiError } from '@/lib/error-handling/api-error';
 
 const mockGetTenantChannelProviderClient = jest.fn();
+const mockHasMessagingConsent = jest.fn();
 
 jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
   getTenantChannelProviderClient: (...args: unknown[]) => mockGetTenantChannelProviderClient(...args),
+}));
+jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({
+  setHumanHandling: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('@/lib/optin/messagingConsent', () => ({
+  hasMessagingConsent: (...args: unknown[]) => mockHasMessagingConsent(...args),
 }));
 
 type MockOptions = {
@@ -84,6 +91,7 @@ function createContext(supabase: ReturnType<typeof createMockSupabase>['builder'
 describe('POST /api/chats/[id]/messages', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHasMessagingConsent.mockResolvedValue(false);
     mockGetTenantChannelProviderClient.mockResolvedValue({
       sendTextMessage: jest.fn().mockResolvedValue({ success: true }),
     });
@@ -120,6 +128,42 @@ describe('POST /api/chats/[id]/messages', () => {
       tenant_id: 'tenant-1',
       chat_id: 'chat-1',
       to_number: 'IGSID_123',
+      direction: 'outbound',
+    });
+  });
+
+  it('blocks WhatsApp follow-up outside the reply window without consent', async () => {
+    const { builder, inserts } = createMockSupabase({
+      chatMetadata: { channel: 'whatsapp' },
+      lastInboundAt: '2026-06-20T12:00:00.000Z',
+    });
+
+    await expect(POST(createContext(builder) as any)).rejects.toMatchObject<ApiError>({
+      statusCode: 423,
+      message: expect.stringContaining('requires explicit messaging consent'),
+    });
+    expect(inserts.find((entry) => entry.table === 'messages')).toBeUndefined();
+    expect(mockGetTenantChannelProviderClient).not.toHaveBeenCalled();
+  });
+
+  it('allows WhatsApp follow-up outside the reply window when consent exists', async () => {
+    mockHasMessagingConsent.mockResolvedValue(true);
+    const sendTextMessage = jest.fn().mockResolvedValue({ success: true });
+    mockGetTenantChannelProviderClient.mockResolvedValue({ sendTextMessage });
+
+    const { builder, inserts } = createMockSupabase({
+      chatMetadata: { channel: 'whatsapp' },
+      lastInboundAt: '2026-06-20T12:00:00.000Z',
+    });
+
+    const response = await POST(createContext(builder) as any);
+
+    expect(response).toMatchObject({ ok: true, id: 'msg-1' });
+    expect(mockGetTenantChannelProviderClient).toHaveBeenCalledWith('tenant-1', 'whatsapp');
+    expect(inserts.find((entry) => entry.table === 'messages')?.payload).toMatchObject({
+      tenant_id: 'tenant-1',
+      chat_id: 'chat-1',
+      to_number: '+2348000000000',
       direction: 'outbound',
     });
   });
