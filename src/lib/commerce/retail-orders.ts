@@ -64,15 +64,35 @@ const RETAIL_ORDER_SELECT = `
   )
 `;
 
+async function resolveCustomerId(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  tenantId: string,
+  externalId: string
+): Promise<string | null> {
+  // Two value-bound .eq() lookups instead of an interpolated .or() filter — an
+  // external-provided identifier must never be spliced into a PostgREST filter
+  // expression (injection risk). `phone` first, then the legacy `phone_number`.
+  const byPhone = await admin
+    .from('customers')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('phone', externalId)
+    .maybeSingle();
+  if (typeof byPhone.data?.id === 'string') return byPhone.data.id;
+
+  const byPhoneNumber = await admin
+    .from('customers')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('phone_number', externalId)
+    .maybeSingle();
+  return typeof byPhoneNumber.data?.id === 'string' ? byPhoneNumber.data.id : null;
+}
+
 async function resolveCustomerAndChat(tenantId: string, externalId: string) {
   const admin = createSupabaseAdminClient();
-  const [{ data: customer }, { data: chat }] = await Promise.all([
-    admin
-      .from('customers')
-      .select('id')
-      .eq('tenant_id', tenantId)
-      .or(`phone.eq.${externalId},phone_number.eq.${externalId}`)
-      .maybeSingle(),
+  const [customerId, { data: chat }] = await Promise.all([
+    resolveCustomerId(admin, tenantId, externalId),
     admin
       .from('chats')
       .select('id')
@@ -84,7 +104,7 @@ async function resolveCustomerAndChat(tenantId: string, externalId: string) {
   ]);
 
   return {
-    customerId: typeof customer?.id === 'string' ? customer.id : null,
+    customerId,
     chatId: typeof chat?.id === 'string' ? chat.id : null,
   };
 }
@@ -288,7 +308,8 @@ async function applyInventoryMovement(
   tenantId: string,
   orderId: string,
   items: Array<Record<string, unknown>>,
-  direction: 'decrement' | 'increment'
+  direction: 'decrement' | 'increment',
+  performedBy: string | null = null
 ) {
   const admin = createSupabaseAdminClient();
 
@@ -302,65 +323,30 @@ async function applyInventoryMovement(
     const quantity = Math.max(0, Number(item.quantity ?? 0));
     if (!quantity) continue;
 
-    let inventoryQuery = admin
-      .from('product_inventory')
-      .select('current_stock, available_stock')
-      .eq('tenant_id', tenantId)
-      .eq('product_id', productId);
-
-    inventoryQuery = variantId
-      ? inventoryQuery.eq('variant_id', variantId)
-      : inventoryQuery.is('variant_id', null);
-
-    const { data: inventory } = await inventoryQuery.maybeSingle();
-    if (!inventory) {
-      throw new Error('Tracked inventory row missing for retail order item');
-    }
-
-    const currentStock = Number(inventory.current_stock ?? 0);
-    const availableStock = Number(inventory.available_stock ?? 0);
-
-    if (direction === 'decrement' && availableStock < quantity) {
-      throw new Error('Insufficient inventory to mark retail order as paid');
-    }
-
-    const nextCurrent = direction === 'decrement' ? currentStock - quantity : currentStock + quantity;
-    const nextAvailable = direction === 'decrement' ? availableStock - quantity : availableStock + quantity;
-
-    let guardedUpdate = admin
-      .from('product_inventory')
-      .update({
-        current_stock: nextCurrent,
-        available_stock: nextAvailable,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('tenant_id', tenantId)
-      .eq('product_id', productId)
-      .eq('current_stock', currentStock)
-      .eq('available_stock', availableStock);
-
-    guardedUpdate = variantId
-      ? guardedUpdate.eq('variant_id', variantId)
-      : guardedUpdate.is('variant_id', null);
-
-    const { data: updatedRows, error: updateError } = await guardedUpdate.select('product_id');
-    if (updateError) {
-      throw new Error(`Failed to update retail inventory: ${updateError.message}`);
-    }
-    if (!updatedRows || updatedRows.length === 0) {
-      throw new Error('Retail inventory changed concurrently; try again');
-    }
-
-    await admin.from('inventory_movements').insert({
-      tenant_id: tenantId,
-      product_id: productId,
-      variant_id: variantId,
-      movement_type: direction === 'decrement' ? 'sale' : 'return',
-      quantity_change: direction === 'decrement' ? -quantity : quantity,
-      reference_type: 'retail_order',
-      reference_id: orderId,
-      reason: direction === 'decrement' ? `Retail order ${orderId} paid` : `Retail order ${orderId} refunded`,
+    // Canonical inventory path: the update_inventory() RPC (migration 117)
+    // atomically adjusts products/product_variants.stock_quantity (floored at 0)
+    // AND writes the inventory_movements row in one call. This replaces the
+    // non-existent `product_inventory` table the earlier implementation queried
+    // (which made mark_paid/mark_refunded throw for any tracked product).
+    // The RPC floors at 0 rather than rejecting — correct here, since this runs
+    // AFTER payment succeeds, so an out-of-stock item must not block finalization.
+    const { error } = await admin.rpc('update_inventory', {
+      p_tenant_id: tenantId,
+      p_product_id: productId,
+      p_variant_id: variantId,
+      p_quantity_change: direction === 'decrement' ? -quantity : quantity,
+      p_movement_type: direction === 'decrement' ? 'sale' : 'return',
+      p_reference_type: 'retail_order',
+      p_reference_id: orderId,
+      p_reason: direction === 'decrement'
+        ? `Retail order ${orderId} paid`
+        : `Retail order ${orderId} refunded`,
+      p_performed_by: performedBy,
     });
+
+    if (error) {
+      throw new Error(`Failed to update retail inventory: ${error.message}`);
+    }
   }
 }
 
@@ -636,7 +622,7 @@ export async function transitionRetailOrder(input: {
     case 'mark_paid': {
       const inventoryAppliedAt = typeof metadata.inventoryAppliedAt === 'string' ? metadata.inventoryAppliedAt : null;
       if (!inventoryAppliedAt) {
-        await applyInventoryMovement(order.tenant_id, order.id, order.items ?? [], 'decrement');
+        await applyInventoryMovement(order.tenant_id, order.id, order.items ?? [], 'decrement', input.actorUserId);
       }
       updates.status = 'paid';
       updates.payment_status = 'paid';
@@ -698,7 +684,7 @@ export async function transitionRetailOrder(input: {
       const inventoryAppliedAt = typeof metadata.inventoryAppliedAt === 'string' ? metadata.inventoryAppliedAt : null;
       const inventoryRevertedAt = typeof metadata.inventoryRevertedAt === 'string' ? metadata.inventoryRevertedAt : null;
       if (inventoryAppliedAt && !inventoryRevertedAt) {
-        await applyInventoryMovement(order.tenant_id, order.id, order.items ?? [], 'increment');
+        await applyInventoryMovement(order.tenant_id, order.id, order.items ?? [], 'increment', input.actorUserId);
       }
       updates.status = 'cancelled';
       updates.payment_status = 'refunded';
