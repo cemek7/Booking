@@ -1,10 +1,39 @@
 # LinkedIn DM Feasibility
 
-**Date:** 2026-06-30  
-**Task:** #12  
-**Status:** Gate-0 only. No adapter build approved.
+**Date:** 2026-06-30 (updated 2026-07-04)
+**Task:** #12
+**Status:** DM path CONFIRMED IMPOSSIBLE. Reframed to a listening/lead adapter (partner-gated).
 
-## Verdict
+## UPDATE 2026-07-04 — there is no LinkedIn DM API; reframe the channel
+
+Verified against the live LinkedIn Marketing API catalog (learn.microsoft.com/en-us/linkedin/marketing/):
+
+**There is NO member/business direct-messaging (1:1 inbox) API.** The full product set is
+Advertising, Event Management, Community Management, Lead Sync, Matched Audiences, Audience
+Insights, Media Planning, Conversions, Company Intelligence. The only messaging-shaped product is
+**Conversation Ads** — a sponsored-message *ad* format, not a two-way support inbox. So a "LinkedIn
+DM adapter" for the AI Front Desk is **permanently NO-GO** (not just access-gated — the capability
+does not exist).
+
+**However, LinkedIn IS reachable for Booka's actual strategy (listening + lead capture)** via the
+partner-gated **Community Management API**:
+- **"Monitor Mentions of Your Brand"** + **Social Stream** → brand-mention listening. This maps onto
+  the SAME `src/lib/listening/*` seam as the social-listening spike (it becomes a `ListeningProvider`
+  named e.g. `linkedin_community`, returning `RawMention[]`), NOT a `ConvChannel`.
+- **Lead Sync API** → pull LinkedIn Lead Gen Form submissions into `leads` (the existing lead-capture
+  table), feeding the recovery/follow-up engine.
+
+**Reframed verdict:** build LinkedIn as a **listening/lead source**, never a DM channel. This aligns
+with the AI Front Desk moat (data + lead recovery) without any unsanctioned automation.
+
+**Gate before building the LinkedIn listening/lead adapter:** it requires LinkedIn Marketing
+Developer Platform access + app review (Community Management + Lead Sync are partner-gated), OAuth
+with organization/page scopes, and confirming rate limits + mention identity stability for
+`external_id` dedup. Until that access is granted, this stays design-only.
+
+---
+
+### Original DM-framed verdict (superseded — kept for history)
 
 **NO-GO for implementation right now.**
 

@@ -1,10 +1,30 @@
 # TikTok DM Feasibility
 
-**Date:** 2026-06-30  
-**Task:** #13  
-**Status:** Gate-0 only. No adapter build approved.
+**Date:** 2026-06-30 (updated 2026-07-04)
+**Task:** #13
+**Status:** DM path CONFIRMED IMPOSSIBLE (no public API). Permanent NO-GO for DMs.
 
-## Verdict
+## UPDATE 2026-07-04 — TikTok has no DM API at all
+
+Verified against the live TikTok for Developers product catalog (developers.tiktok.com/doc/overview):
+
+**There is NO direct-messaging API.** The available products are Login Kit, Content Posting API,
+Display API, Research API, Data Portability API, Commercial Content API, and Green Screen Kit. TikTok
+DMs are **in-app only** (TikTok app / Business Suite); there is no sanctioned third-party send/receive
+surface. This is not "partner-gated" — the capability is simply absent. A "TikTok DM adapter" is
+therefore **permanently NO-GO**.
+
+**TikTok's only reachable surfaces for Booka** (not a front-desk inbox):
+- **Content Posting API** → outbound marketing/publishing.
+- **Lead Generation via the TikTok Ads/Business API** → lead forms into `leads`.
+
+Neither is a conversational channel; both would be marketing/lead features, not a `ConvChannel`.
+**Recommendation:** drop "TikTok DM" from the channel roadmap entirely; revisit only if TikTok ships
+an official business-messaging API. (User deprioritized a TikTok content/lead adapter for now.)
+
+---
+
+### Original DM-framed verdict (superseded — kept for history)
 
 **NO-GO for implementation right now.**
 

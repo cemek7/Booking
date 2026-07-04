@@ -1,7 +1,35 @@
 # Social Listening Provider Spike
 
-**Date:** 2026-07-02  
-**Status:** Updated after a lower-friction provider pass. The first implemented spike path is `google_pse`; real provider-of-record still pending validation.
+**Date:** 2026-07-02 (updated 2026-07-04)
+**Status:** Provider pivoted. `google_pse` is DISCONTINUED — the new implemented spike path is `serpapi`.
+
+## UPDATE 2026-07-04 — `google_pse` is dead; use `serpapi`
+
+Verified against live docs (developers.google.com/custom-search/v1/overview):
+- **The Google Custom Search JSON API is closed to new customers and shuts down 2027-01-01.**
+  Booka cannot obtain a new key, and the surface disappears in ~6 months. `google_pse` is no
+  longer a viable spike path — it is retained in code for any pre-existing key only.
+
+**New first spike path: SerpApi (`serpapi`).** Verified (serpapi.com/search-api):
+- Self-serve signup (no enterprise gate), documented Google Search API.
+- Supports the same advanced operators the existing query builder emits (`site:`, `OR`, quoted
+  terms), plus `tbs` freshness windows and `start` pagination.
+- Returns `organic_results[]` with `link` / `title` / `snippet` / `displayed_link`, so the URL
+  stays the dedup `external_id` — cross-provider canonicalization is unchanged.
+- Tradeoff is identical to `google_pse`: a SERP scraper, not a firehose. Escalation path is
+  unchanged (Brand24 → Brandwatch).
+
+**Implemented:** `src/lib/listening/providers/serpApi.ts` (`SerpApiProvider`), wired into
+`createListeningProvider()` as `case 'serpapi'`. Envs: `SOCIAL_LISTENING_PROVIDER=serpapi`,
+`SERPAPI_API_KEY` (required), `SERPAPI_RESULT_LIMIT` / `SERPAPI_HL` / `SERPAPI_GL` (optional).
+Unit-tested with an injected fetch. **Before production:** confirm the live `organic_results`
+field mapping with a real key, and validate the "Required Contract Checks" below against SerpApi.
+
+---
+
+### Original (superseded) recommendation
+The section below recommended `google_pse` first; it is kept for history only. Read the UPDATE
+above for the current decision.
 
 ## Recommendation
 
