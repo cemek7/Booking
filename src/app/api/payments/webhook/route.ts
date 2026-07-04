@@ -6,7 +6,7 @@ import PaymentService from '@/lib/paymentService';
 import Stripe from 'stripe';
 import crypto from 'crypto';
 import { defaultLogger } from '@/lib/logger';
-import { handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
 
 interface PaymentWebhookPayload {
   provider?: string;
@@ -212,6 +212,23 @@ export const POST = createHttpHandler(
             provider: prov,
             reservationId: reservationId as string | null,
           }).catch(err => defaultLogger.error('payment webhook: handlePaymentSuccess error', err));
+        } else if (/refund/i.test(String(finalStatus)) && ref) {
+          const prov = (provider || 'paystack') as 'paystack' | 'stripe' | 'flutterwave';
+          handlePaymentRefund({
+            tenantId: verifiedTenantId,
+            reference: ref as string,
+            provider: prov,
+            reservationId: reservationId as string | null,
+          }).catch(err => defaultLogger.error('payment webhook: handlePaymentRefund error', err));
+        } else if (/fail|cancel|expired/i.test(String(finalStatus)) && ref) {
+          const prov = (provider || 'paystack') as 'paystack' | 'stripe' | 'flutterwave';
+          handlePaymentFailure({
+            tenantId: verifiedTenantId,
+            reference: ref as string,
+            provider: prov,
+            reservationId: reservationId as string | null,
+            reason: String(finalStatus),
+          }).catch(err => defaultLogger.error('payment webhook: handlePaymentFailure error', err));
         }
       }
     }

@@ -27,7 +27,9 @@ export type FrontDeskEventType =
   | 'recommendation_sent'
   | 'handoff_requested'
   | 'payment_requested'
-  | 'payment_completed';
+  | 'payment_completed'
+  | 'payment_failed'
+  | 'payment_refunded';
 
 export type FrontDeskEventCategory =
   | 'conversation'

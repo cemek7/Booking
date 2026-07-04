@@ -525,7 +525,48 @@ export async function createRetailOrderPaymentLink(input: {
     provider: result.provider || 'unknown',
     reference: result.id,
     paymentUrl: result.payment_url,
+    orderId: order.id,
+    totalCents: Number(order.total_cents ?? 0),
   };
+}
+
+export async function createRetailOrderPaymentLinkForCustomer(input: {
+  tenantId: string;
+  externalId: string;
+  actorUserId: string;
+  orderId?: string | null;
+  callbackUrl?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+
+  let orderId = typeof input.orderId === 'string' && input.orderId.trim()
+    ? input.orderId.trim()
+    : null;
+
+  if (!orderId) {
+    const { data: order } = await admin
+      .from('retail_orders')
+      .select('id')
+      .eq('tenant_id', input.tenantId)
+      .eq('external_customer_ref', input.externalId)
+      .in('status', ['draft', 'pending_payment'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    orderId = typeof order?.id === 'string' ? order.id : null;
+  }
+
+  if (!orderId) {
+    throw new Error('No draft retail order is available for this conversation');
+  }
+
+  return createRetailOrderPaymentLink({
+    tenantId: input.tenantId,
+    orderId,
+    actorUserId: input.actorUserId,
+    callbackUrl: input.callbackUrl ?? null,
+  });
 }
 
 export async function transitionRetailOrder(input: {
@@ -535,6 +576,7 @@ export async function transitionRetailOrder(input: {
   action:
     | 'mark_paid'
     | 'mark_pending_payment'
+    | 'mark_payment_failed'
     | 'mark_preparing'
     | 'mark_fulfilled'
     | 'mark_cancelled'
@@ -575,6 +617,19 @@ export async function transitionRetailOrder(input: {
         ...metadata,
         paymentPendingAt: now,
         paymentPendingBy: input.actorUserId,
+      };
+      break;
+    }
+    case 'mark_payment_failed': {
+      if (order.payment_status === 'paid') {
+        throw new Error('Paid retail orders cannot be marked as failed');
+      }
+      updates.status = 'draft';
+      updates.payment_status = 'failed';
+      updates.metadata = {
+        ...metadata,
+        paymentFailedAt: now,
+        paymentFailedBy: input.actorUserId,
       };
       break;
     }
@@ -696,6 +751,7 @@ export async function transitionRetailOrder(input: {
 
   const journeyStageByAction: Record<typeof input.action, string> = {
     mark_pending_payment: 'pending_payment',
+    mark_payment_failed: 'payment_failed',
     mark_paid: 'paid',
     mark_preparing: 'preparing',
     mark_fulfilled: 'fulfilled',

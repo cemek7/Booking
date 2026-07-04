@@ -342,4 +342,56 @@ describe('handleCustomerBooking sales actions', () => {
     );
     expect(reply).toContain('Great choice');
   });
+
+  it('returns an in-chat retail payment link and persists retail order state', async () => {
+    const conv = makeConv();
+    conv.flow_data = {
+      sales_journey: { stage: 'draft_order' },
+      retail_order: { order_id: 'ord-1', total_cents: 185000 },
+    };
+    mockExecuteAction.mockResolvedValueOnce({
+      success: true,
+      data: {
+        orderId: 'ord-1',
+        reference: 'ref-retail-1',
+        paymentUrl: 'https://pay.example.com/retail/ref-retail-1',
+        totalCents: 185000,
+      },
+    });
+
+    const reply = await handleCustomerBooking(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'create_retail_payment_link',
+        params: {},
+        reply: 'Perfect. I’ll get your payment link ready now.',
+        confidence: 'high',
+      },
+      conv,
+      'send me the payment link',
+    );
+
+    expect(reply).toContain('Perfect. I’ll get your payment link ready now.');
+    expect(reply).toContain('https://pay.example.com/retail/ref-retail-1');
+    expect(updateConversation).toHaveBeenCalledWith(
+      '+2348000000000',
+      'tenant-1',
+      expect.objectContaining({
+        flow_data: expect.objectContaining({
+          sales_journey: expect.objectContaining({
+            stage: 'pending_payment',
+            last_payment_reference: 'ref-retail-1',
+          }),
+          retail_order: expect.objectContaining({
+            order_id: 'ord-1',
+            payment_reference: 'ref-retail-1',
+            payment_status: 'pending',
+            total_cents: 185000,
+          }),
+        }),
+      }),
+      'whatsapp',
+    );
+  });
 });

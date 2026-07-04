@@ -18,6 +18,7 @@ import {
   buildRecommendationsMessage,
 } from '@/lib/whatsapp/product-service';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
+import { createRetailOrderPaymentLinkForCustomer } from '@/lib/commerce/retail-orders';
 import type { Product } from '@/types/product-catalogue';
 
 const supabaseAdmin = createClient(
@@ -38,6 +39,7 @@ export type AIAction =
   | 'recommend_products'
   | 'offer_upsell'
   | 'offer_cross_sell'
+  | 'create_retail_payment_link'
   | 'recover_lead'
   | 'cancel_booking'
   | 'reschedule_booking'
@@ -106,6 +108,9 @@ export async function validateAction(
         ? { valid: true }
         : { valid: false, error: 'recover_lead requires a reason or follow-up timing', retryContext: 'Explain why the lead should be recovered and when to follow up.' };
 
+    case 'create_retail_payment_link':
+      return { valid: true };
+
     case 'update_schedule':
     case 'block_slot':
       return params.tenant_staff_id || params.staff_name
@@ -126,6 +131,7 @@ export async function validateAction(
     case 'recommend_products':
     case 'offer_upsell':
     case 'offer_cross_sell':
+    case 'create_retail_payment_link':
     case 'recover_lead':
     case 'get_insights':
     case 'owner_query':
@@ -823,6 +829,51 @@ export async function executeAction(
             title: action === 'offer_upsell' ? 'Recommended add-ons' : 'Recommended complementary products',
           },
         };
+      }
+
+      case 'create_retail_payment_link': {
+        if (!context.customerPhone) {
+          return { success: false, error: 'Customer phone is required to create a retail payment link' };
+        }
+
+        const paymentLink = await createRetailOrderPaymentLinkForCustomer({
+          tenantId,
+          externalId: context.customerPhone,
+          orderId: typeof params.order_id === 'string' ? params.order_id : null,
+          actorUserId: context.messageId ?? 'frontdesk_ai',
+          callbackUrl: typeof params.callback_url === 'string' ? params.callback_url : null,
+        });
+
+        await recordFrontDeskEvent({
+          tenantId,
+          eventType: 'payment_requested',
+          eventCategory: 'payment',
+          channel: context.channel ?? 'whatsapp',
+          actorRole: 'system',
+          customerId: context.customerId ?? null,
+          messageId: context.messageId ?? null,
+          correlationId: paymentLink.reference,
+          amount: paymentLink.totalCents / 100,
+          currency: 'NGN',
+          metadata: {
+            source: 'ai_front_desk',
+            payment_url: paymentLink.paymentUrl,
+            provider_reference: paymentLink.reference,
+            order_id: paymentLink.orderId,
+          },
+        });
+        await updateChatJourneyByExternalId({
+          tenantId,
+          externalId: context.customerPhone,
+          patch: {
+            type: 'retail',
+            stage: 'pending_payment',
+            orderId: paymentLink.orderId,
+            orderTotalCents: paymentLink.totalCents,
+          },
+        }).catch(() => undefined);
+
+        return { success: true, data: paymentLink };
       }
 
       case 'recover_lead': {

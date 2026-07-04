@@ -1314,6 +1314,334 @@ export interface PaymentSuccessInput {
   reservationId?: string | null;
 }
 
+type PaymentOutcomeInput = PaymentSuccessInput & {
+  reason?: string | null;
+};
+
+async function getRetailPaymentContext(
+  tenantId: string,
+  reference: string
+): Promise<{
+  orderId: string | null;
+  externalCustomerRef: string | null;
+  amountMinor: number | null;
+  currency: string | null;
+}> {
+  const supabase = createServerSupabaseClient();
+  const { data: tx } = await supabase
+    .from('transactions')
+    .select('amount, currency, raw')
+    .eq('provider_reference', reference)
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+
+  const raw = (tx?.raw ?? null) as Record<string, unknown> | null;
+  return {
+    orderId: typeof raw?.retail_order_id === 'string' ? raw.retail_order_id : null,
+    externalCustomerRef: typeof raw?.external_customer_ref === 'string' ? raw.external_customer_ref : null,
+    amountMinor: typeof tx?.amount === 'number' ? Math.round(Number(tx.amount) * 100) : null,
+    currency: typeof tx?.currency === 'string' ? tx.currency : null,
+  };
+}
+
+async function updateRetailConversationState(input: {
+  tenantId: string;
+  externalCustomerRef: string;
+  stage: string;
+  paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
+  orderId: string;
+  reference: string;
+  totalCents?: number | null;
+}) {
+  const { getConversation, updateConversation } = await import('@/lib/whatsapp/v2/conversationState');
+  const conv = await getConversation(input.externalCustomerRef, input.tenantId, 'whatsapp');
+  if (!conv) return;
+
+  await updateConversation(input.externalCustomerRef, input.tenantId, {
+    current_flow: conv.current_flow === 'booking' ? 'booking' : 'managing',
+    flow_data: {
+      ...conv.flow_data,
+      sales_journey: {
+        ...(conv.flow_data?.sales_journey ?? {}),
+        stage: input.stage,
+        last_payment_reference: input.reference,
+      },
+      retail_order: {
+        ...(conv.flow_data?.retail_order ?? {}),
+        order_id: input.orderId,
+        payment_reference: input.reference,
+        payment_status: input.paymentStatus,
+        total_cents: input.totalCents ?? conv.flow_data?.retail_order?.total_cents ?? null,
+      },
+    },
+  }, 'whatsapp');
+}
+
+async function sendRetailPaymentMessage(input: {
+  tenantId: string;
+  externalCustomerRef: string;
+  text: string;
+}) {
+  try {
+    const { getTenantChannelProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+    const provider = await getTenantChannelProviderClient(input.tenantId, 'whatsapp');
+    if (!provider) return;
+    await provider.sendTextMessage(input.externalCustomerRef, input.text);
+  } catch (error) {
+    defaultLogger.warn('[lifecycle] retail payment message send failed', error);
+  }
+}
+
+async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
+  orderId: string;
+  externalCustomerRef: string | null;
+}) {
+  const { transitionRetailOrder, getRetailOrderById } = await import('@/lib/commerce/retail-orders');
+  const order = await transitionRetailOrder({
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+    actorUserId: 'payment_webhook',
+    action: 'mark_paid',
+  });
+
+  const totalCents = Number((order as Record<string, unknown>)?.total_cents ?? input.amountMinor ?? 0);
+  await recordFrontDeskEvent({
+    tenantId: input.tenantId,
+    eventType: 'payment_completed',
+    eventCategory: 'payment',
+    channel: 'whatsapp',
+    correlationId: input.reference,
+    amount: typeof input.amountMinor === 'number' ? input.amountMinor / 100 : totalCents / 100,
+    currency: input.currency ?? 'NGN',
+    statusTo: 'success',
+    metadata: {
+      provider: input.provider,
+      retail_order_id: input.orderId,
+      source: 'handlePaymentSuccess',
+    },
+  });
+
+  if (input.externalCustomerRef) {
+    await updateRetailConversationState({
+      tenantId: input.tenantId,
+      externalCustomerRef: input.externalCustomerRef,
+      stage: 'paid',
+      paymentStatus: 'paid',
+      orderId: input.orderId,
+      reference: input.reference,
+      totalCents,
+    }).catch(() => undefined);
+    await sendRetailPaymentMessage({
+      tenantId: input.tenantId,
+      externalCustomerRef: input.externalCustomerRef,
+      text: `Payment received ✅ Your order is now confirmed. Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. We’ll keep you posted on fulfillment here.`,
+    });
+  }
+
+  defaultLogger.info(`[lifecycle] Retail payment confirmed: order=${input.orderId} provider=${input.provider} ref=${input.reference}`);
+  return getRetailOrderById(input.tenantId, input.orderId);
+}
+
+async function handleRetailPaymentFailure(input: PaymentOutcomeInput & {
+  orderId: string;
+  externalCustomerRef: string | null;
+}) {
+  const { transitionRetailOrder } = await import('@/lib/commerce/retail-orders');
+  const order = await transitionRetailOrder({
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+    actorUserId: 'payment_webhook',
+    action: 'mark_payment_failed',
+    notes: input.reason ?? null,
+  });
+
+  const totalCents = Number((order as Record<string, unknown>)?.total_cents ?? input.amountMinor ?? 0);
+  await recordFrontDeskEvent({
+    tenantId: input.tenantId,
+    eventType: 'payment_failed',
+    eventCategory: 'payment',
+    channel: 'whatsapp',
+    correlationId: input.reference,
+    amount: typeof input.amountMinor === 'number' ? input.amountMinor / 100 : totalCents / 100,
+    currency: input.currency ?? 'NGN',
+    statusTo: 'failed',
+    metadata: {
+      provider: input.provider,
+      retail_order_id: input.orderId,
+      reason: input.reason ?? null,
+      source: 'handlePaymentFailure',
+    },
+  });
+
+  if (input.externalCustomerRef) {
+    await updateRetailConversationState({
+      tenantId: input.tenantId,
+      externalCustomerRef: input.externalCustomerRef,
+      stage: 'payment_failed',
+      paymentStatus: 'failed',
+      orderId: input.orderId,
+      reference: input.reference,
+      totalCents,
+    }).catch(() => undefined);
+    await sendRetailPaymentMessage({
+      tenantId: input.tenantId,
+      externalCustomerRef: input.externalCustomerRef,
+      text: `Your payment didn’t go through, so your order is still saved as a draft. ${input.reason ? `Reason: ${input.reason}. ` : ''}Reply anytime and I can send a fresh payment link.`,
+    });
+  }
+}
+
+export async function handlePaymentFailure(input: PaymentOutcomeInput): Promise<void> {
+  try {
+    if (!input.reservationId) {
+      const retail = await getRetailPaymentContext(input.tenantId, input.reference);
+      if (retail.orderId) {
+        await handleRetailPaymentFailure({
+          ...input,
+          orderId: retail.orderId,
+          externalCustomerRef: retail.externalCustomerRef,
+          amountMinor: input.amountMinor ?? retail.amountMinor ?? undefined,
+          currency: input.currency ?? retail.currency ?? undefined,
+        });
+        return;
+      }
+    }
+
+    if (input.reservationId) {
+      const supabase = createServerSupabaseClient();
+      await supabase
+        .from('transactions')
+        .update({ status: 'failed', updated_at: new Date().toISOString() })
+        .eq('provider_reference', input.reference)
+        .eq('tenant_id', input.tenantId);
+
+      await supabase
+        .from('reservations')
+        .update({ status: 'payment_failed' })
+        .eq('id', input.reservationId)
+        .eq('tenant_id', input.tenantId);
+
+      await recordFrontDeskEvent({
+        tenantId: input.tenantId,
+        eventType: 'payment_failed',
+        eventCategory: 'payment',
+        channel: input.provider,
+        reservationId: input.reservationId,
+        correlationId: input.reference,
+        amount: typeof input.amountMinor === 'number' ? input.amountMinor / 100 : null,
+        currency: input.currency ?? null,
+        statusTo: 'failed',
+        metadata: {
+          provider: input.provider,
+          reason: input.reason ?? null,
+          source: 'handlePaymentFailure',
+        },
+      });
+    }
+  } catch (err) {
+    defaultLogger.error('[lifecycle] handlePaymentFailure error', err);
+  }
+}
+
+async function handleRetailPaymentRefund(input: PaymentOutcomeInput & {
+  orderId: string;
+  externalCustomerRef: string | null;
+}) {
+  const { transitionRetailOrder } = await import('@/lib/commerce/retail-orders');
+  const order = await transitionRetailOrder({
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+    actorUserId: 'payment_webhook',
+    action: 'mark_refunded',
+    notes: input.reason ?? null,
+  });
+
+  const totalCents = Number((order as Record<string, unknown>)?.total_cents ?? input.amountMinor ?? 0);
+  await recordFrontDeskEvent({
+    tenantId: input.tenantId,
+    eventType: 'payment_refunded',
+    eventCategory: 'payment',
+    channel: 'whatsapp',
+    correlationId: input.reference,
+    amount: typeof input.amountMinor === 'number' ? input.amountMinor / 100 : totalCents / 100,
+    currency: input.currency ?? 'NGN',
+    statusTo: 'refunded',
+    metadata: {
+      provider: input.provider,
+      retail_order_id: input.orderId,
+      source: 'handlePaymentRefund',
+    },
+  });
+
+  if (input.externalCustomerRef) {
+    await updateRetailConversationState({
+      tenantId: input.tenantId,
+      externalCustomerRef: input.externalCustomerRef,
+      stage: 'refunded',
+      paymentStatus: 'refunded',
+      orderId: input.orderId,
+      reference: input.reference,
+      totalCents,
+    }).catch(() => undefined);
+    await sendRetailPaymentMessage({
+      tenantId: input.tenantId,
+      externalCustomerRef: input.externalCustomerRef,
+      text: 'Your order payment has been refunded. If you still want the items, reply here and I’ll help you start a new order.',
+    });
+  }
+}
+
+export async function handlePaymentRefund(input: PaymentOutcomeInput): Promise<void> {
+  try {
+    if (!input.reservationId) {
+      const retail = await getRetailPaymentContext(input.tenantId, input.reference);
+      if (retail.orderId) {
+        await handleRetailPaymentRefund({
+          ...input,
+          orderId: retail.orderId,
+          externalCustomerRef: retail.externalCustomerRef,
+          amountMinor: input.amountMinor ?? retail.amountMinor ?? undefined,
+          currency: input.currency ?? retail.currency ?? undefined,
+        });
+        return;
+      }
+    }
+
+    if (input.reservationId) {
+      const supabase = createServerSupabaseClient();
+      await supabase
+        .from('transactions')
+        .update({ status: 'refunded', updated_at: new Date().toISOString() })
+        .eq('provider_reference', input.reference)
+        .eq('tenant_id', input.tenantId);
+
+      await supabase
+        .from('reservations')
+        .update({ status: 'refunded' })
+        .eq('id', input.reservationId)
+        .eq('tenant_id', input.tenantId);
+
+      await recordFrontDeskEvent({
+        tenantId: input.tenantId,
+        eventType: 'payment_refunded',
+        eventCategory: 'payment',
+        channel: input.provider,
+        reservationId: input.reservationId,
+        correlationId: input.reference,
+        amount: typeof input.amountMinor === 'number' ? input.amountMinor / 100 : null,
+        currency: input.currency ?? null,
+        statusTo: 'refunded',
+        metadata: {
+          provider: input.provider,
+          source: 'handlePaymentRefund',
+        },
+      });
+    }
+  } catch (err) {
+    defaultLogger.error('[lifecycle] handlePaymentRefund error', err);
+  }
+}
+
 /**
  * handlePaymentSuccess — shared post-payment confirmation path
  *
@@ -1328,6 +1656,20 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
   const { tenantId, reference, provider, reservationId, amountMinor, currency } = input;
 
   try {
+    if (!reservationId) {
+      const retail = await getRetailPaymentContext(tenantId, reference);
+      if (retail.orderId) {
+        await handleRetailPaymentSuccess({
+          ...input,
+          orderId: retail.orderId,
+          externalCustomerRef: retail.externalCustomerRef,
+          amountMinor: amountMinor ?? retail.amountMinor ?? undefined,
+          currency: currency ?? retail.currency ?? undefined,
+        });
+        return;
+      }
+    }
+
     // 1. Resolve reservation
     let bookingId: string | null = reservationId || null;
 

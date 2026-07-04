@@ -93,6 +93,9 @@ export async function handleCustomerBooking(
     case 'offer_cross_sell':
       return handleOfferProducts(convExternalId, tenantId, aiResp, 'cross-sell', conv, convChannel);
 
+    case 'create_retail_payment_link':
+      return handleCreateRetailPaymentLink(convExternalId, tenantId, aiResp, conv, convChannel);
+
     case 'recover_lead':
       return handleRecoverLead(convExternalId, tenantId, aiResp, conv, convChannel);
 
@@ -709,6 +712,60 @@ async function handleOfferProducts(
         : 'I couldn’t find any complementary products to suggest right now.',
     }
   );
+}
+
+async function handleCreateRetailPaymentLink(
+  externalId: string,
+  tenantId: string,
+  aiResp: AIResponse,
+  conv: ConvState,
+  channel: ConvChannel = 'whatsapp'
+): Promise<string> {
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: externalId,
+    channel,
+    userRole: 'customer',
+  });
+  if (!execResult.success) {
+    return execResult.error
+      ? `I couldn't create your payment link right now: ${execResult.error}`
+      : 'I couldn’t create your payment link right now.';
+  }
+
+  const paymentLink = (execResult.data ?? {}) as {
+    orderId?: string;
+    paymentUrl?: string;
+    reference?: string;
+    totalCents?: number;
+  };
+  const totalCents = Number(paymentLink.totalCents ?? 0);
+
+  await updateConversation(externalId, tenantId, {
+    current_flow: conv.current_flow === 'booking' ? 'booking' : 'managing',
+    flow_data: {
+      ...conv.flow_data,
+      sales_journey: {
+        ...conv.flow_data?.sales_journey,
+        stage: 'pending_payment',
+        last_payment_reference: paymentLink.reference ?? null,
+      },
+      retail_order: {
+        ...(conv.flow_data?.retail_order ?? {}),
+        order_id: paymentLink.orderId ?? null,
+        payment_reference: paymentLink.reference ?? null,
+        payment_url: paymentLink.paymentUrl ?? null,
+        payment_status: 'pending',
+        fulfillment_status: 'unfulfilled',
+        total_cents: totalCents || null,
+      },
+    },
+  }, channel);
+
+  if (!paymentLink.paymentUrl) {
+    return aiResp.reply;
+  }
+
+  return `${aiResp.reply}\n\nPay here to complete your order: ${paymentLink.paymentUrl}${totalCents > 0 ? `\nAmount: ₦${Math.round(totalCents / 100).toLocaleString()}` : ''}\n\nOnce payment goes through, I’ll confirm it right here.`;
 }
 
 async function recordUpsellConversion(

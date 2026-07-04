@@ -66,6 +66,11 @@ jest.mock('@/lib/ai/front-desk-sales', () => ({
   scheduleLeadRecoveryCampaign: jest.fn().mockResolvedValue('campaign-1'),
 }));
 
+const mockCreateRetailOrderPaymentLinkForCustomer = jest.fn();
+jest.mock('@/lib/commerce/retail-orders', () => ({
+  createRetailOrderPaymentLinkForCustomer: mockCreateRetailOrderPaymentLinkForCustomer,
+}));
+
 import { executeAction, validateAction } from '@/lib/whatsapp/v2/actionValidator';
 import type { AIResponse } from '@/lib/whatsapp/v2/actionValidator';
 
@@ -95,6 +100,10 @@ function sendQuote(params: Record<string, unknown> = {}): AIResponse {
 
 function qualifyLead(params: Record<string, unknown> = {}): AIResponse {
   return { action: 'qualify_lead', params, reply: 'Let me understand what you need first.', confidence: 'high' };
+}
+
+function createRetailPaymentLink(params: Record<string, unknown> = {}): AIResponse {
+  return { action: 'create_retail_payment_link', params, reply: 'I can send your payment link now.', confidence: 'high' };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -199,6 +208,12 @@ describe('executeAction — sales actions', () => {
     mockGetTenantWhatsAppProviderClient.mockResolvedValue({
       sendInteractiveMessage: mockSendInteractiveMessage,
       sendMediaMessage: mockSendMediaMessage,
+    });
+    mockCreateRetailOrderPaymentLinkForCustomer.mockResolvedValue({
+      orderId: 'ord-1',
+      reference: 'ref-1',
+      paymentUrl: 'https://pay.example.com/retail/ref-1',
+      totalCents: 185000,
     });
     mockSendInteractiveMessage.mockResolvedValue({ success: true, messageId: 'msg-1' });
     mockSendMediaMessage.mockResolvedValue({ success: true, messageId: 'media-1' });
@@ -406,6 +421,27 @@ describe('executeAction — sales actions', () => {
     expect(result.data).toMatchObject({
       stage: 'qualified',
       lead: { id: 'lead-1' },
+    });
+  });
+
+  it('creates a retail payment link for an existing draft order', async () => {
+    const result = await executeAction(TENANT, createRetailPaymentLink(), {
+      customerPhone: '+2348000000000',
+      channel: 'whatsapp',
+      messageId: 'msg-22',
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockCreateRetailOrderPaymentLinkForCustomer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT,
+        externalId: '+2348000000000',
+      }),
+    );
+    expect(result.data).toMatchObject({
+      orderId: 'ord-1',
+      reference: 'ref-1',
+      paymentUrl: 'https://pay.example.com/retail/ref-1',
     });
   });
 });

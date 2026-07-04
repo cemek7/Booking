@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { verifyPaystackSignature } from '@/lib/webhooks/validation';
 import { defaultLogger } from '@/lib/logger';
-import { handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
 
 /**
  * POST /api/payments/paystack
@@ -96,6 +96,17 @@ export const POST = createHttpHandler(
             defaultLogger.warn('[api/payments/paystack] charge.failed — reservation marked payment_failed',
               { ref, reservationId });
           }
+          if (existing?.tenant_id) {
+            handlePaymentFailure({
+              tenantId: existing.tenant_id,
+              reference: ref,
+              provider: 'paystack',
+              reservationId,
+              amountMinor: data.amount,
+              currency: data.currency,
+              reason: data?.gateway_response || data?.status || 'charge.failed',
+            }).catch(err => defaultLogger.error('[api/payments/paystack] handlePaymentFailure error', err));
+          }
         }
         break;
       }
@@ -121,6 +132,16 @@ export const POST = createHttpHandler(
               .update({ status: 'refunded' })
               .eq('id', reservationId)
               .eq('tenant_id', existing.tenant_id);
+          }
+          if (existing?.tenant_id) {
+            handlePaymentRefund({
+              tenantId: existing.tenant_id,
+              reference: ref,
+              provider: 'paystack',
+              reservationId,
+              amountMinor: data.amount,
+              currency: data.currency,
+            }).catch(err => defaultLogger.error('[api/payments/paystack] handlePaymentRefund error', err));
           }
           defaultLogger.info('[api/payments/paystack] charge.refunded processed', { ref, reservationId });
         }

@@ -4,7 +4,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { verifyStripeSignature } from '@/lib/webhooks/validation';
 import { defaultLogger } from '@/lib/logger';
-import { handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
 
 /**
  * POST /api/payments/stripe
@@ -152,6 +152,17 @@ export const POST = createHttpHandler(
           .eq('tenant_id', verifiedTenantId);
         defaultLogger.warn('[api/payments/stripe] payment_intent.payment_failed', { ref, reservationId, verifiedTenantId });
       }
+      if (ref) {
+        handlePaymentFailure({
+          tenantId: verifiedTenantId,
+          reference: ref,
+          provider: 'stripe',
+          reservationId,
+          amountMinor: event?.data?.object?.amount,
+          currency: event?.data?.object?.currency,
+          reason: event?.data?.object?.last_payment_error?.message || 'payment_intent.payment_failed',
+        }).catch(err => defaultLogger.error('[api/payments/stripe] handlePaymentFailure error', err));
+      }
     }
 
     // Handle refunds — update transaction and reservation to refunded status
@@ -171,6 +182,16 @@ export const POST = createHttpHandler(
           .update({ status: 'refunded' })
           .eq('id', reservationId)
           .eq('tenant_id', verifiedTenantId);
+      }
+      if (ref) {
+        handlePaymentRefund({
+          tenantId: verifiedTenantId,
+          reference: ref,
+          provider: 'stripe',
+          reservationId,
+          amountMinor: event?.data?.object?.amount_refunded || event?.data?.object?.amount,
+          currency: event?.data?.object?.currency,
+        }).catch(err => defaultLogger.error('[api/payments/stripe] handlePaymentRefund error', err));
       }
       defaultLogger.info('[api/payments/stripe] charge.refunded processed', { ref, reservationId });
     }

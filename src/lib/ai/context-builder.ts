@@ -108,13 +108,14 @@ ${ownerBlock}Conversation state:
 - Step: ${conv.flow_step}
 - Booking in progress: ${JSON.stringify(conv.flow_data?.booking_in_progress ?? null)}
 - Sales journey: ${JSON.stringify(conv.flow_data?.sales_journey ?? null)}
+- Retail order: ${JSON.stringify(conv.flow_data?.retail_order ?? null)}
 
 ${retryBlock}Customer message:
 "${message}"
 
 Respond ONLY with valid JSON:
 {
-  "action": "create_booking | get_availability | list_services | list_staff | get_price | send_quote | qualify_lead | show_catalog | show_showcase | recommend_products | offer_upsell | offer_cross_sell | recover_lead | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
+  "action": "create_booking | get_availability | list_services | list_staff | get_price | send_quote | qualify_lead | show_catalog | show_showcase | recommend_products | offer_upsell | offer_cross_sell | create_retail_payment_link | recover_lead | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
   "params": {},
   "reply": "natural language reply",
   "confidence": "high | medium | low"
@@ -132,6 +133,7 @@ Rules:
 - Use "recommend_products" when the customer wants product suggestions, add-ons, or "what should I buy/use" guidance.
 - Use "offer_upsell" for a higher-value add-on, upgrade, or aftercare recommendation linked to the customer's interest.
 - Use "offer_cross_sell" for a complementary service or retail recommendation.
+- Use "create_retail_payment_link" only when there is already a draft retail order in the conversation context and the customer is clearly ready to pay now.
 - Use "recover_lead" when the customer is interested but not ready, has objections, or wants a follow-up later. Include reason and optionally follow_up_at.
 - For "show_catalog" and "recommend_products", prefer product IDs from the grounded context when possible. You may also pass "product_name", "query", or "category".
 - For "show_showcase", prefer a grounded showcase pack ID when possible. You may also pass "showcase_name" or "trigger_text".
