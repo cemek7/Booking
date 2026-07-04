@@ -17,6 +17,7 @@ import {
   buildProductListMessage,
   buildRecommendationsMessage,
 } from '@/lib/whatsapp/product-service';
+import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import type { Product } from '@/types/product-catalogue';
 
 const supabaseAdmin = createClient(
@@ -440,6 +441,13 @@ export async function executeAction(
             service_name: quotedService?.name ?? params.service_name ?? null,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: { type: 'booking', stage: 'confirmed' },
+          }).catch(() => undefined);
+        }
         return { success: true, data: { reservation } };
       }
 
@@ -577,6 +585,13 @@ export async function executeAction(
             previous_experience: params.previous_experience ?? null,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: { type: 'lead', stage: 'qualified', leadId: lead?.id ?? null },
+          }).catch(() => undefined);
+        }
 
         return { success: true, data: { lead, stage: 'qualified' } };
       }
@@ -616,6 +631,13 @@ export async function executeAction(
             duration_minutes: quote.duration,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: { type: 'lead', stage: 'quoted', leadId: lead?.id ?? null },
+          }).catch(() => undefined);
+        }
 
         return { success: true, data: { quote, lead } };
       }
@@ -683,6 +705,13 @@ export async function executeAction(
             category: params.category ?? null,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: { type: 'retail', stage: 'catalog_shared' },
+          }).catch(() => undefined);
+        }
 
         return {
           success: true,
@@ -722,6 +751,13 @@ export async function executeAction(
             reason: params.reason ?? null,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: { type: 'retail', stage: 'recommending' },
+          }).catch(() => undefined);
+        }
 
         return {
           success: true,
@@ -767,6 +803,16 @@ export async function executeAction(
             reason: params.reason ?? null,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: {
+              type: 'retail',
+              stage: action === 'offer_upsell' ? 'upsell_offered' : 'cross_sell_offered',
+            },
+          }).catch(() => undefined);
+        }
 
         return {
           success: true,
@@ -821,6 +867,13 @@ export async function executeAction(
             recovery_message: params.recovery_message ?? null,
           },
         });
+        if (context.customerPhone) {
+          await updateChatJourneyByExternalId({
+            tenantId,
+            externalId: context.customerPhone,
+            patch: { type: 'lead', stage: 'followup_scheduled', leadId: lead?.id ?? null },
+          }).catch(() => undefined);
+        }
 
         return { success: true, data: { lead, campaignRunId } };
       }

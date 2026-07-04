@@ -1,5 +1,5 @@
 "use client";
-import type { ChatSupportStatus } from '@/lib/chats/operations';
+import type { ChatJourneyType, ChatSupportStatus } from '@/lib/chats/operations';
 
 export interface ChatSummary {
   id: string;
@@ -9,6 +9,10 @@ export interface ChatSummary {
   unread?: number;
   status: ChatSupportStatus;
   assigneeLabel?: string | null;
+  journeyType: ChatJourneyType;
+  journeyStage?: string | null;
+  cartItemCount?: number;
+  orderTotalCents?: number | null;
 }
 
 interface ChatSidebarProps {
@@ -23,6 +27,14 @@ export function ChatSidebar({ chats, activeId, onSelect, filter }: ChatSidebarPr
     open: 'bg-emerald-50 text-emerald-700',
     pending: 'bg-amber-50 text-amber-800',
     resolved: 'bg-slate-100 text-slate-700',
+  };
+  const journeyTone: Record<ChatJourneyType, string> = {
+    general: 'bg-slate-100 text-slate-700',
+    lead: 'bg-blue-100 text-blue-700',
+    booking: 'bg-violet-100 text-violet-700',
+    retail: 'bg-amber-100 text-amber-800',
+    support: 'bg-rose-100 text-rose-700',
+    mixed: 'bg-fuchsia-100 text-fuchsia-700',
   };
   const list = chats.filter(c => {
     if (!filter) return true;
@@ -61,8 +73,19 @@ export function ChatSidebar({ chats, activeId, onSelect, filter }: ChatSidebarPr
                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${statusTone[c.status]}`}>
                   {c.status}
                 </span>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${journeyTone[c.journeyType]}`}>
+                  {c.journeyStage ? `${c.journeyType}:${c.journeyStage}` : c.journeyType}
+                </span>
                 <span className="truncate">{c.assigneeLabel || 'Unassigned'}</span>
               </div>
+              {c.journeyType === 'retail' && (c.cartItemCount || c.orderTotalCents) ? (
+                <div className="mt-0.5 text-[10px] text-amber-700">
+                  {c.cartItemCount ? `${c.cartItemCount} item${c.cartItemCount === 1 ? '' : 's'}` : 'Draft order'}
+                  {typeof c.orderTotalCents === 'number'
+                    ? ` · ₦${Math.round(c.orderTotalCents / 100).toLocaleString()}`
+                    : ''}
+                </div>
+              ) : null}
               <div className="text-[11px] text-gray-500 mt-0.5">
                 {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
               </div>

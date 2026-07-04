@@ -4,6 +4,21 @@ export type ChatSupportStatus = (typeof CHAT_SUPPORT_STATUSES)[number];
 
 export type ChatChannel = 'whatsapp' | 'instagram';
 
+export const CHAT_JOURNEY_TYPES = ['general', 'lead', 'booking', 'retail', 'support', 'mixed'] as const;
+
+export type ChatJourneyType = (typeof CHAT_JOURNEY_TYPES)[number];
+
+export type ChatJourneyState = {
+  type: ChatJourneyType;
+  stage: string | null;
+  leadId: string | null;
+  cartId: string | null;
+  orderId: string | null;
+  cartItemCount: number;
+  orderTotalCents: number | null;
+  updatedAt: string | null;
+};
+
 export type ChatSupportState = {
   status: ChatSupportStatus;
   assigneeUserId: string | null;
@@ -14,7 +29,19 @@ export type ChatMetadata = {
   subject?: string;
   channel?: ChatChannel;
   support?: Partial<ChatSupportState> | null;
+  journey?: Partial<ChatJourneyState> | null;
 } | null;
+
+export const DEFAULT_CHAT_JOURNEY_STATE: ChatJourneyState = {
+  type: 'general',
+  stage: null,
+  leadId: null,
+  cartId: null,
+  orderId: null,
+  cartItemCount: 0,
+  orderTotalCents: null,
+  updatedAt: null,
+};
 
 export const DEFAULT_CHAT_SUPPORT_STATE: ChatSupportState = {
   status: 'open',
@@ -38,6 +65,33 @@ export function getChatSupportState(metadata: ChatMetadata): ChatSupportState {
   };
 }
 
+export function getChatJourneyState(metadata: ChatMetadata): ChatJourneyState {
+  const journey = metadata?.journey ?? null;
+  const type = journey?.type;
+
+  return {
+    type:
+      type && CHAT_JOURNEY_TYPES.includes(type)
+        ? type
+        : DEFAULT_CHAT_JOURNEY_STATE.type,
+    stage: typeof journey?.stage === 'string' && journey.stage.trim().length > 0
+      ? journey.stage.trim()
+      : null,
+    leadId: typeof journey?.leadId === 'string' ? journey.leadId : null,
+    cartId: typeof journey?.cartId === 'string' ? journey.cartId : null,
+    orderId: typeof journey?.orderId === 'string' ? journey.orderId : null,
+    cartItemCount:
+      typeof journey?.cartItemCount === 'number' && Number.isFinite(journey.cartItemCount)
+        ? Math.max(0, Math.trunc(journey.cartItemCount))
+        : DEFAULT_CHAT_JOURNEY_STATE.cartItemCount,
+    orderTotalCents:
+      typeof journey?.orderTotalCents === 'number' && Number.isFinite(journey.orderTotalCents)
+        ? Math.max(0, Math.trunc(journey.orderTotalCents))
+        : null,
+    updatedAt: typeof journey?.updatedAt === 'string' ? journey.updatedAt : null,
+  };
+}
+
 export function mergeChatSupportState(
   metadata: ChatMetadata,
   patch: Partial<ChatSupportState>
@@ -50,5 +104,21 @@ export function mergeChatSupportState(
   return {
     ...(metadata ?? {}),
     support: nextSupport,
+  };
+}
+
+export function mergeChatJourneyState(
+  metadata: ChatMetadata,
+  patch: Partial<ChatJourneyState>
+): NonNullable<ChatMetadata> {
+  const nextJourney = {
+    ...getChatJourneyState(metadata),
+    ...patch,
+    updatedAt: patch.updatedAt ?? new Date().toISOString(),
+  };
+
+  return {
+    ...(metadata ?? {}),
+    journey: nextJourney,
   };
 }

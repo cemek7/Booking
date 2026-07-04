@@ -22,6 +22,8 @@ import { getAvailableSlots, lockSlot, releaseLock } from '../slotEngine';
 import { addToWaitlist } from '../waitlist';
 import { defaultLogger } from '@/lib/logger';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
+import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
+import { addProductsToRetailCart } from '@/lib/commerce/retail-orders';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -227,6 +229,14 @@ async function handleGetAvailability(
       awaiting_selection: true,
     },
   }, channel);
+  await updateChatJourneyByExternalId({
+    tenantId,
+    externalId,
+    patch: {
+      type: 'booking',
+      stage: 'selecting_slot',
+    },
+  }).catch(() => undefined);
 
   const dateFormatted = new Date(date).toLocaleDateString('en-NG', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -351,6 +361,14 @@ async function handleCreateBooking(
       awaiting_confirmation: true,
     },
   }, channel);
+  await updateChatJourneyByExternalId({
+    tenantId,
+    externalId,
+    patch: {
+      type: 'booking',
+      stage: 'awaiting_confirmation',
+    },
+  }).catch(() => undefined);
 
   const depositNote = riskScore === 'high'
     ? '\n\n*A deposit is required for this booking.*'
@@ -495,6 +513,14 @@ async function confirmBooking(
 
     if (lock_id) await releaseLock(lock_id);
     await resetConversation(externalId, tenantId, channel);
+    await updateChatJourneyByExternalId({
+      tenantId,
+      externalId,
+      patch: {
+        type: 'booking',
+        stage: 'pending_deposit',
+      },
+    }).catch(() => undefined);
 
     return `Almost done! To secure your appointment, please pay the ₦${Math.round(depositAmountCents / 100).toLocaleString()} deposit: ${paymentResult.authorizationUrl}\n\nYour slot is held for 30 minutes.`;
   }
@@ -515,6 +541,14 @@ async function confirmBooking(
 
   // Reset flow
   await resetConversation(externalId, tenantId, channel);
+  await updateChatJourneyByExternalId({
+    tenantId,
+    externalId,
+    patch: {
+      type: 'booking',
+      stage: 'confirmed',
+    },
+  }).catch(() => undefined);
 
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
@@ -714,6 +748,17 @@ async function recordUpsellConversion(
   await updateConversation(externalId, tenantId, {
     flow_data: { ...conv.flow_data, pending_upsell: null },
   }, channel);
+
+  const retail = await addProductsToRetailCart({
+    tenantId,
+    externalId,
+    productIds,
+    source: mode === 'cross_sell' ? 'cross_sell' : 'upsell',
+  }).catch(() => null);
+
+  if (retail) {
+    return `Great choice! 🎉 I’ve added that to your draft order. Current total: ₦${Math.round(retail.totalCents / 100).toLocaleString()}. Anything else I can help with?`;
+  }
 
   return 'Great choice! 🎉 I’ve noted that for you — the team will add it to your order. Anything else I can help with?';
 }

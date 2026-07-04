@@ -230,6 +230,16 @@ export default function ChatsPanel() {
                       {activeChat.assigneeLabel ? `Assigned to ${activeChat.assigneeLabel}` : 'Unassigned'}
                     </span>
                   ) : null}
+                  {activeChat ? (
+                    <span className="text-[10px] text-gray-500">
+                      {activeChat.journeyStage
+                        ? `${activeChat.journeyType} · ${activeChat.journeyStage}`
+                        : activeChat.journeyType}
+                      {activeChat.journeyType === 'retail' && typeof activeChat.orderTotalCents === 'number'
+                        ? ` · ₦${Math.round(activeChat.orderTotalCents / 100).toLocaleString()}`
+                        : ''}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             ) : (

@@ -15,6 +15,8 @@ describe('ChatSidebar', () => {
             unread: 2,
             status: 'pending',
             assigneeLabel: 'Grace Hopper',
+            journeyType: 'lead',
+            journeyStage: 'qualified',
             lastMessageAt: '2026-07-03T09:15:00.000Z',
           },
         ]}
@@ -22,6 +24,7 @@ describe('ChatSidebar', () => {
     );
 
     expect(screen.getByText('pending')).toBeInTheDocument();
+    expect(screen.getByText('lead:qualified')).toBeInTheDocument();
     expect(screen.getByText('Grace Hopper')).toBeInTheDocument();
     expect(screen.getByLabelText('2 unread messages')).toBeInTheDocument();
   });

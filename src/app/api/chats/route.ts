@@ -2,7 +2,11 @@ export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { defaultLogger } from '@/lib/logger';
-import { getChatSupportState, type ChatChannel } from '@/lib/chats/operations';
+import {
+  getChatJourneyState,
+  getChatSupportState,
+  type ChatChannel,
+} from '@/lib/chats/operations';
 
 type ChatRow = {
   id: string;
@@ -14,6 +18,16 @@ type ChatRow = {
       status?: 'open' | 'pending' | 'resolved';
       assigneeUserId?: string | null;
       assigneeLabel?: string | null;
+    } | null;
+    journey?: {
+      type?: 'general' | 'lead' | 'booking' | 'retail' | 'support' | 'mixed';
+      stage?: string | null;
+      leadId?: string | null;
+      cartId?: string | null;
+      orderId?: string | null;
+      cartItemCount?: number;
+      orderTotalCents?: number | null;
+      updatedAt?: string | null;
     } | null;
   } | null;
   last_message_at?: string | null;
@@ -44,15 +58,27 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.internalServerError(new Error('Failed to fetch chats: ' + error.message));
     }
 
-    const mapped = ((data || []) as ChatRow[]).map((c) => ({
-      ...getChatSupportState(c.metadata ?? null),
-      id: c.id,
-      customerPhone: c.customer_phone ?? null,
-      subject: c.metadata?.subject || c.customer_phone || String(c.id).slice(0, 6),
-      last_message_at: c.last_message_at,
-      unread: c.unread_count ?? 0,
-      channel: c.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
-    }));
+    const mapped = ((data || []) as ChatRow[]).map((c) => {
+      const support = getChatSupportState(c.metadata ?? null);
+      const journey = getChatJourneyState(c.metadata ?? null);
+
+      return {
+        ...support,
+        id: c.id,
+        customerPhone: c.customer_phone ?? null,
+        subject: c.metadata?.subject || c.customer_phone || String(c.id).slice(0, 6),
+        last_message_at: c.last_message_at,
+        unread: c.unread_count ?? 0,
+        channel: c.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
+        journeyType: journey.type,
+        journeyStage: journey.stage,
+        leadId: journey.leadId,
+        cartId: journey.cartId,
+        orderId: journey.orderId,
+        cartItemCount: journey.cartItemCount,
+        orderTotalCents: journey.orderTotalCents,
+      };
+    });
 
     return mapped;
   },

@@ -2,7 +2,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
-import { getChatSupportState, type ChatChannel, type ChatSupportStatus } from '@/lib/chats/operations';
+import {
+  getChatJourneyState,
+  getChatSupportState,
+  type ChatChannel,
+  type ChatJourneyType,
+  type ChatSupportStatus,
+} from '@/lib/chats/operations';
 import { authGet } from '@/lib/auth/auth-api-client';
 
 export type ChatSummary = {
@@ -16,6 +22,13 @@ export type ChatSummary = {
   status: ChatSupportStatus;
   assigneeUserId?: string | null;
   assigneeLabel?: string | null;
+  journeyType: ChatJourneyType;
+  journeyStage?: string | null;
+  leadId?: string | null;
+  cartId?: string | null;
+  orderId?: string | null;
+  cartItemCount?: number;
+  orderTotalCents?: number | null;
 };
 export type ChatAssigneeOption = {
   id: string;
@@ -48,6 +61,15 @@ interface ChatRow {
       status?: ChatSupportStatus;
       assigneeUserId?: string | null;
       assigneeLabel?: string | null;
+    } | null;
+    journey?: {
+      type?: ChatJourneyType;
+      stage?: string | null;
+      leadId?: string | null;
+      cartId?: string | null;
+      orderId?: string | null;
+      cartItemCount?: number;
+      orderTotalCents?: number | null;
     } | null;
   } | null;
   unread_count?: number;
@@ -116,18 +138,30 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         }
       }
 
-      const mapped: ChatSummary[] = rows.map((row) => ({
-        ...getChatSupportState(row.metadata ?? null),
-        id: row.id,
-        customerPhone: row.customer_phone,
-        lastMessageAt: row.last_message_at,
-        subject: row.metadata?.subject || row.customer_phone || (row.session_id ? `Session ${row.session_id.slice(0,6)}` : `Chat ${String(row.id).slice(0,6)}`),
-        channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
-        unread: row.unread_count ?? 0,
-        humanHandlingUntil: row.customer_phone
-          ? humanHandlingByKey.get(`${row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp'}:${row.customer_phone}`) ?? null
-          : null,
-      }));
+      const mapped: ChatSummary[] = rows.map((row) => {
+        const support = getChatSupportState(row.metadata ?? null);
+        const journey = getChatJourneyState(row.metadata ?? null);
+
+        return {
+          ...support,
+          id: row.id,
+          customerPhone: row.customer_phone,
+          lastMessageAt: row.last_message_at,
+          subject: row.metadata?.subject || row.customer_phone || (row.session_id ? `Session ${row.session_id.slice(0,6)}` : `Chat ${String(row.id).slice(0,6)}`),
+          channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
+          unread: row.unread_count ?? 0,
+          humanHandlingUntil: row.customer_phone
+            ? humanHandlingByKey.get(`${row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp'}:${row.customer_phone}`) ?? null
+            : null,
+          journeyType: journey.type,
+          journeyStage: journey.stage,
+          leadId: journey.leadId,
+          cartId: journey.cartId,
+          orderId: journey.orderId,
+          cartItemCount: journey.cartItemCount,
+          orderTotalCents: journey.orderTotalCents,
+        };
+      });
       setChats(mapped.map(c => ({ ...c, unread: unreadMap[c.id] ?? c.unread ?? 0 })));
     } finally { setLoading(false); }
   }, [supabase, tenantId]);
@@ -211,8 +245,10 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         if (!row) { loadChats(); return; }
         setChats(prev => {
           const idx = prev.findIndex(c => c.id === row.id);
+          const support = getChatSupportState(row.metadata ?? null);
+          const journey = getChatJourneyState(row.metadata ?? null);
           const updated: ChatSummary = {
-            ...getChatSupportState(row.metadata ?? null),
+            ...support,
             id: row.id,
             customerPhone: row.customer_phone,
             lastMessageAt: row.last_message_at,
@@ -220,6 +256,13 @@ export function useChatRealtime(tenantId: string | null | undefined) {
             channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
             unread: prev[idx]?.unread ?? 0,
             humanHandlingUntil: prev[idx]?.humanHandlingUntil ?? null,
+            journeyType: journey.type,
+            journeyStage: journey.stage,
+            leadId: journey.leadId,
+            cartId: journey.cartId,
+            orderId: journey.orderId,
+            cartItemCount: journey.cartItemCount,
+            orderTotalCents: journey.orderTotalCents,
           };
           if (idx === -1) return [updated, ...prev];
           const next = prev.slice();
