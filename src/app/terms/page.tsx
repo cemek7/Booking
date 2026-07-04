@@ -28,6 +28,8 @@ export default function TermsPage() {
           <li><strong>AI credits:</strong> AI usage is paid from a prepaid credit wallet. Credits are <strong>prepaid, non-refundable for cash</strong>, usable only for {LEGAL.product} AI usage, and expire per the rules shown in your billing settings.</li>
           <li><strong>Selling services &amp; products:</strong> you may sell your own services and products through {LEGAL.product}. You set and are responsible for prices, descriptions, availability/stock, and the accuracy of your listings.</li>
           <li><strong>Your responsibilities (merchant of record):</strong> you are the merchant of record for all payments your customers make through {LEGAL.product} — bookings and product purchases. You are responsible for delivering services, fulfilling and shipping product orders, honoring your own cancellation/refund/return terms, product quality and any warranties, complying with consumer-protection law (including distance-selling / right-to-return rules where they apply), handling customer disputes and chargebacks, and collecting/remitting applicable taxes. {LEGAL.product} only facilitates the payment to your account.</li>
+          <li><strong>Returns policy (required if you sell products):</strong> if you sell products through {LEGAL.product}, you must publish a clear, accurate returns/refund policy that is available to customers before purchase and that meets or exceeds the consumer rights available under applicable law (including any statutory right to cancel or return). You are solely responsible for honoring that policy and any mandatory returns/withdrawal rights.</li>
+          <li><strong>Product safety &amp; liability:</strong> you are responsible for the safety, legality, quality, labelling, and description of the products you sell, and for any product-liability, warranty, or recall obligations. You must not sell prohibited, unsafe, counterfeit, or illegal items. You will indemnify {LEGAL.company} against claims arising from the products you sell or the services you deliver.</li>
           <li><strong>Data:</strong> you are the data controller for your customers&apos; data; {LEGAL.product} processes it under our <Link href="/dpa">DPA</Link>.</li>
           <li><strong>Acceptable use:</strong> you must follow our <Link href="/acceptable-use">Acceptable Use Policy</Link>, including messaging-consent and anti-spam rules.</li>
           <li><strong>Termination:</strong> either party may terminate per these Terms; we may suspend for non-payment or policy violations.</li>
@@ -48,6 +50,15 @@ export default function TermsPage() {
           {LEGAL.product} is provided "as is." To the extent permitted by law, {LEGAL.company} is not liable
           for the acts or omissions of tenants or their service delivery, and our aggregate liability is
           limited as set out in the applicable order or subscription agreement.
+        </p>
+        <p>
+          <strong>Products are sold by the business, not by {LEGAL.company}.</strong> {LEGAL.company} is a
+          technology and payment-facilitation provider — it does not manufacture, supply, own, inspect, or
+          sell any products offered through {LEGAL.product}, and is not a party to the sale. To the extent
+          permitted by law, {LEGAL.company} is not liable for the products themselves (including their
+          safety, quality, fitness, description, delivery, or any product-liability claim); those
+          responsibilities rest with the selling business. Nothing here limits liability that cannot be
+          excluded under applicable law.
         </p>
       </LegalSection>
 
