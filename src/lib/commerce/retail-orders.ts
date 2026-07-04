@@ -1,5 +1,8 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
+import { PaymentsAdapter } from '@/lib/paymentsAdapter';
+import { defaultLogger } from '@/lib/logger';
+import { randomUUID } from 'crypto';
 
 type ProductSnapshot = {
   id: string;
@@ -25,6 +28,41 @@ type RetailOrder = {
   cart_id: string | null;
   total_cents: number;
 };
+
+type RetailOrderStatus = 'draft' | 'pending_payment' | 'paid' | 'cancelled' | 'fulfilled';
+type RetailPaymentStatus = 'unpaid' | 'pending' | 'paid' | 'failed' | 'refunded';
+type RetailFulfillmentStatus = 'unfulfilled' | 'preparing' | 'fulfilled' | 'cancelled';
+
+const RETAIL_ORDER_SELECT = `
+  id,
+  tenant_id,
+  cart_id,
+  customer_id,
+  source_chat_id,
+  external_customer_ref,
+  status,
+  payment_status,
+  fulfillment_status,
+  currency,
+  subtotal_cents,
+  total_cents,
+  notes,
+  metadata,
+  created_at,
+  updated_at,
+  customer:customers(id, name, email, phone),
+  items:retail_order_items(
+    id,
+    product_id,
+    variant_id,
+    quantity,
+    unit_price_cents,
+    total_price_cents,
+    metadata,
+    product:products(id, name, category, sku, track_inventory),
+    variant:product_variants(id, name, sku)
+  )
+`;
 
 async function resolveCustomerAndChat(tenantId: string, externalId: string) {
   const admin = createSupabaseAdminClient();
@@ -207,6 +245,471 @@ async function syncDraftOrderItems(orderId: string, cartId: string, tenantId: st
       metadata: item.metadata ?? {},
     }))
   );
+}
+
+function getRetailOrderMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
+async function loadRetailOrderForUpdate(tenantId: string, orderId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from('retail_orders')
+    .select(RETAIL_ORDER_SELECT)
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load retail order: ${error.message}`);
+  }
+  if (!data) {
+    throw new Error('Retail order not found');
+  }
+
+  return data as Record<string, unknown>;
+}
+
+async function updateChatJourneyForOrder(order: Record<string, unknown>, patch: Record<string, unknown>) {
+  const externalCustomerRef = typeof order.external_customer_ref === 'string' ? order.external_customer_ref : null;
+  const tenantId = typeof order.tenant_id === 'string' ? order.tenant_id : null;
+  if (!externalCustomerRef || !tenantId) return;
+
+  await updateChatJourneyByExternalId({
+    tenantId,
+    externalId: externalCustomerRef,
+    patch,
+  });
+}
+
+async function applyInventoryMovement(
+  tenantId: string,
+  orderId: string,
+  items: Array<Record<string, unknown>>,
+  direction: 'decrement' | 'increment'
+) {
+  const admin = createSupabaseAdminClient();
+
+  for (const item of items) {
+    const product = item.product as { track_inventory?: boolean } | null | undefined;
+    if (!product?.track_inventory) continue;
+
+    const productId = typeof item.product_id === 'string' ? item.product_id : null;
+    if (!productId) continue;
+    const variantId = typeof item.variant_id === 'string' ? item.variant_id : null;
+    const quantity = Math.max(0, Number(item.quantity ?? 0));
+    if (!quantity) continue;
+
+    let inventoryQuery = admin
+      .from('product_inventory')
+      .select('current_stock, available_stock')
+      .eq('tenant_id', tenantId)
+      .eq('product_id', productId);
+
+    inventoryQuery = variantId
+      ? inventoryQuery.eq('variant_id', variantId)
+      : inventoryQuery.is('variant_id', null);
+
+    const { data: inventory } = await inventoryQuery.maybeSingle();
+    if (!inventory) {
+      throw new Error('Tracked inventory row missing for retail order item');
+    }
+
+    const currentStock = Number(inventory.current_stock ?? 0);
+    const availableStock = Number(inventory.available_stock ?? 0);
+
+    if (direction === 'decrement' && availableStock < quantity) {
+      throw new Error('Insufficient inventory to mark retail order as paid');
+    }
+
+    const nextCurrent = direction === 'decrement' ? currentStock - quantity : currentStock + quantity;
+    const nextAvailable = direction === 'decrement' ? availableStock - quantity : availableStock + quantity;
+
+    let guardedUpdate = admin
+      .from('product_inventory')
+      .update({
+        current_stock: nextCurrent,
+        available_stock: nextAvailable,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('tenant_id', tenantId)
+      .eq('product_id', productId)
+      .eq('current_stock', currentStock)
+      .eq('available_stock', availableStock);
+
+    guardedUpdate = variantId
+      ? guardedUpdate.eq('variant_id', variantId)
+      : guardedUpdate.is('variant_id', null);
+
+    const { data: updatedRows, error: updateError } = await guardedUpdate.select('product_id');
+    if (updateError) {
+      throw new Error(`Failed to update retail inventory: ${updateError.message}`);
+    }
+    if (!updatedRows || updatedRows.length === 0) {
+      throw new Error('Retail inventory changed concurrently; try again');
+    }
+
+    await admin.from('inventory_movements').insert({
+      tenant_id: tenantId,
+      product_id: productId,
+      variant_id: variantId,
+      movement_type: direction === 'decrement' ? 'sale' : 'return',
+      quantity_change: direction === 'decrement' ? -quantity : quantity,
+      reference_type: 'retail_order',
+      reference_id: orderId,
+      reason: direction === 'decrement' ? `Retail order ${orderId} paid` : `Retail order ${orderId} refunded`,
+    });
+  }
+}
+
+export async function listRetailOrders(input: {
+  tenantId: string;
+  status?: string | null;
+  paymentStatus?: string | null;
+  fulfillmentStatus?: string | null;
+  chatId?: string | null;
+  customerId?: string | null;
+  limit?: number;
+  offset?: number;
+}) {
+  const admin = createSupabaseAdminClient();
+  const limit = Math.min(input.limit ?? 25, 100);
+  const offset = Math.max(input.offset ?? 0, 0);
+
+  let query = admin
+    .from('retail_orders')
+    .select(RETAIL_ORDER_SELECT, { count: 'exact' })
+    .eq('tenant_id', input.tenantId)
+    .order('updated_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (input.status) query = query.eq('status', input.status);
+  if (input.paymentStatus) query = query.eq('payment_status', input.paymentStatus);
+  if (input.fulfillmentStatus) query = query.eq('fulfillment_status', input.fulfillmentStatus);
+  if (input.chatId) query = query.eq('source_chat_id', input.chatId);
+  if (input.customerId) query = query.eq('customer_id', input.customerId);
+
+  const { data, error, count } = await query;
+  if (error) {
+    throw new Error(`Failed to list retail orders: ${error.message}`);
+  }
+
+  return {
+    data: data ?? [],
+    total: count ?? 0,
+    limit,
+    offset,
+  };
+}
+
+export async function getRetailOrderById(tenantId: string, orderId: string) {
+  return loadRetailOrderForUpdate(tenantId, orderId);
+}
+
+export async function createRetailOrderPaymentLink(input: {
+  tenantId: string;
+  orderId: string;
+  actorUserId: string;
+  callbackUrl?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  const rawOrder = await loadRetailOrderForUpdate(input.tenantId, input.orderId);
+  const order = rawOrder as {
+    id: string;
+    tenant_id: string;
+    customer_id: string | null;
+    external_customer_ref: string | null;
+    source_chat_id: string | null;
+    status: RetailOrderStatus;
+    payment_status: RetailPaymentStatus;
+    currency: string;
+    total_cents: number;
+    metadata: Record<string, unknown> | null;
+    customer?: { email?: string | null; phone?: string | null; name?: string | null } | null;
+  };
+
+  if (order.payment_status === 'paid') {
+    throw new Error('Retail order is already paid');
+  }
+  if (Number(order.total_cents ?? 0) <= 0) {
+    throw new Error('Retail order total must be greater than zero');
+  }
+
+  const paymentMetadata = getRetailOrderMetadata(order.metadata).payment as Record<string, unknown> | undefined;
+  const existingReference = typeof paymentMetadata?.reference === 'string' ? paymentMetadata.reference : null;
+  const referenceKey = existingReference || `retail_${order.id.replace(/-/g, '').slice(0, 24)}_${randomUUID().slice(0, 8)}`;
+
+  const adapter = new PaymentsAdapter();
+  const result = await adapter.createStandalonePaymentLink({
+    tenant_id: order.tenant_id,
+    reference_key: referenceKey,
+    amount_minor_units: Number(order.total_cents ?? 0),
+    currency: order.currency || 'NGN',
+    customer_email: order.customer?.email ?? null,
+    customer_phone: order.customer?.phone ?? order.external_customer_ref ?? null,
+    description: `Retail order ${order.id}`,
+    callback_url: input.callbackUrl ?? null,
+    metadata: {
+      tenant_id: order.tenant_id,
+      retail_order_id: order.id,
+      source_chat_id: order.source_chat_id,
+      external_customer_ref: order.external_customer_ref,
+    },
+  });
+
+  if (result.status !== 'created' || !result.id || !result.payment_url) {
+    throw new Error(result.error || 'Failed to create retail order payment link');
+  }
+
+  const nextMetadata = {
+    ...getRetailOrderMetadata(order.metadata),
+    payment: {
+      provider: result.provider || 'unknown',
+      reference: result.id,
+      url: result.payment_url,
+      createdAt: new Date().toISOString(),
+      createdBy: input.actorUserId,
+    },
+  };
+
+  const { error: orderError } = await admin
+    .from('retail_orders')
+    .update({
+      status: 'pending_payment',
+      payment_status: 'pending',
+      metadata: nextMetadata,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('tenant_id', order.tenant_id)
+    .eq('id', order.id);
+
+  if (orderError) {
+    throw new Error(`Failed to store retail payment link: ${orderError.message}`);
+  }
+
+  const transactionPayload = {
+    tenant_id: order.tenant_id,
+    amount: Number(order.total_cents ?? 0) / 100,
+    currency: order.currency || 'NGN',
+    type: 'retail_order',
+    status: 'initiated',
+    provider_reference: result.id,
+    raw: {
+      provider: result.provider || 'unknown',
+      payment_url: result.payment_url,
+      retail_order_id: order.id,
+      source_chat_id: order.source_chat_id,
+      external_customer_ref: order.external_customer_ref,
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: txError } = await admin
+    .from('transactions')
+    .upsert(transactionPayload, { onConflict: 'provider_reference' });
+
+  if (txError) {
+    defaultLogger.warn('[retail-orders] failed to persist retail payment transaction', txError);
+  }
+
+  await updateChatJourneyForOrder(order, {
+    type: 'retail',
+    stage: 'pending_payment',
+    orderId: order.id,
+    orderTotalCents: Number(order.total_cents ?? 0),
+  });
+
+  return {
+    provider: result.provider || 'unknown',
+    reference: result.id,
+    paymentUrl: result.payment_url,
+  };
+}
+
+export async function transitionRetailOrder(input: {
+  tenantId: string;
+  orderId: string;
+  actorUserId: string;
+  action:
+    | 'mark_paid'
+    | 'mark_pending_payment'
+    | 'mark_preparing'
+    | 'mark_fulfilled'
+    | 'mark_cancelled'
+    | 'mark_refunded';
+  notes?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  const rawOrder = await loadRetailOrderForUpdate(input.tenantId, input.orderId);
+  const order = rawOrder as {
+    id: string;
+    tenant_id: string;
+    status: RetailOrderStatus;
+    payment_status: RetailPaymentStatus;
+    fulfillment_status: RetailFulfillmentStatus;
+    total_cents: number;
+    metadata: Record<string, unknown> | null;
+    items: Array<Record<string, unknown>>;
+    cart_id: string | null;
+  };
+
+  const metadata = getRetailOrderMetadata(order.metadata);
+  const now = new Date().toISOString();
+  const updates: Record<string, unknown> = {
+    updated_at: now,
+  };
+  if (input.notes && input.notes.trim()) {
+    updates.notes = input.notes.trim();
+  }
+
+  switch (input.action) {
+    case 'mark_pending_payment': {
+      if (order.payment_status === 'paid') {
+        throw new Error('Paid retail orders cannot return to pending payment');
+      }
+      updates.status = 'pending_payment';
+      updates.payment_status = 'pending';
+      updates.metadata = {
+        ...metadata,
+        paymentPendingAt: now,
+        paymentPendingBy: input.actorUserId,
+      };
+      break;
+    }
+    case 'mark_paid': {
+      const inventoryAppliedAt = typeof metadata.inventoryAppliedAt === 'string' ? metadata.inventoryAppliedAt : null;
+      if (!inventoryAppliedAt) {
+        await applyInventoryMovement(order.tenant_id, order.id, order.items ?? [], 'decrement');
+      }
+      updates.status = 'paid';
+      updates.payment_status = 'paid';
+      updates.metadata = {
+        ...metadata,
+        inventoryAppliedAt: inventoryAppliedAt || now,
+        inventoryAppliedBy: inventoryAppliedAt ? metadata.inventoryAppliedBy : input.actorUserId,
+        paidAt: now,
+        paidBy: input.actorUserId,
+      };
+      if (order.cart_id) {
+        await admin
+          .from('retail_carts')
+          .update({ status: 'converted', updated_at: now })
+          .eq('tenant_id', order.tenant_id)
+          .eq('id', order.cart_id);
+      }
+      break;
+    }
+    case 'mark_preparing': {
+      if (order.payment_status !== 'paid') {
+        throw new Error('Retail order must be paid before fulfillment can begin');
+      }
+      updates.fulfillment_status = 'preparing';
+      updates.metadata = {
+        ...metadata,
+        preparingAt: now,
+        preparingBy: input.actorUserId,
+      };
+      break;
+    }
+    case 'mark_fulfilled': {
+      if (order.payment_status !== 'paid') {
+        throw new Error('Retail order must be paid before fulfillment');
+      }
+      updates.status = 'fulfilled';
+      updates.fulfillment_status = 'fulfilled';
+      updates.metadata = {
+        ...metadata,
+        fulfilledAt: now,
+        fulfilledBy: input.actorUserId,
+      };
+      break;
+    }
+    case 'mark_cancelled': {
+      if (order.payment_status === 'paid') {
+        throw new Error('Paid retail orders should be refunded instead of cancelled');
+      }
+      updates.status = 'cancelled';
+      updates.fulfillment_status = 'cancelled';
+      updates.metadata = {
+        ...metadata,
+        cancelledAt: now,
+        cancelledBy: input.actorUserId,
+      };
+      break;
+    }
+    case 'mark_refunded': {
+      const inventoryAppliedAt = typeof metadata.inventoryAppliedAt === 'string' ? metadata.inventoryAppliedAt : null;
+      const inventoryRevertedAt = typeof metadata.inventoryRevertedAt === 'string' ? metadata.inventoryRevertedAt : null;
+      if (inventoryAppliedAt && !inventoryRevertedAt) {
+        await applyInventoryMovement(order.tenant_id, order.id, order.items ?? [], 'increment');
+      }
+      updates.status = 'cancelled';
+      updates.payment_status = 'refunded';
+      updates.fulfillment_status = 'cancelled';
+      updates.metadata = {
+        ...metadata,
+        refundedAt: now,
+        refundedBy: input.actorUserId,
+        inventoryRevertedAt: inventoryRevertedAt || (inventoryAppliedAt ? now : null),
+      };
+      break;
+    }
+  }
+
+  const { error: orderError } = await admin
+    .from('retail_orders')
+    .update(updates)
+    .eq('tenant_id', order.tenant_id)
+    .eq('id', order.id);
+
+  if (orderError) {
+    throw new Error(`Failed to transition retail order: ${orderError.message}`);
+  }
+
+  const paymentReference =
+    typeof (metadata.payment as Record<string, unknown> | undefined)?.reference === 'string'
+      ? ((metadata.payment as Record<string, unknown>).reference as string)
+      : null;
+
+  if (paymentReference && ['mark_paid', 'mark_refunded'].includes(input.action)) {
+    const nextTxStatus = input.action === 'mark_paid' ? 'success' : 'refunded';
+    const { error: txError } = await admin
+      .from('transactions')
+      .update({
+        status: nextTxStatus,
+        raw: {
+          ...(metadata.payment && typeof metadata.payment === 'object' ? { payment: metadata.payment } : {}),
+          retail_order_id: order.id,
+          transition: input.action,
+        },
+        updated_at: now,
+      })
+      .eq('tenant_id', order.tenant_id)
+      .eq('provider_reference', paymentReference);
+
+    if (txError) {
+      defaultLogger.warn('[retail-orders] failed to update retail transaction status', txError);
+    }
+  }
+
+  const journeyStageByAction: Record<typeof input.action, string> = {
+    mark_pending_payment: 'pending_payment',
+    mark_paid: 'paid',
+    mark_preparing: 'preparing',
+    mark_fulfilled: 'fulfilled',
+    mark_cancelled: 'cancelled',
+    mark_refunded: 'refunded',
+  };
+  await updateChatJourneyForOrder(order, {
+    type: 'retail',
+    stage: journeyStageByAction[input.action],
+    orderId: order.id,
+    orderTotalCents: Number(order.total_cents ?? 0),
+  });
+
+  return getRetailOrderById(input.tenantId, input.orderId);
 }
 
 export async function addProductsToRetailCart(input: {

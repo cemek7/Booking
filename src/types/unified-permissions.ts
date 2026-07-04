@@ -665,6 +665,7 @@ export function canAccessRoute(userRole: Role, route: string): boolean {
     '/dashboard/superadmin/support': ['superadmin'],
     '/dashboard/calendar': ['owner', 'manager', 'staff'],
     '/dashboard/bookings': ['owner', 'manager', 'staff'],
+    '/dashboard/orders': ['owner', 'manager', 'staff'],
     '/dashboard/mentions': ['owner', 'manager'],
     '/dashboard/support': ['owner', 'manager', 'staff'],
     '/dashboard/staff/scheduling': ['owner', 'manager'],

@@ -7,6 +7,7 @@ import { ChatSidebar } from './ChatSidebar';
 import { ChatThread } from './ChatThread';
 import { ChatComposer } from './ChatComposer';
 import EscalationBanner from './EscalationBanner';
+import ChatContextPanel from './ChatContextPanel';
 
 export default function ChatsPanel() {
   const { tenant } = useTenant();
@@ -188,7 +189,8 @@ export default function ChatsPanel() {
         </div>
 
         {/* Thread */}
-        <div className={`flex flex-col flex-1 bg-gray-100 ${activeId ? 'flex' : 'hidden'} lg:flex`}>
+        <div className={`flex flex-1 bg-gray-100 ${activeId ? 'flex' : 'hidden'} lg:flex`}>
+          <div className="flex min-w-0 flex-1 flex-col">
           <div className="p-3 border-b bg-white flex items-center justify-between">
             {activeId ? (
               <div className="flex items-center gap-2">
@@ -318,6 +320,17 @@ export default function ChatsPanel() {
               outboundReadiness={outboundReadiness}
             />
           </div>
+          </div>
+          {activeChat ? (
+            <ChatContextPanel
+              journeyType={activeChat.journeyType}
+              journeyStage={activeChat.journeyStage}
+              leadId={activeChat.leadId}
+              orderId={activeChat.orderId}
+              cartItemCount={activeChat.cartItemCount}
+              orderTotalCents={activeChat.orderTotalCents}
+            />
+          ) : null}
         </div>
       </div>
     </>

@@ -66,6 +66,13 @@ const Icons = {
       <path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
+  orders: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="3" y="4" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 8h8M6 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7 4V2.5M13 4V2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
   showcase: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" stroke="currentColor" strokeWidth="1.5" />
@@ -158,6 +165,8 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/manager/analytics', label: 'Analytics', icon: Icons.analytics, roles: ['manager'] },
   // Reports
   { href: '/dashboard/reports', label: 'Reports', icon: Icons.reports, roles: ['owner', 'manager'] },
+  // Orders
+  { href: '/dashboard/orders', label: 'Orders', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
   // Showcase packs
   { href: '/dashboard/showcase', label: 'Showcase', icon: Icons.showcase, roles: ['owner', 'manager'] },
   // Chats
@@ -199,6 +208,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/showcase' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('owner'))!,
@@ -233,6 +243,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,
@@ -253,6 +264,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
     {
       title: 'Communication',
       items: [
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/tasks' && i.roles.includes('staff'))!,
