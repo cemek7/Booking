@@ -55,7 +55,7 @@ below for history.
 Verified `.from('...')` callers, table absent from both migrations and live schema:
 | Subsystem | File(s) | Missing tables | Runtime behavior |
 |---|---|---|---|
-| HIPAA / compliance | `middleware/hipaaMiddleware.ts`, `lib/compliance/hipaaCompliance.ts` | `phi_access_logs`, `patient_consents`, `encrypted_medical_data`, `security_incidents`, `user_tenant_roles` | middleware NOT wired → dead; but **false compliance signal** |
+| ~~HIPAA / compliance~~ | ✅ **DELETED 2026-07-05** — removed `middleware/hipaaMiddleware.ts`, `lib/compliance/hipaaCompliance.ts`, `HIPAAComplianceDashboard.tsx`; unwired the inline block in `middleware/unified/middleware-adapter.ts` and the `hipaaMiddleware.handle` call in `proxy.ts` (kept its generic security headers). All 5 phantom tables now 0 refs. Residual healthcare *config* left + flagged: `verticalModuleManager.ts` `medical-practice` module + `types/audit-logging.ts` `hipaa_medical` flag (config/enum only, no table queries — remove if healthcare is permanently out of scope). | phi_access_logs, patient_consents, encrypted_medical_data, security_incidents, user_tenant_roles | gone |
 | Payment fraud | `lib/paymentSecurityService.ts` | `fraud_assessments`, `suspicious_activities` | verify wired/dead |
 | LLM usage/quota | `lib/llmUsageTracker.ts` | `llm_usage`, `llm_quotas` | **fail-quiet** → per-model quota silently no-ops (real guard = Spec 5 wallet caps on `ai_wallets`) |
 | Usage metering | `app/api/usage/route.ts`, `lib/usageMetrics.ts` | `usage_daily` | verify |

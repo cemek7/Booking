@@ -66,26 +66,6 @@ export async function initializeUnifiedMiddleware() {
     createTenantValidationMiddleware()
   );
 
-  // 4. HIPAA compliance middleware (PHI access logging)
-  middlewareOrchestrator.register(
-    {
-      name: 'hipaa-compliance',
-      enabled: process.env.HIPAA_ENABLED === 'true',
-      priority: 50,
-      condition: (ctx: MiddlewareContext) => {
-        const pathname = new URL(ctx.request.url).pathname;
-        // Apply to PHI endpoints (patient, medical records, etc.)
-        const phiPaths = ['/api/patients', '/api/medical-records', '/api/health-data'];
-        return phiPaths.some(p => pathname.startsWith(p));
-      },
-      errorHandler: async (error) => {
-        defaultLogger.error('[HIPAA] Compliance check failed:', error.message);
-        return ApiErrorFactory.forbidden('HIPAA compliance check failed').toResponse();
-      },
-    },
-    createHIPAAComplianceMiddleware()
-  );
-
   // 5. Rate limiting middleware
   middlewareOrchestrator.register(
     {
@@ -109,35 +89,6 @@ export async function initializeUnifiedMiddleware() {
   defaultLogger.info('[Middleware] Unified middleware system initialized');
 }
 
-/**
- * HIPAA compliance middleware implementation
- */
-function createHIPAAComplianceMiddleware(): MiddlewareHandler {
-  return async (context: MiddlewareContext): Promise<MiddlewareContext | NextResponse> => {
-    if (!context.user) {
-      return context;
-    }
-
-    // Log PHI access for HIPAA compliance
-    const timestamp = new Date().toISOString();
-    const logEntry = {
-      timestamp,
-      userId: context.user.id,
-      role: context.user.role,
-      endpoint: new URL(context.request.url).pathname,
-      method: context.request.method,
-      ipAddress: context.request.headers.get('x-forwarded-for') || 'unknown',
-    };
-
-    defaultLogger.info('[HIPAA] PHI Access Log:', JSON.stringify(logEntry));
-
-    // Could integrate with external logging/monitoring here
-    // e.g., send to compliance audit log
-
-    context.state.hipaaLogged = true;
-    return context;
-  };
-}
 
 /**
  * Rate limiting middleware
