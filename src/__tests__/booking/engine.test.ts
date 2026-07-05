@@ -40,9 +40,14 @@ jest.mock('@/lib/observability/observability', () => ({
 }));
 
 jest.mock('@/lib/eventbus/eventBus', () => ({
+  // engine.ts uses the getEventBus() factory and calls publishEvent()/stopProcessing().
+  getEventBus: jest.fn(() => ({
+    publishEvent: jest.fn().mockResolvedValue(undefined),
+    stopProcessing: jest.fn().mockResolvedValue(undefined),
+  })),
   EventBusService: jest.fn().mockImplementation(() => ({
-    publish: jest.fn().mockResolvedValue(undefined),
-    shutdown: jest.fn().mockResolvedValue(undefined),
+    publishEvent: jest.fn().mockResolvedValue(undefined),
+    stopProcessing: jest.fn().mockResolvedValue(undefined),
   })),
 }));
 
