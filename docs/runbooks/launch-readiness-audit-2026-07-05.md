@@ -14,7 +14,15 @@
 
 ## 🔴 CRITICAL — blocks launch
 
-### C1. Two parallel product-commerce systems; the older one writes to 3 phantom tables
+### C1. Two parallel product-commerce systems — RESOLVED 2026-07-05 (consolidated on `retail_orders`)
+**Fix:** deleted the orphan `product_bookings` subsystem (`app/api/bookings/products/route.ts`,
+`components/booking/IntegratedBookingForm.tsx`, `components/booking/ProductSelector.tsx` — none imported
+elsewhere) and purged all `product_inventory` embeds/inserts from the variant routes (stock lives on
+`product_variants.stock_quantity` per migration 117; adjustments via the `update_inventory` RPC).
+`retail_orders` is now the single product-commerce path. tsc clean; no dangling imports. Original finding
+below for history.
+
+<details><summary>Original C1 finding</summary>
 - **`retail_orders`** (migration `120`, `src/lib/commerce/retail-orders.ts`) — the AI-front-desk sales path.
   Real tables. Reviewed + fixed 2026-07 (`fd24b22`, `56121a3`).
 - **`product_bookings`** (`src/app/api/bookings/products/route.ts`) — an EARLIER product-commerce attempt.
@@ -29,6 +37,7 @@
   new migrations. Do NOT blind-fix — it's UI-wired and duplicates a working system.
 - Note the `product_inventory` shape here (`reserved_stock`, `minimum_stock`, `reorder_point`) is a richer
   model than migration 117's flat `products.stock_quantity` — a consolidation must pick one.
+</details>
 
 ### C2. `db/migrations/` is NOT the schema source of truth (~45 live tables have no migration)
 - `services`, `tenant_users`, `bookings`, `jobs`, `notifications`, `reservation_services`, etc. exist only

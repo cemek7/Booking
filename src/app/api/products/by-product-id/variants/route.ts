@@ -28,17 +28,10 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.notFound('Product not found');
     }
 
-    // Get variants for the product with inventory info
+    // Get variants for the product (stock is product_variants.stock_quantity, via *)
     const { data: variants, error } = await ctx.supabase
       .from('product_variants')
-      .select(`
-        *,
-        product_inventory (
-          current_stock,
-          reserved_stock,
-          available_stock
-        )
-      `)
+      .select('*')
       .eq('product_id', productId)
       .eq('tenant_id', ctx.user!.tenantId)
       .order('created_at', { ascending: false });
@@ -134,24 +127,8 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.internalServerError(new Error('Failed to create variant'));
     }
 
-    // Initialize inventory for the variant
-    const { error: inventoryError } = await ctx.supabase
-      .from('product_inventory')
-      .insert({
-        product_id: productId,
-        variant_id: variant.id,
-        tenant_id: ctx.user!.tenantId,
-        current_stock: 0,
-        reserved_stock: 0,
-        available_stock: 0,
-        minimum_stock: 0,
-        maximum_stock: null,
-        reorder_point: 0
-      });
-
-    if (inventoryError) {
-      // Continue anyway, inventory can be added later
-    }
+    // Stock lives on product_variants.stock_quantity (migration 117); no separate
+    // inventory table to initialize. Adjustments flow through the update_inventory RPC.
 
     return {
       success: true,

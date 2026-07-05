@@ -36,11 +36,6 @@ export const GET = createHttpHandler(
         *,
         product:products!product_id(
           id, name, price_cents, currency, tenant_id, category
-        ),
-        product_inventory(
-          current_stock,
-          reserved_stock,
-          available_stock
         )
       `)
       .eq('id', variantId)
