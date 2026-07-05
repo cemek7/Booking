@@ -115,7 +115,10 @@ export const PATCH = createHttpHandler(
         .select('id', { count: 'exact' })
         .eq('tenant_id', tenantId)
         .neq('id', reservationId)
-        .or(`and(start_at.lte.${newEndIso},end_at.gte.${newStartIso})`);
+        // Overlap: start_at <= newEnd AND end_at >= newStart. Bind values via
+        // chained filters instead of interpolating into an .or() string.
+        .lte('start_at', newEndIso)
+        .gte('end_at', newStartIso);
 
       if (confErr) throw ApiErrorFactory.databaseError(confErr);
 

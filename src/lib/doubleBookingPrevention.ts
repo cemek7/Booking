@@ -213,7 +213,11 @@ export class DoubleBookingPrevention {
         `)
         .eq('tenant_id', params.tenantId)
         .neq('status', 'cancelled')
-        .or(`and(start_at.lte.${params.endAt},end_at.gte.${params.startAt})`);
+        // Overlap check: start_at <= endAt AND end_at >= startAt. A single top-level
+        // and() is just default filter chaining, so bind the values instead of
+        // interpolating them into an .or() expression string.
+        .lte('start_at', params.endAt)
+        .gte('end_at', params.startAt);
 
       // Exclude current reservation if updating
       if (params.excludeReservationId) {
