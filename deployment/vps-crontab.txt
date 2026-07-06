@@ -24,14 +24,10 @@ CRON_SECRET=CHANGE_ME
 # WhatsApp outbound worker — every minute (header: Authorization: Bearer)
 * * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/whatsapp" >/dev/null 2>&1
 
+# due reminders across all tenants — every 10 min (header: Authorization: Bearer)
+# /api/cron/reminders is the all-tenants scheduled counterpart to the session-auth
+# /api/reminders/run; both share runRemindersForTenant().
+*/10 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/reminders" >/dev/null 2>&1
+
 # nightly rebooking follow-ups / cycle nudges — 22:00 daily (header: Authorization: Bearer)
 0 22 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/nightly" >/dev/null 2>&1
-
-# ------------------------------------------------------------------------------------------
-# INTENTIONALLY OMITTED: /api/reminders/run
-# That route uses createHttpHandler with { auth: true, roles: ['owner','manager','superadmin'] } —
-# it needs a real logged-in session, NOT CRON_SECRET, so it cannot be curled from cron (or from
-# Vercel Cron — it was already 401-ing there). Before enabling reminders on a schedule, either:
-#   (a) add an x-cron-secret / Bearer CRON_SECRET bypass to the route and iterate over tenants, or
-#   (b) add a dedicated /api/cron/reminders route (like /api/cron/nightly) that loops tenants.
-# Tracked in docs/runbooks/hostinger-vps-deploy.md.

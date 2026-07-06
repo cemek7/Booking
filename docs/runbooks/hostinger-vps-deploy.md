@@ -19,13 +19,13 @@ cron**. `vercel.json` was removed because Vercel Cron does not exist here; its f
 | `/api/jobs/auto-cancel-unconfirmed` | every 15 min | `x-cron-secret: $CRON_SECRET` |
 | `/api/worker/whatsapp` | every minute | `Authorization: Bearer $CRON_SECRET` |
 | `/api/cron/nightly` | 22:00 daily | `Authorization: Bearer $CRON_SECRET` |
-| ~~`/api/reminders/run`~~ | */10 | ⚠️ **NOT scheduled** — see below |
+| `/api/cron/reminders` | every 10 min | `Authorization: Bearer $CRON_SECRET` |
 
-> ⚠️ **Reminders gap (pre-existing, not caused by the Hostinger move):** `/api/reminders/run` uses
-> `createHttpHandler({ auth: true, roles: ['owner','manager','superadmin'] })`, so it needs a logged-in
-> session — it cannot be driven by a cron secret. It was already returning 401 under Vercel Cron. To turn
-> reminders back on, add a `CRON_SECRET` bypass to the route (iterating tenants) or add a dedicated
-> `/api/cron/reminders` route modeled on `/api/cron/nightly`. Do this before promising reminder SLAs.
+> **Reminders (fixed 2026-07-07):** the old `vercel.json` pointed at `/api/reminders/run`, which is
+> session-auth (`{ auth: true, roles: [...] }`) and can't be driven by a cron secret — it was already
+> 401-ing under Vercel Cron. Replaced with `/api/cron/reminders`, the all-tenants Bearer-auth counterpart
+> that shares `runRemindersForTenant()` with the session route. `/api/reminders/run` remains for
+> in-dashboard manual "run now" by an owner/manager.
 
 ---
 
