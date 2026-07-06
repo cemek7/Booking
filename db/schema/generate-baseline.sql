@@ -1,24 +1,22 @@
 -- generate-baseline.sql
 --
--- Run this IN THE SUPABASE SQL EDITOR to reconstruct the full public-schema DDL
--- from the system catalogs (no pg_dump / CLI needed). Read-only. Solves audit C2.
+-- Run IN THE SUPABASE SQL EDITOR to reconstruct the full public-schema DDL from the
+-- system catalogs (no pg_dump / CLI). Read-only. Solves audit C2.
 --
--- Returns ONE ROW PER STATEMENT (column `ddl`), in dependency-safe order:
+-- Returns one row per statement (column `ddl`), dependency-safe order:
 --   CREATE TABLE -> ADD CONSTRAINT (PK/unique/check, then FK) -> CREATE INDEX
 --   -> CREATE VIEW -> CREATE FUNCTION.
--- Select the `ddl` column (or use the editor's "Copy" / "Download CSV") and paste
--- into db/schema/baseline_<date>.sql.
+-- Copy the `ddl` column into db/schema/baseline_<date>.sql.
 --
--- Notes vs the earlier version:
---   * views resolved by OID (pg_get_viewdef(oid)) — no ::regclass name resolution.
---   * statement terminators use chr(59) so the query text contains NO literal
---     semicolons (dodges the SQL editor's statement splitter).
--- public schema ONLY (never Supabase-managed auth/storage/extensions).
+-- Deliberately NO "IF NOT EXISTS" in the emitted DDL: a baseline targets a fresh DB,
+-- and it keeps the token `IF` out of this query entirely (the Supabase editor's
+-- pre-parser was rejecting the literal). Views resolved by OID (no ::regclass).
+-- CTEs use non-keyword names. public schema ONLY.
 
 with
-tables as (
+src_tables as (
   select
-    'CREATE TABLE IF NOT EXISTS ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || E' (\n' ||
+    'CREATE TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || E' (\n' ||
     string_agg(
       '  ' || quote_ident(a.attname) || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)
         || case when a.attnotnull then ' NOT NULL' else '' end
@@ -32,7 +30,7 @@ tables as (
   where n.nspname = 'public' and c.relkind = 'r'
   group by n.nspname, c.relname
 ),
-constraints as (
+src_cons as (
   select
     'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(rel.relname)
       || ' ADD CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) || chr(59) as ddl,
@@ -42,14 +40,13 @@ constraints as (
   join pg_namespace n on n.oid = rel.relnamespace
   where n.nspname = 'public'
 ),
-indexes as (
-  select replace(replace(indexdef, 'CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS '),
-                 'CREATE UNIQUE INDEX ', 'CREATE UNIQUE INDEX IF NOT EXISTS ') || chr(59) as ddl
+src_idx as (
+  select indexdef || chr(59) as ddl
   from pg_indexes
   where schemaname = 'public'
     and indexname not in (select conname from pg_constraint where contype in ('p', 'u'))
 ),
-views as (
+src_views as (
   select
     'CREATE OR REPLACE VIEW ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || ' AS '
       || pg_get_viewdef(c.oid, true) as ddl
@@ -57,7 +54,7 @@ views as (
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'v'
 ),
-functions as (
+src_funcs as (
   select pg_get_functiondef(p.oid) || chr(59) as ddl
   from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
@@ -65,10 +62,10 @@ functions as (
 )
 select ddl
 from (
-  select ddl, 1 as sect, 0   as ord from tables
-  union all select ddl, 2, ord from constraints
-  union all select ddl, 3, 0 from indexes
-  union all select ddl, 4, 0 from views
-  union all select ddl, 5, 0 from functions
+  select ddl, 1 as sect, 0   as ord from src_tables
+  union all select ddl, 2, ord from src_cons
+  union all select ddl, 3, 0 from src_idx
+  union all select ddl, 4, 0 from src_views
+  union all select ddl, 5, 0 from src_funcs
 ) all_ddl
 order by sect, ord;
