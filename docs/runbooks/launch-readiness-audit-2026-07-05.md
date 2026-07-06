@@ -125,8 +125,8 @@ Verified `.from('...')` callers, table absent from both migrations and live sche
   + `117` (products) to prod.
 - Seed/enable SerpApi for social listening (`b07d83b`).
 - Seed 3 Meta templates (deliverability). Provision `tenant-exports` bucket (offboarding).
-- `/api/reminders/run` is session-auth → not on the VPS crontab; needs a CRON_SECRET bypass or a
-  dedicated `/api/cron/reminders` route before reminders fire (see `hostinger-vps-deploy.md`).
+- ✅ Reminders cron RESOLVED 2026-07-07 — added `/api/cron/reminders` (all-tenants, Bearer `CRON_SECRET`,
+  shares `runRemindersForTenant()` with the session route); wired into the VPS crontab (`*/10`).
 - 4 analytics views absent from migrations (customer_service_history_view, followup_candidates_view,
   staff_customer_history_view, tenant_revenue_view) → returning-customer sales-actions silently empty
   until created / confirmed in live DB.
