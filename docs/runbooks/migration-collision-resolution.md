@@ -5,7 +5,7 @@
 
 ## The hazard
 
-Migrations are applied in filename sort order. Three migration *numbers* have two distinct
+Migrations are applied in filename sort order. Four migration *numbers* have two distinct
 **forward** migrations each, so the apply order between the two members of a pair is ambiguous on
 a fresh apply-from-zero, and on an existing prod DB both may already be applied:
 
@@ -14,6 +14,7 @@ a fresh apply-from-zero, and on an existing prod DB both may already be applied:
 | 065 | `065_chats_unique_constraint.sql` | `065_messages_read_columns.sql` |
 | 077 | `077_ai_wallets.sql` | `077_customer_no_show_score.sql` |
 | 079 | `079_finance_ledgers.sql` | `079_whatsapp_message_queue_channel.sql` |
+| 097 | `097_ai_front_desk_stage_d_training_views.sql` | `097_wallet_cost_caps.sql` |
 
 (`078_*` and `082_*` also share a number but the extra files are `_rollback` scripts, which are
 not part of the forward sequence — ignore them here.)
@@ -24,6 +25,9 @@ order is functionally safe **as long as both eventually run**. The real risk is 
 skip is silent.
 
 The launch-critical member is **`077_customer_no_show_score.sql`** — it powers no-show recovery.
+For **097**, both members are launch-relevant and independent: `097_wallet_cost_caps.sql` (AI spend
+caps on `ai_wallets`) and `097_ai_front_desk_stage_d_training_views.sql` (AI-front-desk training
+views). Verify **both** applied — neither replaces the other.
 
 ## Procedure
 

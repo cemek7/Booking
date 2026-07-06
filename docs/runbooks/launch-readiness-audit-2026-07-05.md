@@ -39,13 +39,22 @@ below for history.
   model than migration 117's flat `products.stock_quantity` — a consolidation must pick one.
 </details>
 
-### C2. `db/migrations/` is NOT the schema source of truth (~45 live tables have no migration)
+### C2. `db/migrations/` is NOT the schema source of truth — RESOLVED 2026-07-06
+**Fix shipped:** `db/schema/baseline_2026-07-06.sql` (4124 lines — 107 tables, 62 functions, 14 views,
+22 triggers) captured from live Supabase via `db/schema/generate-baseline.sql` (system-catalog
+reconstruction in the SQL editor — no pg_dump/CLI). This is now the reproducible schema source of truth.
+Note it references `auth.users` + `vault`/`extensions` schemas (Supabase-provided) — stub those to
+provision a non-Supabase env; regenerate via the generator before any fresh provision. Original finding
+below for history.
+
+<details><summary>Original C2 finding</summary>
 - `services`, `tenant_users`, `bookings`, `jobs`, `notifications`, `reservation_services`, etc. exist only
   in live Supabase. **Provisioning any fresh environment from `db/migrations/` yields a broken DB.** No
   reproducible schema = no safe DR / staging / new-region / new-dev onboarding.
 - **Fix:** baseline migration from a live `pg_dump --schema-only`, committed as e.g. `000_baseline.sql`,
   and adopt "every schema change ships as a migration" going forward.
 - This is the ROOT CAUSE of the recurring "missing table" confusion.
+</details>
 
 ---
 
@@ -105,12 +114,19 @@ Verified `.from('...')` callers, table absent from both migrations and live sche
 ---
 
 ## Recommended launch sequencing
-1. **C2** baseline migration (unblocks reproducible envs).
-2. **C1** product decision → consolidate on `retail_orders`.
-3. **H1** delete the false-compliance HIPAA dead code (at minimum).
-4. **H2** fix the booking-engine + evolution-integration test cluster.
+1. ✅ **C2** baseline (`db/schema/baseline_2026-07-06.sql`) — DONE 2026-07-06.
+2. ✅ **C1** consolidated on `retail_orders` — DONE.
+3. ✅ **H1** HIPAA dead code deleted — DONE (fraud/llm-quota kept, non-functional).
+4. 🟡 **H2** booking-engine cluster fixed; a few suites still flaky (bookings timeouts, evolution-integration).
 5. Then M/L as capacity allows.
 
 ## Already-tracked operational opens (not re-litigated here)
-- Apply migration `097` (wallet caps) + `117` (products) to prod.
+- Apply migration `097` (BOTH members — wallet caps + AI-front-desk training views; see collision runbook)
+  + `117` (products) to prod.
 - Seed/enable SerpApi for social listening (`b07d83b`).
+- Seed 3 Meta templates (deliverability). Provision `tenant-exports` bucket (offboarding).
+- `/api/reminders/run` is session-auth → not on the VPS crontab; needs a CRON_SECRET bypass or a
+  dedicated `/api/cron/reminders` route before reminders fire (see `hostinger-vps-deploy.md`).
+- 4 analytics views absent from migrations (customer_service_history_view, followup_candidates_view,
+  staff_customer_history_view, tenant_revenue_view) → returning-customer sales-actions silently empty
+  until created / confirmed in live DB.
