@@ -1,0 +1,37 @@
+# Boka — VPS scheduler (Hostinger). Replaces the Vercel Cron block that lived in vercel.json.
+#
+# Install on the VPS:
+#     crontab deployment/vps-crontab.txt
+# Verify:
+#     crontab -l
+#
+# Requires two values (edit them below OR export them into the crontab):
+#   APP_URL      the public origin the app is served on, e.g. https://app.yourdomain.com
+#   CRON_SECRET  MUST match CRON_SECRET in the app's .env.production
+#
+# cron places NAME=value lines into each job's environment, and jobs run via /bin/sh,
+# so $APP_URL / $CRON_SECRET below expand correctly. No '%' chars (they need escaping in cron).
+
+APP_URL=https://CHANGE_ME
+CRON_SECRET=CHANGE_ME
+
+# job queue processor — every minute (header: x-cron-secret)
+* * * * * curl -fsS -X POST -H "x-cron-secret: $CRON_SECRET" "$APP_URL/api/jobs/process" >/dev/null 2>&1
+
+# auto-cancel unconfirmed reservations — every 15 min (header: x-cron-secret)
+*/15 * * * * curl -fsS -X POST -H "x-cron-secret: $CRON_SECRET" "$APP_URL/api/jobs/auto-cancel-unconfirmed" >/dev/null 2>&1
+
+# WhatsApp outbound worker — every minute (header: Authorization: Bearer)
+* * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/whatsapp" >/dev/null 2>&1
+
+# nightly rebooking follow-ups / cycle nudges — 22:00 daily (header: Authorization: Bearer)
+0 22 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/nightly" >/dev/null 2>&1
+
+# ------------------------------------------------------------------------------------------
+# INTENTIONALLY OMITTED: /api/reminders/run
+# That route uses createHttpHandler with { auth: true, roles: ['owner','manager','superadmin'] } —
+# it needs a real logged-in session, NOT CRON_SECRET, so it cannot be curled from cron (or from
+# Vercel Cron — it was already 401-ing there). Before enabling reminders on a schedule, either:
+#   (a) add an x-cron-secret / Bearer CRON_SECRET bypass to the route and iterate over tenants, or
+#   (b) add a dedicated /api/cron/reminders route (like /api/cron/nightly) that loops tenants.
+# Tracked in docs/runbooks/hostinger-vps-deploy.md.
