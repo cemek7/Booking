@@ -839,6 +839,7 @@ export async function executeAction(
         const paymentLink = await createRetailOrderPaymentLinkForCustomer({
           tenantId,
           externalId: context.customerPhone,
+          channel: context.channel === 'instagram' ? 'instagram' : 'whatsapp',
           orderId: typeof params.order_id === 'string' ? params.order_id : null,
           actorUserId: context.messageId ?? 'frontdesk_ai',
           callbackUrl: typeof params.callback_url === 'string' ? params.callback_url : null,

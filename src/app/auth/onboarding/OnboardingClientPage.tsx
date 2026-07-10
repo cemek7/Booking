@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { getVerticalPackage } from '@/lib/sias';
@@ -14,6 +14,21 @@ import BrandMark from '@/components/brand/BrandMark';
 interface ServiceDraft { name: string; duration: string; price: string }
 interface StaffDraft { name: string; email: string; phone: string; role: 'owner' | 'staff' }
 interface FaqDraft { question: string; answer: string; category: string }
+
+type OnboardingDraft = {
+  name: string;
+  timezone: string;
+  description: string;
+  businessType: string;
+  ownerName: string;
+  ownerEmail: string;
+  ownerPhone: string;
+  businessNickname: string;
+  bookingSources: string[];
+};
+
+const ONBOARDING_DRAFT_KEY = 'booka_onboarding_draft';
+const ONBOARDING_RESUME_KEY = 'booka_onboarding_resume_create';
 
 const ONBOARDING_LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -129,7 +144,9 @@ const labelCls = "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const tokenRef = useRef<string | null>(null);
+  const autoResumeRef = useRef(false);
 
   const [step, setStep] = useState<Step>('basics');
   const [name, setName] = useState('');
@@ -137,6 +154,7 @@ export default function OnboardingPage() {
   const [description, setDescription] = useState('');
   const [businessType, setBusinessType] = useState('');
   const [ownerName, setOwnerName] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
   const [businessNickname, setBusinessNickname] = useState('');
   const [bookingSources, setBookingSources] = useState<string[]>(['whatsapp']);
@@ -160,6 +178,7 @@ export default function OnboardingPage() {
   const [notifyCancellations, setNotifyCancellations] = useState(true);
   const [notifyDailySummary, setNotifyDailySummary] = useState(true);
   const [notifyWeeklySummary, setNotifyWeeklySummary] = useState(false);
+  const [authEmailSent, setAuthEmailSent] = useState(false);
   const selectedPackage = getVerticalPackage(resolveVertical(businessType || 'salon'));
 
   const baseHeaders = useCallback((extra: Record<string, string> = {}): Record<string, string> => {
@@ -201,6 +220,29 @@ export default function OnboardingPage() {
     return () => subscription.unsubscribe();
   }, [router]);
 
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(ONBOARDING_DRAFT_KEY);
+      const fallbackRaw = !raw ? localStorage.getItem(ONBOARDING_DRAFT_KEY) : null;
+      const source = raw || fallbackRaw;
+      if (!source) return;
+      const draft = JSON.parse(source) as Partial<OnboardingDraft>;
+      if (draft.name) setName(draft.name);
+      if (draft.timezone) setTimezone(draft.timezone);
+      if (draft.description) setDescription(draft.description);
+      if (draft.businessType) setBusinessType(draft.businessType);
+      if (draft.ownerName) setOwnerName(draft.ownerName);
+      if (draft.ownerEmail) setOwnerEmail(draft.ownerEmail);
+      if (draft.ownerPhone) setOwnerPhone(draft.ownerPhone);
+      if (draft.businessNickname) setBusinessNickname(draft.businessNickname);
+      if (Array.isArray(draft.bookingSources) && draft.bookingSources.length > 0) {
+        setBookingSources(draft.bookingSources);
+      }
+    } catch {
+      // Ignore malformed draft data.
+    }
+  }, []);
+
   function next() { setStep((s) => STEPS[Math.min(STEPS.indexOf(s) + 1, STEPS.length - 1)]); }
   function back() { setStep((s) => STEPS[Math.max(STEPS.indexOf(s) - 1, 0)]); }
 
@@ -217,19 +259,48 @@ export default function OnboardingPage() {
     try { Intl.DateTimeFormat(undefined, { timeZone: tz }); return true; } catch { return false; }
   }
 
-  async function submitBasics() {
-    if (!name.trim()) { toast.error('Business name is required'); return; }
-    if (!ownerName.trim()) { toast.error('Owner name is required'); return; }
-    if (!ownerPhone.trim()) { toast.error('Owner WhatsApp number is required'); return; }
-    if (timezone.trim() && !isValidIANATimezone(timezone.trim())) {
-      toast.error('Invalid timezone — use IANA format (e.g. Africa/Lagos, Europe/London)');
-      return;
+  function persistDraft() {
+    try {
+      const draft: OnboardingDraft = {
+        name,
+        timezone,
+        description,
+        businessType,
+        ownerName,
+        ownerEmail,
+        ownerPhone,
+        businessNickname,
+        bookingSources,
+      };
+      sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
+      localStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      // Ignore storage errors.
     }
+  }
+
+  function getOnboardingCallbackUrl() {
+    const callbackUrl = new URL('/booka/auth/callback', window.location.origin);
+    callbackUrl.searchParams.set('finalize', '1');
+    callbackUrl.searchParams.set('next', '/booka/auth/onboarding?resume=1');
+    return callbackUrl.toString();
+  }
+
+  async function sendOnboardingMagicLink(targetEmail: string) {
+    const supabase = getSupabaseBrowserClient();
+    return supabase.auth.signInWithOtp({
+      email: targetEmail,
+      options: { emailRedirectTo: getOnboardingCallbackUrl() },
+    });
+  }
+
+  async function createTenantAndContinue(accessToken: string) {
+    tokenRef.current = accessToken;
     setLoading(true);
     try {
       const res = await fetch('/api/onboarding/tenant', {
         method: 'POST',
-        headers: jsonHeaders(),
+        headers: jsonHeaders({ Authorization: `Bearer ${accessToken}` }),
         body: JSON.stringify({
           name: name.trim(),
           timezone: timezone.trim() || undefined,
@@ -239,11 +310,18 @@ export default function OnboardingPage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error((err as { error?: string })?.error || 'Failed to create tenant');
+        toast.error((err as { message?: string; error?: string })?.message || (err as { error?: string })?.error || 'Failed to create tenant');
         return;
       }
       const json = await res.json() as { tenantId?: string; tenantSlug?: string };
       if (json?.tenantId) {
+        try {
+          sessionStorage.removeItem(ONBOARDING_DRAFT_KEY);
+          sessionStorage.removeItem(ONBOARDING_RESUME_KEY);
+          localStorage.removeItem(ONBOARDING_DRAFT_KEY);
+          localStorage.removeItem(ONBOARDING_RESUME_KEY);
+        } catch {}
+        setAuthEmailSent(false);
         setTenantId(json.tenantId);
         if (json.tenantSlug) setTenantSlug(json.tenantSlug);
         try { localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId })); } catch {}
@@ -251,7 +329,7 @@ export default function OnboardingPage() {
         const pkg = getVerticalPackage(vertical);
         await fetch(`/api/tenants/${json.tenantId}/settings`, {
           method: 'PATCH',
-          headers: jsonHeaders(),
+          headers: jsonHeaders({ Authorization: `Bearer ${accessToken}` }),
           body: JSON.stringify({
             managedOnboarding: true,
             verticalPackage: pkg.id,
@@ -284,8 +362,86 @@ export default function OnboardingPage() {
         });
       }
       next();
-    } catch { toast.error('Network error'); }
-    finally { setLoading(false); }
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function ensureSignedInForOnboarding() {
+    const supabase = getSupabaseBrowserClient();
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token ?? null;
+    if (accessToken) {
+      tokenRef.current = accessToken;
+      return true;
+    }
+
+    persistDraft();
+    try {
+      const resp = await sendOnboardingMagicLink(ownerEmail.trim());
+      if (resp.error) {
+        toast.error(resp.error.message || 'Unable to send verification link.');
+        return false;
+      }
+      try {
+        sessionStorage.setItem(ONBOARDING_RESUME_KEY, '1');
+        localStorage.setItem(ONBOARDING_RESUME_KEY, '1');
+      } catch {}
+      setAuthEmailSent(true);
+      toast.success(`Verification link sent to ${ownerEmail.trim()}. Open it in this browser to continue onboarding.`);
+    } catch {
+      toast.error('Unable to send verification link.');
+    }
+    return false;
+  }
+
+  useEffect(() => {
+    async function maybeResumeAfterAuth() {
+      if (autoResumeRef.current || tenantId || step !== 'basics') return;
+      let shouldResume = false;
+      try {
+        shouldResume =
+          searchParams.get('resume') === '1' ||
+          sessionStorage.getItem(ONBOARDING_RESUME_KEY) === '1' ||
+          localStorage.getItem(ONBOARDING_RESUME_KEY) === '1';
+      } catch {}
+      if (!shouldResume) return;
+
+      const supabase = getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token ?? null;
+      if (!accessToken) return;
+      if (!name.trim() || !ownerName.trim() || !ownerEmail.trim() || !ownerPhone.trim()) return;
+
+      autoResumeRef.current = true;
+      setAuthEmailSent(false);
+      toast.success('Email verified. Finishing your workspace setup...');
+      await createTenantAndContinue(accessToken);
+    }
+
+    void maybeResumeAfterAuth();
+  }, [name, ownerName, ownerEmail, ownerPhone, tenantId, step, searchParams]);
+
+  async function submitBasics() {
+    if (!name.trim()) { toast.error('Business name is required'); return; }
+    if (!ownerName.trim()) { toast.error('Owner name is required'); return; }
+    if (!ownerEmail.trim()) { toast.error('Owner email is required'); return; }
+    if (!ownerPhone.trim()) { toast.error('Owner WhatsApp number is required'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail.trim())) {
+      toast.error('Enter a valid owner email');
+      return;
+    }
+    if (timezone.trim() && !isValidIANATimezone(timezone.trim())) {
+      toast.error('Invalid timezone — use IANA format (e.g. Africa/Lagos, Europe/London)');
+      return;
+    }
+    const isSignedIn = await ensureSignedInForOnboarding();
+    if (!isSignedIn) {
+      return;
+    }
+    await createTenantAndContinue(tokenRef.current as string);
   }
 
   async function submitServices() {
@@ -491,13 +647,13 @@ export default function OnboardingPage() {
             Set up Booka once. Run the front desk with less manual work.
           </h1>
           <p className="mt-5 max-w-md text-sm leading-7 text-[#d6ddd9]">
-            This setup configures your booking workflows, AI tone, service structure, and channel preferences for
-            WhatsApp and Instagram in one branded path.
+            This setup configures your sales flows, booking workflows, AI tone, service structure, and channel
+            preferences for WhatsApp and Instagram in one branded path.
           </p>
 
           <div className="mt-8 grid gap-3">
             {[
-              'Booking intake and reminders',
+              'Sales conversations, booking intake, and reminders',
               'WhatsApp operations and Instagram lead capture',
               'Vertical-aware setup for beauty, clinics, and hospitality',
             ].map((item) => (
@@ -547,6 +703,20 @@ export default function OnboardingPage() {
                   </div>
                   <div>
                     <label className={labelCls}>
+                      Owner email <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      value={ownerEmail}
+                      onChange={(e) => setOwnerEmail(e.target.value)}
+                      className={inputCls}
+                      placeholder="you@business.com"
+                      type="email"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelCls}>
                       Owner WhatsApp <span className="text-red-400">*</span>
                     </label>
                     <input
@@ -558,6 +728,12 @@ export default function OnboardingPage() {
                     />
                   </div>
                 </div>
+                {authEmailSent ? (
+                  <div className="rounded-[1.4rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800">
+                    Verification link sent to <span className="font-medium">{ownerEmail.trim()}</span>. Open it in this
+                    browser and onboarding will resume automatically.
+                  </div>
+                ) : null}
                 <div>
                   <label className={labelCls}>Business Type</label>
                   <div className="relative">
@@ -645,9 +821,9 @@ export default function OnboardingPage() {
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
                     <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>
-                    Creating…
+                    Working…
                   </span>
-                ) : 'Continue →'}
+                ) : authEmailSent ? 'Resend verification link' : 'Continue →'}
               </button>
             </div>
           )}
@@ -953,7 +1129,7 @@ export default function OnboardingPage() {
               <div>
                 <h2 className="text-2xl font-bold text-[var(--brand-ink)]">You&apos;re all set!</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  Your business is ready to accept bookings. Head to your dashboard to manage everything.
+                  Your business is ready to handle sales and bookings. Head to your dashboard to manage everything.
                 </p>
               </div>
               <div className="space-y-2.5 pt-2">

@@ -22,7 +22,7 @@ const brandDisplay = Fraunces({
 export const metadata: Metadata = {
   title: "Techclave | AI Operating Systems for African Businesses",
   description:
-    "Techclave builds AI products for customer operations. Booka is the first product: a WhatsApp-first AI front desk for salons, clinics, and hospitality teams.",
+    "Techclave builds AI products for customer operations. Booka is the first product: an AI front desk for beauty, hospitality, and clinic teams that handles sales, bookings, and follow-up on WhatsApp and Instagram.",
 };
 
 export default function RootLayout({

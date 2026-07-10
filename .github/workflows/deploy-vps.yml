@@ -1,0 +1,109 @@
+name: VPS Deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment target
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck:ci
+      - run: npx eslint .
+      - run: npm test -- --runInBand
+
+  build:
+    runs-on: ubuntu-latest
+    needs: quality
+    outputs:
+      deploy_env: ${{ steps.vars.outputs.deploy_env }}
+      image_ref: ${{ steps.vars.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            DEPLOY_ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref_name }}" == "develop" ]]; then
+            DEPLOY_ENV="staging"
+          else
+            DEPLOY_ENV="production"
+          fi
+
+          if [[ "$DEPLOY_ENV" == "staging" ]]; then
+            TAG_PREFIX="staging"
+          else
+            TAG_PREFIX="production"
+          fi
+
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_PREFIX}-${GITHUB_SHA}"
+
+          echo "deploy_env=$DEPLOY_ENV" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "tag_prefix=$TAG_PREFIX" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.vps
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image_ref }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_prefix }}-latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ needs.build.outputs.deploy_env }}
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Trust VPS host
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on VPS
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "APP_IMAGE='${{ needs.build.outputs.image_ref }}' \
+             GHCR_USERNAME='${{ secrets.GHCR_USERNAME }}' \
+             GHCR_TOKEN='${{ secrets.GHCR_TOKEN }}' \
+             /usr/local/bin/techclave-deploy '${{ needs.build.outputs.deploy_env }}'"

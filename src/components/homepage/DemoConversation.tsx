@@ -12,13 +12,18 @@ type DemoMessage = {
 
 const steps = [
   {
-    key: 'service',
-    prompt: 'What would you like to book?',
-    options: ['Hair appointment', 'Clinic consultation', 'Dinner reservation'],
+    key: 'need',
+    prompt: 'What can I help you with today?',
+    options: ['I want a silk press for Saturday', 'I need a skin consultation this week', 'I want dinner for two tonight'],
+  },
+  {
+    key: 'recommendation',
+    prompt: 'Based on that, here is the best fit.',
+    options: ['Silk press + treatment', 'Consultation + facial plan', 'Window table + birthday add-on'],
   },
   {
     key: 'date',
-    prompt: 'Which day works best?',
+    prompt: 'Which day works best for you?',
     options: ['Friday', 'Saturday', 'Monday'],
   },
   {
@@ -27,30 +32,25 @@ const steps = [
     options: ['9:00am', '10:30am', '1:00pm'],
   },
   {
-    key: 'name',
-    prompt: 'What name should I put the booking under?',
-    options: ['Amina', 'Tunde', 'Blessing'],
-  },
-  {
-    key: 'phone',
-    prompt: 'What number should I use for the reminder?',
-    options: ['+234 801 234 5678', '+234 803 111 2244', '+234 812 900 4455'],
+    key: 'details',
+    prompt: 'Who should I confirm this for?',
+    options: ['Amina • +234 801 234 5678', 'Tunde • +234 803 111 2244', 'Blessing • +234 812 900 4455'],
   },
 ] as const;
 
 const greeting = {
   id: 'welcome',
   speaker: 'booka' as const,
-  text: 'Hi, welcome to Booka. I can help you book an appointment or reservation in a few taps. What would you like to book?',
+  text: 'Hi, welcome to Booka. I can recommend the right option, answer quick questions, and confirm your booking here. What are you looking for today?',
 };
 
 function bookingSummary(selection: Record<string, string>) {
   return [
-    `Service: ${selection.service}`,
+    `Need: ${selection.need}`,
+    `Recommended: ${selection.recommendation}`,
     `Date: ${selection.date}`,
     `Time: ${selection.time}`,
-    `Name: ${selection.name}`,
-    `Phone: ${selection.phone}`,
+    `Customer: ${selection.details}`,
   ].join('\n');
 }
 
@@ -115,7 +115,7 @@ export default function DemoConversation() {
             {
               id: `${Date.now()}-${step.key}-booka`,
               speaker: 'booka',
-              text: `Thanks. Here’s the booking summary:\n${bookingSummary(selection)}\n\nI’ve reserved the slot and set a reminder for you.`,
+              text: `Done. Here’s the confirmed summary:\n${bookingSummary(selection)}\n\nI’ve reserved the slot, logged the recommendation, and scheduled the reminder.`,
             },
           ]);
         }
@@ -129,7 +129,7 @@ export default function DemoConversation() {
         {
           id: `${Date.now()}-wrap`,
           speaker: 'booka',
-          text: 'Want me to book another slot?',
+          text: 'Want me to help with another enquiry?',
         },
       ]);
 
@@ -163,7 +163,7 @@ export default function DemoConversation() {
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-emerald-700/45">Live demo</p>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#10211a]">
-            Book like a real customer
+            See a sales-to-booking flow
           </h2>
         </div>
         <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
@@ -193,7 +193,7 @@ export default function DemoConversation() {
           {typing ? (
             <div className="flex justify-start">
               <div className="rounded-3xl rounded-tl-sm border border-emerald-100 bg-white px-4 py-3 text-sm leading-6 text-slate-500 shadow-sm">
-                Booka is checking availability...
+                Booka is checking fit and availability...
               </div>
             </div>
           ) : null}
@@ -213,7 +213,7 @@ export default function DemoConversation() {
           </div>
         ))}
         <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs font-medium text-emerald-800 shadow-sm sm:col-span-3">
-          Booking complete. Starting another intake automatically.
+          Recommendation made, booking confirmed, follow-up ready.
         </div>
       </div>
 
@@ -221,7 +221,7 @@ export default function DemoConversation() {
         <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
           <div className="text-xs uppercase tracking-[0.22em] text-emerald-700/45">What it handles</div>
           <p className="mt-3 text-sm leading-6 text-slate-700">
-            Booking intake, reminders, follow-up, reactivation, and escalation when the request needs a person.
+            Qualification, recommendations, booking intake, reminders, follow-up, and escalation when the request needs a person.
           </p>
         </div>
         <div className="rounded-3xl border border-emerald-100 bg-white p-4">

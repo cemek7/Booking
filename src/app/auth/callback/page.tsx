@@ -50,6 +50,10 @@ export default function AuthCallbackPage() {
     let mounted = true;
     const url = new URL(window.location.href);
     const code = url.searchParams.get('code');
+    const nextPath = url.searchParams.get('next');
+    const isOnboardingResume =
+      typeof nextPath === 'string' &&
+      nextPath.startsWith('/booka/auth/onboarding');
     let finished = false;
     let redirectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -119,6 +123,12 @@ export default function AuthCallbackPage() {
     const completeAuth = async () => {
       if (code) {
         setStatus('Completing sign-in…');
+        if (isOnboardingResume) {
+          const redirectUrl = new URL('/api/auth/callback', window.location.origin);
+          redirectUrl.search = url.search;
+          window.location.replace(redirectUrl.toString());
+          return;
+        }
         try {
           const callbackUrl = new URL('/api/auth/callback', window.location.origin);
           callbackUrl.search = url.search;
@@ -156,7 +166,9 @@ export default function AuthCallbackPage() {
 
           const redirectUrl = new URL('/api/auth/callback', window.location.origin);
           redirectUrl.search = url.search;
-          redirectUrl.searchParams.set('next', '/booka/auth/callback?finalize=1');
+          if (!isOnboardingResume) {
+            redirectUrl.searchParams.set('next', '/booka/auth/callback?finalize=1');
+          }
           window.location.replace(redirectUrl.toString());
           return;
         }

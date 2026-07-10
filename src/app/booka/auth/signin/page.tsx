@@ -5,7 +5,16 @@ import Link from 'next/link';
 import BrandMark from '@/components/brand/BrandMark';
 import AuthMagicLinkForm from '@/components/AuthMagicLinkForm';
 
-export default function BookaSignInPage() {
+export default function BookaSignInPage({
+  searchParams,
+}: {
+  searchParams?: { next?: string };
+}) {
+  const nextPath =
+    searchParams?.next && searchParams.next.startsWith('/') && !searchParams.next.startsWith('//')
+      ? searchParams.next
+      : undefined;
+
   return (
     <div className="min-h-screen bg-linear-to-b from-[#f8f7f2] via-[#f5f2e8] to-[#f0ebdb] px-4 py-10">
       <main className="mx-auto w-full max-w-5xl">
@@ -30,11 +39,12 @@ export default function BookaSignInPage() {
           <p className="brand-kicker text-[#597061]">Booka sign in</p>
           <h1 className="techclave-display mt-4 text-5xl text-[#101717] sm:text-6xl">Welcome back</h1>
           <p className="mt-4 max-w-xl text-base leading-7 text-[#5a625f]">
-            Sign in with a magic link to continue into Booka, your AI front desk for WhatsApp and Instagram beauty enquiries.
+            Sign in with a magic link to continue into Booka, your AI front desk for WhatsApp and Instagram sales,
+            enquiries, and bookings.
           </p>
         </div>
 
-        <AuthMagicLinkForm mode="signin" />
+        <AuthMagicLinkForm mode="signin" redirectTo={nextPath} />
       </main>
     </div>
   );

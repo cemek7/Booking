@@ -6,7 +6,7 @@ const productCards = [
     name: 'Booka',
     stage: 'Live product',
     summary:
-      'AI front desk for service businesses on WhatsApp and Instagram. It replies in seconds, books appointments, sends reminders, follows up, and recovers missed revenue — no extra headcount.',
+      'AI front desk for service businesses on WhatsApp and Instagram. It qualifies demand, sells the right service or offer, confirms bookings, sends reminders, follows up, and recovers missed revenue.',
     href: '/booka',
     accent: 'emerald',
   },
@@ -79,11 +79,11 @@ export default function Home() {
                 Techclave
               </p>
               <h1 className="techclave-display mt-4 max-w-5xl text-5xl text-[#10211a] sm:text-6xl lg:text-7xl">
-                Techclave builds AI products that help businesses reply faster, book more, and recover missed revenue.
+                Techclave builds AI products that help businesses reply faster, sell better, book more, and recover missed revenue.
               </h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-[#4f5d59]">
                 We build practical operating software for African businesses. Each product is focused on one hard
-                workflow. Booka is the first: an AI front desk for service businesses that run on WhatsApp.
+                workflow. Booka is the first: an AI front desk for service businesses that sell and book through WhatsApp and Instagram.
               </p>
 
               <div className="mt-9 flex flex-wrap gap-3">
@@ -107,8 +107,8 @@ export default function Home() {
                 <p className="brand-kicker text-[#d4b368]">Featured product</p>
                 <h2 className="mt-3 text-3xl font-semibold tracking-tight">Booka</h2>
                 <p className="mt-3 text-sm leading-7 text-[#d7ddd9]">
-                  A WhatsApp and Instagram front desk for service businesses that lose bookings, reminders, and
-                  repeat revenue in chat.
+                  A WhatsApp and Instagram front desk for service businesses that lose sales, bookings, reminders,
+                  and repeat revenue in chat.
                 </p>
                 <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5">
                   <div>
@@ -246,8 +246,8 @@ export default function Home() {
               <Link href="/booka/auth/onboarding" className="transition hover:text-[#10211a]">
                 Start onboarding
               </Link>
-              <Link href="/dashboard" className="transition hover:text-[#10211a]">
-                Dashboard
+              <Link href="/booka/auth/signin" className="transition hover:text-[#10211a]">
+                Sign in
               </Link>
             </div>
           </footer>

@@ -11,36 +11,36 @@ const howItWorks = [
   {
     step: '01',
     title: 'Set up the front desk',
-    copy: 'Booka learns your services, hours, tone, and WhatsApp plus Instagram setup, then configures the basics for you.',
+    copy: 'Booka learns your services, products, offers, hours, tone, and WhatsApp plus Instagram setup, then configures the front desk around how you already sell and book.',
   },
   {
     step: '02',
-    title: 'Handle the day-to-day',
-    copy: 'It books, sends reminders, follows up, and escalates edge cases instead of leaving them in chat history.',
+    title: 'Handle sales and booking together',
+    copy: 'It answers questions, recommends the right service or offer, converts interest into a booking, sends reminders, and escalates edge cases instead of leaving revenue sitting in chat history.',
   },
   {
     step: '03',
     title: 'Keep getting sharper',
-    copy: 'Booka remembers customer patterns, weak slots, and repeat issues so the operation improves over time.',
+    copy: 'Booka remembers customer patterns, weak slots, repeat objections, and missed follow-up opportunities so the operation improves over time.',
   },
 ];
 
 const features = [
   {
     title: 'WhatsApp + Instagram',
-    copy: 'Customers message in the channels they already use. Booka keeps WhatsApp chats and Instagram DMs moving without extra admin.',
+    copy: 'Customers message in the channels they already use. Booka keeps WhatsApp chats and Instagram DMs moving without extra admin or missed handoffs.',
+  },
+  {
+    title: 'Sales + booking in one flow',
+    copy: 'Booka does not stop at answering questions. It qualifies demand, recommends the right service or product, handles objections, and moves the customer into a confirmed booking.',
   },
   {
     title: 'Human escalation',
     copy: 'Sensitive cases, refunds, and conflicts move to staff when the assistant should step back.',
   },
   {
-    title: 'Outcome tracking',
-    copy: 'No-shows, revenue recovery, repeat visits, and reactivation are tracked as part of the product.',
-  },
-  {
-    title: 'Managed onboarding',
-    copy: 'The setup feels like a handoff, not a software wizard. Defaults do the heavy lifting.',
+    title: 'Follow-up and recovery',
+    copy: 'No-shows, drop-offs, repeat visits, and reactivation are tracked and pushed forward as part of the product, not left to chance.',
   },
 ];
 
@@ -48,7 +48,7 @@ const faqItems = [
   {
     question: 'Is Booka just booking software?',
     answer:
-      'No. It handles booking, follow-up, reminders, escalation, and recovery in one place for service businesses.',
+      'No. Booka is an AI front desk that handles sales conversations, service recommendations, booking, reminders, follow-up, escalation, and recovery in one place for service businesses.',
   },
   {
     question: 'How does pricing work?',
@@ -69,9 +69,49 @@ const faqItems = [
 
 const launchNotes = [
   'A Techclave product',
-  'WhatsApp + Instagram front desk',
+  'Sales + booking in one front desk',
+  'WhatsApp + Instagram',
   'Managed onboarding included',
 ];
+
+const verticalUseCases: Record<
+  string,
+  {
+    sales: string[];
+    booking: string[];
+  }
+> = {
+  beauty: {
+    sales: [
+      'Answer treatment enquiries and recommend the right service, stylist, or add-on',
+      'Convert price-sensitive chats with deposits, bundles, and repeat-visit nudges',
+    ],
+    booking: [
+      'Book the right slot, stylist, and service combination without back-and-forth',
+      'Handle reminders, reschedules, no-show recovery, and rebooking automatically',
+    ],
+  },
+  hospitality: {
+    sales: [
+      'Convert dining and stay enquiries into higher-value reservations',
+      'Sell deposits, premium tables, special packages, and occasion add-ons before arrival',
+    ],
+    booking: [
+      'Confirm tables, rooms, or event slots across chat without manual inbox juggling',
+      'Handle reservation reminders, guest follow-up, and abandoned booking recovery',
+    ],
+  },
+  medicine: {
+    sales: [
+      'Convert non-sensitive treatment and consultation enquiries into booked visits',
+      'Guide patients toward the right consultation type, test, or follow-up path',
+    ],
+    booking: [
+      'Book appointments with the right practitioner, timing, and visit type',
+      'Handle reminders, recall, follow-up, and escalation for sensitive cases',
+    ],
+  },
+};
 
 export default function BookaLanding() {
   const verticals = [SIAS_VERTICAL_PACKAGES[0], SIAS_VERTICAL_PACKAGES[2], SIAS_VERTICAL_PACKAGES[1]];
@@ -114,6 +154,12 @@ export default function BookaLanding() {
             >
               Start onboarding
             </Link>
+            <Link
+              href="/booka/auth/signin"
+              className="rounded-full border border-emerald-200 bg-emerald-50/60 px-4 py-2 text-sm font-medium text-emerald-900 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50"
+            >
+              Sign in
+            </Link>
           </nav>
         </header>
 
@@ -125,14 +171,15 @@ export default function BookaLanding() {
             </div>
 
             <p className="mt-5 text-xs font-medium uppercase tracking-[0.34em] text-emerald-700/55">
-              AI front desk for high-intent enquiries
+              AI front desk for sales and bookings
             </p>
             <h1 className="mt-4 text-5xl font-semibold leading-[0.94] tracking-tight text-[#10211a] sm:text-6xl lg:text-7xl">
-              Turn WhatsApp and Instagram enquiries into confirmed bookings.
+              Turn WhatsApp and Instagram enquiries into sales and confirmed bookings.
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
-              Booka replies fast, qualifies demand, books the right slot, sends reminders, follows up after no-shows,
-              and hands edge cases to a human for salons, clinics, and hospitality teams.
+              Booka replies fast, qualifies demand, recommends the right service or offer, books the right slot,
+              sends reminders, follows up after no-shows, and hands edge cases to a human for salons, clinics, and
+              hospitality teams.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
@@ -141,6 +188,12 @@ export default function BookaLanding() {
                 className="rounded-full bg-emerald-600 px-6 py-3 text-sm font-medium text-white shadow-[0_12px_30px_rgba(5,150,105,0.18)] transition hover:-translate-y-0.5 hover:bg-emerald-700"
               >
                 Start managed onboarding
+              </Link>
+              <Link
+                href="/booka/auth/signin"
+                className="rounded-full border border-emerald-200 bg-emerald-50/60 px-6 py-3 text-sm font-medium text-emerald-900 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-50"
+              >
+                Sign in to dashboard
               </Link>
               <Link
                 href="#pricing"
@@ -208,11 +261,11 @@ export default function BookaLanding() {
             <div className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm">
               <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">Features & benefits</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                Built for repetitive front-desk work teams handle every day.
+                Built for the front-desk work teams repeat every day.
               </h2>
               <p className="mt-4 text-sm leading-7 text-slate-600">
                 Booka feels simple on the surface because the infrastructure stays in the background. What your
-                team sees is faster replies, fewer missed leads, and a calmer booking workflow across chat and DMs.
+                team sees is faster replies, fewer missed leads, better conversion, and a calmer workflow across chat and DMs.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -236,7 +289,7 @@ export default function BookaLanding() {
                 </h2>
                 <p className="mt-4 text-sm leading-7 text-slate-600">
                   Start with the core subscription, add more automation as volume grows, and move into managed ops
-                  when you want Booka to carry more of the front desk workload across WhatsApp and Instagram.
+                  when you want Booka to carry more of the sales, booking, and follow-up workload across WhatsApp and Instagram.
                 </p>
               </div>
               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
@@ -275,7 +328,7 @@ export default function BookaLanding() {
             <div>
               <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">ICP focus</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                One product. Three clear operating contexts.
+                One front desk. Three high-value use-case clusters.
               </h2>
             </div>
           </div>
@@ -284,9 +337,41 @@ export default function BookaLanding() {
             {verticals.map((vertical) => (
               <article key={vertical.id} className="rounded-[1.75rem] border border-emerald-100 bg-white p-6 shadow-sm">
                 <p className="text-xs uppercase tracking-[0.3em] text-emerald-700/45">{vertical.subtitle}</p>
-                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#10211a]">{vertical.name}</h3>
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#10211a]">
+                  {vertical.id === 'beauty'
+                    ? 'Beauty & Wellness'
+                    : vertical.id === 'hospitality'
+                      ? 'Hospitality'
+                      : 'Clinics & Practices'}
+                </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-600">{vertical.positioning}</p>
                 <p className="mt-4 text-sm font-medium text-emerald-700">{vertical.managedPromise}</p>
+                <div className="mt-5 grid gap-4">
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700/70">
+                      Sales use cases
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {verticalUseCases[vertical.id]?.sales.map((useCase) => (
+                        <p key={useCase} className="text-sm leading-6 text-slate-700">
+                          {useCase}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-100 bg-white p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700/70">
+                      Booking use cases
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {verticalUseCases[vertical.id]?.booking.map((useCase) => (
+                        <p key={useCase} className="text-sm leading-6 text-slate-700">
+                          {useCase}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
                 <div className="mt-5 flex flex-wrap gap-2">
                   {vertical.defaultFlows.map((flow) => (
                     <span key={flow} className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] text-emerald-800">
@@ -301,9 +386,9 @@ export default function BookaLanding() {
           <div className="mt-4 rounded-[1.75rem] border border-emerald-100 bg-[#10211a] p-6 text-[#f5f2e8] shadow-[0_20px_60px_rgba(16,33,26,0.12)]">
             <p className="text-xs uppercase tracking-[0.3em] text-emerald-300/65">Channel strategy</p>
             <ul className="mt-4 grid gap-4 text-sm leading-7 text-[#d7ddd9] lg:grid-cols-3">
-              <li>WhatsApp carries the bulk of booking, reminder, and recovery flows for teams that already operate in chat.</li>
-              <li>Instagram fits best at the enquiry and lead-capture stage, especially when customers discover the business through content first.</li>
-              <li>Booka keeps both channels inside one operating layer instead of forcing staff to manage fragmented inboxes manually.</li>
+              <li>WhatsApp carries the bulk of qualification, booking, reminder, and recovery flows for teams that already operate in chat.</li>
+              <li>Instagram fits best at the enquiry, lead-capture, and conversion stage, especially when customers discover the business through content first.</li>
+              <li>Booka keeps both channels inside one operating layer so sales conversations and bookings do not break across fragmented inboxes.</li>
             </ul>
           </div>
         </section>
@@ -317,7 +402,7 @@ export default function BookaLanding() {
               </h2>
               <p className="mt-4 text-sm leading-7 text-slate-600">
                 These are the numbers that matter when the product becomes an operating layer instead of just a
-                calendar.
+                calendar or inbox.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -361,8 +446,8 @@ export default function BookaLanding() {
                   Put Booka in front of your WhatsApp and Instagram enquiries without changing how your team already works.
                 </h2>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-emerald-50/85">
-                  Customers keep messaging the way they already do. Booka handles the repetitive work and your team
-                  steps in only where judgement matters.
+                  Customers keep messaging the way they already do. Booka handles sales conversations, booking flow,
+                  reminders, and follow-up, and your team steps in only where judgement matters.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3 lg:justify-end">
@@ -389,11 +474,11 @@ export default function BookaLanding() {
             <Link href="/" className="transition hover:text-emerald-900">
               Techclave
             </Link>
+            <Link href="/booka/auth/signin" className="transition hover:text-emerald-900">
+              Sign in
+            </Link>
             <Link href="/booka/auth/onboarding" className="transition hover:text-emerald-900">
               Start onboarding
-            </Link>
-            <Link href="/dashboard" className="transition hover:text-emerald-900">
-              Dashboard
             </Link>
           </div>
         </footer>

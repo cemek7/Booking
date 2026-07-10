@@ -1324,6 +1324,7 @@ async function getRetailPaymentContext(
 ): Promise<{
   orderId: string | null;
   externalCustomerRef: string | null;
+  channel: 'whatsapp' | 'instagram';
   amountMinor: number | null;
   currency: string | null;
 }> {
@@ -1339,6 +1340,7 @@ async function getRetailPaymentContext(
   return {
     orderId: typeof raw?.retail_order_id === 'string' ? raw.retail_order_id : null,
     externalCustomerRef: typeof raw?.external_customer_ref === 'string' ? raw.external_customer_ref : null,
+    channel: raw?.channel === 'instagram' ? 'instagram' : 'whatsapp',
     amountMinor: typeof tx?.amount === 'number' ? Math.round(Number(tx.amount) * 100) : null,
     currency: typeof tx?.currency === 'string' ? tx.currency : null,
   };
@@ -1347,6 +1349,7 @@ async function getRetailPaymentContext(
 async function updateRetailConversationState(input: {
   tenantId: string;
   externalCustomerRef: string;
+  channel: 'whatsapp' | 'instagram';
   stage: string;
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
   orderId: string;
@@ -1354,7 +1357,7 @@ async function updateRetailConversationState(input: {
   totalCents?: number | null;
 }) {
   const { getConversation, updateConversation } = await import('@/lib/whatsapp/v2/conversationState');
-  const conv = await getConversation(input.externalCustomerRef, input.tenantId, 'whatsapp');
+  const conv = await getConversation(input.externalCustomerRef, input.tenantId, input.channel);
   if (!conv) return;
 
   await updateConversation(input.externalCustomerRef, input.tenantId, {
@@ -1374,17 +1377,18 @@ async function updateRetailConversationState(input: {
         total_cents: input.totalCents ?? conv.flow_data?.retail_order?.total_cents ?? null,
       },
     },
-  }, 'whatsapp');
+  }, input.channel);
 }
 
 async function sendRetailPaymentMessage(input: {
   tenantId: string;
   externalCustomerRef: string;
+  channel: 'whatsapp' | 'instagram';
   text: string;
 }) {
   try {
     const { getTenantChannelProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
-    const provider = await getTenantChannelProviderClient(input.tenantId, 'whatsapp');
+    const provider = await getTenantChannelProviderClient(input.tenantId, input.channel);
     if (!provider) return;
     await provider.sendTextMessage(input.externalCustomerRef, input.text);
   } catch (error) {
@@ -1395,6 +1399,7 @@ async function sendRetailPaymentMessage(input: {
 async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
   orderId: string;
   externalCustomerRef: string | null;
+  channel: 'whatsapp' | 'instagram';
 }) {
   const { transitionRetailOrder, getRetailOrderById } = await import('@/lib/commerce/retail-orders');
   const order = await transitionRetailOrder({
@@ -1425,6 +1430,7 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
     await updateRetailConversationState({
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
+      channel: input.channel,
       stage: 'paid',
       paymentStatus: 'paid',
       orderId: input.orderId,
@@ -1434,6 +1440,7 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
     await sendRetailPaymentMessage({
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
+      channel: input.channel,
       text: `Payment received ✅ Your order is now confirmed. Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. We’ll keep you posted on fulfillment here.`,
     });
   }
@@ -1445,6 +1452,7 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
 async function handleRetailPaymentFailure(input: PaymentOutcomeInput & {
   orderId: string;
   externalCustomerRef: string | null;
+  channel: 'whatsapp' | 'instagram';
 }) {
   const { transitionRetailOrder } = await import('@/lib/commerce/retail-orders');
   const order = await transitionRetailOrder({
@@ -1477,6 +1485,7 @@ async function handleRetailPaymentFailure(input: PaymentOutcomeInput & {
     await updateRetailConversationState({
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
+      channel: input.channel,
       stage: 'payment_failed',
       paymentStatus: 'failed',
       orderId: input.orderId,
@@ -1486,6 +1495,7 @@ async function handleRetailPaymentFailure(input: PaymentOutcomeInput & {
     await sendRetailPaymentMessage({
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
+      channel: input.channel,
       text: `Your payment didn’t go through, so your order is still saved as a draft. ${input.reason ? `Reason: ${input.reason}. ` : ''}Reply anytime and I can send a fresh payment link.`,
     });
   }
@@ -1500,6 +1510,7 @@ export async function handlePaymentFailure(input: PaymentOutcomeInput): Promise<
           ...input,
           orderId: retail.orderId,
           externalCustomerRef: retail.externalCustomerRef,
+          channel: retail.channel,
           amountMinor: input.amountMinor ?? retail.amountMinor ?? undefined,
           currency: input.currency ?? retail.currency ?? undefined,
         });
@@ -1546,6 +1557,7 @@ export async function handlePaymentFailure(input: PaymentOutcomeInput): Promise<
 async function handleRetailPaymentRefund(input: PaymentOutcomeInput & {
   orderId: string;
   externalCustomerRef: string | null;
+  channel: 'whatsapp' | 'instagram';
 }) {
   const { transitionRetailOrder } = await import('@/lib/commerce/retail-orders');
   const order = await transitionRetailOrder({
@@ -1577,6 +1589,7 @@ async function handleRetailPaymentRefund(input: PaymentOutcomeInput & {
     await updateRetailConversationState({
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
+      channel: input.channel,
       stage: 'refunded',
       paymentStatus: 'refunded',
       orderId: input.orderId,
@@ -1586,6 +1599,7 @@ async function handleRetailPaymentRefund(input: PaymentOutcomeInput & {
     await sendRetailPaymentMessage({
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
+      channel: input.channel,
       text: 'Your order payment has been refunded. If you still want the items, reply here and I’ll help you start a new order.',
     });
   }
@@ -1600,6 +1614,7 @@ export async function handlePaymentRefund(input: PaymentOutcomeInput): Promise<v
           ...input,
           orderId: retail.orderId,
           externalCustomerRef: retail.externalCustomerRef,
+          channel: retail.channel,
           amountMinor: input.amountMinor ?? retail.amountMinor ?? undefined,
           currency: input.currency ?? retail.currency ?? undefined,
         });
@@ -1663,6 +1678,7 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
           ...input,
           orderId: retail.orderId,
           externalCustomerRef: retail.externalCustomerRef,
+          channel: retail.channel,
           amountMinor: amountMinor ?? retail.amountMinor ?? undefined,
           currency: currency ?? retail.currency ?? undefined,
         });

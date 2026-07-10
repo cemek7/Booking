@@ -55,6 +55,7 @@ function makeSupabaseForRetailTx() {
                     raw: {
                       retail_order_id: 'ord-1',
                       external_customer_ref: '+2348000000000',
+                      channel: 'instagram',
                     },
                   },
                   error: null,
@@ -119,8 +120,9 @@ describe('retail payment lifecycle helpers', () => {
           retail_order: expect.objectContaining({ payment_status: 'paid' }),
         }),
       }),
-      'whatsapp',
+      'instagram',
     );
+    expect(mockGetTenantChannelProviderClient).toHaveBeenCalledWith('tenant-1', 'instagram');
     expect(mockSendTextMessage).toHaveBeenCalledWith(
       '+2348000000000',
       expect.stringContaining('Payment received'),

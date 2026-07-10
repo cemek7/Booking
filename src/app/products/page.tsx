@@ -8,9 +8,9 @@ const products = [
     status: 'Shipping now',
     href: '/booka',
     summary:
-      'AI front desk for beauty businesses on WhatsApp. It handles enquiries, booking intake, reminders, follow-ups, and revenue recovery.',
-    audience: 'Salons, spas, medspas, and beauty studios',
-    outcome: 'Fewer no-shows, more confirmed bookings, stronger repeat revenue',
+      'AI front desk for service businesses on WhatsApp and Instagram. It handles enquiries, recommendations, sales conversion, booking intake, reminders, follow-ups, and revenue recovery.',
+    audience: 'Beauty, hospitality, and clinic teams that sell and book in chat',
+    outcome: 'More conversion, more confirmed bookings, fewer no-shows, stronger repeat revenue',
   },
   {
     name: 'Managed Ops',
@@ -69,14 +69,14 @@ export default function ProductsPage() {
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-[#4f5d59]">
               Techclave is the company brand. Each product stays narrow enough to explain in one sentence and useful
-              enough to run a real workflow.
+              enough to run a real workflow. Booka leads with one clear promise: it sells and books through chat.
             </p>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              {[
-                { value: '1', label: 'Product live' },
-                { value: 'Beauty', label: 'Primary ICP' },
-                { value: 'WhatsApp', label: 'Core surface' },
-              ].map((stat) => (
+                {[
+                  { value: '1', label: 'Product live' },
+                  { value: '3', label: 'Core ICP clusters' },
+                  { value: 'WhatsApp + IG', label: 'Core surfaces' },
+                ].map((stat) => (
                 <div key={stat.label} className="rounded-[1.5rem] border border-[#d8d3c4] bg-white/80 p-4 shadow-sm">
                   <div className="brand-kicker text-[#6c756f]">{stat.label}</div>
                   <div className="mt-3 text-2xl font-semibold text-[#101717]">{stat.value}</div>
@@ -89,8 +89,7 @@ export default function ProductsPage() {
             <p className="brand-kicker text-[#d4b368]">Featured now</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight">Booka</h2>
             <p className="mt-3 text-sm leading-7 text-[#d7ddd9]">
-              The first Techclave product: a WhatsApp-first AI front desk built for beauty businesses that lose
-              bookings in chat.
+              The first Techclave product: an AI front desk built for service teams that lose sales and bookings in chat.
             </p>
           </div>
         </section>
@@ -192,6 +191,9 @@ export default function ProductsPage() {
             </Link>
             <Link href="/booka/auth/onboarding" className="transition hover:text-[#101717]">
               Start onboarding
+            </Link>
+            <Link href="/booka/auth/signin" className="transition hover:text-[#101717]">
+              Sign in
             </Link>
           </div>
         </footer>

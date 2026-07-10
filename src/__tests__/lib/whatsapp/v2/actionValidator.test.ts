@@ -436,6 +436,7 @@ describe('executeAction — sales actions', () => {
       expect.objectContaining({
         tenantId: TENANT,
         externalId: '+2348000000000',
+        channel: 'whatsapp',
       }),
     );
     expect(result.data).toMatchObject({
@@ -443,5 +444,20 @@ describe('executeAction — sales actions', () => {
       reference: 'ref-1',
       paymentUrl: 'https://pay.example.com/retail/ref-1',
     });
+  });
+
+  it('preserves instagram as the source channel when creating a retail payment link', async () => {
+    await executeAction(TENANT, createRetailPaymentLink(), {
+      customerPhone: 'ig-thread-1',
+      channel: 'instagram',
+      messageId: 'msg-ig-1',
+    });
+
+    expect(mockCreateRetailOrderPaymentLinkForCustomer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalId: 'ig-thread-1',
+        channel: 'instagram',
+      }),
+    );
   });
 });

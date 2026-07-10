@@ -399,6 +399,7 @@ export async function createRetailOrderPaymentLink(input: {
   tenantId: string;
   orderId: string;
   actorUserId: string;
+  channel?: 'whatsapp' | 'instagram' | null;
   callbackUrl?: string | null;
 }) {
   const admin = createSupabaseAdminClient();
@@ -443,6 +444,7 @@ export async function createRetailOrderPaymentLink(input: {
       retail_order_id: order.id,
       source_chat_id: order.source_chat_id,
       external_customer_ref: order.external_customer_ref,
+      channel: input.channel ?? null,
     },
   });
 
@@ -456,6 +458,7 @@ export async function createRetailOrderPaymentLink(input: {
       provider: result.provider || 'unknown',
       reference: result.id,
       url: result.payment_url,
+      channel: input.channel ?? null,
       createdAt: new Date().toISOString(),
       createdBy: input.actorUserId,
     },
@@ -489,6 +492,7 @@ export async function createRetailOrderPaymentLink(input: {
       retail_order_id: order.id,
       source_chat_id: order.source_chat_id,
       external_customer_ref: order.external_customer_ref,
+      channel: input.channel ?? null,
     },
     updated_at: new Date().toISOString(),
   };
@@ -521,6 +525,7 @@ export async function createRetailOrderPaymentLinkForCustomer(input: {
   tenantId: string;
   externalId: string;
   actorUserId: string;
+  channel?: 'whatsapp' | 'instagram' | null;
   orderId?: string | null;
   callbackUrl?: string | null;
 }) {
@@ -552,6 +557,7 @@ export async function createRetailOrderPaymentLinkForCustomer(input: {
     tenantId: input.tenantId,
     orderId,
     actorUserId: input.actorUserId,
+    channel: input.channel ?? null,
     callbackUrl: input.callbackUrl ?? null,
   });
 }

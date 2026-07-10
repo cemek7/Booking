@@ -11,7 +11,7 @@ type Props = {
   redirectTo?: string;
 };
 
-function getMagicLinkRedirectPath() {
+function getMagicLinkRedirectPath(nextPath?: string) {
   const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL;
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const browserHost = typeof window !== 'undefined' ? window.location.hostname : '';
@@ -19,6 +19,9 @@ function getMagicLinkRedirectPath() {
   const baseUrl = isLocalHost ? browserOrigin : (configuredAppUrl || browserOrigin);
   const callbackUrl = new URL('/booka/auth/callback', baseUrl || browserOrigin || 'http://localhost');
   callbackUrl.searchParams.set('finalize', '1');
+  if (nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//')) {
+    callbackUrl.searchParams.set('next', nextPath);
+  }
   return callbackUrl.toString();
 }
 
@@ -80,7 +83,7 @@ export default function AuthMagicLinkForm({ mode = "signin", redirectTo }: Props
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const redirect = redirectTo ?? getMagicLinkRedirectPath();
+      const redirect = getMagicLinkRedirectPath(redirectTo);
       let supabaseErr: { message?: string } | null = null;
 
       try {
@@ -180,7 +183,7 @@ export default function AuthMagicLinkForm({ mode = "signin", redirectTo }: Props
     setDebugResult(null);
 
     try {
-      const actionLink = await generateDevMagicLink(email, redirectTo ?? getMagicLinkRedirectPath());
+      const actionLink = await generateDevMagicLink(email, getMagicLinkRedirectPath(redirectTo));
       setDebugResult(actionLink);
       const msg = 'Dev magic link generated. Open the link below in this browser.';
       setMessage(msg);
@@ -231,9 +234,9 @@ export default function AuthMagicLinkForm({ mode = "signin", redirectTo }: Props
               What Booka handles
             </div>
             <ul className="space-y-2 text-sm text-slate-700">
-              <li>WhatsApp and Instagram lead replies</li>
-              <li>Booking, reminders, and no-show follow-up</li>
-              <li>Beauty front-desk workflows without extra admin</li>
+              <li>WhatsApp and Instagram enquiries, recommendations, and sales replies</li>
+              <li>Booking confirmation, reminders, and no-show follow-up</li>
+              <li>Front-desk workflows for beauty, hospitality, and clinic teams</li>
             </ul>
           </div>
         </div>
