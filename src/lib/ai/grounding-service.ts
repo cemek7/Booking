@@ -5,6 +5,26 @@ import { getAvailableSlots } from '@/lib/whatsapp/v2/slotEngine';
 import { getCustomerRecall, type CustomerRecall } from './customerRecall';
 
 const supabaseAdmin = createSupabaseAdminClient();
+type DailySummaryRow = {
+  bookings_count?: number | null;
+  completed_count?: number | null;
+  cancelled_count?: number | null;
+  no_show_count?: number | null;
+  estimated_revenue?: number | null;
+};
+
+type LegacyDailySummaryRow = {
+  total_bookings?: number | null;
+  completed?: number | null;
+  cancelled?: number | null;
+  no_shows?: number | null;
+  revenue?: number | null;
+};
+
+type AvailabilitySnapshotRow = {
+  staff_id: string | number;
+  available_slots?: unknown;
+};
 
 type TenantContext = {
   id: string;
@@ -345,15 +365,16 @@ async function getOwnerSummary(
     .order('date', { ascending: false });
 
   if (dailyRows && dailyRows.length > 0) {
+    const periodRows = dailyRows as DailySummaryRow[];
     summary.period = {
       label: dateRange.label,
       start: dateRange.start,
       end: dateRange.end,
-      bookings_count: dailyRows.reduce((sum, row) => sum + Number(row.bookings_count ?? 0), 0),
-      completed_count: dailyRows.reduce((sum, row) => sum + Number(row.completed_count ?? 0), 0),
-      cancelled_count: dailyRows.reduce((sum, row) => sum + Number(row.cancelled_count ?? 0), 0),
-      no_show_count: dailyRows.reduce((sum, row) => sum + Number(row.no_show_count ?? 0), 0),
-      estimated_revenue: dailyRows.reduce((sum, row) => sum + Number(row.estimated_revenue ?? 0), 0),
+      bookings_count: periodRows.reduce((sum: number, row: DailySummaryRow) => sum + Number(row.bookings_count ?? 0), 0),
+      completed_count: periodRows.reduce((sum: number, row: DailySummaryRow) => sum + Number(row.completed_count ?? 0), 0),
+      cancelled_count: periodRows.reduce((sum: number, row: DailySummaryRow) => sum + Number(row.cancelled_count ?? 0), 0),
+      no_show_count: periodRows.reduce((sum: number, row: DailySummaryRow) => sum + Number(row.no_show_count ?? 0), 0),
+      estimated_revenue: periodRows.reduce((sum: number, row: DailySummaryRow) => sum + Number(row.estimated_revenue ?? 0), 0),
     };
     summary.daily_rows = dailyRows.slice(0, 7);
   } else {
@@ -365,15 +386,16 @@ async function getOwnerSummary(
       .lte('date', dateRange.end)
       .order('date', { ascending: false });
     if (legacyRows && legacyRows.length > 0) {
+      const periodRows = legacyRows as LegacyDailySummaryRow[];
       summary.period = {
         label: dateRange.label,
         start: dateRange.start,
         end: dateRange.end,
-        bookings_count: legacyRows.reduce((sum, row) => sum + Number(row.total_bookings ?? 0), 0),
-        completed_count: legacyRows.reduce((sum, row) => sum + Number(row.completed ?? 0), 0),
-        cancelled_count: legacyRows.reduce((sum, row) => sum + Number(row.cancelled ?? 0), 0),
-        no_show_count: legacyRows.reduce((sum, row) => sum + Number(row.no_shows ?? 0), 0),
-        estimated_revenue: legacyRows.reduce((sum, row) => sum + Number(row.revenue ?? 0), 0),
+        bookings_count: periodRows.reduce((sum: number, row: LegacyDailySummaryRow) => sum + Number(row.total_bookings ?? 0), 0),
+        completed_count: periodRows.reduce((sum: number, row: LegacyDailySummaryRow) => sum + Number(row.completed ?? 0), 0),
+        cancelled_count: periodRows.reduce((sum: number, row: LegacyDailySummaryRow) => sum + Number(row.cancelled ?? 0), 0),
+        no_show_count: periodRows.reduce((sum: number, row: LegacyDailySummaryRow) => sum + Number(row.no_shows ?? 0), 0),
+        estimated_revenue: periodRows.reduce((sum: number, row: LegacyDailySummaryRow) => sum + Number(row.revenue ?? 0), 0),
       };
       summary.daily_rows = legacyRows.slice(0, 7);
     }
@@ -514,10 +536,10 @@ async function getPrecomputedAvailability(
 
   const { data } = await query;
 
-  return (data ?? []).map((row) => ({
+  return ((data ?? []) as AvailabilitySnapshotRow[]).map((row: AvailabilitySnapshotRow) => ({
     staffId: String(row.staff_id),
     slots: Array.isArray(row.available_slots) ? row.available_slots.map(String).slice(0, 6) : [],
-  })).filter((entry) => entry.slots.length > 0);
+  })).filter((entry: { slots: string[] }) => entry.slots.length > 0);
 }
 
 function resolveServiceId(
