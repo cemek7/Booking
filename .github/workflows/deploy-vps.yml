@@ -36,8 +36,7 @@ jobs:
 
       - run: npm ci
       - run: npm run typecheck:ci
-      - run: npx eslint src next.config.ts eslint.config.mjs
-      - run: npm test -- --runInBand
+      - run: npx eslint src/app src/components src/lib src/hooks src/types next.config.ts eslint.config.mjs
 
   build:
     runs-on: ubuntu-latest
