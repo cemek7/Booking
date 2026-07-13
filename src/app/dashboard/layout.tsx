@@ -2,6 +2,8 @@ import React from 'react';
 import { requireAuth } from '@/lib/auth/server-auth';
 import DashboardLayoutClient from '@/components/DashboardLayoutClient';
 
+export const dynamic = 'force-dynamic';
+
 export const metadata = {
   title: 'Dashboard | Booka',
   description: 'Manage your business dashboard',
