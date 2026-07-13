@@ -6,12 +6,7 @@
  * rather than a plain tenants UPDATE — is what preserves the "formerly known as"
  * drift line that the brand-identity layer shows to customers.
  */
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 /** Maps a business vertical to a default brand emoji, or null when unknown. */
 export function suggestEmojiForVertical(vertical: string | null | undefined): string | null {
@@ -37,6 +32,7 @@ export function suggestEmojiForVertical(vertical: string | null | undefined): st
  * previous_names with a timestamp and sets the new display_name + renamed_at.
  */
 export async function renameTenantBrand(tenantId: string, newDisplayName: string): Promise<void> {
+  const supabaseAdmin = createSupabaseAdminClient();
   const { data: t } = await supabaseAdmin
     .from('tenants')
     .select('name, display_name, previous_names')
