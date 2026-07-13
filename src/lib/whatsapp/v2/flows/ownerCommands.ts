@@ -15,6 +15,17 @@ import type { RuleMatch } from '@/lib/ai/rulesEngine';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
+type ServiceListRow = {
+  name: string | null;
+  price: number | string | null;
+  duration: number | null;
+};
+
+type StaffListRow = {
+  phone: string | null;
+  role: string | null;
+};
+
 function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
   return {
     ...((row?.metadata as Record<string, unknown> | null) ?? {}),
@@ -168,7 +179,10 @@ async function executeReadAction(
         .eq('is_active', true)
         .order('sort_order');
       if (!data?.length) return 'No services found. Add one with: "Add [service] at [price]"';
-      const lines = data.map((s) => `  • ${s.name} — ₦${Math.round(Number(s.price ?? 0)).toLocaleString()} (${s.duration ?? 60}min)`);
+      const lines = (data as ServiceListRow[]).map(
+        (s: ServiceListRow) =>
+          `  • ${s.name} — ₦${Math.round(Number(s.price ?? 0)).toLocaleString()} (${s.duration ?? 60}min)`
+      );
       return `Your services:\n${lines.join('\n')}`;
     }
 
@@ -179,7 +193,9 @@ async function executeReadAction(
         .eq('tenant_id', tenantId)
         .in('role', ['staff', 'owner']);
       if (!data?.length) return 'No staff found.';
-      const lines = data.map((s) => `  • ${s.phone ?? 'Unknown'} (${s.role})`);
+      const lines = (data as StaffListRow[]).map(
+        (s: StaffListRow) => `  • ${s.phone ?? 'Unknown'} (${s.role})`
+      );
       return `Your team:\n${lines.join('\n')}`;
     }
 
