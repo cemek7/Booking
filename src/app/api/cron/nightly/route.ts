@@ -24,6 +24,7 @@ import { runGraduationAdvisor } from '@/lib/whatsapp/v2/deliverability/graduatio
 import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/lib/offboarding/purgeWorker';
 
 const supabaseAdmin = createSupabaseAdminClient();
+type LooseRow = Record<string, any>;
 
 export const maxDuration = 300; // 5-minute budget for nightly job
 
@@ -184,7 +185,13 @@ async function runDueCampaignsForAllTenants(): Promise<{ processed: number; deli
     .lte('scheduled_for', now)
     .limit(200);
 
-  const tenantIds = [...new Set((rows ?? []).map((row) => row.tenant_id).filter(Boolean))];
+  const tenantIds = [
+    ...new Set(
+      ((rows ?? []) as Array<{ tenant_id: string | null }>)
+        .map((row) => row.tenant_id)
+        .filter((tenantId): tenantId is string => Boolean(tenantId))
+    ),
+  ];
   let processed = 0;
   let delivered = 0;
   let failed = 0;
@@ -284,16 +291,17 @@ async function aggregateTenantDay(tenantId: string, date: string): Promise<void>
     .lte('start_at', endOfDay);
 
   if (!reservations) return;
+  const reservationRows = reservations as LooseRow[];
 
-  const total = reservations.length;
-  const completed = reservations.filter((r) => r.status === 'completed').length;
-  const cancelled = reservations.filter((r) => r.status === 'cancelled').length;
-  const noShows = reservations.filter((r) => r.status === 'no_show').length;
+  const total = reservationRows.length;
+  const completed = reservationRows.filter((r: LooseRow) => r.status === 'completed').length;
+  const cancelled = reservationRows.filter((r: LooseRow) => r.status === 'cancelled').length;
+  const noShows = reservationRows.filter((r: LooseRow) => r.status === 'no_show').length;
 
   // Revenue from completed reservations
-  const completedIds = reservations
-    .filter((r) => r.status === 'completed')
-    .map((r) => r.service_id)
+  const completedIds = reservationRows
+    .filter((r: LooseRow) => r.status === 'completed')
+    .map((r: LooseRow) => r.service_id)
     .filter(Boolean);
 
   let revenue = 0;
@@ -303,15 +311,15 @@ async function aggregateTenantDay(tenantId: string, date: string): Promise<void>
       .select('id, price')
       .in('id', completedIds);
 
-    const priceMap = Object.fromEntries((services ?? []).map((s) => [s.id, Number(s.price ?? 0)]));
-    revenue = reservations
-      .filter((r) => r.status === 'completed')
-      .reduce((sum, r) => sum + Number(priceMap[r.service_id] ?? 0), 0);
+    const priceMap = Object.fromEntries(((services ?? []) as LooseRow[]).map((s: LooseRow) => [s.id, Number(s.price ?? 0)]));
+    revenue = reservationRows
+      .filter((r: LooseRow) => r.status === 'completed')
+      .reduce((sum: number, r: LooseRow) => sum + Number(priceMap[r.service_id] ?? 0), 0);
   }
 
   // Busiest hour
   const hourCounts: Record<number, number> = {};
-  for (const r of reservations) {
+  for (const r of reservationRows) {
     const hour = new Date(r.start_at).getHours();
     hourCounts[hour] = (hourCounts[hour] ?? 0) + 1;
   }
@@ -319,7 +327,7 @@ async function aggregateTenantDay(tenantId: string, date: string): Promise<void>
 
   // Top service by booking count
   const serviceCounts: Record<string, number> = {};
-  for (const r of reservations.filter((r) => r.service_id)) {
+  for (const r of reservationRows.filter((r: LooseRow) => r.service_id)) {
     serviceCounts[r.service_id] = (serviceCounts[r.service_id] ?? 0) + 1;
   }
   const topServiceId = Object.entries(serviceCounts).sort(([, a], [, b]) => b - a)[0]?.[0] ?? null;
@@ -354,18 +362,19 @@ async function aggregateTenantDailySummary(tenantId: string, date: string): Prom
     .lte('start_at', endOfDay);
 
   if (!reservations) return 0;
+  const reservationRows = reservations as LooseRow[];
 
-  const total = reservations.length;
-  const completed = reservations.filter((r) => r.status === 'completed').length;
-  const cancelled = reservations.filter((r) => r.status === 'cancelled').length;
-  const noShows = reservations.filter((r) => r.status === 'no_show').length;
+  const total = reservationRows.length;
+  const completed = reservationRows.filter((r: LooseRow) => r.status === 'completed').length;
+  const cancelled = reservationRows.filter((r: LooseRow) => r.status === 'cancelled').length;
+  const noShows = reservationRows.filter((r: LooseRow) => r.status === 'no_show').length;
 
-  const serviceIds = reservations
-    .map((reservation) => reservation.service_id)
+  const serviceIds = reservationRows
+    .map((reservation: LooseRow) => reservation.service_id)
     .filter((value): value is string => typeof value === 'string');
 
-  const staffIds = reservations
-    .map((reservation) => reservation.staff_id)
+  const staffIds = reservationRows
+    .map((reservation: LooseRow) => reservation.staff_id)
     .filter((value): value is string => typeof value === 'string');
 
   const [{ data: services }, { data: staffRows }] = await Promise.all([
@@ -382,14 +391,14 @@ async function aggregateTenantDailySummary(tenantId: string, date: string): Prom
       : Promise.resolve({ data: [] }),
   ]);
 
-  const serviceMap = new Map((services ?? []).map((service) => [service.id, service]));
-  const staffMap = new Map((staffRows ?? []).map((staff) => [staff.id, staff]));
+  const serviceMap = new Map(((services ?? []) as LooseRow[]).map((service: LooseRow) => [service.id, service]));
+  const staffMap = new Map(((staffRows ?? []) as LooseRow[]).map((staff: LooseRow) => [staff.id, staff]));
 
   let estimatedRevenue = 0;
   const serviceCounts = new Map<string, number>();
   const staffCounts = new Map<string, number>();
 
-  for (const reservation of reservations) {
+  for (const reservation of reservationRows) {
     const service = typeof reservation.service_id === 'string'
       ? serviceMap.get(reservation.service_id)
       : null;
@@ -408,7 +417,7 @@ async function aggregateTenantDailySummary(tenantId: string, date: string): Prom
         ? reservation.staff_id
         : null;
     if (reservationStaffId) {
-      const staff = staffMap.get(reservationStaffId) ?? [...staffMap.values()].find((row) => row.user_id === reservationStaffId);
+      const staff = staffMap.get(reservationStaffId) ?? [...staffMap.values()].find((row: LooseRow) => row.user_id === reservationStaffId);
       const staffName = staff?.name ?? staff?.phone ?? reservationStaffId;
       staffCounts.set(staffName, (staffCounts.get(staffName) ?? 0) + 1);
     }
@@ -449,8 +458,9 @@ async function aggregateCustomerProfiles(tenantId: string): Promise<number> {
     .eq('tenant_id', tenantId)
     .order('start_at', { ascending: false });
 
+  const reservationRows = (reservations ?? []) as LooseRow[];
   const byCustomer = new Map<string, Array<Record<string, unknown>>>();
-  for (const reservation of reservations ?? []) {
+  for (const reservation of reservationRows) {
     const customerId = typeof reservation.customer_id === 'string' ? reservation.customer_id : null;
     if (!customerId) continue;
     const current = byCustomer.get(customerId) ?? [];
@@ -458,7 +468,7 @@ async function aggregateCustomerProfiles(tenantId: string): Promise<number> {
     byCustomer.set(customerId, current);
   }
 
-  const serviceIds = [...new Set((reservations ?? []).map((reservation) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
+  const serviceIds = [...new Set(reservationRows.map((reservation: LooseRow) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
   const [{ data: staffRows }, { data: services }] = await Promise.all([
     supabaseAdmin
       .from('tenant_users')
@@ -471,11 +481,11 @@ async function aggregateCustomerProfiles(tenantId: string): Promise<number> {
           .in('id', serviceIds)
       : Promise.resolve({ data: [] }),
   ]);
-  const staffMap = new Map((staffRows ?? []).map((staff) => [staff.id, staff.name ?? staff.phone ?? staff.id]));
-  const staffUserMap = new Map((staffRows ?? []).flatMap((staff) => typeof staff.user_id === 'string' ? [[staff.user_id, staff.name ?? staff.phone ?? staff.user_id]] : []));
-  const serviceMap = new Map((services ?? []).map((service) => [service.id, service.name ?? service.id]));
+  const staffMap = new Map(((staffRows ?? []) as LooseRow[]).map((staff: LooseRow) => [staff.id, staff.name ?? staff.phone ?? staff.id]));
+  const staffUserMap = new Map(((staffRows ?? []) as LooseRow[]).flatMap((staff: LooseRow) => typeof staff.user_id === 'string' ? [[staff.user_id, staff.name ?? staff.phone ?? staff.user_id]] : []));
+  const serviceMap = new Map(((services ?? []) as LooseRow[]).map((service: LooseRow) => [service.id, service.name ?? service.id]));
 
-  const rows = customers.map((customer) => {
+  const rows = (customers as LooseRow[]).map((customer: LooseRow) => {
     const history = byCustomer.get(customer.id) ?? [];
     const favoriteService = mostFrequentString(
       history.map((entry) => {
@@ -539,11 +549,11 @@ async function aggregateServicePerformance(tenantId: string): Promise<number> {
     .select('service_id, status')
     .eq('tenant_id', tenantId);
 
-  const rows = services.map((service) => {
-    const related = (reservations ?? []).filter((reservation) => reservation.service_id === service.id);
+  const rows = (services as LooseRow[]).map((service: LooseRow) => {
+    const related = ((reservations ?? []) as LooseRow[]).filter((reservation: LooseRow) => reservation.service_id === service.id);
     const bookings = related.length;
-    const completed = related.filter((reservation) => reservation.status === 'completed').length;
-    const cancellations = related.filter((reservation) => reservation.status === 'cancelled').length;
+    const completed = related.filter((reservation: LooseRow) => reservation.status === 'completed').length;
+    const cancellations = related.filter((reservation: LooseRow) => reservation.status === 'cancelled').length;
     const revenue = completed * Number(service.price ?? 0);
 
     return {
@@ -580,25 +590,25 @@ async function aggregateStaffPerformance(tenantId: string): Promise<number> {
     .select('staff_id, tenant_staff_id, service_id, status')
     .eq('tenant_id', tenantId);
 
-  const serviceIds = [...new Set((reservations ?? []).map((reservation) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
+  const serviceIds = [...new Set(((reservations ?? []) as LooseRow[]).map((reservation: LooseRow) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
   const { data: services } = serviceIds.length
       ? await supabaseAdmin
         .from('services')
         .select('id, price')
         .in('id', serviceIds)
     : { data: [] };
-  const servicePriceMap = new Map((services ?? []).map((service) => [service.id, Number(service.price ?? 0)]));
+  const servicePriceMap = new Map(((services ?? []) as LooseRow[]).map((service: LooseRow) => [service.id, Number(service.price ?? 0)]));
 
-  const rows = staff.map((staffMember) => {
-    const related = (reservations ?? []).filter((reservation) =>
+  const rows = (staff as LooseRow[]).map((staffMember: LooseRow) => {
+    const related = ((reservations ?? []) as LooseRow[]).filter((reservation: LooseRow) =>
       reservation.tenant_staff_id === staffMember.id ||
       (reservation.tenant_staff_id == null && reservation.staff_id === staffMember.user_id)
     );
     const bookings = related.length;
-    const completed = related.filter((reservation) => reservation.status === 'completed').length;
+    const completed = related.filter((reservation: LooseRow) => reservation.status === 'completed').length;
     const estimatedRevenue = related
-      .filter((reservation) => reservation.status === 'completed')
-      .reduce((sum, reservation) => sum + (typeof reservation.service_id === 'string' ? (servicePriceMap.get(reservation.service_id) ?? 0) : 0), 0);
+      .filter((reservation: LooseRow) => reservation.status === 'completed')
+      .reduce((sum: number, reservation: LooseRow) => sum + (typeof reservation.service_id === 'string' ? (servicePriceMap.get(reservation.service_id) ?? 0) : 0), 0);
 
     return {
       tenant_id: tenantId,
@@ -641,7 +651,7 @@ async function aggregateAvailabilitySnapshots(tenantId: string, daysAhead: numbe
     .select('staff_user_id, service_id')
     .eq('tenant_id', tenantId);
 
-  const serviceMap = new Map((services ?? []).map((service) => [service.id, service.duration ?? 60]));
+  const serviceMap = new Map(((services ?? []) as LooseRow[]).map((service: LooseRow) => [service.id, service.duration ?? 60]));
   const mappedServicesByStaff = new Map<string, string[]>();
   for (const row of staffServices ?? []) {
     const current = mappedServicesByStaff.get(row.staff_user_id) ?? [];
@@ -652,7 +662,7 @@ async function aggregateAvailabilitySnapshots(tenantId: string, daysAhead: numbe
   const rows: Array<Record<string, unknown>> = [];
 
   for (const staffMember of staff) {
-    const serviceIds = mappedServicesByStaff.get(staffMember.id) ?? services.map((service) => service.id);
+    const serviceIds = mappedServicesByStaff.get(staffMember.id) ?? (services as LooseRow[]).map((service: LooseRow) => service.id);
     for (let offset = 0; offset < daysAhead; offset++) {
       const date = new Date();
       date.setDate(date.getDate() + offset);
@@ -1225,8 +1235,8 @@ export async function sendOwnerWeeklyDigest(): Promise<number> {
 
     if (!insights?.length) continue;
 
-    const summary = insights.reduce(
-      (acc, row) => {
+    const summary = (insights as LooseRow[]).reduce(
+      (acc: Record<string, any>, row: LooseRow) => {
         acc.totalBookings += Number(row.total_bookings ?? 0);
         acc.completed += Number(row.completed ?? 0);
         acc.cancelled += Number(row.cancelled ?? 0);
@@ -1306,7 +1316,7 @@ export async function sendAtRiskClientsAlert(): Promise<number> {
       .not('customer_number', 'is', null)
       .not('status', 'in', '("cancelled","no_show")');
 
-    const upcomingPhones = new Set((upcomingReservations ?? []).map((row) => row.customer_number as string));
+    const upcomingPhones = new Set(((upcomingReservations ?? []) as LooseRow[]).map((row: LooseRow) => row.customer_number as string));
     const lastCompletedByPhone = new Map<string, { customer_id: string | null; service_id: string | null; start_at: string }>();
 
     for (const reservation of completedReservations) {
@@ -1442,7 +1452,7 @@ async function getNoShowRevenue(tenantId: string, startDate: string, endDate: st
 
   if (!reservations?.length) return 0;
 
-  const serviceIds = [...new Set(reservations.map((row) => row.service_id as string))];
+  const serviceIds = [...new Set((reservations as LooseRow[]).map((row: LooseRow) => row.service_id as string))];
   const { data: services } = await supabaseAdmin
     .from('services')
     .select('id, price')
@@ -1453,7 +1463,7 @@ async function getNoShowRevenue(tenantId: string, startDate: string, endDate: st
     priceMap.set(service.id as string, Number(service.price ?? 0));
   }
 
-  return reservations.reduce((sum, row) => sum + Number(priceMap.get(row.service_id as string) ?? 0), 0);
+  return (reservations as LooseRow[]).reduce((sum: number, row: LooseRow) => sum + Number(priceMap.get(row.service_id as string) ?? 0), 0);
 }
 
 function isMondayInLagos(): boolean {

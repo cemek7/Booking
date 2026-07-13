@@ -78,7 +78,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       }
 
       // Mark as processing
-      const ids = pending.map((m) => m.id);
+      const ids = (pending as Array<{ id: string }>).map((m: { id: string }) => m.id);
       await supabaseAdmin
         .from('whatsapp_message_queue')
         .update({ status: 'processing' })
