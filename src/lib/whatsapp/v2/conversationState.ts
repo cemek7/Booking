@@ -8,13 +8,7 @@
  * All reads/writes go through the Supabase admin client (service role)
  * so that RLS is bypassed for server-side operations.
  */
-
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 export type ConvRole = 'owner' | 'staff' | 'customer' | 'unknown';
 export type ConvFlow = 'idle' | 'onboarding' | 'booking' | 'managing';
@@ -54,6 +48,7 @@ export async function getConversation(
   tenantId: string,
   channel: ConvChannel = 'whatsapp'
 ): Promise<ConvState | null> {
+  const supabaseAdmin = createSupabaseAdminClient();
   const { data, error } = await supabaseAdmin
     .from('whatsapp_conversations')
     .select('id, tenant_id, phone_number, external_id, channel, role, current_flow, flow_step, flow_data, last_inbound_at, opted_out_at')
@@ -86,6 +81,7 @@ export async function ensureConversation(
   role: ConvRole = 'unknown',
   channel: ConvChannel = 'whatsapp'
 ): Promise<ConvState> {
+  const supabaseAdmin = createSupabaseAdminClient();
   const isWhatsApp = channel === 'whatsapp';
   const { data, error } = await supabaseAdmin
     .from('whatsapp_conversations')
@@ -130,6 +126,7 @@ export async function updateConversation(
   patch: ConvStatePatch,
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
+  const supabaseAdmin = createSupabaseAdminClient();
   const { error } = await supabaseAdmin
     .from('whatsapp_conversations')
     .update(patch)

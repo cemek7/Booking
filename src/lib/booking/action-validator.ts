@@ -6,7 +6,7 @@
  * in place until the rest of the channel surface is fully migrated.
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { scheduleLeadRecoveryCampaign, upsertLeadRecord } from '@/lib/ai/front-desk-sales';
 import { cancelReservation, createReservation, rescheduleReservation } from '@/lib/reservationService';
@@ -21,10 +21,7 @@ import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { createRetailOrderPaymentLinkForCustomer } from '@/lib/commerce/retail-orders';
 import type { Product } from '@/types/product-catalogue';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 export type AIAction =
   | 'create_booking'

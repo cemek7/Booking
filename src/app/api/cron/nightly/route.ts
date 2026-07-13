@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { sendTelegramInfo, sendTelegramAlert } from '@/lib/monitoring/telegramAlert';
 import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
 import type { WhatsAppProviderClient } from '@/lib/whatsapp/providers/types';
@@ -23,10 +23,7 @@ import { sendGovernedInitiated } from '@/lib/whatsapp/v2/deliverability/governed
 import { runGraduationAdvisor } from '@/lib/whatsapp/v2/deliverability/graduationAdvisor';
 import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/lib/offboarding/purgeWorker';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 export const maxDuration = 300; // 5-minute budget for nightly job
 

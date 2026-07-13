@@ -9,7 +9,7 @@
  * Called by the Vercel cron worker (src/app/api/worker/whatsapp/route.ts).
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { normalizePidgin, matchRule } from '@/lib/ai/rulesEngine';
 import { isQuotaExceeded, recordAIUsage } from '@/lib/ai/quotaTracker';
 import { getConversation, ensureConversation, updateConversation } from './conversationState';
@@ -41,10 +41,7 @@ import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 const FLASH_LITE_MODEL = 'gemini-2.0-flash-lite';
 const FLASH_MODEL = 'gemini-2.0-flash';

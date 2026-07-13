@@ -13,14 +13,11 @@
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { processMessageV2 } from '@/lib/whatsapp/v2/pipeline';
 import { sendTelegramAlert } from '@/lib/monitoring/telegramAlert';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 const BATCH_SIZE = 20;
 const MAX_EXECUTION_MS = 55_000; // Stay under Vercel's 60s limit

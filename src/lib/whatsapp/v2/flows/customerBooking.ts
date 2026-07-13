@@ -11,7 +11,7 @@
  * enough is known to confirm (create_booking).
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import PaymentService from '@/lib/paymentService';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { siasOperations } from '@/lib/sias-operations';
@@ -25,10 +25,7 @@ import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { addProductsToRetailCart } from '@/lib/commerce/retail-orders';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
   return {

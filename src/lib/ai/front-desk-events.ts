@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 export type FrontDeskEventType =
   | 'inquiry_received'
@@ -61,6 +56,7 @@ export async function recordFrontDeskEvent(input: {
   metadata?: Record<string, unknown> | null;
 }): Promise<void> {
   try {
+    const supabaseAdmin = createSupabaseAdminClient();
     await supabaseAdmin
       .from('ai_front_desk_events')
       .insert({

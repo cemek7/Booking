@@ -11,16 +11,13 @@
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { runRemindersForTenant } from '@/lib/reminders/runner';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5-minute budget
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 export async function GET(request: Request): Promise<NextResponse> {
   const authHeader = request.headers.get('authorization');

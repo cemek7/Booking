@@ -9,16 +9,13 @@
  *   { service_id, date, staff_id?, notified_at? }
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 import { brandCustomerText } from './outboundBranding';
 import { sendGovernedInitiated } from './deliverability/governedSend';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 export interface WaitlistEntry {
   service_id: string;

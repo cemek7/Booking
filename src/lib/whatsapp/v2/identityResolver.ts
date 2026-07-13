@@ -11,13 +11,10 @@
  * Returns tenantId, role, and whether a routing code was found in the message.
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import type { ConvChannel } from './conversationState';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 export type ResolvedIdentity = {
   tenantId: string | null;

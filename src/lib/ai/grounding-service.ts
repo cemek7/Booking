@@ -1,13 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import type { ConvState } from '@/lib/whatsapp/v2/conversationState';
 import type { FrontDeskIntent, IntentRoute } from './intent-router';
 import { getAvailableSlots } from '@/lib/whatsapp/v2/slotEngine';
 import { getCustomerRecall, type CustomerRecall } from './customerRecall';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 type TenantContext = {
   id: string;

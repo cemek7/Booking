@@ -8,15 +8,12 @@
  * and executes the appropriate action or sends the reply.
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
   return {

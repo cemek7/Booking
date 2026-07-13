@@ -10,12 +10,9 @@
  *   AI_FLASH_DAILY_BUDGET  — daily Flash call limit across all tenants (default 200)
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 const LITE_BUDGET = parseInt(process.env.AI_LITE_DAILY_BUDGET ?? '800', 10);
 const FLASH_BUDGET = parseInt(process.env.AI_FLASH_DAILY_BUDGET ?? '200', 10);

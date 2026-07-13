@@ -15,7 +15,7 @@
  *   4 → 5: Activation (generate routing_code + QR + send link)
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { callGoogleAI } from '@/lib/google-ai';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import { generateRoutingCode } from '../identityResolver';
@@ -23,10 +23,7 @@ import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wa
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import type { AIResponse } from '../actionValidator';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
   return {

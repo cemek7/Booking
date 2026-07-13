@@ -5,7 +5,7 @@
  * and returns the branded text — or null when the send should be SKIPPED
  * (an initiated message to an opted-out customer).
  */
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import {
   resolveBrandContext,
   applyBrandIdentity,
@@ -14,10 +14,7 @@ import {
 } from './brandIdentity';
 import { isOptedOut } from './optOut';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseAdmin = createSupabaseAdminClient();
 
 type ConvFlags = ConversationBrandFields & { opted_out_at: string | null };
 
