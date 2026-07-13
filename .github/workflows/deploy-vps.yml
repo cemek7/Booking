@@ -3,7 +3,7 @@ name: VPS Deploy
 on:
   push:
     branches:
-      - develop
+      - staging
       - main
   workflow_dispatch:
     inputs:
@@ -52,7 +52,7 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             DEPLOY_ENV="${{ github.event.inputs.environment }}"
-          elif [[ "${{ github.ref_name }}" == "develop" ]]; then
+          elif [[ "${{ github.ref_name }}" == "staging" ]]; then
             DEPLOY_ENV="staging"
           else
             DEPLOY_ENV="production"
