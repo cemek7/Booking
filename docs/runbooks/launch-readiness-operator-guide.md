@@ -24,7 +24,7 @@ project, copy the key, put it in your deploy env (and `.env.local` for local), r
 3. Verify: accept the cookie banner in-app, navigate; events should appear. Nothing fires pre-consent.
    Session replay masks all text/inputs.
 
-### Linear (issue tracking) — no code dependency
+### Linear (issue tracking) — no code dependency / no app env
 Follow `docs/superpowers/plans/2026-06-11-linear-setup-checklist.md`: create teams/projects, connect
 GitHub, define severity labels + intake template, import the launch-readiness items.
 

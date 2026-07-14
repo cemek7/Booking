@@ -96,9 +96,11 @@ Then walk one real WhatsApp booking end-to-end.
 Critical to boot / core flows:
 - `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
 - `CRON_SECRET` (must match `deployment/vps-crontab.txt`)
-- Payments: `STRIPE_SECRET_KEY` / `PAYSTACK_SECRET_KEY`
+- Payments: `STRIPE_SECRET_KEY`, `STRIPE_PUBLIC_KEY`, `STRIPE_WEBHOOK_SECRET`, `PAYSTACK_SECRET_KEY`
 - WhatsApp: Evolution API base URL + key
-- `SENTRY_DSN`, `NEXT_PUBLIC_POSTHOG_KEY` (observability — optional to boot)
+- Observability: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT`,
+  `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`
+- Linear has no app env in this repo; set it up as an external ops integration only
 
 Run `npm run build` locally-clean is the true launch gate: focused test suites passing does not prove the
 production build resolves every import. This branch is the one confirmed to build (`FEAT_EXIT=0`).

@@ -71,6 +71,18 @@ Important values:
 - `REDIS_PASSWORD`
 - `CRON_SECRET`
 - `RESEND_API_KEY`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_PUBLIC_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `PAYSTACK_SECRET_KEY`
+- `SENTRY_DSN`
+- `NEXT_PUBLIC_SENTRY_DSN`
+- `SENTRY_ORG`
+- `SENTRY_PROJECT`
+- `NEXT_PUBLIC_POSTHOG_KEY`
+- `NEXT_PUBLIC_POSTHOG_HOST`
+
+Linear does not require any application env in this repo right now. It is configured outside the app.
 
 ## 3. DNS records
 
@@ -108,22 +120,12 @@ Production:
 
 Keep staging and production in separate Supabase projects if possible.
 
-## 5. GitHub environments
+## 5. GitHub Actions / GHCR
 
-Create two GitHub environments:
+The current `.github/workflows/deploy-vps.yml` publishes validated images to GHCR only. It does not SSH
+into the VPS anymore.
 
-- `staging`
-- `production`
-
-For each environment, add:
-
-- `VPS_HOST`
-- `VPS_USER`
-- `VPS_SSH_KEY`
-- `GHCR_USERNAME`
-- `GHCR_TOKEN`
-
-`GHCR_TOKEN` should be a token that can pull from `ghcr.io`.
+If you use the GitHub Actions publisher, make sure the repo can push the image and the VPS can pull it.
 
 ## 6. Deployment flow
 
@@ -147,5 +149,5 @@ Verify:
 - `docker ps`
 - `nginx -t`
 - `systemctl status nginx`
-- `curl -I https://staging.app.techclave.cloud/api/health`
-- `curl -I https://app.techclave.cloud/api/health`
+- `curl -fsS https://staging.app.techclave.cloud/api/health`
+- `curl -fsS https://app.techclave.cloud/api/health`
