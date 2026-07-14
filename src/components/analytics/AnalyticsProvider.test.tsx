@@ -24,32 +24,29 @@ jest.mock('next/navigation', () => ({
 import AnalyticsProvider from '@/components/analytics/AnalyticsProvider';
 
 describe('AnalyticsProvider', () => {
-  const original = process.env.NEXT_PUBLIC_POSTHOG_KEY;
   beforeEach(() => {
     window.localStorage.clear();
     initMock.mockClear();
     optInMock.mockClear();
     optOutMock.mockClear();
   });
-  afterEach(() => {
-    process.env.NEXT_PUBLIC_POSTHOG_KEY = original;
-  });
 
   it('renders children', () => {
-    delete process.env.NEXT_PUBLIC_POSTHOG_KEY;
     render(<AnalyticsProvider><span>hi</span></AnalyticsProvider>);
     expect(screen.getByText('hi')).toBeInTheDocument();
   });
 
   it('does NOT init PostHog when no key is configured', () => {
-    delete process.env.NEXT_PUBLIC_POSTHOG_KEY;
     render(<AnalyticsProvider><span>hi</span></AnalyticsProvider>);
     expect(initMock).not.toHaveBeenCalled();
   });
 
   it('inits PostHog opted-out by default and opts out with no consent', () => {
-    process.env.NEXT_PUBLIC_POSTHOG_KEY = 'phc_test';
-    render(<AnalyticsProvider><span>hi</span></AnalyticsProvider>);
+    render(
+      <AnalyticsProvider posthogKey="phc_test" posthogHost="https://us.i.posthog.com">
+        <span>hi</span>
+      </AnalyticsProvider>,
+    );
     expect(initMock).toHaveBeenCalledTimes(1);
     const [, options] = initMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(options.opt_out_capturing_by_default).toBe(true);

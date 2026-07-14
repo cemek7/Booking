@@ -30,10 +30,13 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+  const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+
   return (
     <html lang="en" className={`${brandSans.variable} ${brandDisplay.variable}`}>
       <body className="brand-theme antialiased">
-        <AnalyticsProvider>
+        <AnalyticsProvider posthogKey={posthogKey} posthogHost={posthogHost}>
           <AuthHashRedirect />
           <ToastContainer />
           {children}

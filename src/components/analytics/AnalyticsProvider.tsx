@@ -7,13 +7,22 @@ import { PostHogProvider } from 'posthog-js/react';
 import { hasAnalyticsConsent, onConsentChange } from '@/lib/consent/consentStore';
 import PostHogPageview from './PostHogPageview';
 
-export default function AnalyticsProvider({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
-    if (!key) return; // analytics disabled when unconfigured (dev/test)
+type AnalyticsProviderProps = {
+  children: React.ReactNode;
+  posthogKey?: string;
+  posthogHost?: string;
+};
 
-    posthog.init(key, {
-      api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
+export default function AnalyticsProvider({
+  children,
+  posthogKey,
+  posthogHost,
+}: AnalyticsProviderProps) {
+  useEffect(() => {
+    if (!posthogKey) return; // analytics disabled when unconfigured (dev/test)
+
+    posthog.init(posthogKey, {
+      api_host: posthogHost || 'https://us.i.posthog.com',
       opt_out_capturing_by_default: true,
       capture_pageview: false,
       persistence: 'localStorage+cookie',
@@ -32,7 +41,7 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
     };
     sync();
     return onConsentChange(sync);
-  }, []);
+  }, [posthogHost, posthogKey]);
 
   return (
     <PostHogProvider client={posthog}>
