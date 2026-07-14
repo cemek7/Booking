@@ -1,8 +1,7 @@
-import type { NextConfig } from "next";
-import path from "path";
-import { withSentryConfig } from "@sentry/nextjs";
+import path from 'path';
+import { withSentryConfig } from '@sentry/nextjs';
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   experimental: {
     webpackBuildWorker: false,
   },
@@ -17,7 +16,7 @@ const nextConfig: NextConfig = {
   // so the shim is never actually called at runtime.
   turbopack: {
     resolveAlias: {
-      'winston': {
+      winston: {
         browser: './src/lib/logger/browser-shim',
         default: 'winston',
       },
@@ -37,9 +36,9 @@ const nextConfig: NextConfig = {
       config.resolve = config.resolve || {};
       config.resolve.alias = {
         ...(config.resolve.alias || {}),
-        winston: path.join(__dirname, 'src/lib/logger/browser-shim'),
-        'winston-daily-rotate-file': path.join(__dirname, 'src/lib/logger/browser-shim'),
-        'file-stream-rotator': path.join(__dirname, 'src/lib/logger/browser-shim'),
+        winston: path.join(process.cwd(), 'src/lib/logger/browser-shim'),
+        'winston-daily-rotate-file': path.join(process.cwd(), 'src/lib/logger/browser-shim'),
+        'file-stream-rotator': path.join(process.cwd(), 'src/lib/logger/browser-shim'),
       };
     }
 
@@ -58,9 +57,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: '/(.*)',
-        headers: [
-          ...commonHeaders,
-        ],
+        headers: commonHeaders,
       },
     ];
   },
