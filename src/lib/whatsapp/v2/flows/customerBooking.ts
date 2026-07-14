@@ -24,6 +24,9 @@ import { defaultLogger } from '@/lib/logger';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { addProductsToRetailCart } from '@/lib/commerce/retail-orders';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { captureBookaException } from '@/lib/observability/sentry';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -199,6 +202,7 @@ async function handleGetAvailability(
 
   const slots = await getAvailableSlots(tenantId, tenant_staff_id, date, service_id);
   const available = slots.filter((s) => s.available);
+  const analyticsState = (conv.flow_data?.analytics ?? {}) as Record<string, unknown>;
 
   if (!available.length) {
     // Offer waitlist
@@ -219,6 +223,11 @@ async function handleGetAvailability(
     current_flow: 'booking',
     flow_data: {
       ...conv.flow_data,
+      analytics: {
+        ...analyticsState,
+        booking_flow_started_at: analyticsState.booking_flow_started_at ?? new Date().toISOString(),
+        booking_flow_started_recorded: true,
+      },
       booking_in_progress: {
         ...conv.flow_data?.booking_in_progress,
         service_id,
@@ -237,6 +246,39 @@ async function handleGetAvailability(
       stage: 'selecting_slot',
     },
   }).catch(() => undefined);
+
+  if (!analyticsState.booking_flow_started_recorded) {
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.BOOKING_FLOW_STARTED,
+      properties: {
+        tenant_id: tenantId,
+        channel,
+        flow: 'booking',
+        service_id,
+        staff_id: tenant_staff_id ?? null,
+        metadata: {
+          date,
+        },
+      },
+      distinctId: externalId,
+    });
+  }
+
+  await captureServerAnalyticsEvent({
+    event: ANALYTICS_EVENTS.SLOT_PRESENTED,
+    properties: {
+      tenant_id: tenantId,
+      channel,
+      flow: 'booking',
+      service_id,
+      staff_id: tenant_staff_id ?? null,
+      metadata: {
+        date,
+        available_slot_count: available.length,
+      },
+    },
+    distinctId: externalId,
+  });
 
   const dateFormatted = new Date(date).toLocaleDateString('en-NG', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -395,6 +437,9 @@ async function confirmBooking(
   if (!pending) return 'No booking to confirm. What would you like to book?';
 
   const { service_id, tenant_staff_id, date, start_time, end_time, customer_name, lock_id } = pending;
+  const bookingStartedAt = typeof conv.flow_data?.analytics?.booking_flow_started_at === 'string'
+    ? conv.flow_data.analytics.booking_flow_started_at
+    : null;
   const requiresDeposit = Boolean(pending.deposit_required);
   const depositAmountCents = Number(pending.deposit_amount_cents ?? 0);
   const { data: serviceRow } = await supabaseAdmin
@@ -435,10 +480,43 @@ async function confirmBooking(
     }) as { id: string } | null;
   } catch (error) {
     console.error('[customerBooking] confirmBooking error', error);
+    captureBookaException(error, {
+      tenantId,
+      channel,
+      flow: 'booking',
+      extra: {
+        service_id,
+        staff_id: tenant_staff_id,
+      },
+    });
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.BOOKING_FAILED,
+      properties: {
+        tenant_id: tenantId,
+        channel,
+        flow: 'booking',
+        service_id,
+        staff_id: tenant_staff_id ?? null,
+        failure_reason: error instanceof Error ? error.message : 'reservation_creation_failed',
+      },
+      distinctId: externalId,
+    });
     return 'Sorry, something went wrong confirming your booking. Please try again.';
   }
 
   if (!reservation) {
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.BOOKING_FAILED,
+      properties: {
+        tenant_id: tenantId,
+        channel,
+        flow: 'booking',
+        service_id,
+        staff_id: tenant_staff_id ?? null,
+        failure_reason: 'reservation_not_created',
+      },
+      distinctId: externalId,
+    });
     return 'Sorry, something went wrong confirming your booking. Please try again.';
   }
 
@@ -459,6 +537,27 @@ async function confirmBooking(
       source: 'whatsapp_v2_confirm',
       lock_id: lock_id ?? null,
     },
+  });
+
+  await captureServerAnalyticsEvent({
+    event: ANALYTICS_EVENTS.BOOKING_COMPLETED,
+    properties: {
+      tenant_id: tenantId,
+      channel,
+      flow: 'booking',
+      service_id,
+      reservation_id: reservation.id,
+      customer_id: customer?.id ?? null,
+      staff_id: tenant_staff_id ?? null,
+      time_to_complete_seconds: bookingStartedAt
+        ? Math.max(0, Math.round((Date.now() - new Date(bookingStartedAt).getTime()) / 1000))
+        : null,
+      metadata: {
+        requires_deposit: requiresDeposit,
+        reservation_status: reservationStatus,
+      },
+    },
+    distinctId: externalId,
   });
 
   if (requiresDeposit) {
@@ -509,6 +608,23 @@ async function confirmBooking(
         provider: 'paystack',
         authorization_url: paymentResult.authorizationUrl,
       },
+    });
+
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.PAYMENT_REQUESTED,
+      properties: {
+        tenant_id: tenantId,
+        channel,
+        flow: 'payment',
+        provider: 'paystack',
+        service_id,
+        reservation_id: reservation.id,
+        customer_id: customer?.id ?? null,
+        metadata: {
+          amount_cents: depositAmountCents,
+        },
+      },
+      distinctId: externalId,
     });
 
     if (lock_id) await releaseLock(lock_id);

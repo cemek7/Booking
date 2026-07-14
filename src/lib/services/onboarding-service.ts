@@ -2,6 +2,9 @@ import { defaultLogger } from '@/lib/logger';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import { ensureTenantWahaProvisioning } from '@/lib/whatsapp/wahaProvisioning';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { captureBookaException } from '@/lib/observability/sentry';
 
 interface Service {
   name: string;
@@ -171,10 +174,34 @@ export async function createTenant(
       mustSucceed,
       error: error instanceof Error ? error.message : String(error),
     });
+    captureBookaException(error, {
+      tenantId: tenant.id,
+      flow: 'activation',
+      provider: 'waha',
+      extra: { mustSucceed },
+    });
     if (mustSucceed) {
       throw new Error('Failed to auto-provision WhatsApp endpoint');
     }
   }
+
+  await captureServerAnalyticsEvent({
+    event: ANALYTICS_EVENTS.TENANT_CREATED,
+    properties: {
+      tenant_id: tenant.id,
+      business_category: industry ?? business_type ?? null,
+      flow: 'activation',
+      channel: 'web',
+      staff_count: staff.length,
+      metadata: {
+        slug,
+        services_seeded: services.length,
+        staff_seeded: staff.length,
+        timezone: timezone ?? 'UTC',
+      },
+    },
+    distinctId: userId,
+  });
 
   return { tenantId: tenant.id, slug };
 }

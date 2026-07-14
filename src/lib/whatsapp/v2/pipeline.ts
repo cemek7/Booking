@@ -40,6 +40,8 @@ import { recordAITrainingEvent } from '@/lib/ai/training-events';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -183,6 +185,8 @@ async function handleCustomerMessage(
   allMessageIds: string[],
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
+  const analyticsState = (conv!.flow_data?.analytics ?? {}) as Record<string, unknown>;
+
   // Record customer-initiated opt-in proof once per conversation (flow_data).
   const optInPatch = buildOptInProofPatch(conv!.flow_data, channel);
   if (optInPatch) {
@@ -226,6 +230,19 @@ async function handleCustomerMessage(
       correlationId: messageId,
       metadata: { reason: 'customer_requested_human' },
     });
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.HUMAN_HANDOFF_REQUESTED,
+      properties: {
+        tenant_id: tenantId,
+        channel,
+        flow: 'support',
+        metadata: {
+          current_flow: conv!.current_flow,
+          reason: 'customer_requested_human',
+        },
+      },
+      distinctId: externalId,
+    });
     await createHumanHandoff(supabaseAdmin, {
       tenantId,
       customerPhone: externalId,
@@ -256,6 +273,34 @@ async function handleCustomerMessage(
       awaiting_selection: conv!.flow_data?.awaiting_selection ?? false,
     },
   });
+
+  if (!analyticsState.first_customer_message_recorded) {
+    const mergedFlowData = {
+      ...(conv!.flow_data ?? {}),
+      analytics: {
+        ...analyticsState,
+        first_customer_message_recorded: true,
+        first_customer_message_at: new Date().toISOString(),
+      },
+    };
+    await updateConversation(externalId, tenantId, { flow_data: mergedFlowData }, channel);
+    conv!.flow_data = mergedFlowData;
+
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.FIRST_CUSTOMER_MESSAGE_RECEIVED,
+      properties: {
+        tenant_id: tenantId,
+        channel,
+        flow: 'activation',
+        provider: channel === 'instagram' ? 'meta' : 'system',
+        metadata: {
+          current_flow: conv!.current_flow,
+          conversation_id: conv!.id,
+        },
+      },
+      distinctId: externalId,
+    });
+  }
 
   // L1 check
   const l1Match = matchRule(message, {

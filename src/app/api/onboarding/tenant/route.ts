@@ -8,6 +8,8 @@ import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
 import type { NextRequest } from 'next/server';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 
 const tracer = trace.getTracer('boka-onboarding-api');
 
@@ -66,6 +68,23 @@ const _authenticatedPOST = createHttpHandler(
       const { tenantId, slug: tenantSlug } = await createTenant(adminClient, userId, bodyValidation.data);
 
       span.setAttribute('tenant.id', tenantId);
+
+      await captureServerAnalyticsEvent({
+        event: ANALYTICS_EVENTS.TENANT_ONBOARDING_COMPLETED,
+        properties: {
+          tenant_id: tenantId,
+          business_category: bodyValidation.data.industry ?? bodyValidation.data.business_type ?? null,
+          flow: 'activation',
+          channel: 'web',
+          staff_count: bodyValidation.data.staff?.length ?? 0,
+          metadata: {
+            tenant_slug: tenantSlug,
+            services_count: bodyValidation.data.services?.length ?? 0,
+            staff_count: bodyValidation.data.staff?.length ?? 0,
+          },
+        },
+        distinctId: userId,
+      });
 
       // Non-blocking: flag paystack subaccount setup as pending (bank details collected later)
       void ctx.supabase

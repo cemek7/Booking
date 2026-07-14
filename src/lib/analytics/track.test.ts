@@ -18,13 +18,13 @@ describe('capture', () => {
   });
 
   it('does NOT capture when analytics consent is absent', () => {
-    capture(ANALYTICS_EVENTS.BOOKING_CREATED, { id: '1' });
+    capture(ANALYTICS_EVENTS.BOOKING_COMPLETED, { id: '1' });
     expect(captureMock).not.toHaveBeenCalled();
   });
 
   it('does NOT capture when analytics consent is rejected', () => {
     setConsent(false);
-    capture(ANALYTICS_EVENTS.BOOKING_CREATED);
+    capture(ANALYTICS_EVENTS.BOOKING_COMPLETED);
     expect(captureMock).not.toHaveBeenCalled();
   });
 

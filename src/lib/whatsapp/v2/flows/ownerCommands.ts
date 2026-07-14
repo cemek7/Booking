@@ -12,6 +12,8 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -58,6 +60,21 @@ export async function handleOwnerCommand(
 
   // ── AI response ───────────────────────────────────────────────────────────
   const aiResp = input as AIResponse;
+
+  await captureServerAnalyticsEvent({
+    event: ANALYTICS_EVENTS.OWNER_COMMAND_USED,
+    properties: {
+      tenant_id: tenantId,
+      channel: convChannel,
+      flow: 'owner_command',
+      metadata: {
+        action: aiResp.action,
+        confidence: aiResp.confidence,
+        message_length: rawMessage.length,
+      },
+    },
+    distinctId: convExternalId,
+  });
 
   // Walk-in: execute immediately — no confirmation needed, customer is present
   if (aiResp.action === 'walk_in') {

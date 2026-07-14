@@ -8,6 +8,8 @@ import { getProviderClient } from '@/lib/whatsapp/providers';
 import { whatsappConnectionManager } from '@/lib/whatsapp/connectionManager';
 import { getStoredProviderApiKey, upsertStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
 import { suggestEmojiForVertical } from '@/lib/whatsapp/v2/tenantBrand';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 import {
   buildProviderWebhookUrl,
   ensureTenantWahaProvisioning,
@@ -41,6 +43,28 @@ async function activateV2(tenantId: string): Promise<void> {
     if (emoji) updates.brand_emoji = emoji;
   }
   await admin.from('tenants').update(updates).eq('id', tenantId);
+}
+
+async function recordWhatsAppConnectedEvent(input: {
+  tenantId: string;
+  provider: 'evolution' | 'waha' | 'meta';
+  instanceName: string;
+  phone?: string | null;
+}): Promise<void> {
+  await captureServerAnalyticsEvent({
+    event: ANALYTICS_EVENTS.WHATSAPP_CONNECTED,
+    properties: {
+      tenant_id: input.tenantId,
+      channel: 'whatsapp',
+      flow: 'activation',
+      provider: input.provider,
+      metadata: {
+        instance_name: input.instanceName,
+        phone_configured: Boolean(input.phone),
+      },
+    },
+    distinctId: input.tenantId,
+  });
 }
 
 const ConnectBodySchema = z.object({
@@ -170,6 +194,12 @@ export const POST = createHttpHandler(
         { onConflict: 'tenant_id,instance_name' }
       );
       activateV2(tenantId).catch(() => {});
+      await recordWhatsAppConnectedEvent({
+        tenantId,
+        provider: 'meta',
+        instanceName: liveConfig!.instance_name,
+        phone: liveConfig!.meta_phone_number_id,
+      });
       return {
         status: 'connected',
         instanceName: liveConfig!.instance_name,
@@ -272,6 +302,12 @@ export const POST = createHttpHandler(
       if (effectiveProvider === 'evolution') {
         whatsappConnectionManager.startMonitoring(tenantId).catch(() => {});
       }
+      await recordWhatsAppConnectedEvent({
+        tenantId,
+        provider: effectiveProvider,
+        instanceName,
+        phone: statusResult.phone ?? (effectiveProvider === 'meta' ? metaPhoneNumberId : null),
+      });
       return {
         status: 'connected',
         instanceName,
