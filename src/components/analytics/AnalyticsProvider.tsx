@@ -5,7 +5,6 @@ import React, { Suspense, useEffect } from 'react';
 import posthog from 'posthog-js';
 import { PostHogProvider } from 'posthog-js/react';
 import { hasAnalyticsConsent, onConsentChange } from '@/lib/consent/consentStore';
-import PostHogIdentity from './PostHogIdentity';
 import PostHogPageview from './PostHogPageview';
 
 type AnalyticsProviderProps = {
@@ -48,7 +47,6 @@ export default function AnalyticsProvider({
     <PostHogProvider client={posthog}>
       {/* useSearchParams requires a Suspense boundary in the App Router. */}
       <Suspense fallback={null}>
-        <PostHogIdentity />
         <PostHogPageview />
       </Suspense>
       {children}

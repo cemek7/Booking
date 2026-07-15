@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import TenantProvider from '@/lib/supabase/tenant-context';
 import UnifiedDashboardNav from '@/components/UnifiedDashboardNav';
+import PostHogIdentity from '@/components/analytics/PostHogIdentity';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { Role } from '@/types/roles';
 
@@ -43,6 +44,7 @@ function DashboardLayoutContent({ children, userEmail: initialEmail }: Dashboard
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
+      <PostHogIdentity />
       {/* ── Top header bar ── */}
       <header className="h-14 flex-shrink-0 bg-white border-b border-gray-200 shadow-sm flex items-center px-4 z-30">
         {/* Left: hamburger (mobile) + logo */}
