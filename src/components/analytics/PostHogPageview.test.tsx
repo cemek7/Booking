@@ -35,11 +35,12 @@ describe('PostHogPageview', () => {
     expect(captureMock).not.toHaveBeenCalled();
   });
 
-  it('captures the current page when consent is granted after mount', () => {
+  it('captures the current page when consent is granted after mount', async () => {
     render(<PostHogPageview />);
     expect(captureMock).not.toHaveBeenCalled();
 
     setConsent(true);
+    await Promise.resolve();
 
     expect(captureMock).toHaveBeenCalledWith('$pageview', {
       $current_url: `${window.origin}/dashboard?tab=overview`,

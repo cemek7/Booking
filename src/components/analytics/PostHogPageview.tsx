@@ -38,7 +38,11 @@ export default function PostHogPageview() {
   useEffect(() => {
     return onConsentChange((state) => {
       if (!state?.analytics) return;
-      captureCurrentPageview();
+      // Consent listeners fire synchronously. Defer the manual pageview until
+      // the provider's consent-sync listener has opted PostHog back in.
+      queueMicrotask(() => {
+        captureCurrentPageview();
+      });
     });
   }, [pathname, searchParams]);
 

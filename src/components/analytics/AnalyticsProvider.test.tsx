@@ -22,6 +22,7 @@ jest.mock('next/navigation', () => ({
 }));
 
 import AnalyticsProvider from '@/components/analytics/AnalyticsProvider';
+import { setConsent } from '@/lib/consent/consentStore';
 
 describe('AnalyticsProvider', () => {
   beforeEach(() => {
@@ -55,5 +56,25 @@ describe('AnalyticsProvider', () => {
     expect(options.session_recording).toEqual({ maskAllInputs: true, maskTextSelector: '*' });
     expect(optOutMock).toHaveBeenCalled();
     expect(optInMock).not.toHaveBeenCalled();
+  });
+
+  it('opts in before capturing the first pageview after consent is granted', async () => {
+    render(
+      <AnalyticsProvider posthogKey="phc_test" posthogHost="https://us.i.posthog.com">
+        <span>hi</span>
+      </AnalyticsProvider>,
+    );
+
+    optInMock.mockClear();
+    captureMock.mockClear();
+
+    setConsent(true);
+    await Promise.resolve();
+
+    expect(optInMock).toHaveBeenCalledTimes(1);
+    expect(captureMock).toHaveBeenCalledWith('$pageview', {
+      $current_url: `${window.origin}/`,
+    });
+    expect(optInMock.mock.invocationCallOrder[0]).toBeLessThan(captureMock.mock.invocationCallOrder[0]);
   });
 });
