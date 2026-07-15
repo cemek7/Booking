@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import posthog from 'posthog-js';
-import { hasAnalyticsConsent } from '@/lib/consent/consentStore';
+import { hasAnalyticsConsent, onConsentChange } from '@/lib/consent/consentStore';
 
 /**
  * Manual SPA pageview capture for the App Router (init uses capture_pageview:
@@ -16,16 +16,30 @@ import { hasAnalyticsConsent } from '@/lib/consent/consentStore';
 export default function PostHogPageview() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const lastCapturedUrl = useRef<string | null>(null);
 
-  useEffect(() => {
+  const captureCurrentPageview = () => {
     if (!pathname) return;
     if (!hasAnalyticsConsent()) return;
 
     let url = window.origin + pathname;
     const qs = searchParams?.toString();
     if (qs) url += `?${qs}`;
+    if (lastCapturedUrl.current === url) return;
 
     posthog.capture('$pageview', { $current_url: url });
+    lastCapturedUrl.current = url;
+  };
+
+  useEffect(() => {
+    captureCurrentPageview();
+  }, [pathname, searchParams]);
+
+  useEffect(() => {
+    return onConsentChange((state) => {
+      if (!state?.analytics) return;
+      captureCurrentPageview();
+    });
   }, [pathname, searchParams]);
 
   return null;
