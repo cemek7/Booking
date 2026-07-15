@@ -1,0 +1,45 @@
+'use client';
+
+import { useEffect } from 'react';
+import posthog from 'posthog-js';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+
+type AuthUser = {
+  id?: string;
+  email?: string | null;
+} | null;
+
+export default function PostHogIdentity() {
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+
+    const syncUser = (user: AuthUser) => {
+      if (user?.id) {
+        posthog.identify(user.id, user.email ? { email: user.email } : undefined);
+        return;
+      }
+      posthog.reset();
+    };
+
+    let active = true;
+
+    void supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      syncUser(data?.user ?? null);
+    }).catch(() => {
+      if (!active) return;
+      posthog.reset();
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      syncUser(session?.user ?? null);
+    });
+
+    return () => {
+      active = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  return null;
+}

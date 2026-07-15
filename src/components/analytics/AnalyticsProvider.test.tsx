@@ -7,9 +7,18 @@ const initMock = jest.fn();
 const optInMock = jest.fn();
 const optOutMock = jest.fn();
 const captureMock = jest.fn();
+const identifyMock = jest.fn();
+const resetMock = jest.fn();
 jest.mock('posthog-js', () => ({
   __esModule: true,
-  default: { init: initMock, opt_in_capturing: optInMock, opt_out_capturing: optOutMock, capture: captureMock },
+  default: {
+    init: initMock,
+    opt_in_capturing: optInMock,
+    opt_out_capturing: optOutMock,
+    capture: captureMock,
+    identify: identifyMock,
+    reset: resetMock,
+  },
 }));
 jest.mock('posthog-js/react', () => ({
   __esModule: true,
