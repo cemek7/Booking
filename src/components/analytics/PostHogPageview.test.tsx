@@ -34,4 +34,16 @@ describe('PostHogPageview', () => {
     render(<PostHogPageview />);
     expect(captureMock).not.toHaveBeenCalled();
   });
+
+  it('captures the current page when consent is granted after mount', () => {
+    render(<PostHogPageview />);
+    expect(captureMock).not.toHaveBeenCalled();
+
+    setConsent(true);
+
+    expect(captureMock).toHaveBeenCalledWith('$pageview', {
+      $current_url: `${window.origin}/dashboard?tab=overview`,
+    });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
 });
