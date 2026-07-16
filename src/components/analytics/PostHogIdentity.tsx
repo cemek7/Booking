@@ -28,15 +28,15 @@ export default function PostHogIdentity() {
 
     let active = true;
 
-    void supabase.auth.getUser().then(({ data }) => {
+    void supabase.auth.getUser().then((result: { data?: { user?: AuthUser } }) => {
       if (!active) return;
-      syncUser(data?.user ?? null);
+      syncUser(result.data?.user ?? null);
     }).catch(() => {
       if (!active) return;
       posthog.reset();
     });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = supabase.auth.onAuthStateChange((_event: unknown, session: { user?: AuthUser } | null) => {
       syncUser(session?.user ?? null);
     });
 
