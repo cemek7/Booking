@@ -64,13 +64,20 @@ describe('AnalyticsProvider', () => {
     expect(initMock).not.toHaveBeenCalled();
   });
 
-  it('inits PostHog opted-out by default and opts out with no consent', () => {
+  it('inits PostHog opted-out by default and opts out with no consent', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      json: async () => null,
+    });
+
     render(
       <AnalyticsProvider posthogKey="phc_test" posthogHost="https://us.i.posthog.com">
         <span>hi</span>
       </AnalyticsProvider>,
     );
-    expect(initMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(initMock).toHaveBeenCalledTimes(1);
+    });
     const [, options] = initMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(options.opt_out_capturing_by_default).toBe(true);
     expect(options.capture_pageview).toBe(false);
@@ -81,21 +88,32 @@ describe('AnalyticsProvider', () => {
   });
 
   it('opts in before capturing the first pageview after consent is granted', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      json: async () => null,
+    });
+
     render(
       <AnalyticsProvider posthogKey="phc_test" posthogHost="https://us.i.posthog.com">
         <span>hi</span>
       </AnalyticsProvider>,
     );
 
+    await waitFor(() => {
+      expect(initMock).toHaveBeenCalledTimes(1);
+    });
+
     optInMock.mockClear();
     captureMock.mockClear();
-
     setConsent(true);
-    await Promise.resolve();
 
-    expect(optInMock).toHaveBeenCalledTimes(1);
-    expect(captureMock).toHaveBeenCalledWith('$pageview', {
-      $current_url: `${window.origin}/`,
+    await waitFor(() => {
+      expect(optInMock).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(captureMock).toHaveBeenCalledWith('$pageview', {
+        $current_url: `${window.origin}/`,
+      });
     });
     expect(optInMock.mock.invocationCallOrder[0]).toBeLessThan(captureMock.mock.invocationCallOrder[0]);
   });

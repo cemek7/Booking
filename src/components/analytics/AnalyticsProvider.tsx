@@ -22,18 +22,9 @@ export default function AnalyticsProvider({
   const [resolvedConfig, setResolvedConfig] = useState<{
     posthogKey?: string;
     posthogHost?: string;
-  }>({
-    posthogKey,
-    posthogHost,
-  });
+  } | null>(null);
 
   useEffect(() => {
-    setResolvedConfig({ posthogKey, posthogHost });
-  }, [posthogHost, posthogKey]);
-
-  useEffect(() => {
-    if (resolvedConfig.posthogKey) return;
-
     let cancelled = false;
 
     void fetch('/api/client-config', { cache: 'no-store' })
@@ -45,23 +36,35 @@ export default function AnalyticsProvider({
         }>;
       })
       .then((config) => {
-        if (cancelled || !config?.posthogKey) return;
+        if (cancelled) return;
+        if (!config?.posthogKey) {
+          setResolvedConfig({
+            posthogKey,
+            posthogHost,
+          });
+          return;
+        }
         setResolvedConfig({
           posthogKey: config.posthogKey,
           posthogHost: config.posthogHost || 'https://us.i.posthog.com',
         });
       })
       .catch(() => {
-        // Keep analytics inert when runtime config fetch fails.
+        if (cancelled) return;
+        // Fall back to the layout-provided values when runtime config fetch fails.
+        setResolvedConfig({
+          posthogKey,
+          posthogHost,
+        });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [resolvedConfig.posthogKey]);
+  }, [posthogHost, posthogKey]);
 
   useEffect(() => {
-    if (!resolvedConfig.posthogKey) return; // analytics disabled when unconfigured (dev/test)
+    if (!resolvedConfig?.posthogKey) return; // analytics disabled when unconfigured (dev/test)
 
     posthog.init(resolvedConfig.posthogKey, {
       api_host: resolvedConfig.posthogHost || 'https://us.i.posthog.com',
@@ -84,14 +87,14 @@ export default function AnalyticsProvider({
     };
     sync();
     return onConsentChange(sync);
-  }, [resolvedConfig.posthogHost, resolvedConfig.posthogKey]);
+  }, [resolvedConfig]);
 
   return (
     <PostHogProvider client={posthog}>
-      <AnalyticsReadyProvider ready={Boolean(resolvedConfig.posthogKey)}>
+      <AnalyticsReadyProvider ready={Boolean(resolvedConfig?.posthogKey)}>
         {/* useSearchParams requires a Suspense boundary in the App Router. */}
         <Suspense fallback={null}>
-          {resolvedConfig.posthogKey ? <PostHogPageview /> : null}
+          {resolvedConfig?.posthogKey ? <PostHogPageview /> : null}
         </Suspense>
         {children}
       </AnalyticsReadyProvider>
