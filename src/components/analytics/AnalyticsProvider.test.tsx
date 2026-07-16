@@ -1,6 +1,6 @@
 // src/components/analytics/AnalyticsProvider.test.tsx
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
 const initMock = jest.fn();
@@ -36,9 +36,17 @@ import { setConsent } from '@/lib/consent/consentStore';
 describe('AnalyticsProvider', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    global.fetch = jest.fn() as typeof fetch;
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ posthogKey: null, posthogHost: 'https://us.i.posthog.com' }),
+    });
     initMock.mockClear();
     optInMock.mockClear();
     optOutMock.mockClear();
+    captureMock.mockClear();
+    identifyMock.mockClear();
+    resetMock.mockClear();
   });
 
   it('renders children', () => {
@@ -47,6 +55,11 @@ describe('AnalyticsProvider', () => {
   });
 
   it('does NOT init PostHog when no key is configured', () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ posthogKey: null, posthogHost: 'https://us.i.posthog.com' }),
+    });
+
     render(<AnalyticsProvider><span>hi</span></AnalyticsProvider>);
     expect(initMock).not.toHaveBeenCalled();
   });
@@ -85,5 +98,31 @@ describe('AnalyticsProvider', () => {
       $current_url: `${window.origin}/`,
     });
     expect(optInMock.mock.invocationCallOrder[0]).toBeLessThan(captureMock.mock.invocationCallOrder[0]);
+  });
+
+  it('fetches runtime config when build-time props are absent', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ posthogKey: 'phc_runtime', posthogHost: 'https://us.i.posthog.com' }),
+    });
+
+    render(
+      <AnalyticsProvider>
+        <span>hi</span>
+      </AnalyticsProvider>,
+    );
+
+    await waitFor(() => {
+      expect(initMock).toHaveBeenCalledWith(
+        'phc_runtime',
+        expect.objectContaining({
+          api_host: 'https://us.i.posthog.com',
+          defaults: '2026-05-30',
+          opt_out_capturing_by_default: true,
+        }),
+      );
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/client-config', { cache: 'no-store' });
   });
 });

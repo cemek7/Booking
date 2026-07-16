@@ -1,7 +1,7 @@
 // src/components/analytics/AnalyticsProvider.tsx
 'use client';
 
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import posthog from 'posthog-js';
 import { PostHogProvider } from 'posthog-js/react';
 import { hasAnalyticsConsent, onConsentChange } from '@/lib/consent/consentStore';
@@ -18,11 +18,53 @@ export default function AnalyticsProvider({
   posthogKey,
   posthogHost,
 }: AnalyticsProviderProps) {
-  useEffect(() => {
-    if (!posthogKey) return; // analytics disabled when unconfigured (dev/test)
+  const [resolvedConfig, setResolvedConfig] = useState<{
+    posthogKey?: string;
+    posthogHost?: string;
+  }>({
+    posthogKey,
+    posthogHost,
+  });
 
-    posthog.init(posthogKey, {
-      api_host: posthogHost || 'https://us.i.posthog.com',
+  useEffect(() => {
+    setResolvedConfig({ posthogKey, posthogHost });
+  }, [posthogHost, posthogKey]);
+
+  useEffect(() => {
+    if (resolvedConfig.posthogKey) return;
+
+    let cancelled = false;
+
+    void fetch('/api/client-config', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{
+          posthogKey?: string | null;
+          posthogHost?: string | null;
+        }>;
+      })
+      .then((config) => {
+        if (cancelled || !config?.posthogKey) return;
+        setResolvedConfig({
+          posthogKey: config.posthogKey,
+          posthogHost: config.posthogHost || 'https://us.i.posthog.com',
+        });
+      })
+      .catch(() => {
+        // Keep analytics inert when runtime config fetch fails.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedConfig.posthogKey]);
+
+  useEffect(() => {
+    if (!resolvedConfig.posthogKey) return; // analytics disabled when unconfigured (dev/test)
+
+    posthog.init(resolvedConfig.posthogKey, {
+      api_host: resolvedConfig.posthogHost || 'https://us.i.posthog.com',
+      defaults: '2026-05-30',
       opt_out_capturing_by_default: true,
       capture_pageview: false,
       persistence: 'localStorage+cookie',
@@ -41,7 +83,7 @@ export default function AnalyticsProvider({
     };
     sync();
     return onConsentChange(sync);
-  }, [posthogHost, posthogKey]);
+  }, [resolvedConfig.posthogHost, resolvedConfig.posthogKey]);
 
   return (
     <PostHogProvider client={posthog}>
