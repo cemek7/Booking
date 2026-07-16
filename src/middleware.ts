@@ -81,25 +81,28 @@ function isLocalHost(hostname: string): boolean {
 }
 
 function buildContentSecurityPolicy(nonce: string, local: boolean): string {
+  const posthogScriptSrc = 'https://us-assets.i.posthog.com';
+  const posthogConnectSrc = 'https://us.i.posthog.com';
+
   if (local) {
     return [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${posthogScriptSrc}`,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      "connect-src 'self' http://localhost:* https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.paystack.co",
+      `connect-src 'self' http://localhost:* https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.paystack.co ${posthogScriptSrc} ${posthogConnectSrc}`,
       "frame-ancestors 'none'",
     ].join('; ');
   }
 
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' ${posthogScriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.paystack.co",
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.paystack.co ${posthogScriptSrc} ${posthogConnectSrc}`,
     "frame-ancestors 'none'",
   ].join('; ');
 }
