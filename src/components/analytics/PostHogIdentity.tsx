@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import posthog from 'posthog-js';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useAnalyticsReady } from './AnalyticsReadyContext';
 
 type AuthUser = {
   id?: string;
@@ -10,7 +11,11 @@ type AuthUser = {
 } | null;
 
 export default function PostHogIdentity() {
+  const analyticsReady = useAnalyticsReady();
+
   useEffect(() => {
+    if (!analyticsReady) return;
+
     const supabase = getSupabaseBrowserClient();
 
     const syncUser = (user: AuthUser) => {
@@ -39,7 +44,7 @@ export default function PostHogIdentity() {
       active = false;
       data.subscription.unsubscribe();
     };
-  }, []);
+  }, [analyticsReady]);
 
   return null;
 }

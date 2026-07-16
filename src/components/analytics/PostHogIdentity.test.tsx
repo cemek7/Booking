@@ -1,6 +1,7 @@
 import React from 'react';
 import { render } from '@testing-library/react';
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { AnalyticsReadyProvider } from '@/components/analytics/AnalyticsReadyContext';
 
 const identifyMock = jest.fn();
 const resetMock = jest.fn();
@@ -43,7 +44,11 @@ describe('PostHogIdentity', () => {
       data: { user: { id: 'user_123', email: 'owner@example.com' } },
     });
 
-    render(<PostHogIdentity />);
+    render(
+      <AnalyticsReadyProvider ready>
+        <PostHogIdentity />
+      </AnalyticsReadyProvider>,
+    );
     await Promise.resolve();
 
     expect(identifyMock).toHaveBeenCalledWith('user_123', { email: 'owner@example.com' });
@@ -55,7 +60,11 @@ describe('PostHogIdentity', () => {
       data: { user: null },
     });
 
-    render(<PostHogIdentity />);
+    render(
+      <AnalyticsReadyProvider ready>
+        <PostHogIdentity />
+      </AnalyticsReadyProvider>,
+    );
     await Promise.resolve();
 
     expect(resetMock).toHaveBeenCalledTimes(1);

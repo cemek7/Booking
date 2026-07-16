@@ -125,4 +125,33 @@ describe('AnalyticsProvider', () => {
 
     expect(global.fetch).toHaveBeenCalledWith('/api/client-config', { cache: 'no-store' });
   });
+
+  it('captures the current page after runtime config resolves when consent already exists', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ posthogKey: 'phc_runtime', posthogHost: 'https://us.i.posthog.com' }),
+    });
+
+    setConsent(true);
+    render(
+      <AnalyticsProvider>
+        <span>hi</span>
+      </AnalyticsProvider>,
+    );
+
+    await waitFor(() => {
+      expect(initMock).toHaveBeenCalledWith(
+        'phc_runtime',
+        expect.objectContaining({
+          api_host: 'https://us.i.posthog.com',
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(captureMock).toHaveBeenCalledWith('$pageview', {
+        $current_url: `${window.origin}/`,
+      });
+    });
+  });
 });
