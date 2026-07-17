@@ -14,9 +14,19 @@ individual design docs. This is a living index — update as specs are added.
 | 3 | Revenue Assurance | 2026-07-16-booka-revenue-assurance-design.md | 1, 2 |
 | 4 | Granular Permissions | 2026-07-17-booka-granular-permissions-design.md | 2, 3 (rewires their stub) |
 | 5 | Inventory Variance & Shrinkage | 2026-07-17-booka-inventory-variance-shrinkage-design.md | 2, 3, 4 |
+| 6 | Discount, Refund & Adjustment Controls | 2026-07-17-booka-discount-refund-controls-design.md | 2, 3, 4 |
+| 7 | Service-to-Inventory Recipes | 2026-07-17-booka-service-inventory-recipes-design.md | 2, 5, hook §A |
+| 8 | Customer Commerce Memory | 2026-07-17-booka-customer-commerce-memory-design.md | 1, 2 |
+| 9 | Multimodal Capture | 2026-07-17-booka-multimodal-capture-design.md | 2, 5 |
+| 10 | Conversational Analytics & Briefings | 2026-07-17-booka-conversational-analytics-briefings-design.md | 1, 2, 3 |
+| 11 | AI Recommendations | 2026-07-17-booka-recommendations-design.md | 2, 5, 8, 10 |
 
-**Build order: 1 → 2 → 3 → 4 → 5.** (4 rewires the capability stub 2 & 3 ship with; 5 adds
-a rule to 3's registry and a column to 2's table.)
+**Build order: 1 → 2 → 3 → 4 → 5**, then 6–11 (looser coupling; 6/8 can follow 4, 7 after 5,
+9 after 5, 10 after 3, 11 last as it consumes 8 + 10). (4 rewires the capability stub 2 & 3
+ship with; 5 adds a rule to 3's registry and a column to 2's table.)
+
+**Specs 6–11 had scope self-decided** (flagged in each doc's header) rather than via the
+scoping dialogue used for 1–5 — worth a user pass before planning those.
 
 ## Cross-spec action items (resolve during implementation)
 
@@ -80,8 +90,33 @@ Populating `effectivePermissions` must not regress routes still using only `role
 - **Determinism:** all financial/stock math outside the LLM; LLM only composes grounded prose.
 - **Migrations:** additive/nullable, paired `_rollback.sql`, no premature historical backfill.
 
-## Remaining backlog (not yet specced)
-§11 discount/refund controls (owns thresholds + approval workflow; seam with spec 4) ·
-§5 service-to-inventory recipes + units-of-measure (continues spec 5) ·
-§10 customer commerce memory · Phase 4 multimodal capture (§2) ·
-Phase 5 analytics & briefings (§7/§8) · Phase 6 recommendations (§9).
+## Additional cross-spec items (specs 6–11)
+
+### H. Completion hook is load-bearing for spec 7 too  *(spec 1 ↔ 7, see §A)*
+Spec 7 (recipes) consumes materials on reservation completion — the **same** hook that writes
+`price_cents_snapshot` (§A). Implement the completion hook once, fire both snapshot + recipe
+consumption from it. §A is now doubly blocking.
+
+### I. Single anomaly producer holds for specs 5 & 7  *(spec 3)*
+`stock_shrinkage` (spec 5) and `unusual_consumption` (spec 7) are both **rules added to spec 3's
+registry**, triggered by `stock_count.approved` / service-completion events. No spec creates
+anomalies directly — all go through spec 3's engine (consolidation §C action names apply).
+
+### J. Approval framework vs stock-count approval  *(spec 6 ↔ 5)*
+Spec 5's count approval and spec 6's `approval_requests` are separate mechanisms. Routing
+count adjustments through spec 6 is **optional** (spec 5 has its own approve step) — do not
+double-gate. Discounts/refunds use spec 6; stock counts use spec 5.
+
+### K. Everything executes through spec 2  *(specs 9, 11)*
+Multimodal capture (9) and recommendations (11) never write business tables directly — a
+confirmed extraction / an accepted recommendation runs its `proposed_action` through spec 2's
+`validateAction`/`executeAction` (idempotent via `ai_action_log`), inheriting §12/§11 gates.
+
+### L. Evening delivery stays one message  *(specs 1, 3, 10)*
+Close report (1) + anomaly digest (3) + evening briefing (10) are the **same** WhatsApp
+message (consolidation §F). Only real-time high/critical anomaly alerts and recommendation
+nudges are separate, debounced sends.
+
+## Backlog coverage
+All 17 backlog sections are now specced across sub-projects 1–11. Not yet specced: tenant-defined
+**custom roles** (deferred by §12), and any Phase-by-Phase UI polish beyond each spec's surface.
