@@ -151,6 +151,21 @@ spec 3 rules (`stock_leaving_without_record` excludes `count_adjustment`), spec 
 (`count_adjustment`), spec 7 (`service_consumption`). Define it once (with the action-name
 registry, §C) and reference everywhere.
 
+### Q. Schema authority = baseline snapshot + migrations ≥114  *(all specs)*
+`db/schema/baseline_2026-07-06.sql` is a **point-in-time snapshot** that does NOT include the
+`retail_*` tables (`retail_carts`/`retail_orders`/`retail_order_items`, migration 120) or the
+`products_catalog` reconciles (114–117). The **current schema = baseline + migrations 114–121**.
+All `retail_orders` references in specs 1–3 are sourced from migration 120 (verified) and are
+correct; treat the migrations, not just the baseline, as ground truth. New migrations number
+after 121.
+
+## Review status (2026-07-17)
+Thorough 3-pass review completed. Grounding gaps M–Q found and corrected in specs 1,2,3,5,7 +
+this doc. **Full collision sweep of all 30 proposed new tables: zero collisions** (only
+`inventory_movements` pre-existed → reclassified as extend). Column-ALTER targets all exist.
+Specs 1–5 are grounding-verified and plan-ready; specs 6–11 had scope self-decided and lighter
+grounding review — recommend a user pass before planning them.
+
 ## Backlog coverage
 All 17 backlog sections are now specced across sub-projects 1–11. Not yet specced: tenant-defined
 **custom roles** (deferred by §12), and any Phase-by-Phase UI polish beyond each spec's surface.
