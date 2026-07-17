@@ -124,17 +124,22 @@ interface AnomalyRule {
 NULL-`subject` payments are not false-flagged), `cancelled_order_not_restocked`
 (no refund_restock/return `inventory_movements`), `refund_without_stock_adjustment`,
 `excessive_manual_discount`.
-**Inventory:** `stock_leaving_without_record` (negative `manual_adjustment` with no reason,
-or projection drift vs `Σ inventory_movements`).
+**Inventory:** `stock_leaving_without_record` (negative `adjustment` movement with no reason,
+or projection drift vs `Σ quantity_change`). **Must exclude `count_adjustment` movements**
+(explained by an approved stock count — see consolidation §B). *(Existing `inventory_movements`
+uses `quantity_change` + `movement_type='adjustment'`, not `quantity_delta` — see spec 2 §5.1 correction.)*
+**Deposits:** `deposits_not_applied` — a completed service whose only linked payment is a
+`type='deposit'` transaction and no subsequent balance payment (deposits exist, §5.2 correction).
 
 Severity is per-rule default, scaled by tenant-configurable monetary thresholds (defaults
 provided). Discount thresholds are a **tenant-config default here (e.g. 15%), superseded by
 §11's per-role approval thresholds** when that spec lands (documented seam).
 
 ### 5.2 Deferred rules (data not yet modeled)
-`deposits_not_applied` (no deposit model), `outstanding_balance_aging` (no
-`customer_balances` ledger — backlog §13, later), `staff_created_appointment_unpaid`
-(no reservation-creator field). Listed, not silently dropped.
+`outstanding_balance_aging` (no `customer_balances` ledger — backlog §13, later),
+`staff_created_appointment_unpaid` (no reservation-creator field). Listed, not silently dropped.
+**CORRECTION (2026-07-17 review): `deposits_not_applied` is NOT deferred** — deposits exist
+(`transactions.type='deposit'`), so it ships as a service rule (§5.1).
 
 ## 6. Review workflow & delivery
 

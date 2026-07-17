@@ -26,9 +26,10 @@ movements to true-up the ledger.
 - **`inventory_locations`** (minimal): `name`, `is_default bool`, `is_active bool`,
   `metadata jsonb`. Migration **seeds one default location per existing tenant**. Cannot
   delete the default or a location with stock/movements.
-- **`inventory_movements`** (spec 2) — **+ nullable `location_id`** (queries coalesce
-  `NULL → tenant default`). Stock projection keyed by `(product_id, variant_id, location_id)`.
-  *(Touch-point: fold into spec 2's table if built together.)*
+- **`inventory_movements`** (PRE-EXISTING table, extended by spec 2 — see spec 2 §5.1
+  correction; signed column is **`quantity_change`**, not `quantity_delta`) — **+ nullable
+  `location_id`** (queries coalesce `NULL → tenant default`). Stock projection keyed by
+  `(product_id, variant_id, location_id)`. *(Additive migration on the existing table.)*
 - **`stock_count_sessions`**: `location_id`, `status` (draft|counting|review|approved|
   cancelled), `started_by`, `snapshot_at`, `approved_by`, `approved_at`,
   `shrinkage_value_cents` (cached Σ of items), `notes`. **Unique partial index: one active
@@ -40,16 +41,17 @@ movements to true-up the ledger.
 
 ## 4. Workflow
 1. Owner starts a count for a location → **snapshot** expected quantities per
-   `(product, variant, location)` from the ledger (`Σ quantity_delta ≤ snapshot_at`,
+   `(product, variant, location)` from the ledger (`Σ quantity_change ≤ snapshot_at`,
    `NULL location → default`), frozen into items with `unit_cost_cents`.
 2. Staff enter `counted_quantity` (dashboard, or spec 2's WhatsApp `record_stock_count`
    attaches to the open session for that location). Validate `counted ≥ 0`.
 3. Per item: `variance = counted − expected`, `variance_value_cents = variance × unit_cost`.
    Session shrinkage total = Σ negative variance value.
 4. Owner reviews and approves.
-5. On approve, for each **counted, unflagged** item with `variance ≠ 0`: post
-   `inventory_movements` `type=count_adjustment`, `quantity_delta=variance`,
-   `reference_type='stock_count_item'`, `reference_id=item.id`. Ledger now equals physical.
+5. On approve, for each **counted, unflagged** item with `variance ≠ 0`: post an
+   `inventory_movements` row via the existing RPC with `movement_type='count_adjustment'`,
+   `quantity_change=variance`, `reference_type='stock_count_item'`, `reference_id=item.id`
+   (text). Ledger now equals physical.
    **Idempotent** (approved sessions cannot re-post; per-item reference unique).
 
 ## 5. Correctness guards

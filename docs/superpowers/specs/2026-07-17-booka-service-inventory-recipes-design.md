@@ -38,10 +38,14 @@ has `weight_grams`/`volume_ml` hints. `inventory_movements.movement_type` alread
 
 ## 5. Flow
 On reservation completion (the same hook that writes `price_cents_snapshot`, consolidation §A):
-1. If the service has an active recipe, for each item create a `service_consumption_record`
-   with `planned_quantity` (and `actual_quantity` if the staff/command supplied one).
-2. Convert to `base_uom`, post an `inventory_movements` `type=service_consumption`
-   (negative, `reference_type='reservation'`) in the same transaction; link `movement_id`.
+**Iterate over the reservation's `reservation_services` lines** (reservations are
+multi-service — spec 1 correction); for each service line with an active recipe:
+1. For each recipe item, create a `service_consumption_record` with `planned_quantity`
+   × the line's `reservation_services.quantity` (and `actual_quantity` if supplied).
+2. Convert to `base_uom`, post an `inventory_movements` row via the existing RPC with
+   `movement_type='service_consumption'`, `quantity_change` negative,
+   `reference_type='reservation'` (`reference_id` text), in the same transaction as
+   completion; link `movement_id`.
 3. Staff can override actual usage (via dashboard or a WhatsApp field on completion) — actual
    overrides planned for the movement.
 

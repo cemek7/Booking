@@ -41,12 +41,22 @@ Verified against `db/schema/baseline_2026-07-06.sql` and `src/`:
 
 - **Two booking models exist**: `public.bookings` (event/capacity slots) and
   `public.reservations` (the actual per-customer appointment: `service_id`, `staff_id`,
-  `customer_id`, `status`, `start_at`, `confirmed_at`). Reservations carry **no price** —
-  price comes from the linked `services` row.
+  `customer_id`, `status`, `start_at`, `confirmed_at`).
+- **CORRECTION (2026-07-17 review): reservations are MULTI-SERVICE.**
+  `public.reservation_services` (`reservation_id`, `service_id`, `quantity`, `tenant_id`,
+  `customer_id`) links a reservation to one *or more* services with quantities. A reservation
+  has **no price**; `reservation_services` has **no price** either — price is
+  `services.price × quantity` **summed over the reservation's service lines**. Revenue math
+  in §7 and the snapshot in §4.2 are line-item-aware, not "reservation × one service."
 - `public.services` has `price` and `price_cents` (mutable).
 - `public.transactions` has `amount`, `type`, `status`, `refund_amount`, `refund_reason`,
   `reconciliation_status`, `provider_reference` — but **no link to what it pays for**
   (no `reservation_id`/`order_id`). This is the core reconciliation blocker.
+- **CORRECTION (2026-07-17 review): DEPOSITS EXIST.** `transactions.type` includes `deposit`
+  (alongside `payment`, `refund`, `sale`), and a deposits module exists
+  (`/api/payments/deposits`). A deposit is a **partial payment** toward a service. §7's
+  "recorded payments" includes successful deposits; "outstanding" nets deposits already paid.
+  (This also means spec 3's `deposits_not_applied` rule is data-supported — see that spec's correction.)
 - `public.ledger_entries` is a double-entry-style financial ledger (`entry_type`, `amount`,
   `transaction_id`, `reference_id`).
 - `public.retail_carts` / `retail_cart_items` / `retail_orders` / `retail_order_items`
@@ -77,14 +87,17 @@ Add nullable `subject_type` (`reservation` | `retail_order`) + `subject_id` to
 `payment_allocations` table (more moving parts, only needed once split/partial payments
 are a first-class requirement). Backward-compatible; existing rows keep NULL subject.
 
-### 4.2 Price snapshot at completion
-Add `reservations.price_cents_snapshot`, written when a reservation transitions to
-completed. The close report reads the snapshot, **never the live `services.price`**.
-Rationale: `services.price` is mutable; reading it live makes historical closes
-non-reproducible (a price edit next month would silently rewrite last month's expected
-revenue and create phantom gaps in reports already acted upon). The snapshot freezes the
-price that actually applied to that booking, like a receipt. Cost: one nullable column +
-a write at the completion transition. Also cleanly absorbs per-booking overrides later.
+### 4.2 Price snapshot at completion (multi-service aware)
+Add `reservations.price_cents_snapshot` = the **reservation total** captured at completion:
+`Σ (services.price_cents × reservation_services.quantity)` over the reservation's service
+lines (see the multi-service correction in §3). The close report reads the snapshot,
+**never the live `services.price`**. Rationale: `services.price` is mutable; reading it live
+makes historical closes non-reproducible (a price edit next month would silently rewrite last
+month's expected revenue and create phantom gaps in reports already acted upon). The snapshot
+freezes the price that actually applied, like a receipt. Cost: one nullable column + a write
+at the completion transition. Also absorbs per-booking overrides later.
+*(If per-line detail is later needed for analytics, snapshot the line breakdown into a jsonb;
+for the close report a single reservation total is sufficient.)*
 
 ### 4.3 Business timeline = new table, not extended `audit_logs`
 `audit_logs` is security-scoped with NOT NULL columns (`resource`, `permission`,
@@ -184,13 +197,16 @@ RLS mirroring existing service-role + tenant policies. **All money in integer ce
 deterministic, no LLM**. Location: `src/lib/reconciliation/`.
 
 1. Resolve `[dayStart, dayEnd)` in `tenants.timezone` → UTC bounds.
-2. **Expected revenue** = Σ completed reservations in window × `price_cents_snapshot`
+2. **Expected revenue** = Σ completed reservations in window `price_cents_snapshot`
+   (each snapshot already = Σ over its `reservation_services` lines, §4.2)
    + Σ fulfilled/delivered `retail_orders` totals + Σ `delivery_fee_cents`.
 3. **Adjusted expected** = expected − discounts (`reservations.discount_cents` +
    `retail_orders.discount_cents`) − refunds (`transactions.refund_amount` in window)
    − credits.
-4. **Recorded payments** = Σ successful transactions in window
-   + Σ `retail_orders.amount_paid_cents` for the window.
+4. **Recorded payments** = Σ successful transactions in window — **including `type='deposit'`
+   and `type='payment'`/`sale`** (deposits are partial payments, §3 correction)
+   + Σ `retail_orders.amount_paid_cents` for the window. (Refund-type transactions are the
+   subtraction in step 3, not additions here.)
 5. **Revenue gap** = adjusted − recorded − approved outstanding.
 6. **Review items** (deterministic, read-only):
    - `unpaid_completed_service`: completed reservation with no linked successful

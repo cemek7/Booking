@@ -36,7 +36,14 @@ Verified against `src/` and `db/schema/baseline_2026-07-06.sql`:
   (add stock, record sale, refund, restock, mark delivered, etc.).
 - **Products** (`public.products`): `stock_quantity`, `cost_price_cents`,
   `low_stock_threshold`, `track_inventory`, `price_cents`. `product_variants` also has
-  `stock_quantity`. Stock is a **mutable field today** — no movement ledger.
+  `stock_quantity`.
+- **CORRECTION (2026-07-17 review): `public.inventory_movements` ALREADY EXISTS and is in
+  active use.** Columns: `movement_type` (values seen: `sale`, `damage`, `adjustment`),
+  `quantity_change` (signed), `quantity`, `previous_quantity`/`new_quantity` (projection),
+  `reason`, `notes`, `reference_type`, `reference_id` (**text**), `created_by`/`performed_by`,
+  `variant_id`. Written via a stored procedure (`p_quantity_change`, `p_movement_type`) and
+  consumed by `src/lib/services/inventory-service.ts` (already decrements stock on sale). This
+  spec **extends** this table + service, it does not create a new one — see §4.
 - **Retail** (migration 120 + ledger spec): `retail_orders` with `status`,
   `payment_status`, `fulfillment_status`, `total_cents`, and (from ledger spec)
   `discount_cents`/`delivery_fee_cents`/`amount_paid_cents`. `cart_id` is **nullable**.
@@ -81,10 +88,23 @@ queries), **not** refund/discount/adjust_stock/delete/manage_staff. Denied attem
 `command.denied` business event. Full tenant-defined permission groups + management UI are
 the deferred §12 spec; this table-free map is the precursor.
 
-### 3.4 Minimal inventory movement ledger (not full Phase 3)
-Stock changes write an append-only movement row; `products.stock_quantity` becomes a cached
-projection updated in the same transaction. Phase 3 grows stock counts / variance /
-shrinkage on top. See §5.1.
+### 3.4 Extend the EXISTING inventory movement ledger (not full Phase 3)
+**Revised after review:** the movement ledger already exists (`inventory_movements` +
+`inventory-service.ts` + the `p_quantity_change` RPC). This spec does **not** create a table.
+It:
+- **Routes every commerce stock change through the existing `inventory-service.ts` / RPC**
+  (which already writes a movement + maintains `previous_quantity`/`new_quantity` and
+  `products.stock_quantity`) — no parallel write path.
+- **Reconciles the `movement_type` vocabulary**: extend the existing set
+  (`sale`, `damage`, `adjustment`) with the new causes this spec needs
+  (`refund_restock`, `return`, `transfer_in`, `transfer_out`, `count_adjustment`,
+  `service_consumption`). One canonical list, added to the column's CHECK/enum. Map `sale`
+  as the retail-sale cause (do **not** introduce a duplicate `retail_sale`).
+- **Adds `unit_cost_cents`** (snapshot from `cost_price_cents`, for later loss valuation).
+- **Append-only in practice, not by hard REVOKE** — the existing RPC updates projection
+  columns, so enforce immutability by convention (no UPDATE/DELETE code paths on movement
+  rows) rather than a REVOKE that would break the RPC.
+Phase 3 (spec 5) adds `location_id` + stock counts on top. See §5.1.
 
 ## 4. New actions
 
@@ -102,28 +122,31 @@ Confirmation-required (destructive/high-risk): `refund_sale`, `cancel_order_rest
 
 ## 5. Data model
 
-### 5.1 `inventory_movements` (new, append-only)
-| column | type | notes |
-|---|---|---|
-| id | uuid pk | |
-| tenant_id | uuid not null | RLS-scoped |
-| product_id | uuid not null → products | |
-| variant_id | uuid null → product_variants | |
-| movement_type | text | purchase \| retail_sale \| service_consumption \| return \| refund_restock \| damage \| expiry \| transfer_in \| transfer_out \| manual_adjustment \| count_adjustment |
-| quantity_delta | integer not null | signed (+in / −out) |
-| unit_cost_cents | integer null | from products.cost_price_cents, for later loss valuation |
-| reason | text null | required for damage / manual_adjustment |
-| actor_type | text | user \| staff \| ai \| system |
-| actor_id | uuid null | |
-| source | text | whatsapp \| dashboard \| api \| system |
-| reference_type | text null | e.g. retail_order, transaction |
-| reference_id | uuid null | |
-| created_at | timestamptz | |
+### 5.1 `inventory_movements` (EXISTS — extend, do not create)
+The table already exists with: `id`, `tenant_id`, `product_id`, `variant_id`,
+`movement_type` (existing values `sale`/`damage`/`adjustment`), `quantity_change` (signed),
+`quantity`, `previous_quantity`, `new_quantity`, `reason`, `notes`, `reference_type`,
+`reference_id` (**text**), `created_by`, `performed_by`, `created_at`. Existing writes go
+through the `p_quantity_change` RPC and `inventory-service.ts`.
 
-- Append-only (REVOKE UPDATE/DELETE); RLS tenant-scoped.
-- Indexes: `(tenant_id, product_id, created_at)`, `(tenant_id, movement_type, created_at)`.
-- **Projection**: `products.stock_quantity` updated in the same DB transaction as each
-  insert; a reconcile query (`Σ quantity_delta` per product) rebuilds/verifies it.
+**This spec's additive changes (migration `ALTER TABLE`):**
+- Extend `movement_type` allowed values with: `refund_restock`, `return`, `transfer_in`,
+  `transfer_out`, `count_adjustment`, `service_consumption`, `expiry`, `purchase`. Keep
+  `sale` as the retail-sale cause (no duplicate `retail_sale`).
+- Add `unit_cost_cents integer null` (snapshot from `products.cost_price_cents`).
+- (`location_id` added later by spec 5.)
+
+**Rules:**
+- Signed quantity uses the **existing `quantity_change`** column (not a new `quantity_delta`).
+- `reference_id` stays **text** (existing) — store the uuid as text; do not change the type.
+- Actor is the existing `created_by`/`performed_by`; map `actor_type`/`source` into `notes`
+  or a small `metadata` addition if needed (reconcile at implementation — avoid redundant columns).
+- **Immutability by convention** (no UPDATE/DELETE code paths), NOT a hard REVOKE — the RPC
+  maintains `previous_quantity`/`new_quantity`.
+- **Projection**: `products.stock_quantity` is already maintained by the RPC; a reconcile
+  query (`Σ quantity_change` per product) rebuilds/verifies it.
+- All commerce stock changes call the **existing `inventory-service.ts` / RPC**, extended to
+  accept the new movement types + `unit_cost_cents` — no parallel write path.
 
 ### 5.2 `ai_action_log` (new)
 Satisfies §1 ("log original message, parsed intent, validation result, final action,

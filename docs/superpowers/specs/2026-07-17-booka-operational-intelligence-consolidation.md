@@ -117,6 +117,40 @@ Close report (1) + anomaly digest (3) + evening briefing (10) are the **same** W
 message (consolidation §F). Only real-time high/critical anomaly alerts and recommendation
 nudges are separate, debounced sends.
 
+## Grounding corrections from the 2026-07-17 thorough review (apply everywhere)
+
+### M. `inventory_movements` PRE-EXISTS — extend, never create  *(specs 2, 5, 7)* — **BLOCKING**
+The table already exists and is in active use via `src/lib/services/inventory-service.ts` + a
+`p_quantity_change` stored procedure. Canonical facts for all inventory specs:
+- Signed column is **`quantity_change`** (NOT `quantity_delta`); projection columns
+  `previous_quantity`/`new_quantity` are RPC-maintained; `reference_id` is **text**.
+- `movement_type` existing values: `sale`, `damage`, `adjustment`. New causes
+  (`refund_restock`, `return`, `transfer_in`/`out`, `count_adjustment`, `service_consumption`,
+  `expiry`, `purchase`) are **added to the existing CHECK/enum** — keep `sale` for retail sales
+  (no `retail_sale`).
+- **All** stock changes route through the existing `inventory-service.ts` / RPC (extended for
+  new types + `unit_cost_cents`) — no parallel write path.
+- Immutability by convention (no UPDATE/DELETE code paths), **not** a REVOKE (the RPC updates
+  projection columns).
+- Spec 2 adds `unit_cost_cents`; spec 5 adds `location_id`.
+
+### N. Reservations are MULTI-SERVICE  *(specs 1, 7)* — **BLOCKING**
+`reservation_services` (`reservation_id`, `service_id`, `quantity`) — a booking has one *or
+more* service lines. Revenue = `Σ (services.price_cents × quantity)` over the lines;
+`price_cents_snapshot` is the reservation total. Recipe consumption (spec 7) iterates the lines.
+Any "reservation × one service" assumption is wrong.
+
+### O. Deposits exist  *(specs 1, 3)*
+`transactions.type` includes `deposit` (+ `payment`, `sale`, `refund`); a deposits module
+exists. Deposits are partial payments: spec 1 counts them in recorded payments and nets them
+in outstanding; spec 3's `deposits_not_applied` is a **shipped** rule, not deferred.
+
+### P. movement_type is a shared vocabulary  *(specs 2, 3, 5, 7)*
+One canonical `movement_type` list (item M) is referenced by: spec 2 (commerce causes),
+spec 3 rules (`stock_leaving_without_record` excludes `count_adjustment`), spec 5
+(`count_adjustment`), spec 7 (`service_consumption`). Define it once (with the action-name
+registry, §C) and reference everywhere.
+
 ## Backlog coverage
 All 17 backlog sections are now specced across sub-projects 1–11. Not yet specced: tenant-defined
 **custom roles** (deferred by §12), and any Phase-by-Phase UI polish beyond each spec's surface.
