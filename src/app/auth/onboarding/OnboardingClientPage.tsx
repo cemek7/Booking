@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import { getVerticalPackage } from '@/lib/sias';
 import { getStoredIsAdmin } from '@/lib/auth/token-storage';
 import BrandMark from '@/components/brand/BrandMark';
@@ -206,18 +206,22 @@ export default function OnboardingPage() {
       return;
     }
 
-    const supabase = getSupabaseBrowserClient();
-    supabase.auth.getSession().then((result: { data: { session?: { access_token?: string | null } | null } }) => {
-      const data = result.data as { session?: { access_token?: string | null } | null };
-      if (data.session?.access_token) {
-        tokenRef.current = data.session.access_token;
-      }
-    });
-    // Keep token fresh via auth state changes (e.g. token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { access_token?: string | null } | null) => {
-      if (session?.access_token) tokenRef.current = session.access_token;
-    });
-    return () => subscription.unsubscribe();
+    let unsubscribe = () => {};
+    void getSupabaseBrowserClientAsync()
+      .then((supabase) => {
+        void supabase.auth.getSession().then((result: { data: { session?: { access_token?: string | null } | null } }) => {
+          const data = result.data as { session?: { access_token?: string | null } | null };
+          if (data.session?.access_token) {
+            tokenRef.current = data.session.access_token;
+          }
+        });
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { access_token?: string | null } | null) => {
+          if (session?.access_token) tokenRef.current = session.access_token;
+        });
+        unsubscribe = () => subscription.unsubscribe();
+      })
+      .catch(() => {});
+    return () => unsubscribe();
   }, [router]);
 
   useEffect(() => {
@@ -287,7 +291,7 @@ export default function OnboardingPage() {
   }
 
   async function sendOnboardingMagicLink(targetEmail: string) {
-    const supabase = getSupabaseBrowserClient();
+    const supabase = await getSupabaseBrowserClientAsync();
     return supabase.auth.signInWithOtp({
       email: targetEmail,
       options: { emailRedirectTo: getOnboardingCallbackUrl() },
@@ -370,7 +374,7 @@ export default function OnboardingPage() {
   }
 
   async function ensureSignedInForOnboarding() {
-    const supabase = getSupabaseBrowserClient();
+    const supabase = await getSupabaseBrowserClientAsync();
     const { data } = await supabase.auth.getSession();
     const accessToken = data.session?.access_token ?? null;
     if (accessToken) {
@@ -409,7 +413,7 @@ export default function OnboardingPage() {
       } catch {}
       if (!shouldResume) return;
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = await getSupabaseBrowserClientAsync();
       const { data } = await supabase.auth.getSession();
       const accessToken = data.session?.access_token ?? null;
       if (!accessToken) return;

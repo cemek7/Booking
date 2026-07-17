@@ -16,32 +16,36 @@ export function useAuthHeaders(): Record<string, string> | null {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
-      const supabase = getSupabaseBrowserClient();
+      try {
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const supabase = await getSupabaseBrowserClientAsync();
 
-      const storedToken = getStoredAccessToken();
-      if (!cancelled && storedToken) {
-        setToken(storedToken);
-      }
+        const storedToken = getStoredAccessToken();
+        if (!cancelled && storedToken) {
+          setToken(storedToken);
+        }
 
-      // Fast path: read Supabase's own session storage — no network call when token is fresh.
-      // This gives an immediate non-null token on page revisit so data fetches start right away.
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!cancelled && sessionData.session?.access_token) {
-        setToken(sessionData.session.access_token);
-        setStoredAccessToken(sessionData.session.access_token);
-      }
+        // Fast path: read Supabase's own session storage — no network call when token is fresh.
+        // This gives an immediate non-null token on page revisit so data fetches start right away.
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!cancelled && sessionData.session?.access_token) {
+          setToken(sessionData.session.access_token);
+          setStoredAccessToken(sessionData.session.access_token);
+        }
 
-      // Slow path: server-revalidate (network call). Updates token after a silent refresh.
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) {
-        if (!cancelled) setToken(null);
-        return;
-      }
-      const { data: freshSession } = await supabase.auth.getSession();
-      if (!cancelled && freshSession.session?.access_token) {
-        setToken(freshSession.session.access_token);
-        setStoredAccessToken(freshSession.session.access_token);
+        // Slow path: server-revalidate (network call). Updates token after a silent refresh.
+        const { data: userData } = await supabase.auth.getUser();
+        if (!userData.user) {
+          if (!cancelled) setToken(null);
+          return;
+        }
+        const { data: freshSession } = await supabase.auth.getSession();
+        if (!cancelled && freshSession.session?.access_token) {
+          setToken(freshSession.session.access_token);
+          setStoredAccessToken(freshSession.session.access_token);
+        }
+      } catch {
+        if (!cancelled) setToken(getStoredAccessToken());
       }
     })();
     return () => { cancelled = true; };

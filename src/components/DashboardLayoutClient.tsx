@@ -7,7 +7,7 @@ import { useTenant } from '@/lib/supabase/tenant-context';
 import TenantProvider from '@/lib/supabase/tenant-context';
 import UnifiedDashboardNav from '@/components/UnifiedDashboardNav';
 import PostHogIdentity from '@/components/analytics/PostHogIdentity';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import type { Role } from '@/types/roles';
 
 // Create a singleton QueryClient for client-side queries
@@ -34,7 +34,7 @@ function DashboardLayoutContent({ children, userEmail: initialEmail }: Dashboard
   const [userEmail] = useState<string | null>(initialEmail ?? null);
 
   const handleSignOut = async () => {
-    const supabase = getSupabaseBrowserClient();
+    const supabase = await getSupabaseBrowserClientAsync();
     await supabase.auth.signOut();
     window.location.href = '/booka/auth/signin';
   };

@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 
 import React, { useEffect, useState } from "react";
 import type { Session } from '@supabase/supabase-js';
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getSupabaseBrowserClientAsync } from "@/lib/supabase/client";
 import { storeSignInData } from "@/lib/auth/auth-manager";
 
 type CallbackPayload = {
@@ -174,66 +174,73 @@ export default function AuthCallbackPage() {
         }
       }
 
-      const supabase = getSupabaseBrowserClient();
-      const subscription = supabase.auth.onAuthStateChange((_event: string, session: Session | null) => {
-        if (!mounted || !session) return;
-        void completeExistingSession();
-      });
+      try {
+        const supabase = await getSupabaseBrowserClientAsync();
+        const subscription = supabase.auth.onAuthStateChange((_event: string, session: Session | null) => {
+          if (!mounted || !session) return;
+          void completeExistingSession();
+        });
 
-      const completeExistingSession = async () => {
+        const completeExistingSession = async () => {
+          try {
+            const callbackUrl = new URL('/api/auth/callback', window.location.origin);
+            callbackUrl.searchParams.set('format', 'json');
+
+            const resp = await fetch(callbackUrl.toString(), {
+              method: 'GET',
+              credentials: 'include',
+              headers: {
+                Accept: 'application/json',
+              },
+            });
+
+            const payload = (await resp.json().catch(() => null)) as CallbackPayload | CallbackErrorPayload | null;
+
+            if (
+              !resp.ok ||
+              !payload ||
+              !('accessToken' in payload) ||
+              !payload.accessToken ||
+              !payload.userId
+            ) {
+              throw new Error(
+                payload && 'reason' in payload
+                  ? (payload.reason || payload.message || 'auth_callback_failed')
+                  : 'auth_callback_failed'
+              );
+            }
+
+            await finishAuth(payload);
+          } catch (error) {
+            console.error('[AuthCallback] existing session classification failed', error);
+            if (mounted) {
+              setStatus('Sign-in timed out. Please try the link again or request a new one.');
+            }
+          }
+        };
+
         try {
-          const callbackUrl = new URL('/api/auth/callback', window.location.origin);
-          callbackUrl.searchParams.set('format', 'json');
+          // Hash-based invite flows may land here without a code. Let the browser
+          // client hydrate, then classify the established session server-side.
+          const { data } = await supabase.auth.getSession();
+          if (!mounted) return;
 
-          const resp = await fetch(callbackUrl.toString(), {
-            method: 'GET',
-            credentials: 'include',
-            headers: {
-              Accept: 'application/json',
-            },
-          });
-
-          const payload = (await resp.json().catch(() => null)) as CallbackPayload | CallbackErrorPayload | null;
-
-          if (
-            !resp.ok ||
-            !payload ||
-            !('accessToken' in payload) ||
-            !payload.accessToken ||
-            !payload.userId
-          ) {
-            throw new Error(
-              payload && 'reason' in payload
-                ? (payload.reason || payload.message || 'auth_callback_failed')
-                : 'auth_callback_failed'
-            );
+          if (data.session) {
+            await completeExistingSession();
+            return;
           }
 
-          await finishAuth(payload);
-        } catch (error) {
-          console.error('[AuthCallback] existing session classification failed', error);
           if (mounted) {
             setStatus('Sign-in timed out. Please try the link again or request a new one.');
           }
+        } finally {
+          subscription.data.subscription.unsubscribe();
         }
-      };
-
-      try {
-        // Hash-based invite flows may land here without a code. Let the browser
-        // client hydrate, then classify the established session server-side.
-        const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
-
-        if (data.session) {
-          await completeExistingSession();
-          return;
-        }
-
+      } catch (error) {
+        console.error('[AuthCallback] browser client unavailable', error);
         if (mounted) {
-          setStatus('Sign-in timed out. Please try the link again or request a new one.');
+          setStatus('Sign-in could not be completed. Please request a new link and try again.');
         }
-      } finally {
-        subscription.data.subscription.unsubscribe();
       }
     };
 

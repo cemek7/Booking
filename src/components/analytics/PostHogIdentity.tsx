@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import posthog from 'posthog-js';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import { useAnalyticsReady } from './AnalyticsReadyContext';
 
 type AuthUser = {
@@ -16,8 +16,6 @@ export default function PostHogIdentity() {
   useEffect(() => {
     if (!analyticsReady) return;
 
-    const supabase = getSupabaseBrowserClient();
-
     const syncUser = (user: AuthUser) => {
       if (user?.id) {
         posthog.identify(user.id, user.email ? { email: user.email } : undefined);
@@ -27,22 +25,32 @@ export default function PostHogIdentity() {
     };
 
     let active = true;
+    let unsubscribe = () => {};
 
-    void supabase.auth.getUser().then((result: { data?: { user?: AuthUser } }) => {
-      if (!active) return;
-      syncUser(result.data?.user ?? null);
-    }).catch(() => {
-      if (!active) return;
-      posthog.reset();
-    });
+    void getSupabaseBrowserClientAsync()
+      .then((supabase) => {
+        if (!active) return;
+        void supabase.auth.getUser().then((result: { data?: { user?: AuthUser } }) => {
+          if (!active) return;
+          syncUser(result.data?.user ?? null);
+        }).catch(() => {
+          if (!active) return;
+          posthog.reset();
+        });
 
-    const { data } = supabase.auth.onAuthStateChange((_event: unknown, session: { user?: AuthUser } | null) => {
-      syncUser(session?.user ?? null);
-    });
+        const { data } = supabase.auth.onAuthStateChange((_event: unknown, session: { user?: AuthUser } | null) => {
+          syncUser(session?.user ?? null);
+        });
+        unsubscribe = () => data.subscription.unsubscribe();
+      })
+      .catch(() => {
+        if (!active) return;
+        posthog.reset();
+      });
 
     return () => {
       active = false;
-      data.subscription.unsubscribe();
+      unsubscribe();
     };
   }, [analyticsReady]);
 

@@ -26,8 +26,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async function init() {
       try {
         // dynamically import browser-only helper to avoid SSR-time evaluation
-        const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
-        const supabase = getSupabaseBrowserClient();
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const supabase = await getSupabaseBrowserClientAsync();
         const { data } = await supabase.auth.getUser();
         if (!mounted) return;
         setUser(data?.user ?? null);
@@ -46,8 +46,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let listener: { data?: { subscription?: { unsubscribe?: () => void } } } | (() => void) | null = null;
     (async () => {
       try {
-        const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
-        const sb = typeof window !== 'undefined' ? getSupabaseBrowserClient() : null;
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const sb = typeof window !== 'undefined' ? await getSupabaseBrowserClientAsync() : null;
         if (!sb) return;
         listener = sb.auth.onAuthStateChange((_: unknown, session: { user?: AuthUser }) => {
           setUser(session?.user ?? null);
@@ -74,8 +74,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signOut() {
     setLoading(true);
     try {
-      const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
-      const supabase = getSupabaseBrowserClient();
+      const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+      const supabase = await getSupabaseBrowserClientAsync();
       await supabase.auth.signOut();
       setUser(null);
       if (typeof window !== 'undefined') {

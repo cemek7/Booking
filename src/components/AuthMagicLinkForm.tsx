@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import BrandMark from "@/components/brand/BrandMark";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getSupabaseBrowserClientAsync } from "@/lib/supabase/client";
 import { toast } from "@/components/ui/toast";
 
 type Props = {
@@ -82,7 +82,7 @@ export default function AuthMagicLinkForm({ mode = "signin", redirectTo }: Props
     toast.info(`Sending magic link to ${email}...`);
 
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = await getSupabaseBrowserClientAsync();
       const redirect = getMagicLinkRedirectPath(redirectTo);
       let supabaseErr: { message?: string } | null = null;
 
