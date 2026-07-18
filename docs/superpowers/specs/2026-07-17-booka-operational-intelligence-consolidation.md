@@ -166,6 +166,33 @@ this doc. **Full collision sweep of all 30 proposed new tables: zero collisions*
 Specs 1–5 are grounding-verified and plan-ready; specs 6–11 had scope self-decided and lighter
 grounding review — recommend a user pass before planning them.
 
+## Implementation plans (for Codex execution)
+
+Each spec has a detailed, TDD, task-decomposed plan under `docs/superpowers/plans/`. Execute in
+this order (each ships as small reviewable units; run its migrations before dependents):
+
+| # | Plan file | Migrations |
+|---|-----------|-----------|
+| 1 | plans/2026-07-17-booka-business-ledger-daily-close.md | 122–124 |
+| 2 | plans/2026-07-17-booka-owner-commerce-commands.md | 125–126 (+127 fn) |
+| 3 | plans/2026-07-17-booka-revenue-assurance.md | 128 |
+| 4 | plans/2026-07-17-booka-granular-permissions.md | 129 |
+| 5 | plans/2026-07-17-booka-inventory-variance-shrinkage.md | 130 |
+| 6 | plans/2026-07-17-booka-discount-refund-controls.md | 131 |
+| 7 | plans/2026-07-17-booka-service-inventory-recipes.md | 132 |
+| 8 | plans/2026-07-17-booka-customer-commerce-memory.md | 133 |
+| 9 | plans/2026-07-17-booka-multimodal-capture.md | 134 |
+| 10 | plans/2026-07-17-booka-conversational-analytics-briefings.md | 135 |
+| 11 | plans/2026-07-17-booka-recommendations.md | 136 |
+
+**Codex execution notes:**
+- Read this consolidation doc first (items A–Q), then the plan's spec, then the plan.
+- Resolve **§A (completion hook)** during plan 1 — it is doubly blocking (plans 1 and 7).
+- Plans 1–5 are grounding-verified. Plans 6–11 had scope self-decided; before executing each,
+  do a quick grounding pass on its target tables (the migration numbers assume no collisions —
+  verified 2026-07-17, but re-confirm against the live DB since it may have advanced past migration 121).
+- Every migration ships a paired `_rollback.sql`. Money is integer cents. RLS on every new table.
+
 ## Backlog coverage
-All 17 backlog sections are now specced across sub-projects 1–11. Not yet specced: tenant-defined
-**custom roles** (deferred by §12), and any Phase-by-Phase UI polish beyond each spec's surface.
+All 17 backlog sections are specced (sub-projects 1–11) and planned (plans 1–11). Not yet specced:
+tenant-defined **custom roles** (deferred by §12), and UI polish beyond each spec's surface.
