@@ -16,6 +16,7 @@ export const BUSINESS_EVENT_ACTIONS = {
   STOCK_RESTOCKED: 'stock.restocked',
   STOCK_TRANSFERRED: 'stock.transferred',
   STOCK_COUNT_RECORDED: 'stock.count_recorded',
+  STOCK_COUNT_APPROVED: 'stock_count.approved',
   RETAIL_SALE_RECORDED: 'retail_sale.recorded',
   ORDER_REFUNDED: 'order.refunded',
   OUTSTANDING_BALANCE_RECORDED: 'outstanding_balance.recorded',

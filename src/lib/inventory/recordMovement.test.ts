@@ -10,6 +10,7 @@ describe('recordMovement', () => {
     await recordMovement(admin, {
       tenantId: 'tenant-1',
       productId: 'product-1',
+      locationId: 'loc-main',
       movementType: 'refund_restock',
       quantityChange: -3,
       unitCostCents: 950,
@@ -30,6 +31,7 @@ describe('recordMovement', () => {
       p_reason: 'damaged return',
       p_performed_by: 'user-1',
       p_unit_cost_cents: 950,
+      p_location_id: 'loc-main',
     });
   });
 });

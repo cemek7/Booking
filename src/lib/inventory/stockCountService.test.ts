@@ -1,6 +1,20 @@
 import { describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { computeVariance, enterCount, startCountSession } from './stockCountService';
+import { computeVariance, enterCount, startCountSession, approveSession } from './stockCountService';
+
+const mockRecordMovement = jest.fn();
+const mockRecordBusinessEvent = jest.fn();
+
+jest.mock('./recordMovement', () => ({
+  recordMovement: (...args: unknown[]) => mockRecordMovement(...args),
+}));
+
+jest.mock('@/lib/audit/businessEvents', () => ({
+  BUSINESS_EVENT_ACTIONS: {
+    STOCK_COUNT_APPROVED: 'stock_count.approved',
+  },
+  recordBusinessEvent: (...args: unknown[]) => mockRecordBusinessEvent(...args),
+}));
 
 function makeAdmin() {
   const inserts: Array<{ table: string; payload: unknown }> = [];
@@ -31,6 +45,30 @@ function makeAdmin() {
                 single: async () => ({
                   data: { id: 'session-1', snapshot_at: '2026-07-20T12:00:00.000Z' },
                   error: null,
+                }),
+              }),
+            };
+          },
+          select: () => ({
+            eq: () => ({
+              single: async () => ({
+                data: {
+                  id: 'session-1',
+                  tenant_id: 'tenant-1',
+                  location_id: 'loc-main',
+                  snapshot_at: '2026-07-20T12:00:00.000Z',
+                  status: 'review',
+                },
+                error: null,
+              }),
+            }),
+          }),
+          update: (payload: unknown) => {
+            updates.push({ table, payload });
+            return {
+              eq: () => ({
+                select: () => ({
+                  single: async () => ({ data: { id: 'session-1', ...payload }, error: null }),
                 }),
               }),
             };
@@ -78,6 +116,12 @@ function makeAdmin() {
                 ],
                 error: null,
               }),
+              gte: () => ({
+                lt: async () => ({
+                  data: [{ id: 'mv-live', product_id: 'prod-var', variant_id: 'variant-1', location_id: 'loc-main', movement_type: 'sale' }],
+                  error: null,
+                }),
+              }),
             }),
           }),
         };
@@ -101,6 +145,7 @@ function makeAdmin() {
                 },
                 error: null,
               }),
+              then: undefined,
             }),
           }),
           update: (payload: unknown) => {
@@ -113,6 +158,9 @@ function makeAdmin() {
               }),
             };
           },
+          eq: () => ({
+            then: undefined,
+          }),
         };
       }
 
@@ -127,6 +175,11 @@ function makeAdmin() {
 }
 
 describe('stockCountService', () => {
+  beforeEach(() => {
+    mockRecordMovement.mockReset();
+    mockRecordBusinessEvent.mockReset();
+  });
+
   it('startCountSession snapshots expected quantities for base and variant stock and flags missing costs', async () => {
     const admin = makeAdmin();
 
@@ -186,5 +239,102 @@ describe('stockCountService', () => {
         variance_value_cents: -500,
       })
     );
+  });
+
+  it('approveSession skips moved items, posts clean count adjustments, and emits stock_count.approved', async () => {
+    const admin = makeAdmin();
+    const originalFrom = admin.from.bind(admin);
+    admin.from = ((table: string) => {
+      if (table === 'stock_count_items') {
+        return {
+          select: () => ({
+            eq: async () => ({
+              data: [
+                {
+                  id: 'item-clean',
+                  tenant_id: 'tenant-1',
+                  session_id: 'session-1',
+                  product_id: 'prod-base',
+                  variant_id: null,
+                  location_id: 'loc-main',
+                  expected_quantity: 7,
+                  counted_quantity: 5,
+                  variance: -2,
+                  unit_cost_cents: 200,
+                  variance_value_cents: -400,
+                  flags: {},
+                },
+                {
+                  id: 'item-moved',
+                  tenant_id: 'tenant-1',
+                  session_id: 'session-1',
+                  product_id: 'prod-var',
+                  variant_id: 'variant-1',
+                  location_id: 'loc-main',
+                  expected_quantity: 4,
+                  counted_quantity: 1,
+                  variance: -3,
+                  unit_cost_cents: null,
+                  variance_value_cents: null,
+                  flags: {},
+                },
+                {
+                  id: 'item-uncounted',
+                  tenant_id: 'tenant-1',
+                  session_id: 'session-1',
+                  product_id: 'prod-skip',
+                  variant_id: null,
+                  location_id: 'loc-main',
+                  expected_quantity: 2,
+                  counted_quantity: null,
+                  variance: null,
+                  unit_cost_cents: 150,
+                  variance_value_cents: null,
+                  flags: {},
+                },
+              ],
+              error: null,
+            }),
+          }),
+          update: (payload: unknown) => {
+            admin.__updates.push({ table, payload });
+            return {
+              eq: async () => ({ error: null }),
+            };
+          },
+        };
+      }
+      return originalFrom(table);
+    }) as typeof admin.from;
+
+    const session = await approveSession(admin, 'session-1', 'approver-1');
+
+    expect(mockRecordMovement).toHaveBeenCalledTimes(1);
+    expect(mockRecordMovement).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        productId: 'prod-base',
+        locationId: 'loc-main',
+        movementType: 'count_adjustment',
+        quantityChange: -2,
+        referenceType: 'stock_count_item',
+        referenceId: 'item-clean',
+      })
+    );
+    expect(admin.__updates).toContainEqual({
+      table: 'stock_count_items',
+      payload: expect.objectContaining({
+        flags: expect.objectContaining({ moved_during_count: true }),
+      }),
+    });
+    expect(mockRecordBusinessEvent).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        action: 'stock_count.approved',
+        entityId: 'session-1',
+      })
+    );
+    expect(session).toEqual(expect.objectContaining({ status: 'approved', shrinkage_value_cents: 400 }));
   });
 });

@@ -4,6 +4,7 @@ export interface RecordMovementInput {
   tenantId: string;
   productId?: string | null;
   variantId?: string | null;
+  locationId?: string | null;
   movementType:
     | 'sale'
     | 'damage'
@@ -37,5 +38,6 @@ export async function recordMovement(admin: SupabaseClient, input: RecordMovemen
     p_reason: input.reason ?? null,
     p_performed_by: input.actorId ?? null,
     p_unit_cost_cents: input.unitCostCents ?? null,
+    p_location_id: input.locationId ?? null,
   });
 }
