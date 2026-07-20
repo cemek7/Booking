@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
 
 type TenantMembership = {
   tenant_id: string;
@@ -22,6 +23,7 @@ type CallbackFound =
       role: 'owner' | 'manager' | 'staff';
       email: string | null;
       user_id: string | null;
+      onboarding_incomplete?: boolean;
     }
   | {
       multiple: true;
@@ -158,11 +160,18 @@ async function classifyUser(userId: string | null, email: string | null): Promis
 
   if (validMemberships.length === 1) {
     const membership = validMemberships[0];
+    const { data: tenant } = await admin
+      .from('tenants')
+      .select('settings, metadata')
+      .eq('id', membership.tenant_id)
+      .maybeSingle();
+
     return {
       tenant_id: membership.tenant_id,
       role: membership.role,
       email,
       user_id: userId,
+      onboarding_incomplete: isTenantOnboardingIncomplete(tenant),
     };
   }
 
@@ -213,7 +222,7 @@ function buildCallbackPayload(session: {
       userId,
       email,
       found,
-      redirectPath: getTenantRedirectPath(found.role),
+      redirectPath: found.onboarding_incomplete ? '/booka/auth/onboarding?resume=1' : getTenantRedirectPath(found.role),
     };
   }
 
