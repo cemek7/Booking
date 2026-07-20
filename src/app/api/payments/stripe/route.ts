@@ -85,6 +85,15 @@ export const POST = createHttpHandler(
       currency: event?.data?.object?.currency || 'USD',
       type: event.type || 'stripe_event',
       status: event?.data?.object?.status || 'unknown',
+      subject_type: event?.data?.object?.metadata?.retail_order_id
+        ? 'retail_order'
+        : event?.data?.object?.metadata?.reservation_id
+          ? 'reservation'
+          : null,
+      subject_id:
+        event?.data?.object?.metadata?.retail_order_id ||
+        event?.data?.object?.metadata?.reservation_id ||
+        null,
       raw: event,
     };
 

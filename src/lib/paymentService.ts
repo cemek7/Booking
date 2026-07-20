@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
 import { publishEvent } from './eventBus';
@@ -617,6 +616,8 @@ export class PaymentService {
           currency: params.currency,
           type: 'deposit',
           status: 'pending',
+          subject_type: 'reservation',
+          subject_id: params.reservationId,
           provider: provider.id,
           provider_reference: reference,
           raw: {
@@ -746,6 +747,8 @@ export class PaymentService {
           currency: transaction.currency,
           type: 'refund',
           status: 'pending',
+          subject_type: transaction.subject_type ?? null,
+          subject_id: transaction.subject_id ?? null,
           provider: transaction.provider,
           refund_amount: refundAmount,
           refund_reason: params.reason,

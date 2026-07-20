@@ -1,6 +1,4 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createHash } from 'crypto';
 import metrics from './metrics';
 import { trace } from '@opentelemetry/api';
@@ -27,6 +25,13 @@ export interface DepositIntentResult {
   provider?: string;
   payment_url?: string | null;
   error?: string | null;
+}
+
+interface ExistingDepositTransaction {
+  raw?: {
+    ref?: string | null;
+    provider?: string | null;
+  } | null;
 }
 
 export interface StandalonePaymentLinkInput {
@@ -261,7 +266,16 @@ async function createStripeStandalonePaymentLink(
 // Persistence helper for transactions row (type=deposit)
 export async function recordDepositTransaction(supabase: SupabaseClient, tenantId: string, reservationId: string, minorAmount: number, currency: string, provider: string, ref: string | null) {
   try {
-    await supabase.from('transactions').insert({ tenant_id: tenantId, amount: minorAmount / 100, currency, type: 'deposit', status: 'initiated', raw: { provider, ref, reservation_id: reservationId } });
+    await supabase.from('transactions').insert({
+      tenant_id: tenantId,
+      amount: minorAmount / 100,
+      currency,
+      type: 'deposit',
+      status: 'initiated',
+      subject_type: 'reservation',
+      subject_id: reservationId,
+      raw: { provider, ref, reservation_id: reservationId },
+    });
   } catch (e) {
     defaultLogger.warn('recordDepositTransaction failed', e);
   }
@@ -292,7 +306,13 @@ export async function initiateDepositForReservation(
       .eq('type', 'deposit')
       .limit(1);
     if (existing && existing.length > 0) {
-      return { id: (existing[0] as any)?.raw?.ref || null, status: 'created', provider: (existing[0] as any)?.raw?.provider, payment_url: null };
+      const existingTx = existing[0] as ExistingDepositTransaction;
+      return {
+        id: existingTx.raw?.ref || null,
+        status: 'created',
+        provider: existingTx.raw?.provider || undefined,
+        payment_url: null,
+      };
     }
     const intent = await adapter.createDeposit({ tenant_id: tenantId, reservation_id: reservationId, amount_minor_units: depositMinor, currency });
     if (intent.status === 'created') {
@@ -305,4 +325,12 @@ export async function initiateDepositForReservation(
   }
 }
 
-export default { PaymentsAdapter, PaystackProvider, StripeProvider, recordDepositTransaction, initiateDepositForReservation };
+const paymentsAdapterExports = {
+  PaymentsAdapter,
+  PaystackProvider,
+  StripeProvider,
+  recordDepositTransaction,
+  initiateDepositForReservation,
+};
+
+export default paymentsAdapterExports;

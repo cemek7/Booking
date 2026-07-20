@@ -485,6 +485,8 @@ export async function createRetailOrderPaymentLink(input: {
     currency: order.currency || 'NGN',
     type: 'retail_order',
     status: 'initiated',
+    subject_type: 'retail_order',
+    subject_id: order.id,
     provider_reference: result.id,
     raw: {
       provider: result.provider || 'unknown',
