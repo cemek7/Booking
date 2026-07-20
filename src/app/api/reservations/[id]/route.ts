@@ -6,6 +6,7 @@ import { auditSuperadminAction } from '@/types/unified-permissions';
 import { parseIso } from '@/lib/utils';
 import { defaultLogger } from '@/lib/logger';
 import { siasOperations } from '@/lib/sias-operations';
+import { markReservationCompleted } from '@/lib/reconciliation/reservationSnapshot';
 
 /**
  * GET,PATCH,DELETE /api/reservations/[id]
@@ -76,7 +77,7 @@ export const PATCH = createHttpHandler(
 
     // Parse update payload
     const body = await parseJsonBody<ReservationUpdatePayload>(ctx.request);
-    const updates: Record<string, any> = {};
+    const updates: Record<string, unknown> = {};
 
     // Copy allowed fields
     const allowedFields: (keyof ReservationUpdatePayload)[] = ['customer_name', 'phone', 'service', 'status'];
@@ -131,15 +132,45 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.validationError({ _: 'No update fields provided' });
     }
 
-    // Apply updates
-    const { data: updated, error: upErr } = await ctx.supabase
-      .from('reservations')
-      .update(updates)
-      .eq('id', reservationId)
-      .select('*')
-      .single();
+    let updated: Record<string, unknown> | null = null;
+    const isCompletionTransition = updates.status === 'completed' && existing.status !== 'completed';
 
-    if (upErr) throw ApiErrorFactory.databaseError(upErr);
+    if (isCompletionTransition) {
+      const nonStatusUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([key]) => key !== 'status')
+      );
+
+      if (Object.keys(nonStatusUpdates).length > 0) {
+        const { error: preUpdateError } = await ctx.supabase
+          .from('reservations')
+          .update(nonStatusUpdates)
+          .eq('id', reservationId);
+
+        if (preUpdateError) throw ApiErrorFactory.databaseError(preUpdateError);
+      }
+
+      // price_cents_snapshot frozen here — do not read live services.price for revenue (spec 1 §4.2)
+      await markReservationCompleted(ctx.supabase, tenantId, reservationId, ctx.user!.id);
+
+      const { data: refreshed, error: refreshedError } = await ctx.supabase
+        .from('reservations')
+        .select('*')
+        .eq('id', reservationId)
+        .single();
+
+      if (refreshedError) throw ApiErrorFactory.databaseError(refreshedError);
+      updated = refreshed as Record<string, unknown>;
+    } else {
+      const { data: refreshed, error: upErr } = await ctx.supabase
+        .from('reservations')
+        .update(updates)
+        .eq('id', reservationId)
+        .select('*')
+        .single();
+
+      if (upErr) throw ApiErrorFactory.databaseError(upErr);
+      updated = refreshed as Record<string, unknown>;
+    }
 
     // Audit log
     try {
