@@ -1,10 +1,15 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from './businessEvents';
 
-function mockAdmin(insert: jest.Mock) {
+interface MockAdmin extends Pick<SupabaseClient, 'from'> {
+  from: jest.Mock;
+}
+
+function mockAdmin(insert: jest.Mock): MockAdmin {
   return {
     from: jest.fn(() => ({ insert })),
-  } as never;
+  };
 }
 
 describe('recordBusinessEvent', () => {
@@ -21,7 +26,7 @@ describe('recordBusinessEvent', () => {
     });
 
     expect(admin.from).toHaveBeenCalledWith('business_events');
-    const row = insert.mock.calls[0][0];
+    const row = insert.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(row).toMatchObject({
       tenant_id: 't1',
       actor_type: 'system',

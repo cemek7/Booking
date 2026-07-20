@@ -131,7 +131,7 @@ export default function CloseReportsClient() {
 
     const response = await authFetch<{ runId: string }>(
       `/api/owner/close-reports/${selectedDate}/recompute`,
-      { method: 'POST', headers }
+      { method: 'POST', headers: headers ?? undefined }
     );
 
     if (response.error) {
