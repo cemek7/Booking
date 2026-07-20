@@ -51,9 +51,53 @@ function normalizeInternalPath(nextPath: string | null | undefined): string | nu
   return nextPath;
 }
 
+function firstForwardedValue(value: string | null): string | null {
+  if (!value) return null;
+  const first = value.split(',')[0]?.trim();
+  return first || null;
+}
+
+function isInternalHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
+function getPublicOrigin(request: NextRequest): string {
+  const forwardedHost = firstForwardedValue(request.headers.get('x-forwarded-host'));
+  const forwardedProto = firstForwardedValue(request.headers.get('x-forwarded-proto'));
+
+  if (forwardedHost) {
+    return `${forwardedProto || 'https'}://${forwardedHost}`;
+  }
+
+  const requestUrl = new URL(request.url);
+  if (!isInternalHostname(requestUrl.hostname)) {
+    return requestUrl.origin;
+  }
+
+  const configuredOrigin =
+    process.env.APP_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL;
+
+  if (configuredOrigin) {
+    return configuredOrigin.replace(/\/+$/, '');
+  }
+
+  return requestUrl.origin;
+}
+
 function buildRedirectUrl(request: NextRequest, nextPath: string | null) {
-  const baseUrl = new URL(request.url);
-  return new URL(normalizeInternalPath(nextPath) || '/auth/callback?finalize=1', baseUrl);
+  return new URL(
+    normalizeInternalPath(nextPath) || '/auth/callback?finalize=1',
+    getPublicOrigin(request)
+  );
 }
 
 function getTenantRedirectPath(role: 'owner' | 'manager' | 'staff'): string {
