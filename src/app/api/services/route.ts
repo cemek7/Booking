@@ -14,11 +14,13 @@ import { createHttpHandler, parseJsonBody, getVerifiedTenantId } from '@/lib/err
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { getPaginationParams } from '@/lib/error-handling/migration-helpers';
 
-const ServiceCreateSchema = z.object({
+const ServicePayloadSchema = z.object({
   name: z.string().trim().min(1),
   description: z.string().nullable().optional(),
   price: z.number().min(0).optional(),
+  price_cents: z.number().int().min(0).optional(),
   duration: z.number().int().min(1).optional(),
+  duration_minutes: z.number().int().min(1).optional(),
   category: z.string().nullable().optional(),
 });
 
@@ -26,8 +28,42 @@ interface ServiceCreatePayload {
   name: string;
   description?: string | null;
   price?: number;
+  price_cents?: number;
   duration?: number;
+  duration_minutes?: number;
   category?: string | null;
+}
+
+function normalizeServicePayload(body: ServiceCreatePayload) {
+  const durationMinutes = body.duration_minutes ?? body.duration ?? 30;
+  const priceCents = body.price_cents ?? body.price ?? 0;
+
+  return {
+    name: body.name,
+    description: body.description || null,
+    category: body.category || null,
+    duration_minutes: durationMinutes,
+    price_cents: priceCents,
+  };
+}
+
+function mapServiceRow(row: Record<string, unknown>) {
+  const durationMinutes =
+    typeof row.duration_minutes === 'number'
+      ? row.duration_minutes
+      : Number(row.duration_minutes ?? row.duration ?? 30);
+  const priceCents =
+    typeof row.price_cents === 'number'
+      ? row.price_cents
+      : Number(row.price_cents ?? row.price ?? 0);
+
+  return {
+    ...row,
+    duration: Number.isFinite(durationMinutes) ? durationMinutes : 30,
+    duration_minutes: Number.isFinite(durationMinutes) ? durationMinutes : 30,
+    price: Number.isFinite(priceCents) ? priceCents : 0,
+    price_cents: Number.isFinite(priceCents) ? priceCents : 0,
+  };
 }
 
 export const GET = createHttpHandler(
@@ -37,7 +73,7 @@ export const GET = createHttpHandler(
 
     const { data, error } = await ctx.supabase
       .from('services')
-      .select('id,name,description,price,duration,category,created_at')
+      .select('*')
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -50,7 +86,7 @@ export const GET = createHttpHandler(
       .eq('tenant_id', tenantId);
 
     return {
-      data: data || [],
+      data: (data || []).map((row: Record<string, unknown>) => mapServiceRow(row)),
       pagination: { page, limit, total: count || 0, offset }
     };
   },
@@ -67,27 +103,27 @@ export const POST = createHttpHandler(
     const tenantId = getVerifiedTenantId(ctx);
 
     const rawBody = await parseJsonBody<ServiceCreatePayload>(ctx.request);
-    const bodyValidation = ServiceCreateSchema.safeParse(rawBody);
+    const bodyValidation = ServicePayloadSchema.safeParse(rawBody);
     if (!bodyValidation.success) {
       throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
-    const body = bodyValidation.data;
+    const body = normalizeServicePayload(bodyValidation.data);
 
     const { data, error } = await ctx.supabase
       .from('services')
       .insert({
         tenant_id: tenantId,
         name: body.name,
-        description: body.description || null,
-        price: body.price ?? 0,
-        duration: body.duration ?? 30,
-        category: body.category || null,
+        description: body.description,
+        price_cents: body.price_cents,
+        duration_minutes: body.duration_minutes,
+        category: body.category,
       })
       .select('*')
       .single();
 
     if (error) throw ApiErrorFactory.databaseError(error);
-    return data;
+    return mapServiceRow(data as Record<string, unknown>);
   },
   'POST',
   { auth: true, roles: ['owner', 'manager'] }
@@ -108,17 +144,32 @@ export const PATCH = createHttpHandler(
     }
 
     const body = await parseJsonBody<Partial<ServiceCreatePayload>>(ctx.request);
+    const bodyValidation = ServicePayloadSchema.partial().safeParse(body);
+    if (!bodyValidation.success) {
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
+    }
+    const parsed = bodyValidation.data;
+    const updates: Record<string, unknown> = {};
+    if (parsed.name !== undefined) updates.name = parsed.name;
+    if (parsed.description !== undefined) updates.description = parsed.description || null;
+    if (parsed.category !== undefined) updates.category = parsed.category || null;
+    if (parsed.duration !== undefined || parsed.duration_minutes !== undefined) {
+      updates.duration_minutes = parsed.duration_minutes ?? parsed.duration;
+    }
+    if (parsed.price !== undefined || parsed.price_cents !== undefined) {
+      updates.price_cents = parsed.price_cents ?? parsed.price;
+    }
 
     const { data, error } = await ctx.supabase
       .from('services')
-      .update(body)
+      .update(updates)
       .eq('id', serviceId)
       .eq('tenant_id', tenantId)
       .select('*')
       .single();
 
     if (error) throw ApiErrorFactory.databaseError(error);
-    return data;
+    return mapServiceRow(data as Record<string, unknown>);
   },
   'PATCH',
   { auth: true, roles: ['owner', 'manager'] }
