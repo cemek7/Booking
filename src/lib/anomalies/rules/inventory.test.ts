@@ -121,4 +121,54 @@ describe('inventoryRules', () => {
       })
     );
   });
+
+  it('raises unusual_consumption from service.consumption_recorded above tenant thresholds', async () => {
+    const admin = makeAdmin();
+    admin.__responses.set('tenants', {
+      data: {
+        settings: {
+          service_consumption_variance_threshold_units: 1,
+          service_consumption_variance_threshold_percent: 10,
+        },
+      },
+      error: null,
+    });
+
+    const rule = inventoryRules.find((entry) => entry.key === 'unusual_consumption');
+    if (!rule) throw new Error('unusual_consumption rule missing');
+
+    const candidates = await rule.detect(
+      admin,
+      'tenant-1',
+      {
+        startUtc: '2026-07-20T00:00:00.000Z',
+        endUtc: '2026-07-21T00:00:00.000Z',
+      },
+      {
+        window: { startUtc: '2026-07-20T00:00:00.000Z', endUtc: '2026-07-21T00:00:00.000Z' },
+        eventAction: 'service.consumption_recorded',
+        eventMetadata: {
+          reservation_id: 'res-1',
+          service_id: 'svc-1',
+          product_id: 'product-1',
+          planned_quantity: 4,
+          actual_quantity: 7,
+          variance_quantity: 3,
+          uom: 'piece',
+          movement_id: 'movement-1',
+          unit_cost_cents: 250,
+        },
+      }
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toEqual(
+      expect.objectContaining({
+        ruleKey: 'unusual_consumption',
+        entityId: 'product-1',
+        actualValueCents: 750,
+        differenceCents: 750,
+      }),
+    );
+  });
 });

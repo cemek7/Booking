@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { recordMovement } from './recordMovement';
 import { convert, type InventoryUom } from './uom';
 
@@ -205,4 +206,32 @@ export async function consumeForReservation(
     .insert(consumptionRows);
 
   if (insertError) throw insertError;
+
+  for (const row of consumptionRows) {
+    const plannedQuantity = Number(row.planned_quantity ?? 0);
+    const actualQuantity = Number(row.actual_quantity ?? plannedQuantity);
+
+    await recordBusinessEvent(admin, {
+      tenantId,
+      actorType: actorId ? 'user' : 'system',
+      actorId,
+      action: BUSINESS_EVENT_ACTIONS.SERVICE_CONSUMPTION_RECORDED,
+      entityType: 'reservation',
+      entityId: reservationId,
+      source: 'api',
+      metadata: {
+        reservation_id: reservationId,
+        service_id: row.service_id ?? null,
+        product_id: row.product_id ?? null,
+        variant_id: row.variant_id ?? null,
+        staff_id: row.staff_id ?? null,
+        planned_quantity: plannedQuantity,
+        actual_quantity: actualQuantity,
+        variance_quantity: actualQuantity - plannedQuantity,
+        uom: row.uom ?? null,
+        movement_id: row.movement_id ?? null,
+        unit_cost_cents: productMap.get(String(row.product_id))?.cost_price_cents ?? null,
+      },
+    });
+  }
 }

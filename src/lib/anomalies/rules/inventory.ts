@@ -28,6 +28,20 @@ type StockShrinkageEventItem = {
   flags?: Record<string, unknown> | null;
 };
 
+type ServiceConsumptionEvent = {
+  reservation_id?: string | null;
+  service_id?: string | null;
+  product_id?: string | null;
+  variant_id?: string | null;
+  staff_id?: string | null;
+  planned_quantity?: number | null;
+  actual_quantity?: number | null;
+  variance_quantity?: number | null;
+  uom?: string | null;
+  movement_id?: string | null;
+  unit_cost_cents?: number | null;
+};
+
 function readThreshold(settings: Record<string, unknown> | null | undefined, key: string) {
   const value = settings?.[key];
   const numberValue = typeof value === 'number' ? value : Number(value ?? 0);
@@ -142,6 +156,70 @@ async function stockShrinkageDetect(
     });
 }
 
+async function unusualConsumptionDetect(
+  admin: SupabaseClient,
+  tenantId: string,
+  _window: RuleWindow,
+  ctx: RuleContext
+): Promise<AnomalyCandidate[]> {
+  const event = (ctx.eventMetadata ?? {}) as ServiceConsumptionEvent;
+  const planned = Number(event.planned_quantity ?? 0);
+  const actual = Number(event.actual_quantity ?? planned);
+  const variance = Number(event.variance_quantity ?? actual - planned);
+
+  if (planned <= 0 || variance === 0) return [];
+
+  const { data: tenantRow, error: tenantError } = await admin
+    .from('tenants')
+    .select('settings')
+    .eq('id', tenantId)
+    .maybeSingle<TenantSettingsRow>();
+
+  if (tenantError) throw tenantError;
+
+  const settings = tenantRow?.settings ?? {};
+  const percentThreshold = readThreshold(settings, 'service_consumption_variance_threshold_percent') || 20;
+  const unitThreshold = readThreshold(settings, 'service_consumption_variance_threshold_units');
+  const variancePercent = Math.abs((variance / planned) * 100);
+
+  if (Math.abs(variance) <= unitThreshold && variancePercent <= percentThreshold) {
+    return [];
+  }
+
+  const actualValueCents = event.unit_cost_cents == null ? null : Math.abs(variance) * Number(event.unit_cost_cents);
+
+  return [
+    {
+      tenantId,
+      ruleKey: 'unusual_consumption',
+      domain: 'inventory',
+      severity: variancePercent >= 50 ? 'high' : 'medium',
+      entityType: 'product',
+      entityId: event.product_id ?? event.movement_id ?? null,
+      expectedValueCents: event.unit_cost_cents == null ? null : planned * Number(event.unit_cost_cents),
+      actualValueCents,
+      differenceCents: actualValueCents,
+      detectionSource: 'realtime_event',
+      detail: {
+        reservation_id: event.reservation_id ?? null,
+        service_id: event.service_id ?? null,
+        product_id: event.product_id ?? null,
+        variant_id: event.variant_id ?? null,
+        staff_id: event.staff_id ?? null,
+        planned_quantity: planned,
+        actual_quantity: actual,
+        variance_quantity: variance,
+        variance_percent: variancePercent,
+        uom: event.uom ?? null,
+        movement_id: event.movement_id ?? null,
+        unit_cost_cents: event.unit_cost_cents ?? null,
+        threshold_percent: percentThreshold,
+        threshold_units: unitThreshold,
+      },
+    },
+  ];
+}
+
 export const inventoryRules: AnomalyRule[] = [
   {
     key: 'stock_leaving_without_record',
@@ -160,5 +238,15 @@ export const inventoryRules: AnomalyRule[] = [
     detect: stockShrinkageDetect,
     dedupKey: (candidate) =>
       `stock_shrinkage:${candidate.detail?.session_id ?? 'unknown'}:${candidate.detail?.stock_count_item_id ?? candidate.entityId}`,
+  },
+  {
+    key: 'unusual_consumption',
+    domain: 'inventory',
+    severity: 'medium',
+    mode: 'realtime',
+    triggerActions: ['service.consumption_recorded'],
+    detect: unusualConsumptionDetect,
+    dedupKey: (candidate) =>
+      `unusual_consumption:${candidate.detail?.reservation_id ?? 'unknown'}:${candidate.detail?.product_id ?? candidate.entityId}:${candidate.detail?.movement_id ?? 'movement'}`,
   },
 ];

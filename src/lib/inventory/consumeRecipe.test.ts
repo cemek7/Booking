@@ -2,9 +2,17 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockRecordMovement = jest.fn();
+const mockRecordBusinessEvent = jest.fn();
 
 jest.mock('./recordMovement', () => ({
   recordMovement: (...args: unknown[]) => mockRecordMovement(...args),
+}));
+
+jest.mock('@/lib/audit/businessEvents', () => ({
+  BUSINESS_EVENT_ACTIONS: {
+    SERVICE_CONSUMPTION_RECORDED: 'service.consumption_recorded',
+  },
+  recordBusinessEvent: (...args: unknown[]) => mockRecordBusinessEvent(...args),
 }));
 
 import { consumeForReservation } from './consumeRecipe';
@@ -126,6 +134,7 @@ function createAdminMock() {
 describe('consumeForReservation', () => {
   beforeEach(() => {
     mockRecordMovement.mockReset();
+    mockRecordBusinessEvent.mockReset();
     mockRecordMovement
       .mockResolvedValueOnce({ data: [{ movement_id: 'move-1' }], error: null })
       .mockResolvedValueOnce({ data: [{ movement_id: 'move-2' }], error: null });
@@ -191,5 +200,21 @@ describe('consumeForReservation', () => {
         ],
       },
     ]);
+
+    expect(mockRecordBusinessEvent).toHaveBeenCalledTimes(2);
+    expect(mockRecordBusinessEvent).toHaveBeenNthCalledWith(
+      1,
+      admin,
+      expect.objectContaining({
+        action: 'service.consumption_recorded',
+        entityId: RESERVATION_ID,
+        metadata: expect.objectContaining({
+          product_id: PRODUCT_A,
+          planned_quantity: 6,
+          actual_quantity: 6,
+          variance_quantity: 0,
+        }),
+      }),
+    );
   });
 });

@@ -35,6 +35,7 @@ export const BUSINESS_EVENT_ACTIONS = {
   APPROVAL_APPROVED: 'approval.approved',
   APPROVAL_REJECTED: 'approval.rejected',
   APPROVAL_ALERTED: 'approval.alerted',
+  SERVICE_CONSUMPTION_RECORDED: 'service.consumption_recorded',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';
