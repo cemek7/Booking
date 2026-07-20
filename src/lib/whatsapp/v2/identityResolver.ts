@@ -19,6 +19,8 @@ const supabaseAdmin = createSupabaseAdminClient();
 export type ResolvedIdentity = {
   tenantId: string | null;
   role: 'owner' | 'staff' | 'customer' | 'unknown';
+  tenantUserId: string | null;
+  userId: string | null;
   routingCodeFound: boolean;
   strippedMessage: string; // message with routing code removed (if found)
 };
@@ -33,6 +35,8 @@ export async function resolveIncoming(
   const baseResult: ResolvedIdentity = {
     tenantId: null,
     role: 'unknown',
+    tenantUserId: null,
+    userId: null,
     routingCodeFound: false,
     strippedMessage: messageText.trim(),
   };
@@ -55,8 +59,17 @@ export async function resolveIncoming(
 
     if (channel === 'whatsapp') {
       // Check if phone is actually an owner/staff (takes precedence over stored role)
-      const staffRole = await resolveStaffRole(externalId, conv.tenant_id);
-      if (staffRole) resolvedRole = staffRole;
+      const staffIdentity = await resolveStaffRole(externalId, conv.tenant_id);
+      if (staffIdentity) {
+        resolvedRole = staffIdentity.role;
+        return {
+          ...baseResult,
+          tenantId: conv.tenant_id,
+          role: resolvedRole,
+          tenantUserId: staffIdentity.tenantUserId,
+          userId: staffIdentity.userId,
+        };
+      }
     }
 
     return {
@@ -88,6 +101,8 @@ export async function resolveIncoming(
         return {
           tenantId: tenant.id,
           role: 'customer',
+          tenantUserId: null,
+          userId: null,
           routingCodeFound: true,
           strippedMessage: stripped || messageText.trim(),
         };
@@ -106,7 +121,7 @@ async function resolveByPhone(
 ): Promise<Omit<ResolvedIdentity, 'strippedMessage'> | null> {
   const { data: staffRow } = await supabaseAdmin
     .from('tenant_users')
-    .select('tenant_id, role')
+    .select('id, user_id, tenant_id, role')
     .eq('phone', phone)
     .in('role', ['owner', 'staff', 'manager'])
     .maybeSingle();
@@ -115,7 +130,9 @@ async function resolveByPhone(
 
   return {
     tenantId: staffRow.tenant_id,
-    role: staffRow.role as 'owner' | 'staff',
+    role: staffRow.role === 'owner' ? 'owner' : 'staff',
+    tenantUserId: staffRow.id ?? null,
+    userId: staffRow.user_id ?? null,
     routingCodeFound: false,
   };
 }
@@ -123,17 +140,21 @@ async function resolveByPhone(
 async function resolveStaffRole(
   phone: string,
   tenantId: string
-): Promise<'owner' | 'staff' | null> {
+): Promise<{ role: 'owner' | 'staff'; tenantUserId: string | null; userId: string | null } | null> {
   const { data } = await supabaseAdmin
     .from('tenant_users')
-    .select('role')
+    .select('id, user_id, role')
     .eq('phone', phone)
     .eq('tenant_id', tenantId)
     .in('role', ['owner', 'staff', 'manager'])
     .maybeSingle();
 
   if (!data) return null;
-  return data.role === 'owner' ? 'owner' : 'staff';
+  return {
+    role: data.role === 'owner' ? 'owner' : 'staff',
+    tenantUserId: data.id ?? null,
+    userId: data.user_id ?? null,
+  };
 }
 
 // ─── Routing code generator ───────────────────────────────────────────────────
