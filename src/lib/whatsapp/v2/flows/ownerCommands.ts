@@ -20,6 +20,7 @@ import { getPermissionForAction, hasPermissionInSet } from '@/lib/booking/capabi
 import { createHash } from 'crypto';
 import { parseNairaAmount } from '@/lib/ai/parseNairaAmount';
 import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { gateApprovalForAction } from '@/lib/approvals/requests';
 import type { Role } from '@/types/roles';
 
 const supabaseAdmin = createSupabaseAdminClient();
@@ -232,6 +233,44 @@ export async function handleOwnerCommand(
   }
 
   // Write confirmed (this path: awaiting_confirmation=true, AI response is confirming)
+  if (actor?.role) {
+    try {
+      const approvalGate = await gateApprovalForAction(supabaseAdmin, {
+        tenantId,
+        actorId: actor.tenantUserId,
+        actorRole: actor.role,
+        aiResponse: aiResp,
+      });
+
+      if (approvalGate.status === 'pending') {
+        await updateConversation(convExternalId, tenantId, {
+          flow_data: {
+            ...conv.flow_data,
+            pending_action: null,
+            awaiting_confirmation: false,
+          },
+        }, convChannel);
+
+        await logAiAction(supabaseAdmin, {
+          tenantId,
+          actorType: role,
+          channel: convChannel,
+          rawMessage,
+          action: commandResponse.action,
+          params: commandResponse.params,
+          idempotencyKey,
+          validationResult: { approval_request_id: approvalGate.requestId ?? null },
+          outcome: 'pending_approval',
+          model: 'owner-command',
+        });
+
+        return approvalGate.reply ?? 'This request was sent for approval.';
+      }
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Approval checks failed. Please try again.';
+    }
+  }
+
   const execResult = await executeAction(tenantId, aiResp, {
     customerPhone: convExternalId,
     actorId: actor?.tenantUserId ?? null,

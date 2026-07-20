@@ -7,6 +7,7 @@ const mockFindByIdempotencyKey = jest.fn();
 const mockLogAiAction = jest.fn();
 const mockRecordBusinessEvent = jest.fn();
 const mockGetEffectivePermissions = jest.fn();
+const mockGateApprovalForAction = jest.fn();
 
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: () => ({
@@ -50,6 +51,10 @@ jest.mock('@/lib/permissions/effectivePermissions', () => ({
   getEffectivePermissions: (...args: unknown[]) => mockGetEffectivePermissions(...args),
 }));
 
+jest.mock('@/lib/approvals/requests', () => ({
+  gateApprovalForAction: (...args: unknown[]) => mockGateApprovalForAction(...args),
+}));
+
 import { handleOwnerCommand } from './ownerCommands';
 
 describe('handleOwnerCommand', () => {
@@ -61,6 +66,8 @@ describe('handleOwnerCommand', () => {
     mockLogAiAction.mockReset();
     mockRecordBusinessEvent.mockReset();
     mockGetEffectivePermissions.mockReset();
+    mockGateApprovalForAction.mockReset();
+    mockGateApprovalForAction.mockResolvedValue({ status: 'clear' });
   });
 
   it('returns duplicate reply for repeated write commands', async () => {
@@ -117,6 +124,48 @@ describe('handleOwnerCommand', () => {
       expect.objectContaining({
         action: 'refund_sale',
         outcome: 'denied',
+      })
+    );
+  });
+
+  it('routes over-limit discount actions into pending approval', async () => {
+    mockFindByIdempotencyKey.mockResolvedValue(null);
+    mockGetEffectivePermissions.mockResolvedValue(new Set(['ISSUE_DISCOUNTS']));
+    mockGateApprovalForAction.mockResolvedValue({
+      status: 'pending',
+      requestId: 'approval-1',
+      reply: 'Discount request sent for approval (20%).',
+    });
+
+    const reply = await handleOwnerCommand(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'create_order',
+        params: {
+          items: [{ product_id: 'product-1', quantity: 1, unit_price_cents: 10000 }],
+          discount_cents: 2000,
+          reason: 'VIP retention',
+        },
+        reply: 'Apply 20% discount?',
+        confidence: 'high',
+      },
+      {
+        role: 'staff',
+        channel: 'whatsapp',
+        external_id: '+2348000000000',
+        flow_data: { awaiting_confirmation: true },
+      } as never,
+      'Apply 20% discount'
+    );
+
+    expect(reply).toBe('Discount request sent for approval (20%).');
+    expect(mockExecuteAction).not.toHaveBeenCalled();
+    expect(mockLogAiAction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'create_order',
+        outcome: 'pending_approval',
       })
     );
   });
