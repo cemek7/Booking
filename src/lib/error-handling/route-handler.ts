@@ -22,6 +22,8 @@ import { hasPermission } from '@/types/unified-permissions';
 import type { Role } from '@/types/roles';
 import { createApiLogger } from '@/lib/logger/api-logger';
 import { getAlertService } from '@/lib/monitoring/alerting';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 
 /**
  * Lifecycle access gate — pure predicate (no I/O).
@@ -201,7 +203,8 @@ export function createApiHandler(
         const requestedTenantId = request.headers.get('x-tenant-id');
         const shouldResolveTenantMembership = requireTenantMembership || Boolean(requestedTenantId);
 
-        let tenantUser: { tenant_id: string; role: string } | null = null;
+        let tenantUser: { id: string; tenant_id: string; role: string } | null = null;
+        let userPermissions: string[] = [];
 
         if (shouldResolveTenantMembership) {
           if (!requestedTenantId) {
@@ -215,7 +218,7 @@ export function createApiHandler(
           // when the row exists. Membership validation is a server-side trust check.
           const { data: tenantUserData, error: tenantUserError } = await createSupabaseAdminClient()
             .from('tenant_users')
-            .select('tenant_id, role')
+            .select('id, tenant_id, role')
             .eq('user_id', authData.user.id)
             .eq('tenant_id', requestedTenantId)
             .maybeSingle();
@@ -232,6 +235,9 @@ export function createApiHandler(
           }
 
           tenantUser = tenantUserData;
+          userPermissions = Array.from(
+            await getEffectivePermissions(createSupabaseAdminClient(), tenantUser.tenant_id, tenantUser.id)
+          );
         }
 
         // Check role requirements — always validate roles if specified,
@@ -253,12 +259,29 @@ export function createApiHandler(
         if (options.permissions && options.permissions.length > 0) {
           const userRole = tenantUser?.role as Role | undefined;
           const denied = options.permissions.filter(permission => {
+            if (isGlobalAdmin) return false;
+            if (userPermissions.includes(permission)) return false;
             const colonIdx = permission.indexOf(':');
             const resource = colonIdx >= 0 ? permission.slice(0, colonIdx) : permission;
             const action = colonIdx >= 0 ? permission.slice(colonIdx + 1) : 'read';
             return !hasPermission(userRole ?? 'staff', resource, action as 'read' | 'write' | 'delete' | 'admin');
           });
           if (denied.length > 0) {
+            if (tenantUser?.tenant_id) {
+              await recordBusinessEvent(createSupabaseAdminClient(), {
+                tenantId: tenantUser.tenant_id,
+                actorType: 'user',
+                actorId: authData.user.id,
+                action: BUSINESS_EVENT_ACTIONS.ACCESS_DENIED,
+                entityType: 'api_route',
+                entityId: new URL(request.url).pathname,
+                source: 'api',
+                metadata: {
+                  denied_permissions: denied,
+                  role: userRole ?? 'staff',
+                },
+              });
+            }
             const error = ApiErrorFactory.insufficientPermissions(options.permissions);
             return error.toResponse();
           }
@@ -299,7 +322,7 @@ export function createApiHandler(
             email: authData.user.email || '',
             role: isGlobalAdmin ? 'superadmin' : (tenantUser?.role || ''),
             tenantId: tenantUser?.tenant_id,
-            permissions: [],
+            permissions: isGlobalAdmin ? ['*'] : userPermissions,
           },
           supabase,
           params,

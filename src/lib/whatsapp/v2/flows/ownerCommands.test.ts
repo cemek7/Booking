@@ -6,9 +6,20 @@ const mockCaptureAnalytics = jest.fn();
 const mockFindByIdempotencyKey = jest.fn();
 const mockLogAiAction = jest.fn();
 const mockRecordBusinessEvent = jest.fn();
+const mockGetEffectivePermissions = jest.fn();
 
 jest.mock('@/lib/supabase/server', () => ({
-  createSupabaseAdminClient: () => ({ from: jest.fn() }),
+  createSupabaseAdminClient: () => ({
+    from: jest.fn(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: { id: 'tenant-user-1', user_id: 'user-1', role: 'staff' },
+        error: null,
+      }),
+    })),
+  }),
 }));
 
 jest.mock('@/lib/booking/action-validator', () => ({
@@ -35,6 +46,10 @@ jest.mock('@/lib/audit/businessEvents', () => ({
   recordBusinessEvent: (...args: unknown[]) => mockRecordBusinessEvent(...args),
 }));
 
+jest.mock('@/lib/permissions/effectivePermissions', () => ({
+  getEffectivePermissions: (...args: unknown[]) => mockGetEffectivePermissions(...args),
+}));
+
 import { handleOwnerCommand } from './ownerCommands';
 
 describe('handleOwnerCommand', () => {
@@ -45,6 +60,7 @@ describe('handleOwnerCommand', () => {
     mockFindByIdempotencyKey.mockReset();
     mockLogAiAction.mockReset();
     mockRecordBusinessEvent.mockReset();
+    mockGetEffectivePermissions.mockReset();
   });
 
   it('returns duplicate reply for repeated write commands', async () => {
@@ -74,6 +90,7 @@ describe('handleOwnerCommand', () => {
 
   it('denies staff refund commands and logs the denial', async () => {
     mockFindByIdempotencyKey.mockResolvedValue(null);
+    mockGetEffectivePermissions.mockResolvedValue(new Set(['RECORD_PAYMENTS']));
 
     const reply = await handleOwnerCommand(
       '+2348000000000',

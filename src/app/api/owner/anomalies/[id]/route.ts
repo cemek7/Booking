@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createHttpHandler, getRouteParam, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { getAnomaly, updateAnomaly } from '@/lib/anomalies/service';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const PatchSchema = z.object({
   assigned_to: z.string().uuid().nullable().optional(),
@@ -19,7 +20,7 @@ export const GET = createHttpHandler(
     return { anomaly };
   },
   'GET',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.APPROVE_ANOMALIES] }
 );
 
 export const PATCH = createHttpHandler(
@@ -42,5 +43,5 @@ export const PATCH = createHttpHandler(
     return { anomaly };
   },
   'PATCH',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.APPROVE_ANOMALIES] }
 );

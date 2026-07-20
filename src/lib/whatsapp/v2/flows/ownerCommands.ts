@@ -16,9 +16,11 @@ import { updateConversation, ConvState, ConvChannel } from '../conversationState
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
-import { getCapabilityForAction, hasCapability } from '@/lib/booking/capabilityMap';
+import { getPermissionForAction, hasPermissionInSet } from '@/lib/booking/capabilityMap';
 import { createHash } from 'crypto';
 import { parseNairaAmount } from '@/lib/ai/parseNairaAmount';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import type { Role } from '@/types/roles';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -33,6 +35,13 @@ type StaffListRow = {
   role: string | null;
 };
 
+type CommandActorContext = {
+  role: Role;
+  tenantUserId: string;
+  userId: string | null;
+  permissions: Set<string>;
+};
+
 type OwnerAIResponse = AIResponse & {
   idempotency_key?: string;
   requires_confirmation?: boolean;
@@ -42,6 +51,29 @@ function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | 
   return {
     ...((row?.metadata as Record<string, unknown> | null) ?? {}),
     tone_config: row?.tone_config ?? null,
+  };
+}
+
+async function resolveCommandActor(
+  tenantId: string,
+  phone: string
+): Promise<CommandActorContext | null> {
+  const { data, error } = await supabaseAdmin
+    .from('tenant_users')
+    .select('id, user_id, role')
+    .eq('tenant_id', tenantId)
+    .eq('phone', phone)
+    .in('role', ['owner', 'manager', 'staff'])
+    .maybeSingle<{ id: string; user_id: string | null; role: Role }>();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  return {
+    role: data.role,
+    tenantUserId: data.id,
+    userId: data.user_id,
+    permissions: await getEffectivePermissions(supabaseAdmin, tenantId, data.id),
   };
 }
 
@@ -71,10 +103,13 @@ export async function handleOwnerCommand(
   // ── AI response ───────────────────────────────────────────────────────────
   const aiResp = normalizeMoneyParams(input as AIResponse);
   const commandResponse = aiResp as OwnerAIResponse;
-  const actionCapability = getCapabilityForAction(commandResponse.action);
   const role = conv.role ?? 'owner';
+  const requiredPermission = getPermissionForAction(commandResponse.action);
   const writeAction = isWriteAction(commandResponse.action);
   const idempotencyKey = getIdempotencyKey(tenantId, convExternalId, rawMessage, commandResponse, writeAction);
+  const actor = requiredPermission || writeAction
+    ? await resolveCommandActor(tenantId, convExternalId)
+    : null;
 
   await captureServerAnalyticsEvent({
     event: ANALYTICS_EVENTS.OWNER_COMMAND_USED,
@@ -93,7 +128,12 @@ export async function handleOwnerCommand(
 
   // Walk-in: execute immediately — no confirmation needed, customer is present
   if (aiResp.action === 'walk_in') {
-    const execResult = await executeAction(tenantId, aiResp, { customerPhone: convExternalId });
+    const execResult = await executeAction(tenantId, aiResp, {
+      customerPhone: convExternalId,
+      actorId: actor?.tenantUserId ?? null,
+      userRole: role === 'staff' ? 'staff' : 'owner',
+      channel: convChannel,
+    });
     await logAiAction(supabaseAdmin, {
       tenantId,
       actorType: role,
@@ -119,16 +159,17 @@ export async function handleOwnerCommand(
     }
   }
 
-  if (actionCapability && !hasCapability(role, actionCapability)) {
+  if (requiredPermission) {
+    if (!actor || !hasPermissionInSet(actor.permissions, requiredPermission)) {
     await recordBusinessEvent(supabaseAdmin, {
       tenantId,
       actorType: role === 'staff' ? 'staff' : 'user',
-      actorId: null,
+      actorId: actor?.userId ?? null,
       action: BUSINESS_EVENT_ACTIONS.COMMAND_DENIED,
       entityType: 'ai_action',
       entityId: commandResponse.action,
       source: 'whatsapp',
-      metadata: { capability: actionCapability, role, params: commandResponse.params },
+      metadata: { permission: requiredPermission, role, params: commandResponse.params },
     });
     await logAiAction(supabaseAdmin, {
       tenantId,
@@ -138,11 +179,12 @@ export async function handleOwnerCommand(
       action: commandResponse.action,
       params: commandResponse.params,
       idempotencyKey,
-      validationResult: { denied_capability: actionCapability },
+      validationResult: { denied_permission: requiredPermission },
       outcome: 'denied',
       model: 'owner-command',
     });
     return 'You are not permitted to run that command.';
+  }
   }
 
   // If AI wants confirmation before executing a write action, store pending action
@@ -190,7 +232,12 @@ export async function handleOwnerCommand(
   }
 
   // Write confirmed (this path: awaiting_confirmation=true, AI response is confirming)
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: convExternalId });
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: convExternalId,
+    actorId: actor?.tenantUserId ?? null,
+    userRole: role === 'staff' ? 'staff' : 'owner',
+    channel: convChannel,
+  });
   await updateConversation(convExternalId, tenantId, {
     flow_data: {
       ...conv.flow_data,
@@ -249,7 +296,13 @@ async function handleRuleMatch(
         return 'I already handled that command.';
       }
 
-      const result = await executeAction(tenantId, pending, { customerPhone: externalId });
+      const actor = await resolveCommandActor(tenantId, externalId);
+      const result = await executeAction(tenantId, pending, {
+        customerPhone: externalId,
+        actorId: actor?.tenantUserId ?? null,
+        userRole: conv.role === 'staff' ? 'staff' : 'owner',
+        channel,
+      });
       await updateConversation(externalId, tenantId, {
         flow_data: { ...conv.flow_data, pending_action: null, awaiting_confirmation: false },
       }, channel);

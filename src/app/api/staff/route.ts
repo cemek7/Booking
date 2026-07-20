@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createHttpHandler, parseJsonBody, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const StaffSeedSchema = z.object({
   name: z.string().optional(),
@@ -39,7 +40,7 @@ export const GET = createHttpHandler(
     return { staff };
   },
   'GET',
-  { auth: true }
+  { auth: true, permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );
 
 /**
@@ -73,5 +74,5 @@ export const POST = createHttpHandler(
     return { success: true, count: rows.length };
   },
   'POST',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );

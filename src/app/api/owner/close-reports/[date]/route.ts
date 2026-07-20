@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 export const GET = createHttpHandler(
   async (ctx) => {
@@ -34,5 +35,5 @@ export const GET = createHttpHandler(
     return { run, items: items ?? [] };
   },
   'GET',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.VIEW_REVENUE] }
 );

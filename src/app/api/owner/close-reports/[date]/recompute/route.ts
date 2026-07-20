@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { computeDailyClose } from '@/lib/reconciliation/reconciliationService';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 export const POST = createHttpHandler(
   async (ctx) => {
@@ -32,5 +33,5 @@ export const POST = createHttpHandler(
     return { runId };
   },
   'POST',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.VIEW_REVENUE] }
 );

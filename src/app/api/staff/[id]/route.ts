@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 /**
  * DELETE /api/staff/[id]
@@ -44,5 +45,5 @@ export const DELETE = createHttpHandler(
     return { success: true };
   },
   'DELETE',
-  { auth: true, roles: ['owner'] }
+  { auth: true, roles: ['owner'], permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );

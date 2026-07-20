@@ -3,6 +3,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import PaymentService from '@/lib/paymentService';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 interface DepositRequest {
   amount: number;
@@ -11,6 +12,10 @@ interface DepositRequest {
   reservationId: string;
   provider?: 'paystack' | 'stripe' | 'flutterwave';
 }
+
+type TenantMetadata = {
+  paystack_subaccount_code?: string;
+};
 
 export const POST = createHttpHandler(
   async (ctx) => {
@@ -87,7 +92,7 @@ export const POST = createHttpHandler(
         .select('metadata')
         .eq('id', tenantUser.tenant_id)
         .single();
-      subaccountCode = (tenant?.metadata as any)?.paystack_subaccount_code ?? undefined;
+      subaccountCode = (tenant?.metadata as TenantMetadata | null)?.paystack_subaccount_code ?? undefined;
     }
 
     const paymentService = new PaymentService(ctx.supabase);
@@ -137,5 +142,5 @@ export const POST = createHttpHandler(
     };
   },
   'POST',
-  { auth: true }
+  { auth: true, permissions: [BOOKA_PERMISSIONS.RECORD_PAYMENTS] }
 );

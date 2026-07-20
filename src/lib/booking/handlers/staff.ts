@@ -1,12 +1,46 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { logAiAction } from '@/lib/ai/aiActionLog';
+import { setPermissionOverride } from '@/lib/permissions/overrides';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
+import type { Role } from '@/types/roles';
 import type { ActionHandler } from './registry';
 
 type ActionContext = { actorId?: string | null; role?: string };
 
 function getString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+const STAFF_CAPABILITY_PERMISSION_MAP: Record<string, string> = {
+  refund: BOOKA_PERMISSIONS.ISSUE_REFUNDS,
+  refunds: BOOKA_PERMISSIONS.ISSUE_REFUNDS,
+  refund_sale: BOOKA_PERMISSIONS.ISSUE_REFUNDS,
+  payment: BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  payments: BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  record_payment: BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  record_payments: BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  discount: BOOKA_PERMISSIONS.ISSUE_DISCOUNTS,
+  discounts: BOOKA_PERMISSIONS.ISSUE_DISCOUNTS,
+  stock: BOOKA_PERMISSIONS.ADJUST_INVENTORY,
+  inventory: BOOKA_PERMISSIONS.ADJUST_INVENTORY,
+  adjust_stock: BOOKA_PERMISSIONS.ADJUST_INVENTORY,
+  sales: BOOKA_PERMISSIONS.RECORD_SALES,
+  record_sales: BOOKA_PERMISSIONS.RECORD_SALES,
+  staff: BOOKA_PERMISSIONS.MANAGE_STAFF,
+  manage_staff: BOOKA_PERMISSIONS.MANAGE_STAFF,
+};
+
+function getPermissionFromCapability(capability: string): string | null {
+  const key = capability.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return STAFF_CAPABILITY_PERMISSION_MAP[key] ?? null;
+}
+
+function normalizeActorRole(role?: string): Role {
+  if (role === 'superadmin' || role === 'owner' || role === 'manager' || role === 'staff') {
+    return role;
+  }
+  return 'owner';
 }
 
 async function staffSalesQueryExecute(admin: SupabaseClient, tenantId: string, params: Record<string, unknown>) {
@@ -89,35 +123,58 @@ async function setStaffCapabilityExecute(
     return { success: false, error: 'set_staff_capability requires staff_id and capability' };
   }
 
+  const permission = getPermissionFromCapability(capability);
+  if (!permission) {
+    return { success: false, error: `Unknown staff capability: ${capability}` };
+  }
+
+  const actorRole = normalizeActorRole(ctx.role);
+  const actorId = ctx.actorId ?? null;
+  if (!actorId) {
+    return { success: false, error: 'set_staff_capability requires an authenticated actor' };
+  }
+
+  const actorPerms = await getEffectivePermissions(admin, tenantId, actorId);
+  const override = enabled
+    ? await setPermissionOverride(admin, {
+        tenantId,
+        targetUserId: staffId,
+        permission,
+        effect: 'grant',
+        actorRole,
+        actorPerms,
+        actorUserId: actorId,
+        reason: `AI command: ${capability} enabled`,
+      })
+    : await setPermissionOverride(admin, {
+        tenantId,
+        targetUserId: staffId,
+        permission,
+        effect: 'revoke',
+        actorRole,
+        actorPerms,
+        actorUserId: actorId,
+        reason: `AI command: ${capability} disabled`,
+      });
+
   await logAiAction(admin, {
     tenantId,
     actorType: 'user',
-    actorId: ctx.actorId ?? null,
+    actorId,
     channel: 'whatsapp',
     rawMessage: null,
     action: 'set_staff_capability',
-    params: { staff_id: staffId, capability, enabled },
+    params: { staff_id: staffId, capability, permission, enabled },
     idempotencyKey: `staff-capability:${tenantId}:${staffId}:${capability}:${enabled}`,
-    validationResult: { deferred_to_permissions_spec: true },
+    validationResult: { permission, enabled, override_id: (override as { id?: string } | null)?.id ?? null },
     outcome: 'executed',
     model: 'system',
   });
 
-  await recordBusinessEvent(admin, {
-    tenantId,
-    actorType: 'user',
-    actorId: ctx.actorId ?? null,
-    action: BUSINESS_EVENT_ACTIONS.STAFF_PERMISSION_CHANGED,
-    entityType: 'tenant_user',
-    entityId: staffId,
-    source: 'whatsapp',
-    metadata: { capability, enabled, deferred_to_permissions_spec: true },
-  });
-
   return {
     success: true,
-    reply: `Recorded capability intent for staff member ${staffId}: ${capability} ${enabled ? 'enabled' : 'disabled'}.`,
-    data: { staff_id: staffId, capability, enabled },
+    reply: `Updated staff permissions for ${staffId}: ${permission} ${enabled ? 'granted' : 'revoked'}.`,
+    data: { staff_id: staffId, capability, permission, enabled },
   };
 }
 

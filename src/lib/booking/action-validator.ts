@@ -420,6 +420,7 @@ export async function executeAction(
   tenantId: string,
   aiResponse: AIResponse,
   context: {
+    actorId?: string | null;
     customerPhone?: string;
     tenantStaffId?: string;
     customerId?: string;
@@ -438,7 +439,8 @@ export async function executeAction(
       params as Record<string, unknown>,
       {
         channel: context.channel,
-        actorId: context.customerId ?? null,
+        actorId: context.actorId ?? context.customerId ?? null,
+        role: context.userRole,
         customerPhone: context.customerPhone,
         tenantStaffId: context.tenantStaffId,
         customerId: context.customerId,

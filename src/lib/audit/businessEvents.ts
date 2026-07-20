@@ -25,6 +25,7 @@ export const BUSINESS_EVENT_ACTIONS = {
   CUSTOMER_TAGGED: 'customer.tagged',
   STAFF_PERMISSION_CHANGED: 'staff.permission_changed',
   COMMAND_DENIED: 'command.denied',
+  ACCESS_DENIED: 'access.denied',
   ANOMALY_DETECTED: 'anomaly.detected',
   ANOMALY_RESOLVED: 'anomaly.resolved',
   ANOMALY_REVIEWED: 'anomaly.reviewed',

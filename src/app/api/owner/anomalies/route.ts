@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { listAnomalies } from '@/lib/anomalies/service';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 export const GET = createHttpHandler(
   async (ctx) => {
@@ -20,5 +21,5 @@ export const GET = createHttpHandler(
     return { anomalies };
   },
   'GET',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.APPROVE_ANOMALIES] }
 );
