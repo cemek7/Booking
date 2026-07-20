@@ -19,6 +19,7 @@ import {
 } from '@/lib/whatsapp/product-service';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { createRetailOrderPaymentLinkForCustomer } from '@/lib/commerce/retail-orders';
+import { dispatchExecute, dispatchValidate } from '@/lib/booking/handlers/registry';
 import type { Product } from '@/types/product-catalogue';
 
 const supabaseAdmin = createSupabaseAdminClient();
@@ -72,6 +73,17 @@ export async function validateAction(
   aiResponse: AIResponse
 ): Promise<ValidationResult> {
   const { action, params } = aiResponse;
+  const registryResult = await dispatchValidate(
+    supabaseAdmin as unknown as import('@supabase/supabase-js').SupabaseClient,
+    tenantId,
+    action,
+    params as Record<string, unknown>,
+    {}
+  );
+
+  if (registryResult.handled && registryResult.result) {
+    return registryResult.result;
+  }
 
   switch (action) {
     case 'create_booking':
@@ -400,6 +412,30 @@ export async function executeAction(
   const { action, params } = aiResponse;
 
   try {
+    const registryResult = await dispatchExecute(
+      supabaseAdmin as unknown as import('@supabase/supabase-js').SupabaseClient,
+      tenantId,
+      action,
+      params as Record<string, unknown>,
+      {
+        channel: context.channel,
+        actorId: context.customerId ?? null,
+        customerPhone: context.customerPhone,
+        tenantStaffId: context.tenantStaffId,
+        customerId: context.customerId,
+        messageId: context.messageId,
+        userRole: context.userRole,
+      }
+    );
+
+    if (registryResult.handled && registryResult.result) {
+      return {
+        success: registryResult.result.success,
+        error: registryResult.result.error,
+        data: registryResult.result.reply ? { reply: registryResult.result.reply } : undefined,
+      };
+    }
+
     switch (action) {
       case 'create_booking': {
         const startAt = params.start_at;
