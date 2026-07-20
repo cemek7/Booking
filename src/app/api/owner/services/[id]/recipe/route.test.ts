@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+const mockCreateSupabaseAdminClient = jest.fn();
+
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: () => mockCreateSupabaseAdminClient(),
+}));
+
 import { GET, PUT } from './route';
 
 const SERVICE_ID = '11111111-1111-4111-8111-111111111111';
@@ -96,9 +102,11 @@ describe('/api/owner/services/[id]/recipe', () => {
   });
 
   it('returns the service recipe', async () => {
+    mockCreateSupabaseAdminClient.mockReturnValue(createAdminMock());
+
     const response = await GET({
       request: new Request(`http://localhost/api/owner/services/${SERVICE_ID}/recipe`, { method: 'GET' }),
-      supabase: createAdminMock() as never,
+      supabase: {} as never,
       params: { id: SERVICE_ID },
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: ['MANAGE_PRODUCTS'] },
     });
@@ -114,6 +122,8 @@ describe('/api/owner/services/[id]/recipe', () => {
   });
 
   it('rejects non-convertible units loudly', async () => {
+    mockCreateSupabaseAdminClient.mockReturnValue(createAdminMock());
+
     await expect(
       PUT({
         request: {
@@ -132,7 +142,7 @@ describe('/api/owner/services/[id]/recipe', () => {
             ],
           }),
         } as never,
-        supabase: createAdminMock() as never,
+        supabase: {} as never,
         params: { id: SERVICE_ID },
         user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: ['MANAGE_PRODUCTS'] },
       }),
@@ -141,6 +151,7 @@ describe('/api/owner/services/[id]/recipe', () => {
 
   it('saves convertible recipe items', async () => {
     const admin = createAdminMock();
+    mockCreateSupabaseAdminClient.mockReturnValue(admin);
 
     const response = await PUT({
       request: {
@@ -160,7 +171,7 @@ describe('/api/owner/services/[id]/recipe', () => {
           ],
         }),
       } as never,
-      supabase: admin as never,
+      supabase: {} as never,
       params: { id: SERVICE_ID },
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: ['MANAGE_PRODUCTS'] },
     });

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createHttpHandler, getRouteParam, getVerifiedTenantId, type RouteContext } from '@/lib/error-handling/route-handler';
 import { convert, type InventoryUom } from '@/lib/inventory/uom';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const RecipeItemSchema = z.object({
@@ -70,8 +71,9 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const tenantId = getVerifiedTenantId(ctx);
     const serviceId = getRouteParam(ctx.params, 'id');
+    const admin = createSupabaseAdminClient();
 
-    const { data, error } = await ctx.supabase
+    const { data, error } = await admin
       .from('service_material_recipes')
       .select(`
         id, tenant_id, service_id, is_active, notes, created_at, updated_at,
@@ -94,15 +96,16 @@ export const PUT = createHttpHandler(
   async (ctx) => {
     const tenantId = getVerifiedTenantId(ctx);
     const serviceId = getRouteParam(ctx.params, 'id');
+    const admin = createSupabaseAdminClient();
     const parsed = RecipeSchema.safeParse((await ctx.request.json().catch(() => ({}))) as unknown);
 
     if (!parsed.success) {
       throw ApiErrorFactory.validationError({ issues: parsed.error.issues });
     }
 
-    await validateRecipeItems(ctx, tenantId, parsed.data.items);
+    await validateRecipeItems({ ...ctx, supabase: admin }, tenantId, parsed.data.items);
 
-    const { data: recipe, error: recipeError } = await ctx.supabase
+    const { data: recipe, error: recipeError } = await admin
       .from('service_material_recipes')
       .upsert(
         {
@@ -121,7 +124,7 @@ export const PUT = createHttpHandler(
       throw ApiErrorFactory.databaseError(recipeError ?? new Error('Failed to save recipe'));
     }
 
-    const { error: deleteError } = await ctx.supabase
+    const { error: deleteError } = await admin
       .from('service_material_recipe_items')
       .delete()
       .eq('recipe_id', recipe.id);
@@ -129,7 +132,7 @@ export const PUT = createHttpHandler(
     if (deleteError) throw ApiErrorFactory.databaseError(deleteError);
 
     if (parsed.data.items.length > 0) {
-      const { error: insertError } = await ctx.supabase
+      const { error: insertError } = await admin
         .from('service_material_recipe_items')
         .insert(
           parsed.data.items.map((item) => ({

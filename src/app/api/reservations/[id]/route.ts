@@ -7,6 +7,7 @@ import { parseIso } from '@/lib/utils';
 import { defaultLogger } from '@/lib/logger';
 import { siasOperations } from '@/lib/sias-operations';
 import { markReservationCompleted } from '@/lib/reconciliation/reservationSnapshot';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 /**
  * GET,PATCH,DELETE /api/reservations/[id]
@@ -150,7 +151,7 @@ export const PATCH = createHttpHandler(
       }
 
       // price_cents_snapshot frozen here — do not read live services.price for revenue (spec 1 §4.2)
-      await markReservationCompleted(ctx.supabase, tenantId, reservationId, ctx.user!.id);
+      await markReservationCompleted(createSupabaseAdminClient(), tenantId, reservationId, ctx.user!.id);
 
       const { data: refreshed, error: refreshedError } = await ctx.supabase
         .from('reservations')

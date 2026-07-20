@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
+import { consumeForReservation } from '@/lib/inventory/consumeRecipe';
 
 interface ReservationServiceLine {
   service_id: string;
@@ -91,6 +92,8 @@ export async function markReservationCompleted(
     .eq('id', reservationId);
 
   if (error) throw error;
+
+  await consumeForReservation(admin, tenantId, reservationId, actorId);
 
   await recordBusinessEvent(admin, {
     tenantId,
