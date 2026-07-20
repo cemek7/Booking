@@ -5,7 +5,8 @@
  * better hierarchy management, context-aware permissions, and audit capabilities
  */
 
-import { Role, ROLE_PERMISSION_MAP, PermissionCheckResult } from './index';
+import type { Role } from './roles';
+import { ROLE_PERMISSION_MAP, type PermissionCheckResult } from './permissions';
 
 // Enhanced role hierarchy with explicit levels and inheritance rules
 export interface EnhancedRoleHierarchy {
