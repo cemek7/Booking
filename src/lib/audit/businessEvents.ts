@@ -24,6 +24,8 @@ export const BUSINESS_EVENT_ACTIONS = {
   CUSTOMER_TAGGED: 'customer.tagged',
   STAFF_PERMISSION_CHANGED: 'staff.permission_changed',
   COMMAND_DENIED: 'command.denied',
+  ANOMALY_DETECTED: 'anomaly.detected',
+  ANOMALY_RESOLVED: 'anomaly.resolved',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';
