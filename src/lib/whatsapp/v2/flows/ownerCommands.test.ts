@@ -169,4 +169,34 @@ describe('handleOwnerCommand', () => {
       })
     );
   });
+
+  it('denies discounted create_order commands when the actor lacks ISSUE_DISCOUNTS', async () => {
+    mockFindByIdempotencyKey.mockResolvedValue(null);
+    mockGetEffectivePermissions.mockResolvedValue(new Set(['RECORD_SALES']));
+
+    const reply = await handleOwnerCommand(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'create_order',
+        params: {
+          items: [{ product_id: 'product-1', quantity: 1, unit_price_cents: 10000 }],
+          discount_cents: 500,
+          reason: 'promo',
+        },
+        reply: 'Apply promo discount?',
+        confidence: 'high',
+      },
+      {
+        role: 'staff',
+        channel: 'whatsapp',
+        external_id: '+2348000000000',
+        flow_data: {},
+      } as never,
+      'Apply promo discount'
+    );
+
+    expect(reply).toBe('You are not permitted to run that command.');
+    expect(mockExecuteAction).not.toHaveBeenCalled();
+  });
 });

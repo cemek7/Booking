@@ -48,6 +48,22 @@ type OwnerAIResponse = AIResponse & {
   requires_confirmation?: boolean;
 };
 
+function toInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  }
+  return null;
+}
+
+function actionRequiresDiscountPermission(aiResp: AIResponse): boolean {
+  if (aiResp.action !== 'create_order') return false;
+  const discountCents = Math.max(0, toInteger(aiResp.params.discount_cents ?? aiResp.params.discount) ?? 0);
+  const discountPercent = Math.max(0, toInteger(aiResp.params.discount_percent) ?? 0);
+  return discountCents > 0 || discountPercent > 0;
+}
+
 function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
   return {
     ...((row?.metadata as Record<string, unknown> | null) ?? {}),
@@ -105,7 +121,9 @@ export async function handleOwnerCommand(
   const aiResp = normalizeMoneyParams(input as AIResponse);
   const commandResponse = aiResp as OwnerAIResponse;
   const role = conv.role ?? 'owner';
-  const requiredPermission = getPermissionForAction(commandResponse.action);
+  const requiredPermission = actionRequiresDiscountPermission(commandResponse)
+    ? 'ISSUE_DISCOUNTS'
+    : getPermissionForAction(commandResponse.action);
   const writeAction = isWriteAction(commandResponse.action);
   const idempotencyKey = getIdempotencyKey(tenantId, convExternalId, rawMessage, commandResponse, writeAction);
   const actor = requiredPermission || writeAction
