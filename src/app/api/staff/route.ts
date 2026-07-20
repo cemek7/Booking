@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler, parseJsonBody, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 
 const StaffSeedSchema = z.object({
@@ -67,7 +68,11 @@ export const POST = createHttpHandler(
       role: m.role ?? 'staff',
     }));
 
-    const { error } = await ctx.supabase.from('tenant_users').insert(rows);
+    // This onboarding seed path creates placeholder tenant_users rows before the
+    // invited staff claim an auth account. Use the admin client after auth/tenant
+    // ownership has already been verified by the route wrapper so we do not rely
+    // on RLS behavior for partially populated placeholder rows.
+    const { error } = await createSupabaseAdminClient().from('tenant_users').insert(rows);
     if (error) throw ApiErrorFactory.databaseError(error);
 
     return { success: true, count: rows.length };

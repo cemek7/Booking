@@ -455,13 +455,15 @@ export default function OnboardingPage() {
       try {
         await Promise.all(
           valid.map(async (s) => {
+            const parsedDuration = s.duration ? Number(s.duration) : undefined;
+            const parsedPrice = s.price ? Number(s.price) : undefined;
             const res = await fetch('/api/services', {
               method: 'POST',
               headers: jsonHeaders(tenantHeaders()),
               body: JSON.stringify({
                 name: s.name.trim(),
-                duration: s.duration ? Number(s.duration) : undefined,
-                price: s.price ? Number(s.price) : undefined,
+                duration: Number.isFinite(parsedDuration) && (parsedDuration ?? 0) > 0 ? parsedDuration : undefined,
+                price: Number.isFinite(parsedPrice) && (parsedPrice ?? -1) >= 0 ? parsedPrice : undefined,
               }),
             });
             if (!res.ok) throw new Error(`service:${res.status}`);
