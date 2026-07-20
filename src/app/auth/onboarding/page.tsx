@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import OnboardingClientPage from './OnboardingClientPage';
 import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getRoleDashboardPath } from '@/types/unified-permissions';
+import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
 
 async function isSuperadmin(userId: string, email?: string | null): Promise<boolean> {
   const admin = createSupabaseAdminClient();
@@ -33,15 +34,35 @@ export default async function OnboardingPage() {
     redirect('/dashboard/superadmin');
   }
 
-  const { data: memberships } = await createSupabaseAdminClient()
+  const admin = createSupabaseAdminClient();
+  const { data: memberships } = await admin
     .from('tenant_users')
-    .select('role')
+    .select('tenant_id, role')
     .eq('user_id', user.id)
     .order('tenant_id', { ascending: true })
     .limit(1);
 
-  const role = memberships?.[0]?.role;
+  const membership = memberships?.[0];
+  const role = membership?.role;
   if (role) {
+    const { data: tenant } = membership?.tenant_id
+      ? await admin
+          .from('tenants')
+          .select('id, slug, name, timezone, settings, metadata')
+          .eq('id', membership.tenant_id)
+          .maybeSingle()
+      : { data: null };
+
+    if (isTenantOnboardingIncomplete(tenant)) {
+      return (
+        <OnboardingClientPage
+          initialTenantId={membership.tenant_id}
+          initialTenantSlug={tenant?.slug ?? null}
+          initialResumeMode
+        />
+      );
+    }
+
     redirect(getRoleDashboardPath(role));
   }
 

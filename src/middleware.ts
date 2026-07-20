@@ -5,6 +5,8 @@ import { initializeUnifiedMiddleware } from '@/middleware/unified/middleware-ada
 import { getRoleDashboardPath } from '@/types/unified-permissions';
 import { isValidRole } from '@/types/roles';
 import { getAuthenticatedUserRole } from '@/middleware/unified/auth/auth-handler';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
 
 export const runtime = 'nodejs';
 
@@ -159,6 +161,19 @@ export async function middleware(request: NextRequest) {
     const { role: resolvedRole, isAuthenticated, tenantId } = await getAuthenticatedUserRole(request);
     const role = resolvedRole?.toLowerCase() ?? null;
     if (role && isValidRole(role)) {
+      if (tenantId && tenantId !== 'global') {
+        const admin = createSupabaseAdminClient();
+        const { data: tenant } = await admin
+          .from('tenants')
+          .select('settings, metadata')
+          .eq('id', tenantId)
+          .maybeSingle();
+
+        if (isTenantOnboardingIncomplete(tenant)) {
+          return NextResponse.redirect(new URL('/booka/auth/onboarding?resume=1', request.url));
+        }
+      }
+
       const dashboardPath = getRoleDashboardPath(role);
       return NextResponse.redirect(new URL(dashboardPath, request.url));
     }

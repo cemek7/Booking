@@ -142,7 +142,17 @@ const sectionTitleCls = "text-2xl font-semibold tracking-tight text-[var(--brand
 const sectionCopyCls = "mt-1 text-sm leading-7 text-slate-600";
 const labelCls = "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.24em] text-[#597061]";
 
-export default function OnboardingPage() {
+interface OnboardingClientPageProps {
+  initialResumeMode?: boolean;
+  initialTenantId?: string | null;
+  initialTenantSlug?: string | null;
+}
+
+export default function OnboardingPage({
+  initialResumeMode = false,
+  initialTenantId = null,
+  initialTenantSlug = null,
+}: OnboardingClientPageProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenRef = useRef<string | null>(null);
@@ -246,6 +256,23 @@ export default function OnboardingPage() {
       // Ignore malformed draft data.
     }
   }, []);
+
+  useEffect(() => {
+    if (!initialTenantId) return;
+
+    setTenantId((current) => current ?? initialTenantId);
+    if (initialTenantSlug) {
+      setTenantSlug((current) => current ?? initialTenantSlug);
+    }
+    if (initialResumeMode) {
+      setStep((current) => (current === 'basics' ? 'services' : current));
+    }
+    try {
+      localStorage.setItem('current_tenant', JSON.stringify({ id: initialTenantId }));
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [initialResumeMode, initialTenantId, initialTenantSlug]);
 
   function next() { setStep((s) => STEPS[Math.min(STEPS.indexOf(s) + 1, STEPS.length - 1)]); }
   function back() { setStep((s) => STEPS[Math.max(STEPS.indexOf(s) - 1, 0)]); }
@@ -610,6 +637,8 @@ export default function OnboardingPage() {
                 useDmReplies: instagramUseDmReplies,
               },
             },
+            onboardingCompleted: true,
+            onboardingCompletedAt: new Date().toISOString(),
           }),
         });
       } catch {

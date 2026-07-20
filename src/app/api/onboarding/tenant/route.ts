@@ -70,7 +70,7 @@ const _authenticatedPOST = createHttpHandler(
       span.setAttribute('tenant.id', tenantId);
 
       await captureServerAnalyticsEvent({
-        event: ANALYTICS_EVENTS.TENANT_ONBOARDING_COMPLETED,
+        event: ANALYTICS_EVENTS.TENANT_ONBOARDING_STARTED,
         properties: {
           tenant_id: tenantId,
           business_category: bodyValidation.data.industry ?? bodyValidation.data.business_type ?? null,

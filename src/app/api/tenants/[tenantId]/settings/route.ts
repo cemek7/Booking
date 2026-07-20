@@ -87,6 +87,8 @@ const SettingsSchemaBase = z.object({
   whatsappDefaultDelaySeconds: z.number().int().min(0).optional(),
   whatsappLinkPreview: z.boolean().optional(),
   managedOnboarding: z.boolean().optional(),
+  onboardingCompleted: z.boolean().optional(),
+  onboardingCompletedAt: z.string().min(1).optional(),
   verticalPackage: z.string().min(1).optional(),
   billingModel: z.string().min(1).optional(),
   managedPromise: z.string().min(1).optional(),
