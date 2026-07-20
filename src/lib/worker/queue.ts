@@ -41,7 +41,7 @@ const DataExportJobSchema = z.object({
 });
 
 const MaintenanceJobSchema = z.object({
-  type: z.enum(['cleanup_old_data', 'generate_reports', 'sync_external_calendars', 'backup_database']),
+  type: z.enum(['cleanup_old_data', 'generate_reports', 'send_close_reports', 'sync_external_calendars', 'backup_database']),
   tenant_id: z.string().uuid().optional(),
   parameters: z.record(z.any()).optional()
 });
@@ -447,6 +447,15 @@ export class WorkerQueueService {
         }
       );
 
+      // Every 15 minutes, sweep tenants whose local close-report time has passed.
+      await queue.add('send_close_reports',
+        { type: 'send_close_reports' },
+        {
+          repeat: { cron: '*/15 * * * *' },
+          jobId: 'send-close-reports'
+        }
+      );
+
       // Hourly external calendar sync
       await queue.add('sync_external_calendars',
         { type: 'sync_external_calendars' },
@@ -761,6 +770,9 @@ export class WorkerQueueService {
         case 'generate_reports':
           await this.generateReports();
           break;
+        case 'send_close_reports':
+          await this.sendCloseReports();
+          break;
         case 'sync_external_calendars':
           await this.syncExternalCalendars();
           break;
@@ -989,6 +1001,12 @@ export class WorkerQueueService {
   private async generateReports(): Promise<void> {
     // Reports are generated on-demand via analytics API routes
     defaultLogger.info('[WorkerQueue] Report generation delegated to analytics API');
+  }
+
+  private async sendCloseReports(): Promise<void> {
+    const { runDueCloseReportsWithAdmin } = await import('@/lib/reconciliation/closeReportJob');
+    const sentCount = await runDueCloseReportsWithAdmin();
+    defaultLogger.info('[WorkerQueue] Close report sweep complete', { sentCount });
   }
 
   private async syncExternalCalendars(): Promise<void> {

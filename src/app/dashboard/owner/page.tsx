@@ -68,6 +68,12 @@ const quickLinks = [
     icon: FileText,
   },
   {
+    href: '/dashboard/owner/close-reports',
+    title: 'Daily Close',
+    description: 'Review expected revenue, recorded payments, and unresolved gaps.',
+    icon: DollarSign,
+  },
+  {
     href: '/dashboard/settings',
     title: 'Settings',
     description: 'Configure preferences, business details, and AI settings.',
