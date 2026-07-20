@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Capability } from '../capabilityMap';
+import { commerceHandlers } from './commerce';
 
 export interface ActionContext {
   role?: string;
@@ -27,10 +28,12 @@ export interface ActionHandler {
     tenantId: string,
     params: Record<string, unknown>,
     ctx: ActionContext
-  ): Promise<{ success: boolean; error?: string; reply?: string }>;
+  ): Promise<{ success: boolean; error?: string; reply?: string; data?: unknown }>;
 }
 
-export const HANDLERS: Record<string, ActionHandler> = {};
+export const HANDLERS: Record<string, ActionHandler> = {
+  ...commerceHandlers,
+};
 
 export async function dispatchValidate(
   admin: SupabaseClient,
@@ -53,7 +56,7 @@ export async function dispatchExecute(
   action: string,
   params: Record<string, unknown>,
   ctx: ActionContext
-): Promise<{ handled: boolean; result?: { success: boolean; error?: string; reply?: string } }> {
+): Promise<{ handled: boolean; result?: { success: boolean; error?: string; reply?: string; data?: unknown } }> {
   const handler = HANDLERS[action];
   if (!handler) return { handled: false };
   return {

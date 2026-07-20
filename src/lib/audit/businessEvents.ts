@@ -7,6 +7,10 @@ export const BUSINESS_EVENT_ACTIONS = {
   RECONCILIATION_DELIVERED: 'reconciliation.delivered',
   RETAIL_ORDER_DELIVERED: 'retail_order.delivered',
   DISCOUNT_APPLIED: 'discount.applied',
+  PRODUCT_STOCK_ADJUSTED: 'product.stock_adjusted',
+  PRODUCT_PRICE_CHANGED: 'product.price_changed',
+  PRODUCT_ADDED: 'product.added',
+  PRODUCT_AVAILABILITY_CHANGED: 'product.availability_changed',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';

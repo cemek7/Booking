@@ -38,6 +38,11 @@ export type AIAction =
   | 'offer_upsell'
   | 'offer_cross_sell'
   | 'create_retail_payment_link'
+  | 'add_product'
+  | 'adjust_stock'
+  | 'set_price'
+  | 'set_availability'
+  | 'low_stock_query'
   | 'recover_lead'
   | 'cancel_booking'
   | 'reschedule_booking'
@@ -432,7 +437,7 @@ export async function executeAction(
       return {
         success: registryResult.result.success,
         error: registryResult.result.error,
-        data: registryResult.result.reply ? { reply: registryResult.result.reply } : undefined,
+        data: registryResult.result.data ?? (registryResult.result.reply ? { reply: registryResult.result.reply } : undefined),
       };
     }
 
