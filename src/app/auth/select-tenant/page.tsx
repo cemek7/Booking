@@ -9,6 +9,7 @@ interface TenantOption {
   role: string;
   name: string | null;
   slug: string | null;
+  onboarding_incomplete?: boolean;
 }
 
 interface PickerState {
@@ -49,7 +50,11 @@ export default function SelectTenantPage() {
       email: state.email,
       user_id: state.userId,
     });
-    router.push(getRedirectUrl(determineUserType(false, normalizedRole), normalizedRole));
+    router.push(
+      tenant.onboarding_incomplete
+        ? '/booka/auth/onboarding?resume=1'
+        : getRedirectUrl(determineUserType(false, normalizedRole), normalizedRole)
+    );
   }
 
   if (!state) {
