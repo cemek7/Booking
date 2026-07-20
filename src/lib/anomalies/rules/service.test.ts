@@ -75,4 +75,31 @@ describe('serviceRules', () => {
 
     expect(candidates).toHaveLength(0);
   });
+
+  it('flags deposits_not_applied when only successful deposits exist for a completed reservation', async () => {
+    const admin = makeAdmin();
+    admin.__responses.set('reservations', {
+      data: [{ id: 'reservation-2', price_cents_snapshot: 20000 }],
+      error: null,
+    });
+    admin.__responses.set('transactions', {
+      data: [{ subject_type: 'reservation', subject_id: 'reservation-2', amount: 50, type: 'deposit', status: 'success' }],
+      error: null,
+    });
+
+    const depositsRule = serviceRules.find((rule) => rule.key === 'deposits_not_applied');
+    expect(depositsRule).toBeDefined();
+
+    const candidates = await depositsRule!.detect(admin, 'tenant-1', {
+      startUtc: '2026-07-20T00:00:00.000Z',
+      endUtc: '2026-07-21T00:00:00.000Z',
+    }, { window: { startUtc: '2026-07-20T00:00:00.000Z', endUtc: '2026-07-21T00:00:00.000Z' } });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toEqual(expect.objectContaining({
+      ruleKey: 'deposits_not_applied',
+      entityId: 'reservation-2',
+      actualValueCents: 5000,
+    }));
+  });
 });

@@ -51,4 +51,39 @@ describe('retailRules', () => {
       entityId: 'order-1',
     }));
   });
+
+  it('does not flag legacy sale transactions before the rollout cutoff when subject linkage is missing', async () => {
+    const admin = makeAdmin();
+    admin.__responses.set('transactions', {
+      data: [
+        {
+          id: 'tx-legacy-1',
+          subject_type: null,
+          subject_id: null,
+          amount: 120,
+          type: 'sale',
+          status: 'success',
+          created_at: '2026-07-01T10:00:00.000Z',
+        },
+      ],
+      error: null,
+    });
+
+    const paymentWithoutSaleRule = retailRules.find((rule) => rule.key === 'payment_without_matching_sale');
+    expect(paymentWithoutSaleRule).toBeDefined();
+
+    const candidates = await paymentWithoutSaleRule!.detect(admin, 'tenant-1', {
+      startUtc: '2026-07-01T00:00:00.000Z',
+      endUtc: '2026-07-02T00:00:00.000Z',
+      rolloutCutoffUtc: '2026-07-15T00:00:00.000Z',
+    }, {
+      window: {
+        startUtc: '2026-07-01T00:00:00.000Z',
+        endUtc: '2026-07-02T00:00:00.000Z',
+        rolloutCutoffUtc: '2026-07-15T00:00:00.000Z',
+      },
+    });
+
+    expect(candidates).toHaveLength(0);
+  });
 });
