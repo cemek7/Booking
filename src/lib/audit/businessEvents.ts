@@ -11,6 +11,10 @@ export const BUSINESS_EVENT_ACTIONS = {
   PRODUCT_PRICE_CHANGED: 'product.price_changed',
   PRODUCT_ADDED: 'product.added',
   PRODUCT_AVAILABILITY_CHANGED: 'product.availability_changed',
+  STOCK_DAMAGED: 'stock.damaged',
+  STOCK_RESTOCKED: 'stock.restocked',
+  STOCK_TRANSFERRED: 'stock.transferred',
+  STOCK_COUNT_RECORDED: 'stock.count_recorded',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';

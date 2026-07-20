@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Capability } from '../capabilityMap';
 import { commerceHandlers } from './commerce';
+import { inventoryHandlers } from './inventory';
 
 export interface ActionContext {
   role?: string;
@@ -33,6 +34,7 @@ export interface ActionHandler {
 
 export const HANDLERS: Record<string, ActionHandler> = {
   ...commerceHandlers,
+  ...inventoryHandlers,
 };
 
 export async function dispatchValidate(
