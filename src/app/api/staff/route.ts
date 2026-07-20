@@ -7,7 +7,7 @@ const StaffSeedSchema = z.object({
   name: z.string().optional(),
   email: z.string().email().optional(),
   phone: z.string().optional(),
-  role: z.enum(['owner', 'manager', 'staff']).optional(),
+  role: z.enum(['manager', 'staff']).optional(),
 });
 
 /**

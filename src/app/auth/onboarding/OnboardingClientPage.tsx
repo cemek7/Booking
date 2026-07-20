@@ -12,7 +12,7 @@ import { getStoredIsAdmin } from '@/lib/auth/token-storage';
 import BrandMark from '@/components/brand/BrandMark';
 
 interface ServiceDraft { name: string; duration: string; price: string }
-interface StaffDraft { name: string; email: string; phone: string; role: 'owner' | 'staff' }
+interface StaffDraft { name: string; email: string; phone: string; role: 'manager' | 'staff' }
 interface FaqDraft { question: string; answer: string; category: string }
 
 type OnboardingDraft = {
@@ -898,10 +898,10 @@ export default function OnboardingPage() {
                     <input value={s.phone} onChange={(e) => updateStaff(i, 'phone', e.target.value)}
                       className={inputCls} placeholder="WhatsApp number (e.g. 2348012345678)" type="tel" />
                     <div className="relative">
-                      <select value={s.role} onChange={(e) => updateStaff(i, 'role', e.target.value as 'owner' | 'staff')}
+                      <select value={s.role} onChange={(e) => updateStaff(i, 'role', e.target.value as 'manager' | 'staff')}
                         className={selectCls}>
                         <option value="staff">Staff</option>
-                        <option value="owner">Owner</option>
+                        <option value="manager">Manager</option>
                       </select>
                       <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
