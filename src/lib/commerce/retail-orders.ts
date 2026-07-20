@@ -4,6 +4,7 @@ import { PaymentsAdapter } from '@/lib/paymentsAdapter';
 import { siasOperations } from '@/lib/sias-operations';
 import { defaultLogger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
+import { resolveCustomer } from '@/lib/customers/identity';
 
 type ProductSnapshot = {
   id: string;
@@ -70,24 +71,9 @@ async function resolveCustomerId(
   tenantId: string,
   externalId: string
 ): Promise<string | null> {
-  // Two value-bound .eq() lookups instead of an interpolated .or() filter — an
-  // external-provided identifier must never be spliced into a PostgREST filter
-  // expression (injection risk). `phone` first, then the legacy `phone_number`.
-  const byPhone = await admin
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('phone', externalId)
-    .maybeSingle();
-  if (typeof byPhone.data?.id === 'string') return byPhone.data.id;
-
-  const byPhoneNumber = await admin
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('phone_number', externalId)
-    .maybeSingle();
-  return typeof byPhoneNumber.data?.id === 'string' ? byPhoneNumber.data.id : null;
+  return resolveCustomer(admin, tenantId, externalId, {
+    source: 'retail_chat_sales',
+  });
 }
 
 async function resolveCustomerAndChat(tenantId: string, externalId: string) {

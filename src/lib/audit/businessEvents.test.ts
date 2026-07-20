@@ -4,13 +4,28 @@ import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from './businessEvents';
 
 function mockAdmin(insert: jest.Mock): SupabaseClient {
   return {
-    from: jest.fn(() => ({ insert })),
+    from: jest.fn(() => ({
+      insert,
+    })),
   } as unknown as SupabaseClient;
 }
 
 describe('recordBusinessEvent', () => {
   it('inserts a normalized row into business_events', async () => {
-    const insert = jest.fn(async () => ({ error: null }));
+    const insert = jest.fn(() => ({
+      select: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({
+        data: {
+          tenant_id: 't1',
+          action: BUSINESS_EVENT_ACTIONS.RECONCILIATION_COMPUTED,
+          entity_type: 'reconciliation_run',
+          entity_id: 'r1',
+          created_at: '2026-07-20T00:00:00.000Z',
+          metadata: {},
+        },
+        error: null,
+      }),
+    }));
     const admin = mockAdmin(insert);
 
     await recordBusinessEvent(admin, {
@@ -34,7 +49,10 @@ describe('recordBusinessEvent', () => {
   });
 
   it('never throws when the insert errors', async () => {
-    const insert = jest.fn(async () => ({ error: { message: 'boom' } }));
+    const insert = jest.fn(() => ({
+      select: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: null, error: { message: 'boom' } }),
+    }));
     await expect(
       recordBusinessEvent(mockAdmin(insert), {
         tenantId: 't1',

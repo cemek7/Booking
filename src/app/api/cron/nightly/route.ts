@@ -22,9 +22,20 @@ import { brandCustomerText } from '@/lib/whatsapp/v2/outboundBranding';
 import { sendGovernedInitiated } from '@/lib/whatsapp/v2/deliverability/governedSend';
 import { runGraduationAdvisor } from '@/lib/whatsapp/v2/deliverability/graduationAdvisor';
 import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/lib/offboarding/purgeWorker';
+import { recomputeProfile } from '@/lib/customers/profile';
+import { normalizePhone } from '@/lib/customers/identity';
 
 const supabaseAdmin = createSupabaseAdminClient();
-type LooseRow = Record<string, any>;
+type LooseRow = Record<string, unknown>;
+
+type WeeklyInsightAccumulator = {
+  totalBookings: number;
+  completed: number;
+  cancelled: number;
+  noShows: number;
+  revenue: number;
+  topServices: Map<string, number>;
+};
 
 export const maxDuration = 300; // 5-minute budget for nightly job
 
@@ -447,93 +458,17 @@ async function aggregateTenantDailySummary(tenantId: string, date: string): Prom
 async function aggregateCustomerProfiles(tenantId: string): Promise<number> {
   const { data: customers } = await supabaseAdmin
     .from('customers')
-    .select('id, name, customer_name, phone, phone_number')
-    .eq('tenant_id', tenantId);
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .is('merged_into', null);
 
   if (!customers?.length) return 0;
 
-  const { data: reservations } = await supabaseAdmin
-    .from('reservations')
-    .select('customer_id, service_id, tenant_staff_id, staff_id, status, start_at')
-    .eq('tenant_id', tenantId)
-    .order('start_at', { ascending: false });
-
-  const reservationRows = (reservations ?? []) as LooseRow[];
-  const byCustomer = new Map<string, Array<Record<string, unknown>>>();
-  for (const reservation of reservationRows) {
-    const customerId = typeof reservation.customer_id === 'string' ? reservation.customer_id : null;
-    if (!customerId) continue;
-    const current = byCustomer.get(customerId) ?? [];
-    current.push(reservation as Record<string, unknown>);
-    byCustomer.set(customerId, current);
+  for (const customer of customers as Array<{ id: string }>) {
+    await recomputeProfile(supabaseAdmin, tenantId, customer.id);
   }
 
-  const serviceIds = [...new Set(reservationRows.map((reservation: LooseRow) => reservation.service_id).filter((value): value is string => typeof value === 'string'))];
-  const [{ data: staffRows }, { data: services }] = await Promise.all([
-    supabaseAdmin
-      .from('tenant_users')
-      .select('id, user_id, name, phone')
-      .eq('tenant_id', tenantId),
-    serviceIds.length
-      ? supabaseAdmin
-          .from('services')
-          .select('id, name')
-          .in('id', serviceIds)
-      : Promise.resolve({ data: [] }),
-  ]);
-  const staffMap = new Map(((staffRows ?? []) as LooseRow[]).map((staff: LooseRow) => [staff.id, staff.name ?? staff.phone ?? staff.id]));
-  const staffUserMap = new Map(((staffRows ?? []) as LooseRow[]).flatMap((staff: LooseRow) => typeof staff.user_id === 'string' ? [[staff.user_id, staff.name ?? staff.phone ?? staff.user_id]] : []));
-  const serviceMap = new Map(((services ?? []) as LooseRow[]).map((service: LooseRow) => [service.id, service.name ?? service.id]));
-
-  const rows = (customers as LooseRow[]).map((customer: LooseRow) => {
-    const history = byCustomer.get(customer.id) ?? [];
-    const favoriteService = mostFrequentString(
-      history.map((entry) => {
-        const serviceId = typeof entry.service_id === 'string' ? entry.service_id : null;
-        return serviceId ? String(serviceMap.get(serviceId) ?? serviceId) : null;
-      })
-    );
-    const favoriteStaff = mostFrequentString(
-      history.map((entry) => {
-        const staffId = typeof entry.tenant_staff_id === 'string'
-          ? entry.tenant_staff_id
-          : typeof entry.staff_id === 'string'
-            ? entry.staff_id
-            : null;
-        if (!staffId) return null;
-        return typeof entry.tenant_staff_id === 'string'
-          ? String(staffMap.get(staffId) ?? staffId)
-          : String(staffUserMap.get(staffId) ?? staffId);
-      })
-    );
-
-    const completedHistory = history.filter((entry) => entry.status === 'completed');
-    const lastVisit = typeof completedHistory[0]?.start_at === 'string' ? completedHistory[0].start_at : null;
-    const daysSinceVisit = lastVisit ? diffDays(lastVisit, new Date().toISOString()) : null;
-    const lifetimeBookings = history.length;
-
-    return {
-      tenant_id: tenantId,
-      customer_id: customer.id,
-      customer_name: customer.name ?? customer.customer_name ?? null,
-      customer_phone: customer.phone ?? customer.phone_number ?? null,
-      lifetime_bookings: lifetimeBookings,
-      last_visit: lastVisit,
-      favorite_service: favoriteService,
-      favorite_staff: favoriteStaff,
-      days_since_visit: daysSinceVisit,
-      risk_score: deriveCustomerRisk(lifetimeBookings, daysSinceVisit),
-      generated_at: new Date().toISOString(),
-    };
-  });
-
-  if (rows.length > 0) {
-    await supabaseAdmin
-      .from('customer_profile_summary')
-      .upsert(rows, { onConflict: 'tenant_id,customer_id' });
-  }
-
-  return rows.length;
+  return customers.length;
 }
 
 async function aggregateServicePerformance(tenantId: string): Promise<number> {
@@ -809,28 +744,6 @@ function calculateAvailabilityForDuration(
   return slots;
 }
 
-function mostFrequentString(values: Array<string | null>): string | null {
-  const counts = new Map<string, number>();
-  for (const value of values) {
-    if (!value) continue;
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-}
-
-function deriveCustomerRisk(lifetimeBookings: number, daysSinceVisit: number | null): 'low' | 'medium' | 'high' {
-  if (daysSinceVisit === null) return 'high';
-  if (daysSinceVisit > 120) return 'high';
-  if (daysSinceVisit > 60 || lifetimeBookings <= 1) return 'medium';
-  return 'low';
-}
-
-function diffDays(olderIso: string, newerIso: string): number {
-  const older = new Date(olderIso).getTime();
-  const newer = new Date(newerIso).getTime();
-  return Math.max(0, Math.floor((newer - older) / (1000 * 60 * 60 * 24)));
-}
-
 function timeToMinutes(time: string): number {
   const [hours, minutes] = time.split(':').map(Number);
   return hours * 60 + (minutes ?? 0);
@@ -894,9 +807,8 @@ export async function sendRebookingFollowUps(): Promise<number> {
 
     if (!tenant?.v2_enabled) continue;
     if (!service?.rebooking_interval_days) continue;
-    if (!reservation.customer_number) continue;
-
-    const recipientPhone = reservation.customer_number;
+    const recipientPhone = normalizePhone(reservation.customer_number) ?? reservation.customer_number;
+    if (!recipientPhone) continue;
     const serviceId = reservation.service_id as string;
 
     const { data: customer } = reservation.customer_id
@@ -1072,10 +984,11 @@ export async function sendRebookingNudges(): Promise<number> {
       // Deduplicate — take the most recent reservation per customer
       const latestByPhone = new Map<string, (typeof reservations)[number]>();
       for (const r of reservations) {
-        if (!r.customer_number) continue;
-        const existing = latestByPhone.get(r.customer_number);
+        const normalizedPhone = normalizePhone(r.customer_number) ?? r.customer_number;
+        if (!normalizedPhone) continue;
+        const existing = latestByPhone.get(normalizedPhone);
         if (!existing || r.start_at > existing.start_at) {
-          latestByPhone.set(r.customer_number, r);
+          latestByPhone.set(normalizedPhone, r);
         }
       }
 
@@ -1235,8 +1148,8 @@ export async function sendOwnerWeeklyDigest(): Promise<number> {
 
     if (!insights?.length) continue;
 
-    const summary = (insights as LooseRow[]).reduce(
-      (acc: Record<string, any>, row: LooseRow) => {
+    const summary = (insights as LooseRow[]).reduce<WeeklyInsightAccumulator>(
+      (acc, row) => {
         acc.totalBookings += Number(row.total_bookings ?? 0);
         acc.completed += Number(row.completed ?? 0);
         acc.cancelled += Number(row.cancelled ?? 0);
@@ -1316,11 +1229,15 @@ export async function sendAtRiskClientsAlert(): Promise<number> {
       .not('customer_number', 'is', null)
       .not('status', 'in', '("cancelled","no_show")');
 
-    const upcomingPhones = new Set(((upcomingReservations ?? []) as LooseRow[]).map((row: LooseRow) => row.customer_number as string));
+    const upcomingPhones = new Set(
+      ((upcomingReservations ?? []) as LooseRow[])
+        .map((row: LooseRow) => normalizePhone(row.customer_number as string | null) ?? (row.customer_number as string | null))
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    );
     const lastCompletedByPhone = new Map<string, { customer_id: string | null; service_id: string | null; start_at: string }>();
 
     for (const reservation of completedReservations) {
-      const phone = reservation.customer_number as string | null;
+      const phone = normalizePhone(reservation.customer_number as string | null) ?? (reservation.customer_number as string | null);
       if (!phone || upcomingPhones.has(phone)) continue;
 
       const existing = lastCompletedByPhone.get(phone);

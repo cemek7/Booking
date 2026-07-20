@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { findCustomerByPhone, normalizePhone } from '@/lib/customers/identity';
 
 export interface CustomerRecall {
   lastService: string | null;
@@ -7,11 +8,6 @@ export interface CustomerRecall {
   visitCount: number;
   rebookingDue: boolean;
 }
-
-type CustomerLookupRow = {
-  id?: string | null;
-  last_visit?: string | null;
-};
 
 type VisitRow = {
   start_at: string | null;
@@ -32,53 +28,6 @@ function readService(row: VisitRow) {
   return Array.isArray(payload) ? (payload[0] ?? null) : (payload ?? null);
 }
 
-function uniquePhoneCandidates(phone: string): string[] {
-  const digits = phone.replace(/\D/g, '');
-  const candidates = [phone.trim(), digits];
-
-  if (digits.startsWith('234') && digits.length > 3) {
-    candidates.push(`0${digits.slice(3)}`);
-    candidates.push(`+${digits}`);
-  } else if (digits.startsWith('0') && digits.length > 1) {
-    candidates.push(`234${digits.slice(1)}`);
-    candidates.push(`+234${digits.slice(1)}`);
-  }
-
-  return [...new Set(candidates.filter(Boolean))];
-}
-
-async function findCustomer(
-  admin: SupabaseClient,
-  tenantId: string,
-  phone: string,
-): Promise<CustomerLookupRow | null> {
-  for (const candidate of uniquePhoneCandidates(phone)) {
-    const { data: phoneRow } = await admin
-      .from('customers')
-      .select('id, last_visit')
-      .eq('tenant_id', tenantId)
-      .eq('phone', candidate)
-      .maybeSingle();
-
-    if (phoneRow?.id) {
-      return phoneRow as CustomerLookupRow;
-    }
-
-    const { data: phoneNumberRow } = await admin
-      .from('customers')
-      .select('id, last_visit')
-      .eq('tenant_id', tenantId)
-      .eq('phone_number', candidate)
-      .maybeSingle();
-
-    if (phoneNumberRow?.id) {
-      return phoneNumberRow as CustomerLookupRow;
-    }
-  }
-
-  return null;
-}
-
 /**
  * Tenant-scoped recall for a returning WhatsApp customer.
  * Returns null for unknown/new customers or on any error.
@@ -89,10 +38,10 @@ export async function getCustomerRecall(
   phone: string,
 ): Promise<CustomerRecall | null> {
   try {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) return null;
 
-    const customer = await findCustomer(admin, tenantId, normalizedPhone);
+    const customer = await findCustomerByPhone(admin, tenantId, normalizedPhone, 'id, last_visit, merged_into');
     if (!customer?.id) return null;
 
     const { data: rows } = await admin

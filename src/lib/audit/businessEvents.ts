@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { processBusinessEventForAnomalies } from '@/lib/anomalies/realtimeSubscriber';
+import { processBusinessEventForCustomerProfile } from '@/lib/customers/profileSubscriber';
 
 export const BUSINESS_EVENT_ACTIONS = {
   RESERVATION_COMPLETED: 'reservation.completed',
@@ -24,6 +25,7 @@ export const BUSINESS_EVENT_ACTIONS = {
   ORDER_CANCELLED: 'order.cancelled',
   CUSTOMER_NOTE_ADDED: 'customer.note_added',
   CUSTOMER_TAGGED: 'customer.tagged',
+  CUSTOMER_MERGED: 'customer.merged',
   STAFF_PERMISSION_CHANGED: 'staff.permission_changed',
   COMMAND_DENIED: 'command.denied',
   ACCESS_DENIED: 'access.denied',
@@ -106,6 +108,22 @@ export async function recordBusinessEvent(
         metadata: data.metadata ?? null,
       }).catch((subscriberError) => {
         console.warn('[businessEvents] anomaly subscriber failed', {
+          tenantId: event.tenantId,
+          action: event.action,
+          error:
+            subscriberError instanceof Error
+              ? subscriberError.message
+              : String(subscriberError),
+        });
+      });
+
+      processBusinessEventForCustomerProfile(admin, {
+        tenantId: data.tenant_id,
+        action: data.action,
+        entityType: data.entity_type ?? null,
+        entityId: data.entity_id ?? null,
+      }).catch((subscriberError) => {
+        console.warn('[businessEvents] customer profile subscriber failed', {
           tenantId: event.tenantId,
           action: event.action,
           error:

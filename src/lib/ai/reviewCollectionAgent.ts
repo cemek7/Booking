@@ -7,6 +7,7 @@
  */
 
 import { defaultLogger } from '@/lib/logger';
+import { findCustomerByPhone, normalizePhone } from '@/lib/customers/identity';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
@@ -40,14 +41,38 @@ interface ReviewConversationState {
   attempts: number;
 }
 
+interface ReviewSessionMetadata {
+  reservation_id?: string;
+  staff_name?: string;
+  service_name?: string;
+}
+
+interface ReservationReviewRow {
+  id: string;
+  tenant_id: string;
+  customer_id?: string | null;
+  customer_number?: string | null;
+  staff_id?: string | null;
+  tenant_staff_id?: string | null;
+  service_id?: string | null;
+  start_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export class ReviewCollectionAgent {
   private supabase = createServerSupabaseClient();
+
+  private normalizeSessionPhone(phone: string): string {
+    return normalizePhone(phone) ?? phone;
+  }
 
   /**
    * Initiate review collection for a completed booking
    */
   async initiateReviewRequest(request: ReviewRequest): Promise<boolean> {
     try {
+      const sessionPhone = this.normalizeSessionPhone(request.customerPhone);
+
       // Check if review already exists
       const { data: existingReview } = await this.supabase
         .from('reviews')
@@ -72,7 +97,7 @@ export class ReviewCollectionAgent {
       await this.supabase
         .from('whatsapp_sessions')
         .upsert({
-          phone_number: request.customerPhone,
+          phone_number: sessionPhone,
           tenant_id: request.tenantId,
           session_type: 'review_collection',
           state: state,
@@ -86,7 +111,7 @@ export class ReviewCollectionAgent {
 
       // Send initial review request message
       const message = this.generateInitialMessage(request);
-      await this.sendMessage(request.tenantId, request.customerPhone, message);
+      await this.sendMessage(request.tenantId, sessionPhone, message);
 
       // Log the review request
       await this.supabase
@@ -119,11 +144,13 @@ export class ReviewCollectionAgent {
     message: string
   ): Promise<{ reply: string; completed: boolean }> {
     try {
+      const sessionPhone = this.normalizeSessionPhone(customerPhone);
+
       // Get current conversation state
       const { data: session } = await this.supabase
         .from('whatsapp_sessions')
         .select('*')
-        .eq('phone_number', customerPhone)
+        .eq('phone_number', sessionPhone)
         .eq('session_type', 'review_collection')
         .eq('tenant_id', tenantId)
         .single();
@@ -136,16 +163,16 @@ export class ReviewCollectionAgent {
       }
 
       const state = session.state as ReviewConversationState;
-      const metadata = session.metadata as any;
+      const metadata = (session.metadata ?? {}) as ReviewSessionMetadata;
 
       // Process based on current step
       switch (state.step) {
         case 'initial_request':
         case 'awaiting_rating':
-          return await this.processRatingResponse(state, metadata, message, customerPhone);
+          return await this.processRatingResponse(state, metadata, message, sessionPhone);
 
         case 'awaiting_feedback':
-          return await this.processFeedbackResponse(state, metadata, message, customerPhone);
+          return await this.processFeedbackResponse(state, metadata, message, sessionPhone);
 
         default:
           return {
@@ -237,7 +264,7 @@ export class ReviewCollectionAgent {
    */
   private async processRatingResponse(
     state: ReviewConversationState,
-    metadata: any,
+    metadata: ReviewSessionMetadata,
     message: string,
     customerPhone: string
   ): Promise<{ reply: string; completed: boolean }> {
@@ -289,7 +316,7 @@ export class ReviewCollectionAgent {
    */
   private async processFeedbackResponse(
     state: ReviewConversationState,
-    metadata: any,
+    metadata: ReviewSessionMetadata,
     message: string,
     customerPhone: string
   ): Promise<{ reply: string; completed: boolean }> {
@@ -304,7 +331,7 @@ export class ReviewCollectionAgent {
     }
 
     // Save the review to database
-    await this.saveReview(state, metadata);
+    await this.saveReview(state);
 
     state.step = 'completed';
     await this.updateSessionState(customerPhone, state);
@@ -323,10 +350,7 @@ export class ReviewCollectionAgent {
   /**
    * Save review to database
    */
-  private async saveReview(
-    state: ReviewConversationState,
-    metadata: any
-  ): Promise<void> {
+  private async saveReview(state: ReviewConversationState): Promise<void> {
     try {
       // Get reservation details
       const { data: reservation } = await this.supabase
@@ -404,7 +428,7 @@ export class ReviewCollectionAgent {
     await this.supabase
       .from('whatsapp_sessions')
       .update({ state: state })
-      .eq('phone_number', customerPhone)
+      .eq('phone_number', this.normalizeSessionPhone(customerPhone))
       .eq('session_type', 'review_collection');
   }
 
@@ -456,7 +480,7 @@ export class ReviewCollectionAgent {
       // Get reservation details
       const { data: reservation } = await supabase
         .from('reservations')
-        .select('id, tenant_id, customer_id, staff_id, tenant_staff_id, service_id, start_at, metadata')
+        .select('id, tenant_id, customer_id, customer_number, staff_id, tenant_staff_id, service_id, start_at, metadata')
         .eq('id', reservationId)
         .eq('status', 'completed')
         .single();
@@ -465,15 +489,30 @@ export class ReviewCollectionAgent {
         defaultLogger.info('Reservation not found or incomplete data:', reservationId);
         return;
       }
-      const res = reservation as any;
+      const res = reservation as ReservationReviewRow;
+      const reservationPhone = normalizePhone(
+        typeof (res as { customer_number?: unknown }).customer_number === 'string'
+          ? (res as { customer_number?: string | null }).customer_number
+          : null,
+      );
+
       const [{ data: customer }, { data: staff }, { data: service }] = await Promise.all([
-        res.customer_id
-          ? supabase
-              .from('customers')
-              .select('name, customer_name, phone, phone_number')
-              .eq('id', res.customer_id)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
+        reservationPhone
+          ? Promise.resolve({
+              data: await findCustomerByPhone(
+                supabase,
+                res.tenant_id,
+                reservationPhone,
+                'id, name, customer_name, phone, phone_number, normalized_phone',
+              ),
+            })
+          : res.customer_id
+            ? supabase
+                .from('customers')
+                .select('id, name, customer_name, phone, phone_number, normalized_phone')
+                .eq('id', res.customer_id)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
         supabase
           .from('tenant_users')
           .select('id, user_id, name')
@@ -485,7 +524,9 @@ export class ReviewCollectionAgent {
           : Promise.resolve({ data: null }),
       ]);
 
-      const customerPhone = customer?.phone ?? customer?.phone_number;
+      const customerPhone =
+        normalizePhone(customer?.normalized_phone ?? customer?.phone ?? customer?.phone_number ?? null)
+        ?? reservationPhone;
       const customerName = customer?.name ?? customer?.customer_name;
       const staffName = staff?.name ?? 'our team';
 

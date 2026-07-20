@@ -53,7 +53,7 @@ export interface Permission {
 export interface PermissionCondition {
   type: 'time' | 'location' | 'data' | 'user' | 'tenant';
   operator: 'equals' | 'contains' | 'greater' | 'less' | 'in' | 'not_in';
-  value: any;
+  value: unknown;
   description: string;
 }
 
@@ -70,7 +70,7 @@ export interface PermissionRestriction {
   permissionId: string;
   restrictionType: 'time' | 'data' | 'feature' | 'rate';
   description: string;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 // Permission check result
@@ -79,7 +79,7 @@ export interface PermissionCheckResult {
   permission: Permission;
   reason?: string;
   restrictions?: PermissionRestriction[];
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 // System-wide permission registry
@@ -102,6 +102,8 @@ export const BOOKA_PERMISSIONS = {
   VIEW_ANALYTICS: 'VIEW_ANALYTICS',
   VIEW_REVENUE: 'VIEW_REVENUE',
   MANAGE_STAFF: 'MANAGE_STAFF',
+  VIEW_CUSTOMER_NOTES: 'VIEW_CUSTOMER_NOTES',
+  MERGE_CUSTOMERS: 'MERGE_CUSTOMERS',
   APPROVE_ANOMALIES: 'APPROVE_ANOMALIES',
   APPROVE_LARGE_DISCOUNTS: 'APPROVE_LARGE_DISCOUNTS',
   APPROVE_REFUNDS: 'APPROVE_REFUNDS',
@@ -208,6 +210,20 @@ export const PERMISSIONS: PermissionRegistry = {
     action: 'manage',
     scope: 'tenant',
     description: 'Manage staff access, permissions, and accountability settings',
+  },
+  [BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES]: {
+    id: BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES,
+    category: 'user',
+    action: 'view',
+    scope: 'tenant',
+    description: 'View sensitive customer notes and internal memory',
+  },
+  [BOOKA_PERMISSIONS.MERGE_CUSTOMERS]: {
+    id: BOOKA_PERMISSIONS.MERGE_CUSTOMERS,
+    category: 'user',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Review duplicate customers and merge customer histories',
   },
   [BOOKA_PERMISSIONS.APPROVE_ANOMALIES]: {
     id: BOOKA_PERMISSIONS.APPROVE_ANOMALIES,
@@ -480,6 +496,8 @@ const BOOKA_MANAGER_PERMISSIONS: BookaPermissionId[] = [
   BOOKA_PERMISSIONS.VIEW_ANALYTICS,
   BOOKA_PERMISSIONS.VIEW_REVENUE,
   BOOKA_PERMISSIONS.MANAGE_STAFF,
+  BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES,
+  BOOKA_PERMISSIONS.MERGE_CUSTOMERS,
   BOOKA_PERMISSIONS.APPROVE_ANOMALIES,
   BOOKA_PERMISSIONS.APPROVE_LARGE_DISCOUNTS,
   BOOKA_PERMISSIONS.APPROVE_REFUNDS,
@@ -491,6 +509,7 @@ const BOOKA_STAFF_PERMISSIONS: BookaPermissionId[] = [
   BOOKA_PERMISSIONS.VIEW_PRODUCTS,
   BOOKA_PERMISSIONS.RECORD_SALES,
   BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES,
 ];
 
 // Role permission mappings
@@ -558,13 +577,14 @@ export const ROLE_PERMISSION_MAP: Record<Role, string[]> = {
 export function hasPermission(
   userRole: Role, // Updated to use standardized Role type
   permissionId: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): PermissionCheckResult {
   // Import enhanced permission checking for better inheritance
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { hasEnhancedPermission } = require('./enhanced-permissions');
     return hasEnhancedPermission(userRole, permissionId, context);
-  } catch (error) {
+  } catch {
     // Fallback to original implementation if enhanced module not available
     defaultLogger.warn('Enhanced permissions not available, using fallback');
     return hasPermissionFallback(userRole, permissionId, context);
@@ -575,7 +595,7 @@ export function hasPermission(
 function hasPermissionFallback(
   userRole: Role,
   permissionId: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): PermissionCheckResult {
   // Check direct permissions
   const rolePermissions = ROLE_PERMISSION_MAP[userRole] || [];
@@ -595,7 +615,13 @@ function hasPermissionFallback(
   if (!permission) {
     return {
       granted: false,
-      permission: permission,
+      permission: {
+        id: permissionId,
+        category: 'api',
+        action: 'read',
+        scope: 'none',
+        description: 'Unknown permission',
+      },
       reason: 'Permission not found'
     };
   }
@@ -611,7 +637,7 @@ function hasPermissionFallback(
 export function checkPermissions(
   userRole: Role, // Updated to use standardized Role type
   requiredPermissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): PermissionCheckResult[] {
   return requiredPermissions.map(permissionId => 
     hasPermission(userRole, permissionId, context)
@@ -621,7 +647,7 @@ export function checkPermissions(
 export function hasAllPermissions(
   userRole: Role, // Updated to use standardized Role type
   requiredPermissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): boolean {
   const results = checkPermissions(userRole, requiredPermissions, context);
   return results.every(result => result.granted);
@@ -630,7 +656,7 @@ export function hasAllPermissions(
 export function hasAnyPermission(
   userRole: Role, // Updated to use standardized Role type
   requiredPermissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): boolean {
   const results = checkPermissions(userRole, requiredPermissions, context);
   return results.some(result => result.granted);
@@ -638,10 +664,11 @@ export function hasAnyPermission(
 
 export function getPermissionsForRole(role: Role): Permission[] {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getAllPermissionsForRole } = require('./enhanced-permissions');
     const permissionIds = getAllPermissionsForRole(role);
     return permissionIds.map((id: string) => PERMISSIONS[id]).filter(Boolean); // Explicitly typed `id`
-  } catch (error) {
+  } catch {
     // Fallback to original implementation
     defaultLogger.warn('Enhanced permissions not available, using fallback for getPermissionsForRole');
     return getPermissionsForRoleFallback(role);
