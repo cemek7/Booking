@@ -10,6 +10,7 @@ export interface BusinessEventRecord {
   entityType?: string | null;
   entityId?: string | null;
   createdAt?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 function eventWindow(event: BusinessEventRecord): RuleWindow {
@@ -31,6 +32,7 @@ export async function processBusinessEventForAnomalies(
   const ctx = {
     window: eventWindow(event),
     eventAction: event.action,
+    eventMetadata: event.metadata ?? null,
     runId: null,
   };
   const rules = getMatchingRules('realtime', ctx);

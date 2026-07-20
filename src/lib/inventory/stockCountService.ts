@@ -185,6 +185,50 @@ export async function startCountSession(
   return session;
 }
 
+export async function listCountSessions(
+  admin: SupabaseClient,
+  tenantId: string
+) {
+  const { data, error } = await admin
+    .from('stock_count_sessions')
+    .select('id, tenant_id, location_id, status, started_by, snapshot_at, approved_by, approved_at, shrinkage_value_cents, notes, created_at')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getCountSessionWithItems(
+  admin: SupabaseClient,
+  tenantId: string,
+  sessionId: string
+) {
+  const { data: session, error: sessionError } = await admin
+    .from('stock_count_sessions')
+    .select('id, tenant_id, location_id, status, started_by, snapshot_at, approved_by, approved_at, shrinkage_value_cents, notes, created_at')
+    .eq('tenant_id', tenantId)
+    .eq('id', sessionId)
+    .maybeSingle<SessionRow & { shrinkage_value_cents?: number | null; notes?: string | null; created_at?: string }>();
+
+  if (sessionError) throw sessionError;
+  if (!session) throw new Error(`Stock count session ${sessionId} not found`);
+
+  const { data: items, error: itemsError } = await admin
+    .from('stock_count_items')
+    .select('id, tenant_id, session_id, product_id, variant_id, location_id, expected_quantity, counted_quantity, variance, unit_cost_cents, variance_value_cents, flags, created_at, updated_at')
+    .eq('tenant_id', tenantId)
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: true });
+
+  if (itemsError) throw itemsError;
+
+  return {
+    session,
+    items: items ?? [],
+  };
+}
+
 export async function enterCount(
   admin: SupabaseClient,
   itemId: string,
@@ -231,13 +275,19 @@ export async function enterCount(
 export async function approveSession(
   admin: SupabaseClient,
   sessionId: string,
-  approverId: string
+  approverId: string,
+  tenantIdOverride?: string
 ) {
-  const { data: session, error: sessionError } = await admin
+  let sessionQuery = admin
     .from('stock_count_sessions')
     .select('id, tenant_id, location_id, snapshot_at, status')
-    .eq('id', sessionId)
-    .single<SessionRow>();
+    .eq('id', sessionId);
+
+  if (tenantIdOverride) {
+    sessionQuery = sessionQuery.eq('tenant_id', tenantIdOverride);
+  }
+
+  const { data: session, error: sessionError } = await sessionQuery.single<SessionRow>();
 
   if (sessionError) throw sessionError;
   if (!session) throw new Error(`Stock count session ${sessionId} not found`);
@@ -318,8 +368,10 @@ export async function approveSession(
       location_id: item.location_id ?? session.location_id ?? null,
       variance,
       variance_value_cents: varianceValueCents,
+      unit_cost_cents: item.unit_cost_cents ?? null,
       counted_quantity: item.counted_quantity,
       expected_quantity: item.expected_quantity,
+      flags: item.flags ?? {},
     });
   }
 

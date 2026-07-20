@@ -72,13 +72,14 @@ export async function recordBusinessEvent(
     const { data, error } = await admin
       .from('business_events')
       .insert(payload)
-      .select('tenant_id, action, entity_type, entity_id, created_at')
+      .select('tenant_id, action, entity_type, entity_id, created_at, metadata')
       .single<{
         tenant_id: string;
         action: string;
         entity_type?: string | null;
         entity_id?: string | null;
         created_at?: string | null;
+        metadata?: Record<string, unknown> | null;
       }>();
 
     if (error) {
@@ -97,6 +98,7 @@ export async function recordBusinessEvent(
         entityType: data.entity_type ?? null,
         entityId: data.entity_id ?? null,
         createdAt: data.created_at ?? null,
+        metadata: data.metadata ?? null,
       }).catch((subscriberError) => {
         console.warn('[businessEvents] anomaly subscriber failed', {
           tenantId: event.tenantId,

@@ -80,6 +80,12 @@ const quickLinks = [
     icon: AlertTriangle,
   },
   {
+    href: '/dashboard/owner/stock-counts',
+    title: 'Stock Counts',
+    description: 'Run physical counts, review variance, and approve shrinkage adjustments.',
+    icon: Package,
+  },
+  {
     href: '/dashboard/settings',
     title: 'Settings',
     description: 'Configure preferences, business details, and AI settings.',

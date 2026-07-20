@@ -14,6 +14,7 @@ export interface RuleContext {
   window: RuleWindow;
   runId?: string | null;
   eventAction?: string;
+  eventMetadata?: Record<string, unknown> | null;
 }
 
 export interface AnomalyRule {
