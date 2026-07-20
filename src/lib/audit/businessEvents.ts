@@ -23,6 +23,7 @@ export const BUSINESS_EVENT_ACTIONS = {
   CUSTOMER_NOTE_ADDED: 'customer.note_added',
   CUSTOMER_TAGGED: 'customer.tagged',
   STAFF_PERMISSION_CHANGED: 'staff.permission_changed',
+  COMMAND_DENIED: 'command.denied',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';
