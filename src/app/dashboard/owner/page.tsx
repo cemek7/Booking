@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import Link from "next/link";
-import { Activity, ArrowRight, BarChart3, CalendarDays, ClipboardList, DollarSign, FileText, ImagePlus, MessageCircle, Package, Settings2, Users } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, BarChart3, CalendarDays, ClipboardList, DollarSign, FileText, ImagePlus, MessageCircle, Package, Settings2, Users } from 'lucide-react';
 import { requireAuth } from '@/lib/auth/server-auth';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import { Badge } from '@/components/ui/badge';
@@ -72,6 +72,12 @@ const quickLinks = [
     title: 'Daily Close',
     description: 'Review expected revenue, recorded payments, and unresolved gaps.',
     icon: DollarSign,
+  },
+  {
+    href: '/dashboard/owner/anomalies',
+    title: 'Anomaly Review',
+    description: 'Work through unresolved revenue, refund, and stock exceptions.',
+    icon: AlertTriangle,
   },
   {
     href: '/dashboard/settings',

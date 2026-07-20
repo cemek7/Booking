@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { processBusinessEventForAnomalies } from '@/lib/anomalies/realtimeSubscriber';
 
 export const BUSINESS_EVENT_ACTIONS = {
   RESERVATION_COMPLETED: 'reservation.completed',
@@ -26,6 +27,8 @@ export const BUSINESS_EVENT_ACTIONS = {
   COMMAND_DENIED: 'command.denied',
   ANOMALY_DETECTED: 'anomaly.detected',
   ANOMALY_RESOLVED: 'anomaly.resolved',
+  ANOMALY_REVIEWED: 'anomaly.reviewed',
+  ANOMALY_ALERTED: 'anomaly.alerted',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';
@@ -51,7 +54,7 @@ export async function recordBusinessEvent(
   event: BusinessEventInput
 ): Promise<void> {
   try {
-    const { error } = await admin.from('business_events').insert({
+    const payload = {
       tenant_id: event.tenantId,
       actor_type: event.actorType,
       actor_id: event.actorId ?? null,
@@ -63,13 +66,44 @@ export async function recordBusinessEvent(
       after: event.after ?? null,
       reason: event.reason ?? null,
       metadata: event.metadata ?? {},
-    });
+    };
+    const { data, error } = await admin
+      .from('business_events')
+      .insert(payload)
+      .select('tenant_id, action, entity_type, entity_id, created_at')
+      .single<{
+        tenant_id: string;
+        action: string;
+        entity_type?: string | null;
+        entity_id?: string | null;
+        created_at?: string | null;
+      }>();
 
     if (error) {
       console.warn('[businessEvents] write failed', {
         tenantId: event.tenantId,
         action: event.action,
         error: error.message,
+      });
+      return;
+    }
+
+    if (data) {
+      processBusinessEventForAnomalies(admin, {
+        tenantId: data.tenant_id,
+        action: data.action,
+        entityType: data.entity_type ?? null,
+        entityId: data.entity_id ?? null,
+        createdAt: data.created_at ?? null,
+      }).catch((subscriberError) => {
+        console.warn('[businessEvents] anomaly subscriber failed', {
+          tenantId: event.tenantId,
+          action: event.action,
+          error:
+            subscriberError instanceof Error
+              ? subscriberError.message
+              : String(subscriberError),
+        });
       });
     }
   } catch (error) {

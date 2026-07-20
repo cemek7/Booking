@@ -3,6 +3,7 @@ import { defaultLogger } from '@/lib/logger';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { buildDefaultWhatsAppProviderConfig, getProviderClient } from '@/lib/whatsapp/providers';
+import { getAnomalySummary } from '@/lib/anomalies/notify';
 import { computeDailyClose } from './reconciliationService';
 import { formatCloseReportText } from './formatCloseReport';
 
@@ -77,6 +78,7 @@ export async function runCloseReportForTenant(
 
   const ownerPhone = await findOwnerPhone(admin, tenantId);
   if (!ownerPhone) return;
+  const anomalySummary = await getAnomalySummary(admin, tenantId);
 
   const config = buildDefaultWhatsAppProviderConfig();
   if (!config) {
@@ -85,7 +87,7 @@ export async function runCloseReportForTenant(
   }
 
   const client = getProviderClient(config);
-  await client.sendTextMessage(ownerPhone, formatCloseReportText(run, items ?? []));
+  await client.sendTextMessage(ownerPhone, formatCloseReportText(run, items ?? [], anomalySummary));
 
   await admin
     .from('reconciliation_runs')

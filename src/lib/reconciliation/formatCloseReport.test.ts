@@ -14,11 +14,13 @@ describe('formatCloseReportText', () => {
       [
         { item_type: 'unpaid_completed_service' },
         { item_type: 'delivered_unpaid_order' },
-      ]
+      ],
+      { openCount: 3, totalAtRiskCents: 9_500_00 }
     );
 
     expect(text).toContain('₦420,000');
     expect(text).toContain('₦15,000');
+    expect(text).toContain('Open anomalies: 3, ₦9,500 at risk');
     expect(text).toMatch(/review/i);
   });
 });

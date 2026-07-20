@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
+import { runRules, type DetectedAnomaly } from '@/lib/anomalies/rules/registry';
 import { computeCloseFromInputs, type CloseInputs } from './computeClose';
 
 interface ReservationCloseRow {
@@ -39,6 +40,25 @@ export function resolveDayWindowUtc(
     startUtc: start.toISOString(),
     endUtc: end.toISOString(),
   };
+}
+
+function reconciliationItemKey(itemType: string, entityType: string | null | undefined, entityId: string | null | undefined) {
+  return `${itemType}:${entityType ?? ''}:${entityId ?? ''}`;
+}
+
+function anomalyItemKey(detection: DetectedAnomaly): string | null {
+  if (!detection.entityType || !detection.entityId) return null;
+
+  switch (detection.ruleKey) {
+    case 'completed_service_unpaid':
+      return reconciliationItemKey('unpaid_completed_service', detection.entityType, detection.entityId);
+    case 'delivered_order_unpaid':
+      return reconciliationItemKey('delivered_unpaid_order', detection.entityType, detection.entityId);
+    case 'discount_without_reason':
+      return reconciliationItemKey('discount_without_reason', detection.entityType, detection.entityId);
+    default:
+      return null;
+  }
 }
 
 function tzOffsetMs(date: string, timezone: string): number {
@@ -124,6 +144,45 @@ export async function computeDailyClose(
       }))
     );
     if (itemsError) throw itemsError;
+  }
+
+  const detections = await runRules(admin, tenantId, 'batch', {
+    window: { startUtc, endUtc },
+    runId: run.id,
+  });
+
+  if (detections.length > 0) {
+    const { data: storedItems, error: storedItemsError } = await admin
+      .from('reconciliation_items')
+      .select('id, item_type, entity_type, entity_id')
+      .eq('run_id', run.id);
+    if (storedItemsError) throw storedItemsError;
+
+    const itemMap = new Map<string, string>();
+    for (const item of storedItems ?? []) {
+      itemMap.set(
+        reconciliationItemKey(
+          String((item as { item_type: string }).item_type),
+          (item as { entity_type?: string | null }).entity_type ?? null,
+          (item as { entity_id?: string | null }).entity_id ?? null
+        ),
+        String((item as { id: string }).id)
+      );
+    }
+
+    for (const detection of detections) {
+      const itemKey = anomalyItemKey(detection);
+      if (!itemKey) continue;
+      const itemId = itemMap.get(itemKey);
+      if (!itemId) continue;
+
+      const { error: linkError } = await admin
+        .from('reconciliation_items')
+        .update({ anomaly_id: detection.anomalyId })
+        .eq('id', itemId)
+        .eq('run_id', run.id);
+      if (linkError) throw linkError;
+    }
   }
 
   await recordBusinessEvent(admin, {

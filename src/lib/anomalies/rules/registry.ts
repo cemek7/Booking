@@ -31,38 +31,76 @@ export interface AnomalyRule {
   dedupKey(candidate: AnomalyCandidate): string;
 }
 
+export interface DetectedAnomaly {
+  anomalyId: string;
+  ruleKey: string;
+  domain: AnomalyDomain;
+  severity: AnomalySeverity;
+  entityType?: string | null;
+  entityId?: string | null;
+  expectedValueCents?: number | null;
+  actualValueCents?: number | null;
+  differenceCents?: number | null;
+  detectionSource: AnomalyCandidate['detectionSource'];
+  dedupKey: string;
+  runId?: string | null;
+  detail?: Record<string, unknown>;
+}
+
 export const RULES: AnomalyRule[] = [
   ...inventoryRules,
   ...serviceRules,
   ...retailRules,
 ];
 
-export async function runRules(
-  admin: SupabaseClient,
-  tenantId: string,
+export function getMatchingRules(
   trigger: 'batch' | 'realtime',
   ctx: RuleContext
-): Promise<string[]> {
-  const ids: string[] = [];
-  const matchingRules = RULES.filter((rule) => {
+): AnomalyRule[] {
+  return RULES.filter((rule) => {
     if (rule.mode !== 'both' && rule.mode !== trigger) return false;
     if (trigger === 'realtime' && rule.triggerActions?.length && ctx.eventAction) {
       return rule.triggerActions.includes(ctx.eventAction);
     }
     return trigger === 'batch' || !rule.triggerActions?.length || !ctx.eventAction;
   });
+}
+
+export async function runRules(
+  admin: SupabaseClient,
+  tenantId: string,
+  trigger: 'batch' | 'realtime',
+  ctx: RuleContext
+): Promise<DetectedAnomaly[]> {
+  const results: DetectedAnomaly[] = [];
+  const matchingRules = getMatchingRules(trigger, ctx);
 
   for (const rule of matchingRules) {
     const candidates = await rule.detect(admin, tenantId, ctx.window, ctx);
     for (const candidate of candidates) {
+      const dedupKey = rule.dedupKey(candidate);
       const anomalyId = await upsertAnomaly(admin, {
         ...candidate,
-        dedupKey: rule.dedupKey(candidate),
+        dedupKey,
         runId: candidate.runId ?? ctx.runId ?? null,
       });
-      ids.push(anomalyId);
+      results.push({
+        anomalyId,
+        ruleKey: candidate.ruleKey,
+        domain: candidate.domain,
+        severity: candidate.severity,
+        entityType: candidate.entityType ?? null,
+        entityId: candidate.entityId ?? null,
+        expectedValueCents: candidate.expectedValueCents ?? null,
+        actualValueCents: candidate.actualValueCents ?? null,
+        differenceCents: candidate.differenceCents ?? null,
+        detectionSource: candidate.detectionSource,
+        dedupKey,
+        runId: candidate.runId ?? ctx.runId ?? null,
+        detail: candidate.detail,
+      });
     }
   }
 
-  return ids;
+  return results;
 }

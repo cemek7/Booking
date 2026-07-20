@@ -10,11 +10,20 @@ interface ReportItemLike {
   item_type: string;
 }
 
+interface AnomalySummaryLike {
+  openCount: number;
+  totalAtRiskCents: number;
+}
+
 function naira(cents: number) {
   return `₦${Math.round(cents / 100).toLocaleString()}`;
 }
 
-export function formatCloseReportText(run: ReportRunLike, items: ReportItemLike[]): string {
+export function formatCloseReportText(
+  run: ReportRunLike,
+  items: ReportItemLike[],
+  anomalySummary?: AnomalySummaryLike | null
+): string {
   const counts = items.reduce<Record<string, number>>((map, item) => {
     map[item.item_type] = (map[item.item_type] ?? 0) + 1;
     return map;
@@ -37,6 +46,9 @@ export function formatCloseReportText(run: ReportRunLike, items: ReportItemLike[
     `Recorded payments: ${naira(run.recorded_payments_cents)}`,
     `Approved outstanding: ${naira(run.approved_outstanding_cents)}`,
     `Unexplained difference: ${naira(run.revenue_gap_cents)}`,
+    ...(anomalySummary && anomalySummary.openCount > 0
+      ? [`Open anomalies: ${anomalySummary.openCount}, ${naira(anomalySummary.totalAtRiskCents)} at risk`]
+      : []),
     ...(reviewLines.length ? ['', 'Items requiring review:', ...reviewLines] : []),
   ].join('\n');
 }
