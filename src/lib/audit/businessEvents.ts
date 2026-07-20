@@ -18,6 +18,11 @@ export const BUSINESS_EVENT_ACTIONS = {
   RETAIL_SALE_RECORDED: 'retail_sale.recorded',
   ORDER_REFUNDED: 'order.refunded',
   OUTSTANDING_BALANCE_RECORDED: 'outstanding_balance.recorded',
+  RETAIL_ORDER_CREATED: 'retail_order.created',
+  ORDER_CANCELLED: 'order.cancelled',
+  CUSTOMER_NOTE_ADDED: 'customer.note_added',
+  CUSTOMER_TAGGED: 'customer.tagged',
+  STAFF_PERMISSION_CHANGED: 'staff.permission_changed',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';

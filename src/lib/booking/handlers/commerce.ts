@@ -505,6 +505,307 @@ async function recordOutstandingBalanceExecute(
   };
 }
 
+async function createOrderExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const items = parseSaleItems(params);
+  if (!items.length) {
+    return { success: false, error: 'create_order requires at least one valid item' };
+  }
+
+  const subtotalCents = items.reduce((sum, item) => sum + item.total_price_cents, 0);
+  const deliveryFeeCents = Math.max(0, toInteger(params.delivery_fee_cents ?? params.delivery_fee) ?? 0);
+  const discountCents = Math.max(0, toInteger(params.discount_cents ?? params.discount) ?? 0);
+  const totalCents = Math.max(0, subtotalCents + deliveryFeeCents - discountCents);
+  const currency = getString(params.currency) ?? 'NGN';
+
+  const { data: order, error: orderError } = await admin
+    .from('retail_orders')
+    .insert({
+      tenant_id: tenantId,
+      customer_id: getString(params.customer_id),
+      source_chat_id: getString(params.source_chat_id),
+      external_customer_ref: getString(params.external_customer_ref),
+      status: 'draft',
+      payment_status: 'unpaid',
+      fulfillment_status: 'unfulfilled',
+      currency,
+      subtotal_cents: subtotalCents,
+      delivery_fee_cents: deliveryFeeCents,
+      discount_cents: discountCents,
+      total_cents: totalCents,
+      amount_paid_cents: 0,
+      notes: getString(params.notes),
+      metadata: {
+        source: 'pos',
+        ...(getObject(params.metadata) ?? {}),
+      },
+    })
+    .select('id, total_cents')
+    .single();
+
+  if (orderError || !order) {
+    return { success: false, error: orderError?.message ?? 'Failed to create order' };
+  }
+
+  const { error: itemsError } = await admin
+    .from('retail_order_items')
+    .insert(items.map((item) => ({
+      order_id: order.id,
+      tenant_id: tenantId,
+      product_id: item.product_id,
+      variant_id: item.variant_id,
+      quantity: item.quantity,
+      unit_price_cents: item.unit_price_cents,
+      total_price_cents: item.total_price_cents,
+      metadata: item.metadata ?? {},
+    })));
+
+  if (itemsError) {
+    return { success: false, error: itemsError.message };
+  }
+
+  await recordBusinessEvent(admin, {
+    tenantId,
+    actorType: 'user',
+    actorId: ctx.actorId ?? null,
+    action: BUSINESS_EVENT_ACTIONS.RETAIL_ORDER_CREATED,
+    entityType: 'retail_order',
+    entityId: String(order.id),
+    source: 'whatsapp',
+    metadata: {
+      total_cents: totalCents,
+      delivery_fee_cents: deliveryFeeCents,
+      discount_cents: discountCents,
+      item_count: items.reduce((sum, item) => sum + item.quantity, 0),
+    },
+  });
+
+  return {
+    success: true,
+    reply: `Order created for ₦${Math.round(totalCents / 100).toLocaleString()}.`,
+    data: { order },
+  };
+}
+
+async function setOrderFulfillmentExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const orderId = getString(params.order_id);
+  const requested = (getString(params.fulfillment_status ?? params.status) ?? '').toLowerCase();
+  if (!orderId || !requested) {
+    return { success: false, error: 'set_order_fulfillment requires order_id and fulfillment_status' };
+  }
+
+  const normalized =
+    requested === 'delivered' || requested === 'pickup' || requested === 'fulfilled'
+      ? 'fulfilled'
+      : requested === 'preparing'
+        ? 'preparing'
+        : requested === 'cancelled'
+          ? 'cancelled'
+          : null;
+
+  if (!normalized) {
+    return { success: false, error: 'Unsupported fulfillment status' };
+  }
+
+  const updates: Record<string, unknown> = {
+    fulfillment_status: normalized,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (normalized === 'fulfilled') {
+    updates.status = 'fulfilled';
+    updates.metadata = {
+      fulfilledAt: new Date().toISOString(),
+      fulfilledBy: ctx.actorId ?? null,
+    };
+  } else if (normalized === 'cancelled') {
+    updates.status = 'cancelled';
+  }
+
+  const { data, error } = await admin
+    .from('retail_orders')
+    .update(updates)
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .select('id, fulfillment_status, status')
+    .single();
+
+  if (error || !data) {
+    return { success: false, error: error?.message ?? 'Failed to update order fulfillment' };
+  }
+
+  if (normalized === 'fulfilled') {
+    await recordBusinessEvent(admin, {
+      tenantId,
+      actorType: 'user',
+      actorId: ctx.actorId ?? null,
+      action: BUSINESS_EVENT_ACTIONS.RETAIL_ORDER_DELIVERED,
+      entityType: 'retail_order',
+      entityId: orderId,
+      source: 'whatsapp',
+    });
+  }
+
+  return {
+    success: true,
+    reply: `Order ${orderId} marked ${normalized}.`,
+    data,
+  };
+}
+
+async function addDeliveryFeeExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>
+) {
+  const orderId = getString(params.order_id);
+  const deliveryFeeCents = Math.max(0, toInteger(params.delivery_fee_cents ?? params.delivery_fee) ?? -1);
+  if (!orderId || deliveryFeeCents < 0) {
+    return { success: false, error: 'add_delivery_fee requires order_id and delivery_fee_cents' };
+  }
+
+  const { data: current, error: fetchError } = await admin
+    .from('retail_orders')
+    .select('id, subtotal_cents, discount_cents')
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (fetchError || !current) {
+    return { success: false, error: fetchError?.message ?? 'Retail order not found' };
+  }
+
+  const nextTotal = Math.max(
+    0,
+    Number(current.subtotal_cents ?? 0) + deliveryFeeCents - Number(current.discount_cents ?? 0)
+  );
+
+  const { data, error } = await admin
+    .from('retail_orders')
+    .update({
+      delivery_fee_cents: deliveryFeeCents,
+      total_cents: nextTotal,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .select('id, delivery_fee_cents, total_cents')
+    .single();
+
+  if (error || !data) {
+    return { success: false, error: error?.message ?? 'Failed to add delivery fee' };
+  }
+
+  return {
+    success: true,
+    reply: `Delivery fee updated to ₦${Math.round(deliveryFeeCents / 100).toLocaleString()}.`,
+    data,
+  };
+}
+
+async function cancelOrderRestockExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const orderId = getString(params.order_id);
+  if (!orderId) {
+    return { success: false, error: 'cancel_order_restock requires order_id' };
+  }
+
+  const { data: order, error: orderError } = await admin
+    .from('retail_orders')
+    .select('id, payment_status, status')
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (orderError || !order) {
+    return { success: false, error: orderError?.message ?? 'Retail order not found' };
+  }
+  if (order.payment_status === 'paid') {
+    return { success: false, error: 'Paid retail orders should be refunded instead of cancelled' };
+  }
+  if (order.status === 'cancelled') {
+    return { success: true, reply: `Order ${orderId} is already cancelled.`, data: order };
+  }
+
+  const { data: items, error: itemsError } = await admin
+    .from('retail_order_items')
+    .select('product_id, variant_id, quantity, product:products(track_inventory)')
+    .eq('order_id', orderId)
+    .eq('tenant_id', tenantId);
+
+  if (itemsError) {
+    return { success: false, error: itemsError.message };
+  }
+
+  for (const item of items ?? []) {
+    const trackInventory = Boolean((item.product as { track_inventory?: boolean } | null)?.track_inventory);
+    if (!trackInventory) continue;
+
+    const result = await recordMovement(admin, {
+      tenantId,
+      productId: getString(item.product_id),
+      variantId: getString(item.variant_id),
+      movementType: 'return',
+      quantityChange: Math.max(0, Number(item.quantity ?? 0)),
+      reason: getString(params.reason) ?? `order cancellation ${orderId}`,
+      referenceType: 'retail_order',
+      referenceId: orderId,
+      actorId: ctx.actorId ?? null,
+    });
+
+    const rpcError = (result as { error?: { message?: string } | null }).error;
+    if (rpcError) {
+      return { success: false, error: rpcError.message ?? 'Failed to restock cancelled order' };
+    }
+  }
+
+  const { data, error } = await admin
+    .from('retail_orders')
+    .update({
+      status: 'cancelled',
+      fulfillment_status: 'cancelled',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .select('id, status, fulfillment_status')
+    .single();
+
+  if (error || !data) {
+    return { success: false, error: error?.message ?? 'Failed to cancel order' };
+  }
+
+  await recordBusinessEvent(admin, {
+    tenantId,
+    actorType: 'user',
+    actorId: ctx.actorId ?? null,
+    action: BUSINESS_EVENT_ACTIONS.ORDER_CANCELLED,
+    entityType: 'retail_order',
+    entityId: orderId,
+    source: 'whatsapp',
+    reason: getString(params.reason),
+  });
+
+  return {
+    success: true,
+    reply: `Order ${orderId} cancelled and stock restocked.`,
+    data,
+  };
+}
+
 export const commerceHandlers: Record<string, ActionHandler> = {
   add_product: {
     action: 'add_product',
@@ -595,5 +896,47 @@ export const commerceHandlers: Record<string, ActionHandler> = {
         : { valid: false, error: 'record_outstanding_balance requires at least one valid item' };
     },
     execute: recordOutstandingBalanceExecute,
+  },
+  create_order: {
+    action: 'create_order',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return parseSaleItems(params).length
+        ? { valid: true }
+        : { valid: false, error: 'create_order requires at least one valid item' };
+    },
+    execute: createOrderExecute,
+  },
+  set_order_fulfillment: {
+    action: 'set_order_fulfillment',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return getString(params.order_id) && getString(params.fulfillment_status ?? params.status)
+        ? { valid: true }
+        : { valid: false, error: 'set_order_fulfillment requires order_id and fulfillment_status' };
+    },
+    execute: setOrderFulfillmentExecute,
+  },
+  add_delivery_fee: {
+    action: 'add_delivery_fee',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      const orderId = getString(params.order_id);
+      const fee = toInteger(params.delivery_fee_cents ?? params.delivery_fee);
+      return orderId && fee !== null && fee >= 0
+        ? { valid: true }
+        : { valid: false, error: 'add_delivery_fee requires order_id and delivery_fee_cents' };
+    },
+    execute: addDeliveryFeeExecute,
+  },
+  cancel_order_restock: {
+    action: 'cancel_order_restock',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return getString(params.order_id)
+        ? { valid: true }
+        : { valid: false, error: 'cancel_order_restock requires order_id' };
+    },
+    execute: cancelOrderRestockExecute,
   },
 };

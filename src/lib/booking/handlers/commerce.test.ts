@@ -232,4 +232,102 @@ describe('commerceHandlers', () => {
       })
     );
   });
+
+  it('cancel_order_restock restores stock for tracked items and cancels the order', async () => {
+    mockRecordMovement.mockResolvedValue({ data: [{ movement_id: 'mov-return-1' }], error: null });
+
+    const admin = {
+      from: jest.fn((table: string) => {
+        if (table === 'retail_orders') {
+          const state = {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            maybeSingle: jest
+              .fn()
+              .mockResolvedValueOnce({ data: { id: 'order-3', payment_status: 'unpaid', status: 'draft' }, error: null }),
+            update: jest.fn().mockReturnThis(),
+            single: jest
+              .fn()
+              .mockResolvedValueOnce({ data: { id: 'order-3', status: 'cancelled', fulfillment_status: 'cancelled' }, error: null }),
+          };
+          return state;
+        }
+
+        if (table === 'retail_order_items') {
+          return {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            then: undefined as unknown,
+          };
+        }
+
+        throw new Error(`Unexpected table ${table}`);
+      }),
+    } as unknown as SupabaseClient;
+
+    const itemsQuery = {
+      eq: jest.fn(),
+      then: undefined as unknown,
+    } as {
+      eq: jest.Mock;
+      then?: (onfulfilled: (value: unknown) => unknown, onrejected?: (reason: unknown) => unknown) => unknown;
+    };
+    itemsQuery.eq.mockReturnValue(itemsQuery);
+    itemsQuery.then = (onfulfilled) =>
+      Promise.resolve(
+        onfulfilled({
+          data: [
+            { product_id: 'product-1', variant_id: null, quantity: 2, product: { track_inventory: true } },
+          ],
+          error: null,
+        })
+      );
+
+    (admin.from as unknown as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'retail_orders') {
+        const state = {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest
+            .fn()
+            .mockResolvedValueOnce({ data: { id: 'order-3', payment_status: 'unpaid', status: 'draft' }, error: null }),
+          update: jest.fn().mockReturnThis(),
+          single: jest
+            .fn()
+            .mockResolvedValueOnce({ data: { id: 'order-3', status: 'cancelled', fulfillment_status: 'cancelled' }, error: null }),
+        };
+        return state;
+      }
+      if (table === 'retail_order_items') {
+        return {
+          select: jest.fn(() => itemsQuery),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const result = await commerceHandlers.cancel_order_restock.execute(
+      admin,
+      'tenant-1',
+      { order_id: 'order-3', reason: 'customer never paid' },
+      { actorId: 'user-1' }
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockRecordMovement).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        movementType: 'return',
+        quantityChange: 2,
+        referenceId: 'order-3',
+      })
+    );
+    expect(mockRecordBusinessEvent).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        action: BUSINESS_EVENT_ACTIONS.ORDER_CANCELLED,
+        entityId: 'order-3',
+      })
+    );
+  });
 });
