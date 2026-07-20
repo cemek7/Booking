@@ -5,8 +5,9 @@ import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions'
 import { BOOKA_PERMISSIONS } from '@/types/permissions';
 import type { Role } from '@/types/roles';
 import type { ActionHandler } from './registry';
+import { decideApproval } from '@/lib/approvals/requests';
 
-type ActionContext = { actorId?: string | null; role?: string };
+type ActionContext = { actorId?: string | null; role?: string; permissions?: string[] };
 
 function getString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -178,6 +179,38 @@ async function setStaffCapabilityExecute(
   };
 }
 
+async function resolveApprovalExecute(
+  admin: SupabaseClient,
+  _tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const requestId = getString(params.request_id);
+  const decision = getString(params.decision)?.toLowerCase();
+  const note = getString(params.note);
+
+  if (!requestId || (decision !== 'approve' && decision !== 'reject')) {
+    return { success: false, error: 'resolve_approval requires request_id and decision' };
+  }
+  if (!ctx.actorId) {
+    return { success: false, error: 'resolve_approval requires an authenticated actor' };
+  }
+
+  const result = await decideApproval(admin, {
+    requestId,
+    actorId: ctx.actorId,
+    actorPerms: ctx.permissions ?? [],
+    decision,
+    note,
+  });
+
+  return {
+    success: true,
+    reply: `Approval ${requestId} ${decision}d.`,
+    data: { approval: result },
+  };
+}
+
 export const staffHandlers: Record<string, ActionHandler> = {
   staff_sales_query: {
     action: 'staff_sales_query',
@@ -205,5 +238,21 @@ export const staffHandlers: Record<string, ActionHandler> = {
         : { valid: false, error: 'set_staff_capability requires staff_id and capability' };
     },
     execute: setStaffCapabilityExecute,
+  },
+  resolve_approval: {
+    action: 'resolve_approval',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      const requestId = getString(params.request_id);
+      const decision = getString(params.decision)?.toLowerCase();
+      if (!requestId || (decision !== 'approve' && decision !== 'reject')) {
+        return { valid: false, error: 'resolve_approval requires request_id and decision' };
+      }
+      if (decision === 'reject' && !getString(params.note)) {
+        return { valid: false, error: 'rejecting an approval requires a note' };
+      }
+      return { valid: true };
+    },
+    execute: resolveApprovalExecute,
   },
 };

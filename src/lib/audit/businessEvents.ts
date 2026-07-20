@@ -31,6 +31,10 @@ export const BUSINESS_EVENT_ACTIONS = {
   ANOMALY_RESOLVED: 'anomaly.resolved',
   ANOMALY_REVIEWED: 'anomaly.reviewed',
   ANOMALY_ALERTED: 'anomaly.alerted',
+  APPROVAL_REQUESTED: 'approval.requested',
+  APPROVAL_APPROVED: 'approval.approved',
+  APPROVAL_REJECTED: 'approval.rejected',
+  APPROVAL_ALERTED: 'approval.alerted',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';

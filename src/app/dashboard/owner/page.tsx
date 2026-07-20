@@ -80,6 +80,12 @@ const quickLinks = [
     icon: AlertTriangle,
   },
   {
+    href: '/dashboard/owner/approvals',
+    title: 'Approvals Queue',
+    description: 'Review discounts, refunds, and inventory changes waiting for sign-off.',
+    icon: ClipboardList,
+  },
+  {
     href: '/dashboard/owner/stock-counts',
     title: 'Stock Counts',
     description: 'Run physical counts, review variance, and approve shrinkage adjustments.',

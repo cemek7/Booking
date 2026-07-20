@@ -9,6 +9,7 @@ export interface ActionContext {
   role?: string;
   channel?: string;
   actorId?: string | null;
+  permissions?: string[];
   customerPhone?: string;
   tenantStaffId?: string;
   customerId?: string;

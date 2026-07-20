@@ -6,7 +6,11 @@ const mockValidateAction = jest.fn();
 const mockExecuteAction = jest.fn();
 
 jest.mock('@/lib/audit/businessEvents', () => ({
-  BUSINESS_EVENT_ACTIONS: {},
+  BUSINESS_EVENT_ACTIONS: {
+    APPROVAL_REQUESTED: 'approval.requested',
+    APPROVAL_APPROVED: 'approval.approved',
+    APPROVAL_REJECTED: 'approval.rejected',
+  },
   recordBusinessEvent: (...args: unknown[]) => mockRecordBusinessEvent(...args),
 }));
 

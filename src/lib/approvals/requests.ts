@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { recordBusinessEvent } from '@/lib/audit/businessEvents';
+import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { executeAction, validateAction, type AIResponse } from '@/lib/booking/action-validator';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { resolveLimit, type ApprovalRequestType, type ApprovalRole } from './policy';
+import { notifyPendingApprovalRequest } from './notify';
 
 export interface CreateApprovalRequestInput {
   tenantId: string;
@@ -56,6 +57,11 @@ export interface ApprovalGateResult {
   status: 'clear' | 'pending';
   requestId?: string;
   reply?: string;
+}
+
+export interface ApprovalQueueFilters {
+  status?: string;
+  requestType?: string;
 }
 
 function toInteger(value: unknown): number | null {
@@ -171,7 +177,7 @@ export async function createApprovalRequest(
     tenantId: input.tenantId,
     actorType: 'user',
     actorId: input.requestedBy,
-    action: 'approval.requested',
+    action: BUSINESS_EVENT_ACTIONS.APPROVAL_REQUESTED,
     entityType: 'approval_request',
     entityId: data.id,
     source: 'system',
@@ -183,6 +189,12 @@ export async function createApprovalRequest(
       subject_id: input.subjectId ?? null,
     },
   });
+
+  try {
+    await notifyPendingApprovalRequest(admin, data);
+  } catch {
+    // best-effort only
+  }
 
   return data;
 }
@@ -220,6 +232,9 @@ export async function decideApproval(
   const nowIso = new Date().toISOString();
 
   if (input.decision === 'reject') {
+    if (!input.note?.trim()) {
+      throw ApiErrorFactory.validationError('A note is required when rejecting an approval request');
+    }
     const { data: rejected, error: rejectError } = await admin
       .from('approval_requests')
       .update({ status: 'rejected', updated_at: nowIso })
@@ -243,7 +258,7 @@ export async function decideApproval(
       tenantId: request.tenant_id,
       actorType: 'user',
       actorId: input.actorId,
-      action: 'approval.rejected',
+      action: BUSINESS_EVENT_ACTIONS.APPROVAL_REJECTED,
       entityType: 'approval_request',
       entityId: request.id,
       source: 'system',
@@ -264,6 +279,7 @@ export async function decideApproval(
 
   const execution = await executeAction(request.tenant_id, request.action_payload, {
     actorId: input.actorId,
+    permissions: Array.from(actorPerms),
     userRole: 'owner',
     channel: 'dashboard',
   });
@@ -294,7 +310,7 @@ export async function decideApproval(
     tenantId: request.tenant_id,
     actorType: 'user',
     actorId: input.actorId,
-    action: 'approval.approved',
+    action: BUSINESS_EVENT_ACTIONS.APPROVAL_APPROVED,
     entityType: 'approval_request',
     entityId: request.id,
     source: 'system',
@@ -306,6 +322,54 @@ export async function decideApproval(
   });
 
   return approved;
+}
+
+export async function listApprovalRequests(
+  admin: SupabaseClient,
+  tenantId: string,
+  filters: ApprovalQueueFilters = {}
+) {
+  let query = admin
+    .from('approval_requests')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false });
+
+  if (filters.status) query = query.eq('status', filters.status);
+  if (filters.requestType) query = query.eq('request_type', filters.requestType);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function listApprovalPolicies(admin: SupabaseClient, tenantId: string) {
+  const { data, error } = await admin
+    .from('tenant_approval_policies')
+    .select('id, request_type, role, max_self_approve, requires_permission, created_at')
+    .eq('tenant_id', tenantId)
+    .order('request_type', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function upsertApprovalPolicy(
+  admin: SupabaseClient,
+  tenantId: string,
+  policy: ApprovalPolicyTableRow
+) {
+  const { data, error } = await admin
+    .from('tenant_approval_policies')
+    .upsert({
+      tenant_id: tenantId,
+      request_type: policy.request_type,
+      role: policy.role,
+      max_self_approve: policy.max_self_approve,
+      requires_permission: policy.requires_permission,
+    }, { onConflict: 'tenant_id,request_type,role' })
+    .select('*');
+  if (error) throw error;
+  return data ?? [];
 }
 
 export async function gateApprovalForAction(

@@ -75,8 +75,7 @@ export type AIAction =
 
 export interface AIResponse {
   action: AIAction;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: Record<string, any>;
+  params: Record<string, unknown>;
   reply: string;
   confidence: 'high' | 'medium' | 'low';
 }
@@ -175,8 +174,7 @@ export async function validateAction(
 
 async function validateCreateBooking(
   tenantId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<ValidationResult> {
   const required = ['service_id', 'start_at'];
   for (const field of required) {
@@ -274,8 +272,7 @@ async function validateServiceOwnership(
 
 async function validateWalkIn(
   tenantId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<ValidationResult> {
   let staffId: string | undefined = params.tenant_staff_id ?? params.staff_id;
 
@@ -372,7 +369,7 @@ async function resolveCustomerIdForNoShow(
 
 async function lookupServiceQuote(
   tenantId: string,
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<{ id: string; name: string; price: number; duration: number } | null> {
   if (typeof params.service_id === 'string') {
     const { data } = await supabaseAdmin
@@ -421,6 +418,7 @@ export async function executeAction(
   aiResponse: AIResponse,
   context: {
     actorId?: string | null;
+    permissions?: string[];
     customerPhone?: string;
     tenantStaffId?: string;
     customerId?: string;
@@ -440,6 +438,7 @@ export async function executeAction(
       {
         channel: context.channel,
         actorId: context.actorId ?? context.customerId ?? null,
+        permissions: context.permissions,
         role: context.userRole,
         customerPhone: context.customerPhone,
         tenantStaffId: context.tenantStaffId,
@@ -464,7 +463,7 @@ export async function executeAction(
         const quotedService = params.service_id
           ? await lookupServiceQuote(tenantId, { service_id: params.service_id })
           : null;
-        const reservation = await createReservation(supabaseAdmin as any, {
+        const reservation = await createReservation(supabaseAdmin, {
           tenant_id: tenantId,
           customer_id: params.customer_id ?? context.customerId ?? null,
           customer_name: params.customer_name,
@@ -512,7 +511,7 @@ export async function executeAction(
       }
 
       case 'cancel_booking': {
-        const reservation = await cancelReservation(supabaseAdmin as any, {
+        const reservation = await cancelReservation(supabaseAdmin, {
           tenant_id: tenantId,
           reservation_id: params.reservation_id,
           reason: params.reason ?? null,
@@ -579,7 +578,7 @@ export async function executeAction(
       }
 
       case 'reschedule_booking': {
-        const reservation = await rescheduleReservation(supabaseAdmin as any, {
+        const reservation = await rescheduleReservation(supabaseAdmin, {
           tenant_id: tenantId,
           reservation_id: params.reservation_id,
           start_at: params.new_start_at,
@@ -1044,7 +1043,7 @@ export async function executeAction(
         const serviceId = params.resolved_service_id ?? params.service_id;
         const startAt = params.walk_in_start_at ?? new Date().toISOString();
         const endAt = params.walk_in_end_at ?? new Date(Date.now() + 60 * 60 * 1000).toISOString();
-        const reservation = await createReservation(supabaseAdmin as any, {
+        const reservation = await createReservation(supabaseAdmin, {
           tenant_id: tenantId,
           customer_id: params.customer_id ?? context.customerId ?? null,
           customer_name: params.customer_name ?? 'Walk-in',
@@ -1085,7 +1084,7 @@ type ProductSelection = {
   track_inventory: boolean;
 };
 
-function getShowcaseTriggerText(params: Record<string, any>): string | undefined {
+function getShowcaseTriggerText(params: Record<string, unknown>): string | undefined {
   const candidates = [
     params.trigger_text,
     params.showcase_name,
@@ -1143,7 +1142,7 @@ async function sendCatalogInteractively(
   tenantId: string,
   customerPhone: string,
   products: ProductSelection[],
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<boolean> {
   const client = await getTenantWhatsAppProviderClient(tenantId);
   if (!client) return false;
@@ -1226,7 +1225,7 @@ function parseIdList(value: unknown): string[] {
 
 async function resolveCatalogProducts(
   tenantId: string,
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<ProductSelection[]> {
   const rows = await loadActiveProducts(tenantId);
   if (rows.length === 0) return [];
@@ -1248,7 +1247,7 @@ async function resolveCatalogProducts(
 
 async function resolveRecommendedProducts(
   tenantId: string,
-  params: Record<string, any>,
+  params: Record<string, unknown>,
   mode: 'recommendation' | 'upsell' | 'cross_sell' = 'recommendation',
 ): Promise<ProductSelection[]> {
   const rows = await loadActiveProducts(tenantId);
