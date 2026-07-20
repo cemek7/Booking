@@ -15,6 +15,9 @@ jest.mock('@/lib/audit/businessEvents', () => ({
     PRODUCT_PRICE_CHANGED: 'product.price_changed',
     PRODUCT_ADDED: 'product.added',
     PRODUCT_AVAILABILITY_CHANGED: 'product.availability_changed',
+    RETAIL_SALE_RECORDED: 'retail_sale.recorded',
+    ORDER_REFUNDED: 'order.refunded',
+    OUTSTANDING_BALANCE_RECORDED: 'outstanding_balance.recorded',
   },
   recordBusinessEvent: (...args: unknown[]) => mockRecordBusinessEvent(...args),
 }));
@@ -26,6 +29,7 @@ function makeAdmin(responses: Array<{ data: unknown; error: { message: string } 
   const queue = [...responses];
 
   return {
+    rpc: jest.fn(async () => queue.shift() ?? { data: null, error: null }),
     from: jest.fn(() => {
       const state = {
         select: jest.fn().mockReturnThis(),
@@ -114,5 +118,118 @@ describe('commerceHandlers', () => {
         { id: 'p2', name: 'Gel', stock_quantity: 0, low_stock_threshold: 2 },
       ],
     });
+  });
+
+  it('record_retail_sale executes through the atomic RPC and emits retail_sale.recorded', async () => {
+    const admin = makeAdmin([
+      {
+        data: [{ order_id: 'order-1', transaction_id: 'tx-1', total_cents: 6500, item_count: 2 }],
+        error: null,
+      },
+    ]);
+
+    const result = await commerceHandlers.record_retail_sale.execute(
+      admin,
+      'tenant-1',
+      {
+        items: [
+          { product_id: 'product-1', quantity: 1, unit_price_cents: 2500 },
+          { product_id: 'product-2', quantity: 1, unit_price_cents: 4000 },
+        ],
+        external_customer_ref: '2348012345678',
+      },
+      { actorId: 'user-1' }
+    );
+
+    expect(result.success).toBe(true);
+    expect(admin.rpc).toHaveBeenCalledWith(
+      'record_retail_sale_tx',
+      expect.objectContaining({
+        p_tenant_id: 'tenant-1',
+        p_actor_user_id: 'user-1',
+        p_external_customer_ref: '2348012345678',
+      })
+    );
+    expect(mockRecordBusinessEvent).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        action: BUSINESS_EVENT_ACTIONS.RETAIL_SALE_RECORDED,
+        entityId: 'order-1',
+      })
+    );
+  });
+
+  it('record_retail_sale returns the RPC error and emits no event on failure', async () => {
+    const admin = makeAdmin([{ data: null, error: { message: 'inventory move failed' } }]);
+
+    const result = await commerceHandlers.record_retail_sale.execute(
+      admin,
+      'tenant-1',
+      {
+        items: [{ product_id: 'product-1', quantity: 2, unit_price_cents: 3000 }],
+      },
+      { actorId: 'user-1' }
+    );
+
+    expect(result).toEqual({ success: false, error: 'inventory move failed' });
+    expect(mockRecordBusinessEvent).not.toHaveBeenCalled();
+  });
+
+  it('refund_sale executes through the atomic refund RPC and emits order.refunded', async () => {
+    const admin = makeAdmin([
+      { data: [{ order_id: 'order-1', refund_transaction_id: 'tx-refund-1', total_cents: 6500 }], error: null },
+    ]);
+
+    const result = await commerceHandlers.refund_sale.execute(
+      admin,
+      'tenant-1',
+      { order_id: 'order-1', reason: 'customer changed mind' },
+      { actorId: 'user-1' }
+    );
+
+    expect(result.success).toBe(true);
+    expect(admin.rpc).toHaveBeenCalledWith(
+      'refund_retail_sale_tx',
+      expect.objectContaining({
+        p_order_id: 'order-1',
+        p_reason: 'customer changed mind',
+      })
+    );
+    expect(mockRecordBusinessEvent).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        action: BUSINESS_EVENT_ACTIONS.ORDER_REFUNDED,
+        entityId: 'order-1',
+      })
+    );
+  });
+
+  it('record_outstanding_balance creates an unpaid retail order and emits an audit event', async () => {
+    const admin = makeAdmin([{ data: { id: 'order-2', total_cents: 9000 }, error: null }]);
+
+    const result = await commerceHandlers.record_outstanding_balance.execute(
+      admin,
+      'tenant-1',
+      {
+        items: [
+          { product_id: 'product-1', quantity: 1, unit_price_cents: 5000 },
+          { product_id: 'product-2', quantity: 2, unit_price_cents: 2000 },
+        ],
+        customer_id: 'customer-1',
+      },
+      { actorId: 'user-1' }
+    );
+
+    expect(result.success).toBe(true);
+    expect(admin.from).toHaveBeenNthCalledWith(1, 'retail_orders');
+    expect(admin.from).toHaveBeenNthCalledWith(2, 'retail_order_items');
+    expect(mockRecordBusinessEvent).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({
+        action: BUSINESS_EVENT_ACTIONS.OUTSTANDING_BALANCE_RECORDED,
+        entityId: 'order-2',
+      })
+    );
   });
 });

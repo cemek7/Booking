@@ -3,6 +3,16 @@ import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/busines
 import { recordMovement } from '@/lib/inventory/recordMovement';
 import type { ActionHandler } from './registry';
 
+type ActionContext = { actorId?: string | null };
+type SaleItem = {
+  product_id: string;
+  variant_id: string | null;
+  quantity: number;
+  unit_price_cents: number;
+  total_price_cents: number;
+  metadata?: Record<string, unknown> | null;
+};
+
 function toInteger(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value === 'string' && value.trim()) {
@@ -16,11 +26,60 @@ function getString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function getObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function parseSaleItems(params: Record<string, unknown>): SaleItem[] {
+  if (Array.isArray(params.items)) {
+    return params.items
+      .map((item) => {
+        const record = getObject(item);
+        if (!record) return null;
+        const productId = getString(record.product_id);
+        const quantity = toInteger(record.quantity);
+        const unitPrice = toInteger(record.unit_price_cents ?? record.price_cents ?? record.price);
+        if (!productId || quantity === null || quantity <= 0 || unitPrice === null || unitPrice < 0) {
+          return null;
+        }
+
+        return {
+          product_id: productId,
+          variant_id: getString(record.variant_id),
+          quantity,
+          unit_price_cents: unitPrice,
+          total_price_cents: toInteger(record.total_price_cents) ?? unitPrice * quantity,
+          metadata: getObject(record.metadata),
+        } satisfies SaleItem;
+      })
+      .filter((item): item is SaleItem => item !== null);
+  }
+
+  const productId = getString(params.product_id);
+  const quantity = toInteger(params.quantity);
+  const unitPrice = toInteger(params.unit_price_cents ?? params.price_cents ?? params.price);
+
+  if (!productId || quantity === null || quantity <= 0 || unitPrice === null || unitPrice < 0) {
+    return [];
+  }
+
+  return [{
+    product_id: productId,
+    variant_id: getString(params.variant_id),
+    quantity,
+    unit_price_cents: unitPrice,
+    total_price_cents: toInteger(params.total_price_cents) ?? unitPrice * quantity,
+    metadata: getObject(params.metadata),
+  }];
+}
+
 async function addProductExecute(
   admin: SupabaseClient,
   tenantId: string,
   params: Record<string, unknown>,
-  ctx: { actorId?: string | null }
+  ctx: ActionContext
 ) {
   const name = getString(params.name);
   const priceCents = toInteger(params.price_cents ?? params.price);
@@ -72,7 +131,7 @@ async function adjustStockExecute(
   admin: SupabaseClient,
   tenantId: string,
   params: Record<string, unknown>,
-  ctx: { actorId?: string | null }
+  ctx: ActionContext
 ) {
   const productId = getString(params.product_id);
   const variantId = getString(params.variant_id);
@@ -122,7 +181,7 @@ async function setPriceExecute(
   admin: SupabaseClient,
   tenantId: string,
   params: Record<string, unknown>,
-  ctx: { actorId?: string | null }
+  ctx: ActionContext
 ) {
   const productId = getString(params.product_id);
   const priceCents = toInteger(params.price_cents ?? params.price);
@@ -177,7 +236,7 @@ async function setAvailabilityExecute(
   admin: SupabaseClient,
   tenantId: string,
   params: Record<string, unknown>,
-  ctx: { actorId?: string | null }
+  ctx: ActionContext
 ) {
   const productId = getString(params.product_id);
   const isActive = typeof params.is_active === 'boolean' ? params.is_active : Boolean(params.available);
@@ -253,6 +312,199 @@ async function lowStockQueryExecute(
   };
 }
 
+async function recordRetailSaleExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const items = parseSaleItems(params);
+  if (!items.length) {
+    return { success: false, error: 'record_retail_sale requires at least one valid item' };
+  }
+  if (!ctx.actorId) {
+    return { success: false, error: 'record_retail_sale requires an actorId' };
+  }
+
+  const { data, error } = await admin.rpc('record_retail_sale_tx', {
+    p_tenant_id: tenantId,
+    p_actor_user_id: ctx.actorId,
+    p_items: items,
+    p_customer_id: getString(params.customer_id),
+    p_external_customer_ref: getString(params.external_customer_ref),
+    p_source_chat_id: getString(params.source_chat_id),
+    p_currency: getString(params.currency) ?? 'NGN',
+    p_notes: getString(params.notes),
+    p_reference_key: getString(params.reference_key) ?? getString(params.reference_id),
+    p_metadata: getObject(params.metadata) ?? {},
+  });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const orderId = getString((row as Record<string, unknown> | null)?.order_id);
+  const totalCents = toInteger((row as Record<string, unknown> | null)?.total_cents) ?? 0;
+  const itemCount = toInteger((row as Record<string, unknown> | null)?.item_count) ?? items.reduce((sum, item) => sum + item.quantity, 0);
+
+  await recordBusinessEvent(admin, {
+    tenantId,
+    actorType: 'user',
+    actorId: ctx.actorId,
+    action: BUSINESS_EVENT_ACTIONS.RETAIL_SALE_RECORDED,
+    entityType: 'retail_order',
+    entityId: orderId,
+    source: 'whatsapp',
+    metadata: {
+      total_cents: totalCents,
+      item_count: itemCount,
+      items: items.map((item) => ({
+        product_id: item.product_id,
+        variant_id: item.variant_id,
+        quantity: item.quantity,
+        unit_price_cents: item.unit_price_cents,
+      })),
+    },
+  });
+
+  return {
+    success: true,
+    reply: `Retail sale recorded for ₦${Math.round(totalCents / 100).toLocaleString()} across ${itemCount} item${itemCount === 1 ? '' : 's'}.`,
+    data: row ?? null,
+  };
+}
+
+async function refundSaleExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const orderId = getString(params.order_id);
+  if (!orderId) {
+    return { success: false, error: 'refund_sale requires order_id' };
+  }
+  if (!ctx.actorId) {
+    return { success: false, error: 'refund_sale requires an actorId' };
+  }
+
+  const { data, error } = await admin.rpc('refund_retail_sale_tx', {
+    p_tenant_id: tenantId,
+    p_order_id: orderId,
+    p_actor_user_id: ctx.actorId,
+    p_reason: getString(params.reason),
+    p_reference_key: getString(params.reference_key) ?? getString(params.reference_id),
+  });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const totalCents = toInteger((row as Record<string, unknown> | null)?.total_cents) ?? 0;
+
+  await recordBusinessEvent(admin, {
+    tenantId,
+    actorType: 'user',
+    actorId: ctx.actorId,
+    action: BUSINESS_EVENT_ACTIONS.ORDER_REFUNDED,
+    entityType: 'retail_order',
+    entityId: orderId,
+    source: 'whatsapp',
+    reason: getString(params.reason),
+    metadata: {
+      total_cents: totalCents,
+    },
+  });
+
+  return {
+    success: true,
+    reply: `Refund recorded for retail order ${orderId}.`,
+    data: row ?? null,
+  };
+}
+
+async function recordOutstandingBalanceExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext
+) {
+  const items = parseSaleItems(params);
+  if (!items.length) {
+    return { success: false, error: 'record_outstanding_balance requires at least one valid item' };
+  }
+
+  const totalCents = items.reduce((sum, item) => sum + item.total_price_cents, 0);
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+  const currency = getString(params.currency) ?? 'NGN';
+
+  const { data: order, error: orderError } = await admin
+    .from('retail_orders')
+    .insert({
+      tenant_id: tenantId,
+      customer_id: getString(params.customer_id),
+      source_chat_id: getString(params.source_chat_id),
+      external_customer_ref: getString(params.external_customer_ref),
+      status: 'pending_payment',
+      payment_status: 'unpaid',
+      fulfillment_status: 'unfulfilled',
+      currency,
+      subtotal_cents: totalCents,
+      total_cents: totalCents,
+      notes: getString(params.notes),
+      metadata: {
+        source: 'pos',
+        outstanding_balance: true,
+        ...(getObject(params.metadata) ?? {}),
+      },
+    })
+    .select('id, total_cents')
+    .single();
+
+  if (orderError || !order) {
+    return { success: false, error: orderError?.message ?? 'Failed to create outstanding balance order' };
+  }
+
+  const { error: itemsError } = await admin
+    .from('retail_order_items')
+    .insert(items.map((item) => ({
+      order_id: order.id,
+      tenant_id: tenantId,
+      product_id: item.product_id,
+      variant_id: item.variant_id,
+      quantity: item.quantity,
+      unit_price_cents: item.unit_price_cents,
+      total_price_cents: item.total_price_cents,
+      metadata: item.metadata ?? {},
+    })));
+
+  if (itemsError) {
+    return { success: false, error: itemsError.message };
+  }
+
+  await recordBusinessEvent(admin, {
+    tenantId,
+    actorType: 'user',
+    actorId: ctx.actorId ?? null,
+    action: BUSINESS_EVENT_ACTIONS.OUTSTANDING_BALANCE_RECORDED,
+    entityType: 'retail_order',
+    entityId: String(order.id),
+    source: 'whatsapp',
+    metadata: {
+      total_cents: totalCents,
+      item_count: itemCount,
+    },
+  });
+
+  return {
+    success: true,
+    reply: `Outstanding balance recorded for ₦${Math.round(totalCents / 100).toLocaleString()}.`,
+    data: { order },
+  };
+}
+
 export const commerceHandlers: Record<string, ActionHandler> = {
   add_product: {
     action: 'add_product',
@@ -312,5 +564,36 @@ export const commerceHandlers: Record<string, ActionHandler> = {
       return { valid: true };
     },
     execute: lowStockQueryExecute,
+  },
+  record_retail_sale: {
+    action: 'record_retail_sale',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return parseSaleItems(params).length
+        ? { valid: true }
+        : { valid: false, error: 'record_retail_sale requires at least one valid item' };
+    },
+    execute: recordRetailSaleExecute,
+  },
+  refund_sale: {
+    action: 'refund_sale',
+    capability: 'refund',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return getString(params.order_id)
+        ? { valid: true }
+        : { valid: false, error: 'refund_sale requires order_id' };
+    },
+    execute: refundSaleExecute,
+  },
+  record_outstanding_balance: {
+    action: 'record_outstanding_balance',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return parseSaleItems(params).length
+        ? { valid: true }
+        : { valid: false, error: 'record_outstanding_balance requires at least one valid item' };
+    },
+    execute: recordOutstandingBalanceExecute,
   },
 };
