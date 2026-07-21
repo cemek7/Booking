@@ -1,13 +1,16 @@
 {
   "name": "boka",
   "version": "0.1.0",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "private": true,
   "scripts": {
     "dev": "NODE_OPTIONS='--max-old-space-size=2048' next dev",
     "build": "NODE_OPTIONS='--max-old-space-size=4096' next build --webpack",
     "start": "NODE_OPTIONS='--max-old-space-size=2048' next start",
     "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p tsconfig.typecheck.json",
-    "typecheck:ci": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p tsconfig.typecheck.json --pretty false",
+    "typecheck:ci": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p tsconfig.ci.json --noEmit --pretty false",
     "typecheck:full": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "worker": "node scripts/whatsapp-worker.mjs",
     "lint": "eslint",

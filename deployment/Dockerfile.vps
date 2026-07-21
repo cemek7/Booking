@@ -3,6 +3,11 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+
+# Cypress is an E2E-only devDependency whose postinstall pulls a ~200MB binary.
+# The production image never runs it, but the download ran on every build —
+# slowing CI and making the deploy fail outright on a transient network error.
+ENV CYPRESS_INSTALL_BINARY=0
 RUN npm ci
 
 FROM node:20-alpine AS builder

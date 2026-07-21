@@ -40,6 +40,12 @@ jobs:
       - run: npm ci
       - run: npm run typecheck:ci
 
+      # Blocking unit-test gate. Runs before the Docker build so a regression
+      # fails in ~1 minute instead of ~5 minutes into the image build. Excludes
+      # the integration suites (live server / third-party APIs) — those run via
+      # `npm run test:integration`.
+      - run: npm test -- --ci --runInBand
+
       - id: vars
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then

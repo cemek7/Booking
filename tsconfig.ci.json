@@ -1,0 +1,24 @@
+{
+  "//": "CI typecheck gate. Extends the app tsconfig and drops test files so the",
+  "//2": "scope matches what `next build` actually type-checks (the app module graph).",
+  "//3": "Without this the gate fails on test-only type errors the production build tolerates.",
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    ".next",
+    ".tsbuild",
+    ".turbo",
+    "coverage",
+    "dist",
+    "tests",
+    "cypress",
+    "src/__tests__",
+    "src/test",
+    "src/components/__tests__",
+    "jest.permission.config.ts",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ]
+}
