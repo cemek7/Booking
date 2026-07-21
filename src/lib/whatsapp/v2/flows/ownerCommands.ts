@@ -22,6 +22,7 @@ import { parseNairaAmount } from '@/lib/ai/parseNairaAmount';
 import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
 import { gateApprovalForAction } from '@/lib/approvals/requests';
 import type { Role } from '@/types/roles';
+import { answerQuestion, MetricPermissionError } from '@/lib/analytics/answer';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -234,7 +235,7 @@ export async function handleOwnerCommand(
 
   // Execute immediately for read-only and message actions
   if (!writeAction) {
-    const result = await executeReadAction(tenantId, aiResp);
+    const result = await executeReadAction(tenantId, aiResp, actor?.tenantUserId ?? null, actor?.permissions, rawMessage);
     await logAiAction(supabaseAdmin, {
       tenantId,
       actorType: role,
@@ -407,15 +408,34 @@ async function handleRuleMatch(
 
 async function executeReadAction(
   tenantId: string,
-  aiResp: AIResponse
+  aiResp: AIResponse,
+  actorId: string | null,
+  permissions?: Set<string>,
+  rawMessage?: string
 ): Promise<string | null> {
   const { action } = aiResp;
 
   switch (action) {
     case 'owner_query':
+    case 'owner_analytics_query':
     case 'get_insights': {
-      // Return the AI-formatted reply (the AI already composed the answer from the context)
-      return null; // use aiResp.reply
+      const question = typeof aiResp.params.question === 'string' && aiResp.params.question.trim()
+        ? aiResp.params.question.trim()
+        : rawMessage?.trim();
+      if (!question) return aiResp.reply;
+
+      try {
+        const answer = await answerQuestion(supabaseAdmin, tenantId, question, {
+          actorId,
+          permissions: permissions ?? new Set(),
+        });
+        return answer.text;
+      } catch (error) {
+        if (error instanceof MetricPermissionError) {
+          return error.message;
+        }
+        return 'I could not answer that analytics question yet. Please try rephrasing it.';
+      }
     }
 
     case 'list_services': {

@@ -20,6 +20,7 @@ export const CAP_TO_PERMISSION: Record<Capability, string> = {
 };
 
 export const ACTION_PERMISSION_MAP: Partial<Record<string, string>> = {
+  owner_analytics_query: BOOKA_PERMISSIONS.VIEW_ANALYTICS,
   refund_sale: BOOKA_PERMISSIONS.ISSUE_REFUNDS,
   set_discount: BOOKA_PERMISSIONS.ISSUE_DISCOUNTS,
   adjust_stock: BOOKA_PERMISSIONS.ADJUST_INVENTORY,

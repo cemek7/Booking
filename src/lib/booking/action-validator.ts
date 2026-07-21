@@ -75,6 +75,7 @@ export type AIAction =
   | 'walk_in'
   | 'get_insights'
   | 'owner_query'
+  | 'owner_analytics_query'
   | 'general_reply'
   | 'needs_info'
   | 'escalate';
@@ -176,6 +177,7 @@ export async function validateAction(
     case 'recover_lead':
     case 'get_insights':
     case 'owner_query':
+    case 'owner_analytics_query':
     case 'general_reply':
     case 'needs_info':
     case 'escalate':

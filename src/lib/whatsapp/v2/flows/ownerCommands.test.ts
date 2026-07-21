@@ -8,6 +8,7 @@ const mockLogAiAction = jest.fn();
 const mockRecordBusinessEvent = jest.fn();
 const mockGetEffectivePermissions = jest.fn();
 const mockGateApprovalForAction = jest.fn();
+const mockAnswerQuestion = jest.fn();
 
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: () => ({
@@ -55,6 +56,11 @@ jest.mock('@/lib/approvals/requests', () => ({
   gateApprovalForAction: (...args: unknown[]) => mockGateApprovalForAction(...args),
 }));
 
+jest.mock('@/lib/analytics/answer', () => ({
+  answerQuestion: (...args: unknown[]) => mockAnswerQuestion(...args),
+  MetricPermissionError: class MetricPermissionError extends Error {},
+}));
+
 import { handleOwnerCommand } from './ownerCommands';
 
 describe('handleOwnerCommand', () => {
@@ -67,6 +73,7 @@ describe('handleOwnerCommand', () => {
     mockRecordBusinessEvent.mockReset();
     mockGetEffectivePermissions.mockReset();
     mockGateApprovalForAction.mockReset();
+    mockAnswerQuestion.mockReset();
     mockGateApprovalForAction.mockResolvedValue({ status: 'clear' });
   });
 
@@ -197,6 +204,45 @@ describe('handleOwnerCommand', () => {
     );
 
     expect(reply).toBe('You are not permitted to run that command.');
+    expect(mockExecuteAction).not.toHaveBeenCalled();
+  });
+
+  it('answers owner analytics queries through the registry-backed analytics flow', async () => {
+    mockFindByIdempotencyKey.mockResolvedValue(null);
+    mockGetEffectivePermissions.mockResolvedValue(new Set(['VIEW_ANALYTICS', 'VIEW_REVENUE']));
+    mockAnswerQuestion.mockResolvedValue({
+      text: 'Total Amount: 12,500',
+      rows: [{ total_amount: 12500 }],
+      limitations: [],
+    });
+
+    const reply = await handleOwnerCommand(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'owner_analytics_query',
+        params: { question: 'How much did we make today?' },
+        reply: 'placeholder',
+        confidence: 'high',
+      },
+      {
+        role: 'owner',
+        channel: 'whatsapp',
+        external_id: '+2348000000000',
+        flow_data: {},
+      } as never,
+      'How much did we make today?'
+    );
+
+    expect(reply).toBe('Total Amount: 12,500');
+    expect(mockAnswerQuestion).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'How much did we make today?',
+      expect.objectContaining({
+        permissions: expect.any(Set),
+      }),
+    );
     expect(mockExecuteAction).not.toHaveBeenCalled();
   });
 });
