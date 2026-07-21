@@ -306,7 +306,14 @@ async function getSiasDashboardSummary(
 export const GET = createHttpHandler(
   async (ctx) => {
     const { searchParams } = new URL(ctx.request.url);
-    const period = (searchParams.get('period') as 'day' | 'week' | 'month' | 'quarter') || 'month';
+    // Validate rather than cast: an unrecognised value used to flow straight
+    // through to PERIOD_MS[period], which is undefined for anything off-list, so
+    // `now - undefined` produced NaN and the queries ran with Invalid Date bounds.
+    const rawPeriod = searchParams.get('period');
+    const period: 'day' | 'week' | 'month' | 'quarter' =
+      rawPeriod === 'day' || rawPeriod === 'week' || rawPeriod === 'quarter' || rawPeriod === 'month'
+        ? rawPeriod
+        : 'month';
     const tenantId = getVerifiedTenantId(ctx);
     const userRole = ctx.user?.role as Role;
     const userId = ctx.user?.id;
