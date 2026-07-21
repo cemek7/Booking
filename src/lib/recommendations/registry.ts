@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runMetric } from '@/lib/analytics/metrics/registry';
 import { explainRecommendation } from '@/lib/recommendations/explain';
+import {
+  DEFAULT_RECOMMENDATION_THRESHOLDS,
+  deriveRecommendationThresholds,
+  type RecommendationThresholds,
+} from '@/lib/recommendations/outcomes';
 
 export interface RecommendationDraft {
   type: string;
@@ -25,7 +30,7 @@ interface RecommendationSignal {
 
 export interface Generator {
   type: string;
-  generate(admin: SupabaseClient, tenantId: string): Promise<RecommendationDraft[]>;
+  generate(admin: SupabaseClient, tenantId: string, thresholds: RecommendationThresholds): Promise<RecommendationDraft[]>;
 }
 
 function localDateString(now = new Date()) {
@@ -39,7 +44,11 @@ function daysBetween(dateIso: string | null | undefined, now = new Date()) {
   return Math.max(0, Math.round((now.getTime() - ts) / (24 * 60 * 60 * 1000)));
 }
 
-async function generateInventoryRecommendations(admin: SupabaseClient, tenantId: string): Promise<RecommendationDraft[]> {
+async function generateInventoryRecommendations(
+  admin: SupabaseClient,
+  tenantId: string,
+  thresholds: RecommendationThresholds,
+): Promise<RecommendationDraft[]> {
   const [{ data: products, error: productsError }, { data: movements, error: movementError }] = await Promise.all([
     admin
       .from('products')
@@ -79,7 +88,7 @@ async function generateInventoryRecommendations(admin: SupabaseClient, tenantId:
     const avgDailyUsage = activeDays > 0 ? usage!.usage / activeDays : 0;
     const daysLeft = avgDailyUsage > 0 ? currentStock / avgDailyUsage : null;
 
-    if (daysLeft !== null && daysLeft <= 14) {
+    if (daysLeft !== null && daysLeft <= thresholds.likelyStockoutDays) {
       drafts.push({
         type: 'likely_stockout',
         entityType: 'product',
@@ -148,7 +157,11 @@ async function generateInventoryRecommendations(admin: SupabaseClient, tenantId:
   return drafts.map(finalizeDraft);
 }
 
-async function generateCustomerRecommendations(admin: SupabaseClient, tenantId: string): Promise<RecommendationDraft[]> {
+async function generateCustomerRecommendations(
+  admin: SupabaseClient,
+  tenantId: string,
+  thresholds: RecommendationThresholds,
+): Promise<RecommendationDraft[]> {
   const { data: profiles, error } = await admin
     .from('customer_profile_summary')
     .select('customer_id, customer_name, lifetime_bookings, lifetime_value_cents, last_visit, repeat_interval_days, days_since_visit, outstanding_balance_cents')
@@ -181,7 +194,7 @@ async function generateCustomerRecommendations(admin: SupabaseClient, tenantId: 
       });
     }
 
-    if (daysSinceVisit >= 45) {
+    if (daysSinceVisit >= thresholds.reactivationDays) {
       drafts.push({
         type: 'reactivation',
         entityType: 'customer',
@@ -212,7 +225,7 @@ async function generateCustomerRecommendations(admin: SupabaseClient, tenantId: 
     }
 
     const riskScore = String(profile.risk_score ?? '').toLowerCase();
-    if ((riskScore === 'high' || riskScore === 'critical') && lifetimeValue > 0) {
+    if ((riskScore === 'high' || riskScore === 'critical') && lifetimeValue > 0 && daysSinceVisit >= thresholds.churnRiskMinDays) {
       drafts.push({
         type: 'churn_risk',
         entityType: 'customer',
@@ -232,7 +245,11 @@ async function generateCustomerRecommendations(admin: SupabaseClient, tenantId: 
   return drafts.map(finalizeDraft);
 }
 
-async function generateServiceRecommendations(admin: SupabaseClient, tenantId: string): Promise<RecommendationDraft[]> {
+async function generateServiceRecommendations(
+  admin: SupabaseClient,
+  tenantId: string,
+  thresholds: RecommendationThresholds,
+): Promise<RecommendationDraft[]> {
   const today = localDateString();
   const horizonEnd = localDateString(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
 
@@ -337,7 +354,7 @@ async function generateServiceRecommendations(admin: SupabaseClient, tenantId: s
         ? ((avgRevenuePerBooking - avgMaterialCost) / avgRevenuePerBooking) * 100
         : 0;
 
-    if (bookings >= 3 && marginPercent > 0 && marginPercent <= 35) {
+    if (bookings >= 3 && marginPercent > 0 && marginPercent <= thresholds.lowMarginPercent) {
       drafts.push({
         type: 'poor_margin_service',
         entityType: 'service',
@@ -383,7 +400,7 @@ async function generateServiceRecommendations(admin: SupabaseClient, tenantId: s
     const service = serviceMap.get(entry.serviceId);
     const summary = (summaries ?? []).find((row) => String(row.service_id ?? '') === entry.serviceId);
     const baselineBookings = Number(summary?.bookings ?? 0);
-    if (!service || entry.availableSlots < 6 || baselineBookings > 5) continue;
+    if (!service || entry.availableSlots < thresholds.underbookedMinSlots || baselineBookings > 5) continue;
     drafts.push({
       type: 'underbooked_slot',
       entityType: 'service',
@@ -403,7 +420,7 @@ async function generateServiceRecommendations(admin: SupabaseClient, tenantId: s
     const staffId = String(summary.staff_id ?? '');
     const remainingSlots = availabilityByStaff.get(staffId)?.availableSlots ?? 0;
     const bookings = Number(summary.bookings ?? 0);
-    if (bookings < 10 || remainingSlots > 2) continue;
+    if (bookings < 10 || remainingSlots > thresholds.overbookedMaxSlots) continue;
     drafts.push({
       type: 'overbooked_staff',
       entityType: 'staff',
@@ -528,7 +545,8 @@ export const GENERATORS: Generator[] = [
 ];
 
 export async function runGenerators(admin: SupabaseClient, tenantId: string) {
-  const drafts = (await Promise.all(GENERATORS.map((generator) => generator.generate(admin, tenantId)))).flat();
+  const thresholds = await deriveRecommendationThresholds(admin, tenantId).catch(() => DEFAULT_RECOMMENDATION_THRESHOLDS);
+  const drafts = (await Promise.all(GENERATORS.map((generator) => generator.generate(admin, tenantId, thresholds)))).flat();
   const inserted: RecommendationDraft[] = [];
 
   for (const draft of drafts) {

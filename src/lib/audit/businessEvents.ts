@@ -43,6 +43,11 @@ export const BUSINESS_EVENT_ACTIONS = {
   APPROVAL_ALERTED: 'approval.alerted',
   SERVICE_CONSUMPTION_RECORDED: 'service.consumption_recorded',
   CAPTURE_CONFIRMED: 'capture.confirmed',
+  RECOMMENDATION_ACCEPTED: 'recommendation.accepted',
+  RECOMMENDATION_DISMISSED: 'recommendation.dismissed',
+  RECOMMENDATION_SNOOZED: 'recommendation.snoozed',
+  RECOMMENDATION_ALERTED: 'recommendation.alerted',
+  RECOMMENDATION_OUTCOME_RECORDED: 'recommendation.outcome_recorded',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';

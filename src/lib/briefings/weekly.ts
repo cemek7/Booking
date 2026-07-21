@@ -82,6 +82,16 @@ export async function buildWeeklyBriefing(
   if (costError) throw costError;
   if (anomalyError) throw anomalyError;
 
+  const { data: pendingRecommendations, error: recommendationError } = await admin
+    .from('business_recommendations')
+    .select('id, title, recommended_action, confidence')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'pending')
+    .order('confidence', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(3);
+  if (recommendationError) throw recommendationError;
+
   const [{ result: topProducts }, { result: topServices }, { result: topCustomers }, { result: staffRevenue }, { result: deadStock }, { result: outstanding }, { result: currentRevenue }, { result: previousRevenue }] = await Promise.all([
     runMetric(admin, tenantId, 'top_products', { dimensions: ['product'], filters: { ...currentRange, limit: 3 }, aggregation: 'rank' }),
     runMetric(admin, tenantId, 'top_services', { dimensions: ['service'], filters: { limit: 3 }, aggregation: 'rank' }),
@@ -122,6 +132,9 @@ export async function buildWeeklyBriefing(
   if (deadStock.rows.length > 0) recommendations.push('Run a dead-stock push or bundle to unlock tied-up cash.');
   if (outstandingAmount > 0) recommendations.push('Collect outstanding balances before they age further.');
   if (grossMargin > 0 && grossMargin < 30) recommendations.push('Margin is thin; review pricing or cost leakage.');
+  for (const recommendation of pendingRecommendations ?? []) {
+    recommendations.push(`${String(recommendation.title)} — ${String(recommendation.recommended_action)}`);
+  }
 
   if (
     totals.bookings === 0 &&

@@ -67,6 +67,24 @@ function makeAdmin() {
           }),
         };
       }
+      if (table === 'business_recommendations') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          order: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockResolvedValue({
+            data: [
+              {
+                id: 'rec-1',
+                title: 'Reactivate Ada',
+                recommended_action: 'Send a comeback offer to Ada now.',
+                confidence: 0.92,
+              },
+            ],
+            error: null,
+          }),
+        };
+      }
       throw new Error(`Unexpected table ${table}`);
     }),
   } as never;
@@ -95,6 +113,7 @@ describe('buildWeeklyBriefing', () => {
     expect(payload?.body).toContain('Top customer: Ada');
     expect(payload?.body).toContain('Top staff: Amaka');
     expect(payload?.body).toContain('Recommended actions:');
+    expect(payload?.body).toContain('Reactivate Ada');
     expect(payload?.meta).toEqual(expect.objectContaining({
       revenue: 2200,
       prior_revenue: 1700,
