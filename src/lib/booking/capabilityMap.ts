@@ -23,6 +23,8 @@ export const ACTION_PERMISSION_MAP: Partial<Record<string, string>> = {
   refund_sale: BOOKA_PERMISSIONS.ISSUE_REFUNDS,
   set_discount: BOOKA_PERMISSIONS.ISSUE_DISCOUNTS,
   adjust_stock: BOOKA_PERMISSIONS.ADJUST_INVENTORY,
+  create_stock_count_session: BOOKA_PERMISSIONS.PERFORM_STOCK_COUNTS,
+  complete_service_capture: BOOKA_PERMISSIONS.COMPLETE_SERVICES,
   record_expense: BOOKA_PERMISSIONS.RECORD_EXPENSES,
   record_purchase: BOOKA_PERMISSIONS.RECORD_PURCHASES,
   record_supplier_payment: BOOKA_PERMISSIONS.RECORD_PAYMENTS,

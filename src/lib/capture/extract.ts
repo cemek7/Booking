@@ -57,6 +57,7 @@ export interface CaptureExtractionProvider {
 export interface PersistedExtractionResult {
   extractedRecordId: string;
   recordType: CaptureRecordType;
+  fields: Record<string, unknown>;
   lowConfidenceFields: string[];
   proposedAction: AIResponse | null;
   transcriptionText?: string | null;
@@ -109,34 +110,58 @@ function normalizeAmountFields(fields: Record<string, unknown>): Record<string, 
   return normalized;
 }
 
-function buildReviewAction(recordType: CaptureRecordType, fields: Record<string, unknown>): AIResponse | null {
+export function buildCaptureReviewAction(recordType: CaptureRecordType, fields: Record<string, unknown>): AIResponse | null {
   switch (recordType) {
+    case 'expense':
+      return {
+        action: 'record_expense' satisfies AIAction,
+        params: fields,
+        reply: 'Review extracted expense before confirmation.',
+        confidence: 'medium',
+      };
+    case 'purchase':
+      return {
+        action: 'record_purchase' satisfies AIAction,
+        params: fields,
+        reply: 'Review extracted purchase before confirmation.',
+        confidence: 'medium',
+      };
+    case 'supplier_payment':
+      return {
+        action: 'record_supplier_payment' satisfies AIAction,
+        params: fields,
+        reply: 'Review extracted supplier payment before confirmation.',
+        confidence: 'medium',
+      };
+    case 'stock_receipt':
+      return {
+        action: 'record_stock_receipt' satisfies AIAction,
+        params: fields,
+        reply: 'Review extracted stock receipt before confirmation.',
+        confidence: 'medium',
+      };
     case 'stock_count':
       return {
-        action: 'adjust_stock' satisfies AIAction,
+        action: 'create_stock_count_session' satisfies AIAction,
         params: {
           items: Array.isArray(fields.items) ? fields.items : [],
           source: 'multimodal_capture',
           capture_record_type: recordType,
         },
-        reply: 'Review extracted stock count before posting inventory changes.',
+        reply: 'Review extracted stock count before opening a stock-count session.',
         confidence: 'medium',
       };
     case 'service':
       return {
-        action: 'owner_query' satisfies AIAction,
+        action: 'complete_service_capture' satisfies AIAction,
         params: {
-          capture_record_type: recordType,
-          fields,
+          ...fields,
           source: 'multimodal_capture',
+          capture_record_type: recordType,
         },
-        reply: 'Review extracted service note before applying service completion details.',
+        reply: 'Review extracted service note before completing the service record.',
         confidence: 'medium',
       };
-    case 'expense':
-    case 'purchase':
-    case 'stock_receipt':
-    case 'supplier_payment':
     case 'retail_sale':
       return {
         action: 'owner_query' satisfies AIAction,
@@ -194,7 +219,7 @@ export async function extractAndPersistRecord(
     Object.entries(providerOutput.fieldConfidence).map(([key, value]) => [key, normalizeConfidence(value)]),
   );
   const lowConfidenceFields = collectLowConfidenceFields(normalizedConfidence);
-  const proposedAction = buildReviewAction(providerOutput.recordType, normalizedFields);
+  const proposedAction = buildCaptureReviewAction(providerOutput.recordType, normalizedFields);
 
   const { data: extractedRecord, error: extractedError } = await admin
     .from('extracted_records')
@@ -231,6 +256,7 @@ export async function extractAndPersistRecord(
   return {
     extractedRecordId: extractedRecord.id,
     recordType: providerOutput.recordType,
+    fields: normalizedFields,
     lowConfidenceFields,
     proposedAction,
     transcriptionText,

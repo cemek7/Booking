@@ -169,6 +169,7 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/orders', label: 'Orders', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
   // Showcase packs
   { href: '/dashboard/showcase', label: 'Showcase', icon: Icons.showcase, roles: ['owner', 'manager'] },
+  { href: '/dashboard/owner/capture', label: 'Capture Review', icon: Icons.showcase, roles: ['owner', 'manager'] },
   // Chats
   { href: '/dashboard/chats', label: 'Chats', icon: Icons.chats, roles: ['owner', 'manager', 'staff'] },
   // Support
@@ -210,6 +211,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/showcase' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/capture' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('owner'))!,
@@ -244,6 +246,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/capture' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,

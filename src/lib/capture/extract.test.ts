@@ -90,7 +90,7 @@ describe('extractAndPersistRecord', () => {
       }),
       low_confidence_fields: ['expense_date'],
       proposed_action: expect.objectContaining({
-        action: 'owner_query',
+        action: 'record_expense',
       }),
     }));
     expect(extractionUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -149,12 +149,63 @@ describe('extractAndPersistRecord', () => {
     });
 
     expect(result.proposedAction).toEqual(expect.objectContaining({
-      action: 'adjust_stock',
+      action: 'create_stock_count_session',
       params: expect.objectContaining({
         source: 'multimodal_capture',
         items: expect.any(Array),
       }),
     }));
     expect(result.lowConfidenceFields).toEqual([]);
+  });
+
+  it('produces a completion proposal for service notes', async () => {
+    const extractedSingle = jest.fn().mockResolvedValue({ data: { id: 'record-3' }, error: null });
+    const extractedSelect = jest.fn().mockReturnValue({ single: extractedSingle });
+    const extractedInsert = jest.fn().mockReturnValue({ select: extractedSelect });
+    const extractionEqId = jest.fn().mockResolvedValue({ error: null });
+    const extractionEqTenant = jest.fn().mockReturnValue({ eq: extractionEqId });
+    const extractionUpdate = jest.fn().mockReturnValue({ eq: extractionEqTenant });
+
+    const admin = {
+      from: jest.fn((table: string) => {
+        if (table === 'extracted_records') return { insert: extractedInsert };
+        if (table === 'extraction_jobs') return { update: extractionUpdate };
+        throw new Error(`Unexpected table ${table}`);
+      }),
+    } as unknown as Parameters<typeof extractAndPersistRecord>[0];
+
+    const provider = {
+      extract: jest.fn().mockResolvedValue({
+        recordType: 'service',
+        fields: {
+          reservation_id: 'res-1',
+          payment_amount: '₦12,000',
+          payment_method: 'cash',
+        },
+        fieldConfidence: {
+          reservation_id: 0.95,
+          payment_amount: 0.9,
+        },
+        model: 'openrouter/gpt-4.1-mini',
+        promptVersion: 'capture-v2',
+      }),
+    };
+
+    const result = await extractAndPersistRecord(admin, provider, {
+      kind: 'service_note',
+      mime: 'image/jpeg',
+      buffer: Buffer.from('image'),
+      tenantId: 'tenant-3',
+      jobId: 'job-3',
+      textContent: 'Completed Ada service, paid cash',
+    });
+
+    expect(result.proposedAction).toEqual(expect.objectContaining({
+      action: 'complete_service_capture',
+      params: expect.objectContaining({
+        reservation_id: 'res-1',
+        payment_amount_cents: 1_200_000,
+      }),
+    }));
   });
 });

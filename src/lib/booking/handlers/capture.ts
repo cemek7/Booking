@@ -1,6 +1,9 @@
+import crypto from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { recordMovement } from '@/lib/inventory/recordMovement';
+import { enterCount, getCountSessionWithItems, startCountSession } from '@/lib/inventory/stockCountService';
+import { markReservationCompleted } from '@/lib/reconciliation/reservationSnapshot';
 import type { ActionHandler } from './registry';
 
 function getString(value: unknown): string | null {
@@ -53,6 +56,29 @@ async function ensureSupplier(
   }
 
   return created.id;
+}
+
+async function findProductIdsByName(
+  admin: SupabaseClient,
+  tenantId: string,
+  names: string[],
+): Promise<Map<string, string>> {
+  const normalizedNames = [...new Set(names.map((name) => name.trim().toLowerCase()).filter(Boolean))];
+  if (!normalizedNames.length) return new Map();
+
+  const { data, error } = await admin
+    .from('products')
+    .select('id, name')
+    .eq('tenant_id', tenantId)
+    .in('name', normalizedNames.map((name) => name));
+
+  if (error) throw error;
+
+  return new Map(
+    (data ?? []).flatMap((row: { id?: string | null; name?: string | null }) => (
+      row.id && row.name ? [[row.name.trim().toLowerCase(), row.id]] : []
+    )),
+  );
 }
 
 type ActionContext = { actorId?: string | null };
@@ -253,6 +279,143 @@ async function recordStockReceiptExecute(
   return { success: true, reply: 'Stock receipt recorded.', data: { stock_receipt: data } };
 }
 
+async function createStockCountSessionExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext,
+) {
+  const items = Array.isArray(params.items) ? params.items : [];
+  const session = await startCountSession(admin, tenantId, getString(params.location_id), ctx.actorId ?? 'system');
+  const sessionDetails = await getCountSessionWithItems(admin, tenantId, session.id);
+  const productNames = items
+    .map((item) => getString(getObject(item)?.product_name))
+    .filter((value): value is string => Boolean(value));
+  const productIdByName = await findProductIdsByName(admin, tenantId, productNames);
+
+  for (const rawItem of items) {
+    const item = getObject(rawItem);
+    if (!item) continue;
+    const countedQuantity = getInteger(item.counted_units ?? item.counted_quantity ?? item.quantity);
+    if (countedQuantity === null) continue;
+
+    const productId = getString(item.product_id)
+      ?? productIdByName.get((getString(item.product_name) ?? '').trim().toLowerCase())
+      ?? null;
+    const variantId = getString(item.variant_id);
+
+    const sessionItem = sessionDetails.items.find((row) => (
+      String(row.product_id ?? '') === String(productId ?? '')
+      && String(row.variant_id ?? '') === String(variantId ?? '')
+    ));
+
+    if (!sessionItem?.id) continue;
+    await enterCount(admin, sessionItem.id, countedQuantity);
+  }
+
+  return {
+    success: true,
+    reply: 'Stock count session created from captured stock sheet.',
+    data: { stock_count_session: session },
+  };
+}
+
+async function completeServiceCaptureExecute(
+  admin: SupabaseClient,
+  tenantId: string,
+  params: Record<string, unknown>,
+  ctx: ActionContext,
+) {
+  const reservationId = getString(params.reservation_id);
+  if (!reservationId) {
+    return { success: false, error: 'complete_service_capture requires reservation_id' };
+  }
+
+  const { data: reservation, error: reservationError } = await admin
+    .from('reservations')
+    .select('id, tenant_id, status, staff_id, tenant_staff_id')
+    .eq('tenant_id', tenantId)
+    .eq('id', reservationId)
+    .maybeSingle<{ id: string; tenant_id: string; status?: string | null; staff_id?: string | null; tenant_staff_id?: string | null }>();
+
+  if (reservationError) return { success: false, error: reservationError.message };
+  if (!reservation) return { success: false, error: 'Reservation not found' };
+
+  const staffId = getString(params.staff_id ?? params.tenant_staff_id);
+  if (staffId) {
+    const { error: updateError } = await admin
+      .from('reservations')
+      .update({
+        staff_id: staffId,
+        tenant_staff_id: staffId,
+      })
+      .eq('tenant_id', tenantId)
+      .eq('id', reservationId);
+    if (updateError) return { success: false, error: updateError.message };
+  }
+
+  if (reservation.status !== 'completed') {
+    await markReservationCompleted(admin, tenantId, reservationId, ctx.actorId ?? null);
+  }
+
+  const paymentAmountCents = getInteger(params.payment_amount_cents ?? params.amount_cents);
+  if (paymentAmountCents && paymentAmountCents > 0) {
+    const transactionId = crypto.randomUUID();
+    const payload = {
+      id: transactionId,
+      tenant_id: tenantId,
+      reservation_id: reservationId,
+      provider: 'manual_capture',
+      provider_id: getString(params.reference) ?? transactionId,
+      amount: paymentAmountCents / 100,
+      currency: getString(params.currency) ?? 'NGN',
+      status: 'success',
+      type: 'payment',
+      subject_type: 'reservation',
+      subject_id: reservationId,
+      raw: {
+        source: 'multimodal_capture',
+        payment_method: getString(params.payment_method),
+        reference: getString(params.reference),
+      },
+      metadata: {
+        source: 'multimodal_capture',
+        payment_method: getString(params.payment_method),
+        reference: getString(params.reference),
+      },
+    };
+
+    const { data: transaction, error: transactionError } = await admin
+      .from('transactions')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (transactionError) return { success: false, error: transactionError.message };
+
+    await recordBusinessEvent(admin, {
+      tenantId,
+      actorType: 'user',
+      actorId: ctx.actorId ?? null,
+      action: BUSINESS_EVENT_ACTIONS.PAYMENT_RECORDED,
+      entityType: 'transaction',
+      entityId: transactionId,
+      source: 'dashboard',
+      after: transaction,
+      metadata: {
+        reservation_id: reservationId,
+        amount_cents: paymentAmountCents,
+      },
+    });
+  }
+
+  return {
+    success: true,
+    reply: 'Service completion recorded from captured note.',
+    data: { reservation: { id: reservationId } },
+  };
+}
+
 export const captureHandlers: Record<string, ActionHandler> = {
   record_expense: {
     action: 'record_expense',
@@ -297,5 +460,27 @@ export const captureHandlers: Record<string, ActionHandler> = {
       };
     },
     execute: recordStockReceiptExecute,
+  },
+  create_stock_count_session: {
+    action: 'create_stock_count_session',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return {
+        valid: Array.isArray(params.items) && params.items.length > 0,
+        error: 'create_stock_count_session requires one or more counted items',
+      };
+    },
+    execute: createStockCountSessionExecute,
+  },
+  complete_service_capture: {
+    action: 'complete_service_capture',
+    requiresConfirmation: true,
+    async validate(_admin, _tenantId, params) {
+      return {
+        valid: Boolean(getString(params.reservation_id)),
+        error: 'complete_service_capture requires reservation_id',
+      };
+    },
+    execute: completeServiceCaptureExecute,
   },
 };

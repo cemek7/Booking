@@ -92,6 +92,12 @@ const quickLinks = [
     icon: Package,
   },
   {
+    href: '/dashboard/owner/capture',
+    title: 'Capture Review',
+    description: 'Process receipts, stock sheets, and voice notes into review-ready business records.',
+    icon: ImagePlus,
+  },
+  {
     href: '/dashboard/settings',
     title: 'Settings',
     description: 'Configure preferences, business details, and AI settings.',

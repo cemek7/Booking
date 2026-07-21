@@ -86,14 +86,16 @@ export const POST = createHttpHandler(
 
     if (duplicateMatchId) {
       await admin
-        .from('extraction_jobs')
+        .from('media_inputs')
         .update({
-          status: 'review_required',
-          error: `duplicate_match:${duplicateMatchId}`,
-          updated_at: new Date().toISOString(),
+          metadata: {
+            original_name: file.name,
+            duplicate_probe: duplicateProbe,
+            duplicate_match_id: duplicateMatchId,
+          },
         })
         .eq('tenant_id', tenantId)
-        .eq('id', ingestResult.extractionJobId);
+        .eq('id', ingestResult.mediaInputId);
     }
 
     return {

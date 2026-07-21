@@ -48,6 +48,8 @@ export type AIAction =
   | 'record_purchase'
   | 'record_supplier_payment'
   | 'record_stock_receipt'
+  | 'create_stock_count_session'
+  | 'complete_service_capture'
   | 'refund_sale'
   | 'record_outstanding_balance'
   | 'create_order'
@@ -155,6 +157,8 @@ export async function validateAction(
     case 'record_purchase':
     case 'record_supplier_payment':
     case 'record_stock_receipt':
+    case 'create_stock_count_session':
+    case 'complete_service_capture':
       return { valid: true };
 
     case 'get_availability':
