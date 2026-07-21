@@ -10,6 +10,33 @@ const tenantRow = {
   renamed_at: null,
 };
 
+// outboundBranding.ts builds its client at module load via
+// createSupabaseAdminClient() from @/lib/supabase/server. Mocking only
+// @supabase/supabase-js leaves the real admin client in place, so the tenant
+// lookup returns nothing and the text comes back unbranded.
+jest.mock('@/lib/supabase/server', () => {
+  return {
+    createSupabaseAdminClient: () => ({
+      from: (table: string) => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: async () =>
+                table === 'tenants'
+                  ? { data: (global as any).__tenantRow }
+                  : { data: (global as any).__convRow },
+            }),
+            maybeSingle: async () =>
+              table === 'tenants'
+                ? { data: (global as any).__tenantRow }
+                : { data: (global as any).__convRow },
+          }),
+        }),
+      }),
+    }),
+  };
+});
+
 jest.mock('@supabase/supabase-js', () => {
   return {
     createClient: () => ({

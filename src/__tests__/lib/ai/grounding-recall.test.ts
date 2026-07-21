@@ -41,6 +41,12 @@ jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => ({ from })),
 }));
 
+// grounding-service reaches the DB through createSupabaseAdminClient() in
+// @/lib/supabase/server, not createClient from @supabase/supabase-js.
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => ({ from })),
+}));
+
 jest.mock('@/lib/ai/customerRecall', () => ({
   getCustomerRecall: (...args: unknown[]) => getCustomerRecall(...args),
 }));

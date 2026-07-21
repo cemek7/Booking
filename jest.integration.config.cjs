@@ -16,6 +16,9 @@ module.exports = {
   testMatch: [
     '<rootDir>/tests/evolution-integration.test.ts',
     '<rootDir>/tests/paystack-integration.test.ts',
+    // Exercises the running app over HTTP (GET /api/health, /api/ready,
+    // /api/security/*). Requires `npm run dev` on localhost:3000.
+    '<rootDir>/src/__tests__/api/health-security/routes.test.ts',
   ],
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest',

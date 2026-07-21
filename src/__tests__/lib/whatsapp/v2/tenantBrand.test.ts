@@ -20,6 +20,11 @@ function makeChain() {
 }
 const mockClient = { from: jest.fn().mockImplementation(() => makeChain()) };
 jest.mock('@supabase/supabase-js', () => ({ createClient: jest.fn(() => mockClient) }));
+// The v2 modules reach the database via createSupabaseAdminClient() in
+// @/lib/supabase/server, not createClient from @supabase/supabase-js.
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => mockClient),
+}));
 
 import { suggestEmojiForVertical, renameTenantBrand } from '@/lib/whatsapp/v2/tenantBrand';
 

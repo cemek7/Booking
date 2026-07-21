@@ -636,7 +636,13 @@ describe('useChatRealtime', () => {
         await result.current.send('Test message');
       });
 
-      expect(global.fetch).not.toHaveBeenCalled();
+      // The hook also GETs /api/staff on mount, so a blanket
+      // not.toHaveBeenCalled() no longer isolates send behaviour. Assert the
+      // thing this test is actually about: no message POST was issued.
+      expect(global.fetch).not.toHaveBeenCalledWith(
+        expect.stringContaining('/messages'),
+        expect.objectContaining({ method: 'POST' }),
+      );
     });
 
     it('should URL encode chat ID in send', async () => {

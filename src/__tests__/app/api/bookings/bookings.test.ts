@@ -1,5 +1,28 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
+
+// POST no longer inserts through ctx.supabase. It builds its own admin client,
+// takes a slot lock via DoubleBookingPrevention, then delegates the write to
+// createReservation(). Injecting ctx.supabase alone leaves all three of those
+// real, so the lock fails and the route throws before reaching the insert.
+const mockAcquireSlotLock = jest.fn();
+const mockCreateReservation = jest.fn();
+
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => ({})),
+}));
+
+jest.mock('@/lib/doubleBookingPrevention', () => ({
+  DoubleBookingPrevention: jest.fn().mockImplementation(() => ({
+    acquireSlotLock: mockAcquireSlotLock,
+    releaseSlotLock: jest.fn(async () => undefined),
+  })),
+}));
+
+jest.mock('@/lib/reservationService', () => ({
+  createReservation: (...args: unknown[]) => mockCreateReservation(...args),
+}));
+
 import { GET, POST } from '@/app/api/bookings/route';
 
 const createMockSupabase = () => ({
@@ -23,6 +46,18 @@ const createMockContext = (overrides = {}) => ({
   },
   supabase: createMockSupabase(),
   ...overrides,
+});
+
+beforeEach(() => {
+  // Default happy path: lock granted, reservation written.
+  mockAcquireSlotLock.mockResolvedValue({ success: true, isConflict: false });
+  mockCreateReservation.mockResolvedValue({
+    id: 'booking-1',
+    service: 'Test Service',
+    start_at: '2024-01-15T10:00:00Z',
+    end_at: '2024-01-15T11:00:00Z',
+    customer_name: 'John Doe',
+  });
 });
 
 describe('GET /api/bookings', () => {
@@ -57,7 +92,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -95,7 +130,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -127,7 +162,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.eq = mockEq;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -150,7 +185,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.gt = mockGt;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -172,7 +207,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.eq = mockEq;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const staffId = '123e4567-e89b-12d3-a456-426614174000';
@@ -194,7 +229,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.order = mockOrder;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -215,7 +250,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: [], error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -250,7 +285,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: mockData, error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -291,7 +326,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: mockData, error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -321,7 +356,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({ data: mockData, error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -342,10 +377,10 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: jest.fn().mockResolvedValue({
+        then: (resolve: any, reject: any) => Promise.resolve({
           data: null,
           error: { message: 'Database error' },
-        }),
+        }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -541,7 +576,13 @@ describe('POST /api/bookings', () => {
       });
 
       await POST(ctx as any);
-      expect(mockSupabase.insert).toHaveBeenCalled();
+      // The write goes through createReservation(), not ctx.supabase.insert —
+      // assert the actual persistence call, scoped to this user's tenant.
+      expect(mockCreateReservation).toHaveBeenCalled();
+      expect(mockCreateReservation.mock.calls[0][1]).toMatchObject({
+        tenant_id: 'tenant-123',
+        customer_name: 'John Doe',
+      });
     });
 
     it('should allow manager to create bookings', async () => {
@@ -570,7 +611,13 @@ describe('POST /api/bookings', () => {
       });
 
       await POST(ctx as any);
-      expect(mockSupabase.insert).toHaveBeenCalled();
+      // The write goes through createReservation(), not ctx.supabase.insert —
+      // assert the actual persistence call, scoped to this user's tenant.
+      expect(mockCreateReservation).toHaveBeenCalled();
+      expect(mockCreateReservation.mock.calls[0][1]).toMatchObject({
+        tenant_id: 'tenant-123',
+        customer_name: 'John Doe',
+      });
     });
   });
 });

@@ -41,6 +41,14 @@ jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => mockClient),
 }));
 
+// The v2 modules reach the database through createSupabaseAdminClient() in
+// @/lib/supabase/server (which builds on @supabase/ssr), not through
+// createClient from @supabase/supabase-js. Mocking only the latter leaves the
+// real admin client in place, which fails as `...eq(...).ilike is not a function`.
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => mockClient),
+}));
+
 jest.mock('@/lib/booking/engine', () => ({
   bookingEngine: { createBooking: jest.fn() },
 }));

@@ -21,6 +21,19 @@ jest.mock('@supabase/supabase-js', () => ({
   }),
 }));
 
+// The route builds its client with createSupabaseAdminClient() from
+// @/lib/supabase/server. Mocking only @supabase/supabase-js left the real
+// client in place, so the tenant list came back empty and the runner never ran.
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: () => ({
+    from: () => ({
+      select: () => ({
+        is: () => Promise.resolve(mockTenantsResponse),
+      }),
+    }),
+  }),
+}));
+
 jest.mock('@/lib/reminders/runner', () => ({
   runRemindersForTenant: jest.fn(),
 }));

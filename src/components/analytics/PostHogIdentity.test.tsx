@@ -1,5 +1,5 @@
 import React from 'react';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { AnalyticsReadyProvider } from '@/components/analytics/AnalyticsReadyContext';
 
@@ -16,15 +16,21 @@ jest.mock('posthog-js', () => ({
   },
 }));
 
-jest.mock('@/lib/supabase/client', () => ({
-  __esModule: true,
-  getSupabaseBrowserClient: () => ({
+jest.mock('@/lib/supabase/client', () => {
+  const client = {
     auth: {
       getUser: getUserMock,
       onAuthStateChange: onAuthStateChangeMock,
     },
-  }),
-}));
+  };
+  return {
+    __esModule: true,
+    getSupabaseBrowserClient: () => client,
+    // PostHogIdentity calls the async variant; without it the component throws
+    // "getSupabaseBrowserClientAsync is not a function" and never identifies.
+    getSupabaseBrowserClientAsync: async () => client,
+  };
+});
 
 import PostHogIdentity from '@/components/analytics/PostHogIdentity';
 
@@ -49,9 +55,11 @@ describe('PostHogIdentity', () => {
         <PostHogIdentity />
       </AnalyticsReadyProvider>,
     );
-    await Promise.resolve();
-
-    expect(identifyMock).toHaveBeenCalledWith('user_123', { email: 'owner@example.com' });
+    // The component resolves the client, then getUser() — two chained
+    // microtask ticks — so a single `await Promise.resolve()` lands too early.
+    await waitFor(() =>
+      expect(identifyMock).toHaveBeenCalledWith('user_123', { email: 'owner@example.com' }),
+    );
     expect(resetMock).not.toHaveBeenCalled();
   });
 
@@ -65,9 +73,7 @@ describe('PostHogIdentity', () => {
         <PostHogIdentity />
       </AnalyticsReadyProvider>,
     );
-    await Promise.resolve();
-
-    expect(resetMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(resetMock).toHaveBeenCalledTimes(1));
     expect(identifyMock).not.toHaveBeenCalled();
   });
 });

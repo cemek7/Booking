@@ -27,7 +27,13 @@ import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/supabase/server', () => ({
   getSupabaseRouteHandlerClient: jest.fn(),
-  createSupabaseAdminClient: jest.fn(),
+  // The nightly cron route captures its client at module load
+  // (`const supabaseAdmin = createSupabaseAdminClient()`), so this must return a
+  // usable client from the first call — a bare jest.fn() yields undefined and
+  // the stage 6 rebooking helpers fail on `undefined.from`. Individual stages
+  // still override this with mockReturnValue(makeAdminMock()) where they need
+  // to assert on specific queries.
+  createSupabaseAdminClient: jest.fn(() => makeNightlySupabaseMock()),
   createServerSupabaseClient: jest.fn(),
 }));
 

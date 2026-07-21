@@ -5,14 +5,15 @@
 
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
-// Mock the Supabase client
+// Mock the Supabase client. getAvailability runs unauthenticated on the public
+// booking path, so it uses the admin client rather than the route handler client.
 jest.mock('@/lib/supabase/server', () => ({
-  getSupabaseRouteHandlerClient: jest.fn(),
+  createSupabaseAdminClient: jest.fn(),
 }));
 
 // Import after mocking
 import { getAvailability } from '@/lib/publicBookingService';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 describe('publicBookingService - getAvailability fixes', () => {
   let mockSupabase: any;
@@ -21,7 +22,7 @@ describe('publicBookingService - getAvailability fixes', () => {
     mockSupabase = {
       from: jest.fn(),
     };
-    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(mockSupabase);
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
   });
 
   afterEach(() => {
@@ -40,7 +41,7 @@ describe('publicBookingService - getAvailability fixes', () => {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         maybeSingle: jest.fn().mockResolvedValueOnce({
-          data: { duration: 60 },
+          data: { duration_minutes: 60 },
           error: null,
         }).mockResolvedValueOnce({
           data: null,
@@ -68,7 +69,7 @@ describe('publicBookingService - getAvailability fixes', () => {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         maybeSingle: jest.fn().mockResolvedValueOnce({
-          data: { duration: 60 },
+          data: { duration_minutes: 60 },
           error: null,
         }).mockResolvedValueOnce({
           data: {

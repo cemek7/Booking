@@ -74,6 +74,11 @@ const mockClient = {
 jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => mockClient),
 }));
+// The v2 modules reach the database via createSupabaseAdminClient() in
+// @/lib/supabase/server, not createClient from @supabase/supabase-js.
+jest.mock('@/lib/supabase/server', () => ({
+  createSupabaseAdminClient: jest.fn(() => mockClient),
+}));
 
 import { claimBatch, appendPendingMessage } from '@/lib/whatsapp/v2/messageBatcher';
 
