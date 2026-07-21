@@ -91,7 +91,7 @@ export async function getTenantServices(tenantId: string) {
     throw ApiErrorFactory.databaseError(new Error(error.message));
   }
 
-  return (services || []).map((service) => {
+  return (services || []).map((service: Record<string, unknown>) => {
     const duration = typeof service.duration_minutes === 'number'
       ? service.duration_minutes
       : Number(service.duration_minutes ?? 30);

@@ -72,13 +72,14 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.databaseError(existingResult.error);
     }
 
+    const existingRows = (existingResult.data || []) as Record<string, unknown>[];
     const existingEmails = new Set(
-      (existingResult.data || [])
+      existingRows
         .map((row) => typeof row.email === 'string' ? row.email.trim().toLowerCase() : null)
         .filter((value): value is string => Boolean(value))
     );
     const existingPhones = new Set(
-      (existingResult.data || [])
+      existingRows
         .map((row) => typeof row.phone === 'string' ? row.phone.trim() : null)
         .filter((value): value is string => Boolean(value))
     );
