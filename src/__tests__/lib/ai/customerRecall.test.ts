@@ -15,7 +15,7 @@ function consume(): Resp {
 
 function makeChain(): any {
   const chain: any = {};
-  ['select', 'eq', 'lt', 'not', 'order', 'limit'].forEach((method) => {
+  ['select', 'eq', 'is', 'lt', 'not', 'order', 'limit'].forEach((method) => {
     chain[method] = () => chain;
   });
   chain.maybeSingle = async () => consume();
@@ -38,14 +38,14 @@ describe('getCustomerRecall', () => {
   it('returns null for an unknown customer', async () => {
     pushDb(null);
 
-    await expect(getCustomerRecall(admin, 't1', '+234800')).resolves.toBeNull();
+    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toBeNull();
   });
 
   it('returns null when the customer has no past visits', async () => {
     pushDb({ id: 'c1', last_visit: null });
     pushDb([]);
 
-    await expect(getCustomerRecall(admin, 't1', '+234800')).resolves.toBeNull();
+    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toBeNull();
   });
 
   it('returns lastService and a single-visit recall without usual staff', async () => {
@@ -60,7 +60,7 @@ describe('getCustomerRecall', () => {
       },
     ]);
 
-    await expect(getCustomerRecall(admin, 't1', '+234800')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
       lastService: 'Trim',
       usualStaff: null,
       visitCount: 1,
@@ -88,7 +88,7 @@ describe('getCustomerRecall', () => {
     ]);
     pushDb({ name: 'Sarah' });
 
-    await expect(getCustomerRecall(admin, 't1', '+234800')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
       usualStaff: 'Sarah',
       visitCount: 2,
     });
@@ -114,7 +114,7 @@ describe('getCustomerRecall', () => {
     ]);
     pushDb(null);
 
-    await expect(getCustomerRecall(admin, 't1', '+234800')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
       usualStaff: null,
     });
   });
@@ -131,7 +131,7 @@ describe('getCustomerRecall', () => {
       },
     ]);
 
-    await expect(getCustomerRecall(admin, 't1', '+234800')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
       rebookingDue: true,
     });
   });
@@ -151,6 +151,6 @@ describe('getCustomerRecall', () => {
       }),
     };
 
-    await expect(getCustomerRecall(throwing, 't1', '+234800')).resolves.toBeNull();
+    await expect(getCustomerRecall(throwing, 't1', '+2348012345678')).resolves.toBeNull();
   });
 });

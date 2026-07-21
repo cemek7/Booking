@@ -3,7 +3,9 @@ import { NextRequest } from 'next/server';
 import { DELETE as staffSkillDELETE } from '@/app/api/staff-skills/[user_id]/[skill_id]/route';
 
 const MOCK_USER = { id: 'u1', email: 'owner@test.com' };
-const MOCK_TENANT = { tenant_id: 't1', role: 'owner' };
+// tenant_users row carries `id` — auth resolves effective permissions via
+// tenant_users.id + tenant_user_permissions (granular perms, plan 4).
+const MOCK_TENANT = { id: 'tu1', tenant_id: 't1', role: 'owner' };
 const MOCK_SKILL_ASSIGNMENT = { tenant_id: 't1' };
 
 // Mock supabase server client (used for data queries after auth)
@@ -17,6 +19,11 @@ jest.mock('@/lib/supabase/server', () => ({
         return {
           select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: MOCK_TENANT, error: null }) }) }) })
         };
+      }
+      if (table === 'tenant_user_permissions') {
+        // No per-user overrides in this fixture — effective permissions = role defaults.
+        const perms = { eq: () => perms, then: (resolve: any) => resolve({ data: [], error: null }) };
+        return { select: () => perms };
       }
       if (table === 'tenants') {
         return {
