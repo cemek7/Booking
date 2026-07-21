@@ -44,6 +44,10 @@ export type AIAction =
   | 'set_availability'
   | 'low_stock_query'
   | 'record_retail_sale'
+  | 'record_expense'
+  | 'record_purchase'
+  | 'record_supplier_payment'
+  | 'record_stock_receipt'
   | 'refund_sale'
   | 'record_outstanding_balance'
   | 'create_order'
@@ -146,6 +150,12 @@ export async function validateAction(
 
     case 'walk_in':
       return validateWalkIn(tenantId, params);
+
+    case 'record_expense':
+    case 'record_purchase':
+    case 'record_supplier_payment':
+    case 'record_stock_receipt':
+      return { valid: true };
 
     case 'get_availability':
     case 'list_services':

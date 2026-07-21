@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Capability } from '../capabilityMap';
+import { captureHandlers } from './capture';
 import { commerceHandlers } from './commerce';
 import { customerHandlers } from './customers';
 import { inventoryHandlers } from './inventory';
@@ -36,6 +37,7 @@ export interface ActionHandler {
 }
 
 export const HANDLERS: Record<string, ActionHandler> = {
+  ...captureHandlers,
   ...commerceHandlers,
   ...customerHandlers,
   ...inventoryHandlers,

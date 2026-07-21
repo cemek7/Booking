@@ -19,6 +19,10 @@ export const BUSINESS_EVENT_ACTIONS = {
   STOCK_COUNT_RECORDED: 'stock.count_recorded',
   STOCK_COUNT_APPROVED: 'stock_count.approved',
   RETAIL_SALE_RECORDED: 'retail_sale.recorded',
+  EXPENSE_RECORDED: 'expense.recorded',
+  PURCHASE_RECORDED: 'purchase.recorded',
+  SUPPLIER_PAYMENT_RECORDED: 'supplier_payment.recorded',
+  STOCK_RECEIPT_RECORDED: 'stock_receipt.recorded',
   ORDER_REFUNDED: 'order.refunded',
   OUTSTANDING_BALANCE_RECORDED: 'outstanding_balance.recorded',
   RETAIL_ORDER_CREATED: 'retail_order.created',
@@ -38,6 +42,7 @@ export const BUSINESS_EVENT_ACTIONS = {
   APPROVAL_REJECTED: 'approval.rejected',
   APPROVAL_ALERTED: 'approval.alerted',
   SERVICE_CONSUMPTION_RECORDED: 'service.consumption_recorded',
+  CAPTURE_CONFIRMED: 'capture.confirmed',
 } as const;
 
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';
