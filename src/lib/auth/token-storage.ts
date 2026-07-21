@@ -119,7 +119,24 @@ export function getStoredTenantId(): string | null {
   try {
     if (typeof window === 'undefined') return null;
     const tenantId = localStorage.getItem(STORAGE_KEYS.TENANT_ID);
-    return tenantId === 'global' ? null : tenantId;
+    if (tenantId && tenantId !== 'global') {
+      return tenantId;
+    }
+
+    const legacyTenantRaw = localStorage.getItem('current_tenant');
+    if (legacyTenantRaw) {
+      try {
+        const legacyTenant = JSON.parse(legacyTenantRaw) as { id?: string };
+        if (legacyTenant?.id && legacyTenant.id !== 'global') {
+          localStorage.setItem(STORAGE_KEYS.TENANT_ID, legacyTenant.id);
+          return legacyTenant.id;
+        }
+      } catch {
+        // Ignore malformed legacy tenant state.
+      }
+    }
+
+    return null;
   } catch (err) {
     console.error('[TokenStorage] Failed to get tenant ID:', err);
     return null;
@@ -154,6 +171,13 @@ export function getStoredRole(): 'owner' | 'manager' | 'staff' | null {
     if (role === 'owner' || role === 'manager' || role === 'staff') {
       return role;
     }
+
+    const legacyRole = localStorage.getItem('current_tenant_role');
+    if (legacyRole === 'owner' || legacyRole === 'manager' || legacyRole === 'staff') {
+      localStorage.setItem(STORAGE_KEYS.ROLE, legacyRole);
+      return legacyRole;
+    }
+
     return null;
   } catch (err) {
     console.error('[TokenStorage] Failed to get role:', err);

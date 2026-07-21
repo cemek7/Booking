@@ -9,6 +9,7 @@ import { toast } from '@/components/ui/toast';
 import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import { getVerticalPackage } from '@/lib/sias';
 import { getStoredIsAdmin } from '@/lib/auth/token-storage';
+import { setStoredRole, setStoredTenantId } from '@/lib/auth/token-storage';
 import BrandMark from '@/components/brand/BrandMark';
 
 interface ServiceDraft { name: string; duration: string; price: string }
@@ -142,6 +143,17 @@ const sectionTitleCls = "text-2xl font-semibold tracking-tight text-[var(--brand
 const sectionCopyCls = "mt-1 text-sm leading-7 text-slate-600";
 const labelCls = "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.24em] text-[#597061]";
 
+function persistTenantSession(tenantId: string, role: 'owner' | 'manager' | 'staff' = 'owner') {
+  try {
+    localStorage.setItem('current_tenant', JSON.stringify({ id: tenantId }));
+    localStorage.setItem('current_tenant_role', role);
+    setStoredTenantId(tenantId);
+    setStoredRole(role);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
 interface OnboardingClientPageProps {
   initialResumeMode?: boolean;
   initialTenantId?: string | null;
@@ -267,11 +279,7 @@ export default function OnboardingPage({
     if (initialResumeMode) {
       setStep((current) => (current === 'basics' ? 'services' : current));
     }
-    try {
-      localStorage.setItem('current_tenant', JSON.stringify({ id: initialTenantId }));
-    } catch {
-      // Ignore storage errors.
-    }
+    persistTenantSession(initialTenantId);
   }, [initialResumeMode, initialTenantId, initialTenantSlug]);
 
   function next() { setStep((s) => STEPS[Math.min(STEPS.indexOf(s) + 1, STEPS.length - 1)]); }
@@ -355,7 +363,7 @@ export default function OnboardingPage({
         setAuthEmailSent(false);
         setTenantId(json.tenantId);
         if (json.tenantSlug) setTenantSlug(json.tenantSlug);
-        try { localStorage.setItem('current_tenant', JSON.stringify({ id: json.tenantId })); } catch {}
+        persistTenantSession(json.tenantId);
         const vertical = resolveVertical(businessType || 'salon');
         const pkg = getVerticalPackage(vertical);
         await fetch(`/api/tenants/${json.tenantId}/settings`, {
@@ -499,6 +507,9 @@ export default function OnboardingPage({
       } catch {
         toast.error('Some services could not be saved — you can add them from the dashboard.');
       } finally { setLoading(false); }
+    }
+    if (tenantId) {
+      persistTenantSession(tenantId);
     }
     next();
   }

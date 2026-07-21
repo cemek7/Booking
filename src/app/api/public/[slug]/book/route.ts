@@ -27,7 +27,8 @@ function escapeHtml(str: string): string {
  * Helper to get tenant by slug
  */
 async function getTenantBySlug(ctx: RouteContext, slug: string) {
-  const { data: tenant, error: tenantErr } = await ctx.supabase
+  const supabase = createSupabaseAdminClient();
+  const { data: tenant, error: tenantErr } = await supabase
     .from('tenants')
     .select('id, is_active')
     .eq('slug', slug)
@@ -122,12 +123,12 @@ export const POST = createHttpHandler(
     void (async () => {
       try {
         const [serviceRes, tenantRes] = await Promise.all([
-          ctx.supabase
+          createSupabaseAdminClient()
             .from('services')
             .select('name')
             .eq('id', validated.service_id)
             .maybeSingle(),
-          ctx.supabase
+          createSupabaseAdminClient()
             .from('tenants')
             .select('name, settings')
             .eq('id', tenant.id)

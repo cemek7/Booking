@@ -9,7 +9,7 @@
  */
 
 import { defaultLogger } from '@/lib/logger';
-import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
@@ -36,7 +36,7 @@ function parseAvailabilityDate(date: string): Date {
  * Get public tenant information
  */
 export async function getTenantPublicInfo(slug: string) {
-  const supabase = getSupabaseRouteHandlerClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: tenant, error } = await supabase
     .from('tenants')
@@ -72,7 +72,7 @@ export async function getTenantPublicInfo(slug: string) {
  * Get available services for tenant
  */
 export async function getTenantServices(tenantId: string) {
-  const supabase = getSupabaseRouteHandlerClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: services, error } = await supabase
     .from('services')
@@ -80,8 +80,8 @@ export async function getTenantServices(tenantId: string) {
       id,
       name,
       description,
-      duration,
-      price,
+      duration_minutes,
+      price_cents,
       image_url
     `)
     .eq('tenant_id', tenantId)
@@ -91,7 +91,22 @@ export async function getTenantServices(tenantId: string) {
     throw ApiErrorFactory.databaseError(new Error(error.message));
   }
 
-  return services || [];
+  return (services || []).map((service) => {
+    const duration = typeof service.duration_minutes === 'number'
+      ? service.duration_minutes
+      : Number(service.duration_minutes ?? 30);
+    const price = typeof service.price_cents === 'number'
+      ? service.price_cents
+      : Number(service.price_cents ?? 0);
+
+    return {
+      ...service,
+      duration: Number.isFinite(duration) ? duration : 30,
+      duration_minutes: Number.isFinite(duration) ? duration : 30,
+      price: Number.isFinite(price) ? price : 0,
+      price_cents: Number.isFinite(price) ? price : 0,
+    };
+  });
 }
 
 /**
@@ -104,7 +119,7 @@ export async function getAvailability(
   date: string,
   _staffId?: string
 ) {
-  const supabase = getSupabaseRouteHandlerClient();
+  const supabase = createSupabaseAdminClient();
 
   // Date is interpreted in the server timezone. Clients should send YYYY-MM-DD in the tenant's timezone.
   const targetDate = parseAvailabilityDate(date);
@@ -116,7 +131,7 @@ export async function getAvailability(
   // Get service duration
   const { data: service, error: serviceError } = await supabase
     .from('services')
-    .select('duration')
+    .select('duration_minutes')
     .eq('id', serviceId)
     .maybeSingle();
 
@@ -128,7 +143,7 @@ export async function getAvailability(
     throw ApiErrorFactory.notFound('Service');
   }
 
-  const durationMinutes = service.duration || 60;
+  const durationMinutes = service.duration_minutes || 60;
 
   // Get business hours for the day
   const { data: hours, error: hoursError } = await supabase
@@ -179,7 +194,7 @@ async function getCustomer(tenantId: string, payload: {
   customer_email: string;
   customer_phone: string;
 }) {
-  const supabase = getSupabaseRouteHandlerClient();
+  const supabase = createSupabaseAdminClient();
   
   // Get or create customer
   const { data: customer } = await supabase
@@ -229,7 +244,7 @@ export async function createPublicBooking(
     notes?: string;
   }
 ) {
-  const supabase = getSupabaseRouteHandlerClient();
+  const supabase = createSupabaseAdminClient();
 
   // Get or create customer
   const customer = await getCustomer(tenantId, payload);
@@ -243,7 +258,7 @@ export async function createPublicBooking(
   
   const { data: service, error: serviceError } = await supabase
     .from('services')
-    .select('duration')
+    .select('duration_minutes')
     .eq('id', payload.service_id)
     .maybeSingle();
 
@@ -255,7 +270,7 @@ export async function createPublicBooking(
     throw ApiErrorFactory.notFound('Service');
   }
 
-  const endTime = new Date(startTime.getTime() + (service.duration || 60) * 60000);
+  const endTime = new Date(startTime.getTime() + (service.duration_minutes || 60) * 60000);
 
   // Use DoubleBookingPrevention service for transactionally safe conflict detection
   // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint

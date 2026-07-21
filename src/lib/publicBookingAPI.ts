@@ -53,7 +53,8 @@ class PublicBookingAPI {
     });
     const res = await fetch(`/api/public/${slug}/availability?${params}`);
     if (!res.ok) throw new Error('Failed to fetch availability');
-    return res.json();
+    const data = await res.json() as TimeSlot[] | { slots?: TimeSlot[] };
+    return Array.isArray(data) ? data : data.slots ?? [];
   }
 
   async createPublicBooking({
