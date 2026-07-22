@@ -140,11 +140,30 @@ The DB-backed `test:integration` suite could **not** be exercised here:
   `ECONNREFUSED 127.0.0.1:3008` (no dev server) and skipped on missing env — as
   expected, not a code signal.
 
-**To exercise the ops-intel flows live**, the owner needs to supply a real
-`DATABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (and run migrations 122–136 on that
-DB), and ideally add the ops-intel flows to a DB-backed integration config. The
-seam correctness in this report is verified by static analysis + the mocked
-unit/integration Jest suites.
+**Live-DB probe (2026-07-22).** The credentials in `Booking/.env.local` point to
+a **remote hosted Supabase project** (`plcilpejrgecjlvgoonh.supabase.co`) with a
+service-role key; `DATABASE_URL` itself is empty. A **read-only** PostgREST probe
+(the safe part of the checklist item "migrations safe against the latest live DB
+state") found that **all 21 ops-intel tables from migrations 122–136 return 404 —
+none are applied on that database** (known pre-existing tables like `tenants`,
+`reservations` return 200, confirming the probe works). The live DB is at the
+pre-feature migration floor (≤121).
+
+Consequences for a live run against that project:
+1. The ops-intel flows cannot run there until migrations 122–136 are applied.
+2. Applying 15 migrations to a shared/production-looking Supabase, and running
+   **write-heavy** flows (completions, retail sales, **refunds**, anomaly
+   inserts, approval money actions) against it, are outward-facing, hard-to-
+   reverse actions — **not** performed during this pass without explicit owner
+   authorization and, ideally, a dedicated test/staging project.
+
+**To exercise the ops-intel flows live**, use a **dedicated test/staging Supabase
+project** (or local DB) with migrations 122–136 applied, then either run the
+mocked flows against it or add the ops-intel flows to a DB-backed integration
+config. The seam correctness in this report is verified by static analysis + the
+mocked unit/integration Jest suites. The additive/nullable migrations with paired
+rollbacks + RLS (verified statically above) are structured to apply cleanly onto
+the ≤121 floor.
 
 ## Merge recommendation
 
