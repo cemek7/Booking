@@ -157,6 +157,20 @@ Consequences for a live run against that project:
    reverse actions — **not** performed during this pass without explicit owner
    authorization and, ideally, a dedicated test/staging project.
 
+**Post-migration verification (2026-07-22, after owner applied 122–136).** A
+read-only re-probe confirms the migrations landed cleanly on the target project:
+- **21/21** ops-intel tables now present (were all 404 before).
+- Column adds present: `reservations.price_cents_snapshot`,
+  `reservations.completed_at`, `inventory_movements.location_id`,
+  `inventory_movements.unit_cost_cents`.
+- New tables are empty (`Content-Range */0`), consistent with a fresh apply; RLS
+  is enabled in the applied DDL (runtime leak-test inconclusive while tables are
+  empty and no tenant-scoped anon JWT is used).
+
+The schema floor is now 136 on the target. Exercising the **write-heavy** flows
+still requires owner consent to write test data to this shared project (or a
+scoped, self-cleaning test tenant) — pending.
+
 **To exercise the ops-intel flows live**, use a **dedicated test/staging Supabase
 project** (or local DB) with migrations 122–136 applied, then either run the
 mocked flows against it or add the ops-intel flows to a DB-backed integration
