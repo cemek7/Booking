@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AnomalyCandidate } from '../upsertAnomaly';
 import type { AnomalyRule, RuleContext, RuleWindow } from './registry';
+import { BUSINESS_EVENT_ACTIONS } from '@/lib/audit/businessEventActions';
 
 type MovementRow = {
   id?: string;
@@ -234,7 +235,7 @@ export const inventoryRules: AnomalyRule[] = [
     domain: 'inventory',
     severity: 'medium',
     mode: 'realtime',
-    triggerActions: ['stock_count.approved'],
+    triggerActions: [BUSINESS_EVENT_ACTIONS.STOCK_COUNT_APPROVED],
     detect: stockShrinkageDetect,
     dedupKey: (candidate) =>
       `stock_shrinkage:${candidate.detail?.session_id ?? 'unknown'}:${candidate.detail?.stock_count_item_id ?? candidate.entityId}`,
@@ -244,7 +245,7 @@ export const inventoryRules: AnomalyRule[] = [
     domain: 'inventory',
     severity: 'medium',
     mode: 'realtime',
-    triggerActions: ['service.consumption_recorded'],
+    triggerActions: [BUSINESS_EVENT_ACTIONS.SERVICE_CONSUMPTION_RECORDED],
     detect: unusualConsumptionDetect,
     dedupKey: (candidate) =>
       `unusual_consumption:${candidate.detail?.reservation_id ?? 'unknown'}:${candidate.detail?.product_id ?? candidate.entityId}:${candidate.detail?.movement_id ?? 'movement'}`,

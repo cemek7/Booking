@@ -74,45 +74,48 @@ failing set.
 | M | `inventory_movements` extended, not recreated; RLS by convention | ✅ migration 126 adds columns (no `CREATE TABLE`); no parallel write path introduced. |
 | Q | Migrations ≥122, additive, paired rollbacks | ✅ migrations 122–136, **15 forward + 15 rollback** (symmetric), every new table has `ENABLE ROW LEVEL SECURITY` + policies (counts verified per migration). |
 
-## Residual gaps
+## Gaps found and closed
 
-### G1 — Approval replay is exactly-once only under *sequential* access (medium)
+Both residual gaps identified in the first pass have now been **fixed** (second
+pass, 2026-07-22). Full suite after the fixes: still exactly the 17 pre-existing
+suites / 122 tests failing (no new failures), plus 2 new passing concurrency
+tests; typecheck green.
 
-`resolveApprovalRequest` (`src/lib/approvals/requests.ts`) guards re-processing
-with `if (request.status !== 'pending')` and a conditional
-`.update(...).eq('status','pending')`. However, it calls `executeAction`
-**before** the atomic status flip, and the approval path does **not** pass
-through the `ai_action_log` idempotency wrapper that the WhatsApp `ownerCommands`
-flow uses. Under **concurrent** approvals of the same pending request (double
-click / double tab / retry), both callers can pass the pending check and execute
-the underlying **money action** (refund / retail sale) twice before one wins the
-status flip.
+### G1 — Approval replay exactly-once under concurrency ✅ FIXED
 
-- **Blast radius:** financial (double refund / double sale) in a narrow
-  concurrency window.
-- **Recommended fix:** claim-then-execute — atomically transition
-  `pending → approving` with a conditional update and only `executeAction` if
-  that update returned a row; on success go `approving → approved`, on failure
-  revert. Alternatively, pass an idempotency key derived from `request.id` into
-  `executeAction` so `ai_action_log` dedups the replay.
-- **Why deferred, not fixed here:** reordering money-critical logic has a real
-  dual-write tradeoff (mark-approved-but-execution-failed) and warrants an owner
-  design decision rather than a silent integration-pass change. Not a
-  correctness issue for the common sequential path.
+**Was:** `decideApproval` (`src/lib/approvals/requests.ts`) called
+`executeAction` **before** the atomic status flip and bypassed the
+`ai_action_log` idempotency wrapper, so concurrent approvals of the same request
+could double-execute a money action (refund / retail sale).
 
-Related low note: `decideRecommendation` does not early-return when a
-recommendation is already `accepted`, so a double-accept of an
-action-backed reco relies on the same `executeAction` idempotency to avoid
-double execution.
+**Fix:** reordered to **claim-then-execute** — the caller first atomically flips
+`pending → approved` via a conditional `.update(...).eq('status','pending')`.
+Only the caller that gets a row back proceeds to `validateAction` +
+`executeAction`; a caller that loses the race re-reads and returns the current
+state **without** re-executing. On validation/execution failure the claim is
+reverted to `pending` so the request stays actionable. New tests in
+`requests.test.ts` assert the claim precedes execution and that a lost claim does
+not execute. This stays within the existing status enum (no migration).
 
-### G2 — Anomaly `triggerActions` use string literals, not the registry constant (low)
+Related low note (`decideRecommendation` not early-returning on already-`accepted`
+recos) is unchanged — the reco accept path still relies on `executeAction`
+idempotency; flagged for a follow-up but not money-critical (owner-driven,
+single-actor UI).
 
-Consolidation item C asks the real-time rule `triggerActions` to reference
-`BUSINESS_EVENT_ACTIONS`. They currently use raw strings
-(`src/lib/anomalies/rules/{inventory,service,retail}.ts`). Every literal was
-verified to match an existing registry value today, so there is **no runtime
-drift** — but a future rename of a registry value would silently break rule
-triggering. Cheap mechanical follow-up: swap the literals for the constants.
+### G2 — Anomaly `triggerActions` reference the registry constant ✅ FIXED
+
+**Was:** rule `triggerActions` used raw string literals rather than
+`BUSINESS_EVENT_ACTIONS` (consolidation item C).
+
+**Fix:** the constant vocabulary was extracted into a **dependency-free leaf
+module** `src/lib/audit/businessEventActions.ts` (imported by nothing), and
+`businessEvents.ts` now re-exports it. The three rule files
+(`rules/{inventory,service,retail}.ts`) reference the constants from the leaf
+module. The leaf extraction was necessary because importing the constant
+directly from `businessEvents.ts` created an import cycle
+(`businessEvents → anomaly subscriber → rules → businessEvents`) that left the
+constant `undefined` at rule-load time — caught during this pass by the rule
+suites failing to load, and resolved by the leaf module.
 
 ## Inherited (out-of-scope) failures
 
@@ -123,16 +126,39 @@ dashboard, `actionValidator` walk-in/sales, evolution integration, etc. They
 should be triaged on `staging` independently; this stack neither fixes nor worsens
 them.
 
+## Live integration-test run — attempted, not possible in this environment
+
+The DB-backed `test:integration` suite could **not** be exercised here:
+
+- No `DATABASE_URL` / Supabase service-role env is set and there is no
+  `.env.local` (only `.env.example`).
+- The `jest.integration.config.cjs` matcher targets only
+  `evolution-integration.test.ts` and `paystack-integration.test.ts` — it does
+  **not** cover the operational-intelligence flows, and both require a running
+  dev server plus live Evolution/Paystack services.
+- A concrete attempt (`npm run test:integration`) failed with
+  `ECONNREFUSED 127.0.0.1:3008` (no dev server) and skipped on missing env — as
+  expected, not a code signal.
+
+**To exercise the ops-intel flows live**, the owner needs to supply a real
+`DATABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (and run migrations 122–136 on that
+DB), and ideally add the ops-intel flows to a DB-backed integration config. The
+seam correctness in this report is verified by static analysis + the mocked
+unit/integration Jest suites.
+
 ## Merge recommendation
 
 **Proceed with a normal merge commit into `staging`** (do **not** squash — the
-per-plan history and migration slices are worth preserving), after:
+per-plan history and migration slices are worth preserving). Preconditions now
+met:
 
-1. Landing the four test-mock fixes + this report (committed on the feature
-   branch as the integration slice).
-2. Owner sign-off (or a follow-up ticket) on **G1** — recommend fixing before
-   the approvals feature is exposed to concurrent real-money use, but it does not
-   block the merge itself.
+1. Four test-mock regressions fixed; branch adds **zero net test regressions**
+   (failing-suite set identical to `staging`).
+2. Both residual gaps (**G1** money-safety, **G2** vocabulary) **closed** with
+   tests; typecheck green.
+3. Remaining pre-merge item is the **live DB integration run**, which is
+   environment-blocked here — run it once real credentials are available, or
+   accept the mocked-suite coverage.
 
 Do **not** port this stack into `release/vps-launch`; cherry-pick only specific
 launch-safe fixes later if required.
@@ -141,7 +167,8 @@ launch-safe fixes later if required.
 
 - [x] Branch-wide validation run and triaged (typecheck green; tests triaged vs merge-base; lint baseline characterized)
 - [x] Integration bugs found during the pass fixed (4 regressions → green)
-- [x] Residual gaps closed or explicitly documented as deferred (G1 medium, G2 low)
+- [x] Residual gaps **closed** with tests (G1 money-safety, G2 vocabulary + cycle)
 - [x] Self-review against plans/specs/consolidation done (items A–Q)
+- [x] Live DB integration run attempted — environment-blocked (no creds/dev server); documented
 - [x] Merge recommendation written
-- [x] Branch clean after the integration commit
+- [x] Branch clean after the integration commits

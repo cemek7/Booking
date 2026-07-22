@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AnomalyCandidate } from '../upsertAnomaly';
 import type { AnomalyRule, RuleContext, RuleWindow } from './registry';
+import { BUSINESS_EVENT_ACTIONS } from '@/lib/audit/businessEventActions';
 
 type ReservationRow = {
   id: string;
@@ -325,7 +326,7 @@ export const serviceRules: AnomalyRule[] = [
     domain: 'service',
     severity: 'high',
     mode: 'both',
-    triggerActions: ['reservation.completed', 'payment.recorded'],
+    triggerActions: [BUSINESS_EVENT_ACTIONS.RESERVATION_COMPLETED, BUSINESS_EVENT_ACTIONS.PAYMENT_RECORDED],
     detect: completedServiceUnpaidDetect,
     dedupKey: (candidate) => `completed_service_unpaid:${candidate.entityId}`,
   },
@@ -334,7 +335,7 @@ export const serviceRules: AnomalyRule[] = [
     domain: 'service',
     severity: 'medium',
     mode: 'both',
-    triggerActions: ['discount.applied'],
+    triggerActions: [BUSINESS_EVENT_ACTIONS.DISCOUNT_APPLIED],
     detect: discountWithoutReasonDetect,
     dedupKey: (candidate) => `discount_without_reason:reservation:${candidate.entityId}`,
   },

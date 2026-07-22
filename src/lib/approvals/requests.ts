@@ -272,21 +272,10 @@ export async function decideApproval(
     return rejected;
   }
 
-  const validation = await validateAction(request.tenant_id, request.action_payload);
-  if (!validation.valid) {
-    throw ApiErrorFactory.validationError(validation.error ?? 'Approval payload no longer validates');
-  }
-
-  const execution = await executeAction(request.tenant_id, request.action_payload, {
-    actorId: input.actorId,
-    permissions: Array.from(actorPerms),
-    userRole: 'owner',
-    channel: 'dashboard',
-  });
-  if (!execution.success) {
-    throw ApiErrorFactory.validationError(execution.error ?? 'Approved action failed to execute');
-  }
-
+  // Atomically claim the request BEFORE executing. Only the caller that wins the
+  // pending -> approved transition runs the (money-moving) action, so concurrent
+  // approvals of the same request cannot double-execute it. The status guard above
+  // covers the sequential case; this conditional update is the concurrency gate.
   const { data: approved, error: approveError } = await admin
     .from('approval_requests')
     .update({ status: 'approved', updated_at: nowIso })
@@ -295,7 +284,49 @@ export async function decideApproval(
     .select('*')
     .single<ApprovalRequestRow>();
 
-  if (approveError || !approved) throw approveError ?? new Error('Failed to approve request');
+  if (approveError || !approved) {
+    // Lost the race to a concurrent approval (or the row is no longer pending).
+    // Do NOT execute the action again — return the current persisted state.
+    const { data: current } = await admin
+      .from('approval_requests')
+      .select('*')
+      .eq('id', request.id)
+      .maybeSingle<ApprovalRequestRow>();
+    return current ?? request;
+  }
+
+  // If validation or execution fails after the claim, revert the claim so the
+  // request stays actionable rather than being stuck 'approved' with no effect.
+  const revertClaim = async () => {
+    await admin
+      .from('approval_requests')
+      .update({ status: 'pending', updated_at: new Date().toISOString() })
+      .eq('id', request.id)
+      .eq('status', 'approved');
+  };
+
+  try {
+    const validation = await validateAction(request.tenant_id, request.action_payload);
+    if (!validation.valid) {
+      throw ApiErrorFactory.validationError(validation.error ?? 'Approval payload no longer validates');
+    }
+
+    const execution = await executeAction(request.tenant_id, request.action_payload, {
+      actorId: input.actorId,
+      permissions: Array.from(actorPerms),
+      userRole: 'owner',
+      channel: 'dashboard',
+    });
+    if (!execution.success) {
+      throw ApiErrorFactory.validationError(execution.error ?? 'Approved action failed to execute');
+    }
+  } catch (err) {
+    // Any failure after the claim (validation, execution returning !success, or a
+    // thrown error) reverts the claim so the request does not get stuck 'approved'
+    // with no effect. Re-thrown to the caller unchanged.
+    await revertClaim();
+    throw err;
+  }
 
   const { error: actionError } = await admin.from('approval_actions').insert({
     tenant_id: request.tenant_id,

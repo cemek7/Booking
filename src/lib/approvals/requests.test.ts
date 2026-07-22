@@ -21,7 +21,7 @@ jest.mock('@/lib/booking/action-validator', () => ({
 
 import { createApprovalRequest, decideApproval, gateApprovalForAction } from './requests';
 
-function makeAdmin(options?: { request?: Record<string, unknown> | null }) {
+function makeAdmin(options?: { request?: Record<string, unknown> | null; claimLost?: boolean }) {
   const request = options?.request ?? {
     id: 'request-1',
     tenant_id: 'tenant-1',
@@ -60,12 +60,14 @@ function makeAdmin(options?: { request?: Record<string, unknown> | null }) {
           }),
           update: (payload: Record<string, unknown>) => {
             updates.push({ table, payload });
+            // Simulate losing the atomic pending->approved claim to a concurrent approver.
+            const claimLost = options?.claimLost && payload.status === 'approved';
             return {
               eq: () => ({
                 eq: () => ({
                   select: () => ({
                     single: async () => ({
-                      data: { ...request, ...payload },
+                      data: claimLost ? null : { ...request, ...payload },
                       error: null,
                     }),
                   }),
@@ -162,6 +164,48 @@ describe('approval requests', () => {
       expect.objectContaining({ actorId: 'manager-1', userRole: 'owner', channel: 'dashboard' })
     );
     expect(approved).toEqual(expect.objectContaining({ status: 'approved' }));
+  });
+
+  it('claims the request (pending->approved) BEFORE executing the action', async () => {
+    const admin = makeAdmin();
+    mockValidateAction.mockResolvedValue({ valid: true });
+    let claimedBeforeExecute = false;
+    mockExecuteAction.mockImplementation(async () => {
+      claimedBeforeExecute = admin.__updates.some(
+        (u) => u.table === 'approval_requests' && u.payload.status === 'approved'
+      );
+      return { success: true, reply: 'done' };
+    });
+
+    await decideApproval(admin, {
+      requestId: 'request-1',
+      actorId: 'manager-1',
+      actorPerms: ['APPROVE_REFUNDS'],
+      decision: 'approve',
+      note: 'Reviewed',
+    });
+
+    // The money action must only run after this caller atomically won the claim.
+    expect(claimedBeforeExecute).toBe(true);
+  });
+
+  it('does not execute the action when the claim is lost to a concurrent approval', async () => {
+    const admin = makeAdmin({ claimLost: true });
+    mockValidateAction.mockResolvedValue({ valid: true });
+    mockExecuteAction.mockResolvedValue({ success: true, reply: 'done' });
+
+    const result = await decideApproval(admin, {
+      requestId: 'request-1',
+      actorId: 'manager-1',
+      actorPerms: ['APPROVE_REFUNDS'],
+      decision: 'approve',
+      note: 'Reviewed',
+    });
+
+    // Concurrent approver already claimed the request — this caller must NOT
+    // re-run the (money-moving) action; it returns the current persisted state.
+    expect(mockExecuteAction).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ id: 'request-1' }));
   });
 
   it('routes over-limit discount actions into pending approval requests', async () => {

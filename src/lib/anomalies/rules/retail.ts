@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AnomalyCandidate } from '../upsertAnomaly';
 import type { AnomalyRule, RuleContext, RuleWindow } from './registry';
+import { BUSINESS_EVENT_ACTIONS } from '@/lib/audit/businessEventActions';
 
 type RetailOrderRow = {
   id: string;
@@ -325,7 +326,11 @@ export const retailRules: AnomalyRule[] = [
     domain: 'retail',
     severity: 'high',
     mode: 'both',
-    triggerActions: ['retail_order.delivered', 'retail_sale.recorded', 'payment.recorded'],
+    triggerActions: [
+      BUSINESS_EVENT_ACTIONS.RETAIL_ORDER_DELIVERED,
+      BUSINESS_EVENT_ACTIONS.RETAIL_SALE_RECORDED,
+      BUSINESS_EVENT_ACTIONS.PAYMENT_RECORDED,
+    ],
     detect: deliveredOrderUnpaidDetect,
     dedupKey: (candidate) => `delivered_order_unpaid:${candidate.entityId}`,
   },
@@ -334,7 +339,7 @@ export const retailRules: AnomalyRule[] = [
     domain: 'retail',
     severity: 'medium',
     mode: 'both',
-    triggerActions: ['order.refunded'],
+    triggerActions: [BUSINESS_EVENT_ACTIONS.ORDER_REFUNDED],
     detect: refundWithoutReasonDetect,
     dedupKey: (candidate) => `refund_without_reason:${candidate.entityType}:${candidate.entityId}`,
   },
