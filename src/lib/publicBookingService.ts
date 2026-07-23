@@ -38,17 +38,12 @@ function parseAvailabilityDate(date: string): Date {
 export async function getTenantPublicInfo(slug: string) {
   const supabase = createSupabaseAdminClient();
 
+  // `description`, `logo_url` and `settings` are NOT columns on `tenants` — they
+  // live inside the `metadata` jsonb. Selecting them directly makes PostgREST
+  // error the whole query, which surfaced as a 404 on every public booking page.
   const { data: tenant, error } = await supabase
     .from('tenants')
-    .select(`
-      id,
-      name,
-      slug,
-      description,
-      logo_url,
-      industry,
-      settings
-    `)
+    .select('id, name, slug, industry, metadata')
     .eq('slug', slug)
     .maybeSingle();
 
@@ -56,14 +51,23 @@ export async function getTenantPublicInfo(slug: string) {
     throw ApiErrorFactory.notFound('Tenant');
   }
 
+  const metadata = (tenant.metadata ?? {}) as Record<string, unknown>;
+  const uiSettings = (metadata.ui_settings ?? {}) as Record<string, unknown>;
+
   return {
     id: tenant.id,
     name: tenant.name,
     slug: tenant.slug,
-    description: tenant.description,
-    logo: tenant.logo_url,
+    description:
+      (metadata.description as string | undefined) ??
+      (uiSettings.description as string | undefined) ??
+      undefined,
+    logo:
+      (metadata.logo_url as string | undefined) ??
+      (uiSettings.logo_url as string | undefined) ??
+      undefined,
     industry: tenant.industry,
-    settings: tenant.settings,
+    settings: uiSettings,
   };
 }
 
