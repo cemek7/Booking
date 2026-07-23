@@ -10,6 +10,7 @@ import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import { getVerticalPackage } from '@/lib/sias';
 import { getStoredIsAdmin } from '@/lib/auth/token-storage';
 import { setStoredRole, setStoredTenantId } from '@/lib/auth/token-storage';
+import { sessionVerifiesEmail } from '@/lib/auth/onboarding-verification';
 import BrandMark from '@/components/brand/BrandMark';
 
 interface ServiceDraft { name: string; duration: string; price: string }
@@ -368,7 +369,9 @@ export default function OnboardingPage({
         const pkg = getVerticalPackage(vertical);
         await fetch(`/api/tenants/${json.tenantId}/settings`, {
           method: 'PATCH',
-          headers: jsonHeaders({ Authorization: `Bearer ${accessToken}` }),
+          // X-Tenant-ID is required by the settings route; the freshly created/
+          // resumed tenant isn't in component state yet, so pass it explicitly.
+          headers: jsonHeaders({ Authorization: `Bearer ${accessToken}`, 'X-Tenant-ID': json.tenantId }),
           body: JSON.stringify({
             managedOnboarding: true,
             verticalPackage: pkg.id,
@@ -411,9 +414,12 @@ export default function OnboardingPage({
   async function ensureSignedInForOnboarding() {
     const supabase = await getSupabaseBrowserClientAsync();
     const { data } = await supabase.auth.getSession();
-    const accessToken = data.session?.access_token ?? null;
-    if (accessToken) {
-      tokenRef.current = accessToken;
+    const session = data.session;
+    // Only treat the user as verified when the active session belongs to the
+    // email being onboarded. A leftover session for a different email must not
+    // bypass verification, or the workspace is created under the wrong identity.
+    if (session?.access_token && sessionVerifiesEmail(session.user?.email, ownerEmail)) {
+      tokenRef.current = session.access_token;
       return true;
     }
 
