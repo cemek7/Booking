@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { createTenant } from '@/lib/services/onboarding-service';
+import { createOrResumeTenant } from '@/lib/services/onboarding-service';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
@@ -42,6 +42,10 @@ const OnboardingBodySchema = z.object({
   description: z.string().optional(),
   services: z.array(ServiceSchema).optional(),
   staff: z.array(StaffSchema).optional(),
+  // Explicit opt-in to create an additional workspace for a user who already
+  // owns one. The default onboarding flow omits it, so re-running onboarding
+  // resumes the existing tenant instead of silently creating a duplicate.
+  allowAdditional: z.boolean().optional(),
 });
 
 const _authenticatedPOST = createHttpHandler(
@@ -65,38 +69,48 @@ const _authenticatedPOST = createHttpHandler(
       // Use admin client to bypass RLS for tenant + membership creation.
       // The user is not yet a tenant member, so the bearer client cannot INSERT into tenant_users.
       const adminClient = createSupabaseAdminClient();
-      const { tenantId, slug: tenantSlug } = await createTenant(adminClient, userId, bodyValidation.data);
+      const { tenantId, slug: tenantSlug, resumed } = await createOrResumeTenant(
+        adminClient,
+        userId,
+        bodyValidation.data,
+        { allowAdditional: bodyValidation.data.allowAdditional }
+      );
 
       span.setAttribute('tenant.id', tenantId);
+      span.setAttribute('tenant.resumed', resumed);
 
-      await captureServerAnalyticsEvent({
-        event: ANALYTICS_EVENTS.TENANT_ONBOARDING_STARTED,
-        properties: {
-          tenant_id: tenantId,
-          business_category: bodyValidation.data.industry ?? bodyValidation.data.business_type ?? null,
-          flow: 'activation',
-          channel: 'web',
-          staff_count: bodyValidation.data.staff?.length ?? 0,
-          metadata: {
-            tenant_slug: tenantSlug,
-            services_count: bodyValidation.data.services?.length ?? 0,
+      // Only fire the "onboarding started" analytics + paystack-pending flag for a
+      // freshly created tenant. A resumed tenant already emitted these on creation.
+      if (!resumed) {
+        await captureServerAnalyticsEvent({
+          event: ANALYTICS_EVENTS.TENANT_ONBOARDING_STARTED,
+          properties: {
+            tenant_id: tenantId,
+            business_category: bodyValidation.data.industry ?? bodyValidation.data.business_type ?? null,
+            flow: 'activation',
+            channel: 'web',
             staff_count: bodyValidation.data.staff?.length ?? 0,
+            metadata: {
+              tenant_slug: tenantSlug,
+              services_count: bodyValidation.data.services?.length ?? 0,
+              staff_count: bodyValidation.data.staff?.length ?? 0,
+            },
           },
-        },
-        distinctId: userId,
-      });
+          distinctId: userId,
+        });
 
-      // Non-blocking: flag paystack subaccount setup as pending (bank details collected later)
-      void ctx.supabase
-        .from('tenants')
-        .update({ metadata: { paystack_subaccount_pending: true } })
-        .eq('id', tenantId)
-        .then(
-          () => defaultLogger.info('[onboarding] Paystack subaccount flagged pending', { tenantId }),
-          (err: unknown) => defaultLogger.warn('[onboarding] Failed to flag paystack subaccount pending', { tenantId, err })
-        );
+        // Non-blocking: flag paystack subaccount setup as pending (bank details collected later)
+        void ctx.supabase
+          .from('tenants')
+          .update({ metadata: { paystack_subaccount_pending: true } })
+          .eq('id', tenantId)
+          .then(
+            () => defaultLogger.info('[onboarding] Paystack subaccount flagged pending', { tenantId }),
+            (err: unknown) => defaultLogger.warn('[onboarding] Failed to flag paystack subaccount pending', { tenantId, err })
+          );
+      }
 
-      return { success: true, tenantId, tenantSlug };
+      return { success: true, tenantId, tenantSlug, resumed };
     } finally {
       span.end();
     }

@@ -35,6 +35,64 @@ interface TenantRow {
   slug: string | null;
 }
 
+type TenantDetails = {
+  name: string;
+  industry?: string;
+  business_type?: string;
+  timezone?: string;
+  description?: string;
+  services?: Service[];
+  staff?: Staff[];
+};
+
+/**
+ * Returns the first tenant this user owns, or null. Used to keep onboarding
+ * idempotent: re-running it (e.g. after a missed magic link) must not silently
+ * create a second workspace.
+ */
+export async function findOwnedTenant(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<{ tenantId: string; slug: string } | null> {
+  const { data: membership, error: membershipError } = await supabase
+    .from('tenant_users')
+    .select('tenant_id')
+    .eq('user_id', userId)
+    .eq('role', 'owner')
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (membershipError || !membership?.tenant_id) return null;
+
+  const { data: tenant, error: tenantError } = await supabase
+    .from('tenants')
+    .select('id, slug')
+    .eq('id', membership.tenant_id)
+    .maybeSingle();
+  if (tenantError || !tenant?.id) return null;
+
+  return { tenantId: tenant.id, slug: tenant.slug ?? '' };
+}
+
+/**
+ * Idempotent onboarding entry point. If the user already owns a tenant, resume
+ * it instead of creating a duplicate. Pass `allowAdditional: true` to explicitly
+ * create another workspace (the deliberate multi-tenant path).
+ */
+export async function createOrResumeTenant(
+  supabase: SupabaseClient,
+  userId: string,
+  tenantDetails: TenantDetails,
+  opts?: { allowAdditional?: boolean }
+): Promise<{ tenantId: string; slug: string; resumed: boolean }> {
+  if (!opts?.allowAdditional) {
+    const existing = await findOwnedTenant(supabase, userId);
+    if (existing) return { ...existing, resumed: true };
+  }
+  const created = await createTenant(supabase, userId, tenantDetails);
+  return { tenantId: created.tenantId, slug: created.slug, resumed: false };
+}
+
 export async function createTenant(
   supabase: SupabaseClient,
   userId: string,
