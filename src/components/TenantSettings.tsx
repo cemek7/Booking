@@ -111,16 +111,9 @@ export default function TenantSettings({ tenantId }: Props) {
         <input value={timezone} onChange={(e) => setTimezone(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" />
       </div>
 
-      <div className="mb-3">
-        <label className="block text-sm font-medium">Preferred LLM model</label>
-        <input value={model} onChange={(e) => setModel(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" placeholder="e.g. gpt-4o-mini" />
-      </div>
-
-      <div className="mb-3">
-        <label className="block text-sm font-medium">Booka AI preflight rate</label>
-        <input value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 block w-full rounded border px-2 py-1" placeholder="credits per token, e.g. 0.000002" />
-        <p className="mt-1 text-xs text-gray-500">Used only to reserve wallet credits before provider usage returns the exact cost.</p>
-      </div>
+      {/* "Preferred LLM model" + "Booka AI preflight rate" removed — internal AI
+          plumbing that a tenant should not configure. The platform manages the
+          model and rate itself. */}
 
       <div className="flex gap-2 items-center">
         <button disabled={loading} onClick={save} className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>

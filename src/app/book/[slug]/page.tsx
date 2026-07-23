@@ -7,14 +7,16 @@ import MiniSiteContainer from './components/MiniSiteContainer';
 import BookingPageSkeleton from './components/BookingPageSkeleton';
 
 interface BookingPageProps {
-  params: {
+  // Next 16: route params are async and must be awaited.
+  params: Promise<{
     slug: string;
-  };
+  }>;
 }
 
 export async function generateMetadata({ params }: BookingPageProps) {
+  const { slug } = await params;
   try {
-    const tenant = await getTenantPublicInfo(params.slug);
+    const tenant = await getTenantPublicInfo(slug);
     return {
       title: `${tenant.name} — Book an Appointment`,
       description: tenant.description || `Schedule your appointment with ${tenant.name}`,
@@ -27,11 +29,10 @@ export async function generateMetadata({ params }: BookingPageProps) {
   }
 }
 
-export const revalidate = 60; // ISR - revalidate every 60 seconds
-
 export default async function BookingPage({ params }: BookingPageProps) {
+  const { slug } = await params;
   try {
-    const tenant = await getTenantPublicInfo(params.slug);
+    const tenant = await getTenantPublicInfo(slug);
 
     if (!tenant) {
       notFound();
@@ -45,7 +46,7 @@ export default async function BookingPage({ params }: BookingPageProps) {
       </Suspense>
     );
   } catch (error) {
-    defaultLogger.error(`Error loading booking page for slug: ${params.slug}`, error);
+    defaultLogger.error(`Error loading booking page for slug: ${slug}`, error);
     notFound();
   }
 }

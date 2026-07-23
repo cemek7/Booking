@@ -172,12 +172,29 @@ export function createApiHandler(
       if (options.auth !== false) {
         const authHeader = request.headers.get('authorization') || '';
 
-        if (!authHeader.startsWith('Bearer ')) {
+        let token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+        // Fallback: many client pages call the API with a raw fetch() that sends
+        // the Supabase session cookie but no Authorization header. Recover the
+        // access token from the cookie-based session so those requests aren't
+        // rejected. The token is still verified via getUser() below, so this
+        // does not weaken auth.
+        if (!token) {
+          try {
+            const cookieClient = getSupabaseRouteHandlerClient();
+            const { data: { session: cookieSession } } = await cookieClient.auth.getSession();
+            if (cookieSession?.access_token) {
+              token = cookieSession.access_token;
+            }
+          } catch {
+            // No cookie session available.
+          }
+        }
+
+        if (!token) {
           const error = ApiErrorFactory.missingAuthorization();
           return error.toResponse();
         }
-
-        const token = authHeader.slice(7);
 
         // Verify the JWT via the admin client — createSupabaseBearerClient uses the
         // accessToken option which replaces the auth module, making auth.getUser() throw.

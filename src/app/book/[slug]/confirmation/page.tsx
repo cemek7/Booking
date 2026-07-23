@@ -3,12 +3,13 @@ import Link from 'next/link';
 import ReviewPrompt from '../components/ReviewPrompt';
 
 interface ConfirmationPageProps {
-  params: {
+  // Next 16: params and searchParams are async.
+  params: Promise<{
     slug: string;
-  };
-  searchParams: {
+  }>;
+  searchParams: Promise<{
     bookingId?: string;
-  };
+  }>;
 }
 
 export const metadata = {
@@ -16,11 +17,12 @@ export const metadata = {
   description: 'Your appointment has been successfully booked',
 };
 
-export default function ConfirmationPage({
+export default async function ConfirmationPage({
   params,
   searchParams,
 }: ConfirmationPageProps) {
-  const bookingId = searchParams.bookingId;
+  const { slug } = await params;
+  const { bookingId } = await searchParams;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center px-4">
@@ -72,12 +74,12 @@ export default function ConfirmationPage({
           </div>
 
           {/* Review prompt */}
-          <ReviewPrompt slug={params.slug} reservationId={bookingId} />
+          <ReviewPrompt slug={slug} reservationId={bookingId} />
 
           {/* Action Buttons */}
           <div className="space-y-3 pt-6 border-t">
             <Link
-              href={`/book/${params.slug}`}
+              href={`/book/${slug}`}
               className="block w-full px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center"
             >
               Book Another Appointment
