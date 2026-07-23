@@ -296,7 +296,15 @@ export class AnalyticsService {
           .lte('created_at', dateRange.end.toISOString()),
       ]);
 
-      if (error) throw error;
+      // NOTE: this query targets a `staff` table that does not exist in the
+      // current schema (staff live in `tenant_users`). Rather than 500 the whole
+      // dashboard, fail soft to an empty result — the widget renders its empty
+      // state. TODO(launch-follow-up): rewrite against tenant_users + reservations
+      // to surface real per-staff performance.
+      if (error) {
+        span.recordException(error as Error);
+        return { success: true, performance: [] };
+      }
 
       // Index feedback by staff id (staff.id matches customer_feedback.staff_user_id)
       const feedbackByStaff: Record<string, number[]> = {};

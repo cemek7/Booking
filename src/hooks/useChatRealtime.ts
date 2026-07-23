@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
+import type { RealtimeChannel, RealtimePostgresChangesPayload, SupabaseClient } from '@supabase/supabase-js';
 import {
   getChatJourneyState,
   getChatSupportState,
@@ -90,7 +90,18 @@ interface ConversationRow {
 }
 
 export function useChatRealtime(tenantId: string | null | undefined) {
-  const supabase = getSupabaseBrowserClient();
+  // Use the ASYNC browser client. The sync getSupabaseBrowserClient() returns a
+  // proxy without realtime when Supabase config comes from runtime (not build)
+  // env — its .channel() returns a Promise, so .channel(...).on crashes. The
+  // async client loads runtime config and returns a real realtime-capable client.
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  useEffect(() => {
+    let active = true;
+    getSupabaseBrowserClientAsync()
+      .then((client) => { if (active) setSupabase(client); })
+      .catch(() => { /* config unavailable; hook stays idle */ });
+    return () => { active = false; };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -102,7 +113,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const chatChannel = useRef<RealtimeChannel | null>(null);
 
   const loadChats = useCallback(async () => {
-    if (!tenantId) { setChats([]); return; }
+    if (!supabase || !tenantId) { setChats([]); return; }
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -167,7 +178,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   }, [supabase, tenantId]);
 
   const loadMessages = useCallback(async (chatId: string | null) => {
-    if (!chatId) { setMessages([]); return; }
+    if (!supabase || !chatId) { setMessages([]); return; }
     const { data, error } = await supabase
       .from('messages')
       .select('id,chat_id,content,direction,created_at')
@@ -238,7 +249,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   // Subscribe to chats list
   useEffect(() => {
     chatChannel.current?.unsubscribe();
-    if (!tenantId) return;
+    if (!supabase || !tenantId) return;
     const ch = supabase.channel(`rt-chats-${tenantId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chats', filter: `tenant_id=eq.${tenantId}` }, (payload: RealtimePostgresChangesPayload<ChatRow>) => {
         const row = payload.new as ChatRow | null;
@@ -286,7 +297,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   // Subscribe to messages for active chat
   useEffect(() => {
     msgChannel.current?.unsubscribe();
-    if (!activeId) return;
+    if (!supabase || !activeId) return;
     const ch = supabase.channel(`rt-messages-${activeId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `chat_id=eq.${activeId}` }, (payload: RealtimePostgresChangesPayload<MessageRow>) => {
         const row = (payload.new || payload.old) as MessageRow | null;

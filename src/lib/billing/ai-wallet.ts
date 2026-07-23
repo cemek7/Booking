@@ -494,7 +494,35 @@ export async function getTenantWalletSummary(
   if (tenantRes.error && tenantRes.error.code !== 'PGRST116') return null;
 
   const wallet = walletRes.data || null;
-  if (!wallet) return null;
+  if (!wallet) {
+    // New tenant with no wallet row yet. Return a zeroed summary (empty state)
+    // rather than null — the route treats null as a hard error and 500s.
+    return {
+      tenant_id: tenantId,
+      currency: 'credits',
+      balance_credits: 0,
+      lifetime_topups_credits: 0,
+      lifetime_spent_credits: 0,
+      low_balance_threshold_credits: 0,
+      month_topups_credits: 0,
+      month_spent_credits: 0,
+      month_profit_credits: 0,
+      month_usage_revenue_credits: 0,
+      month_actual_cost_credits: 0,
+      month_realized_profit_credits: 0,
+      month_withdrawable_profit_credits: 0,
+      cash_collected_credits: 0,
+      recognized_revenue_credits: 0,
+      actual_cost_credits: 0,
+      realized_profit_credits: 0,
+      withdrawable_profit_credits: 0,
+      profit_reserve_credits: 0,
+      unsettled_liabilities_credits: 0,
+      month_tokens: 0,
+      recent_ledger: [],
+      token_rate: getTenantTokenRate(Number(tenantRes.data?.llm_token_rate ?? null)),
+    };
+  }
 
   const [revenueRes, costRes] = await Promise.all([
     admin
