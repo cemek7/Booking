@@ -63,14 +63,20 @@ export const GET = createHttpHandler(
     const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
-    // Build base query
+    // Build the select from non-empty parts. Interpolating optional embeds into
+    // a template produced empty columns (e.g. "*,,") when the flags were off,
+    // which PostgREST rejects (500). Also: get_product_stock is a FUNCTION, not
+    // an embeddable resource — embedding it errors with PGRST200. Stock already
+    // lives on the products row (stock_quantity, track_inventory), so
+    // include_stock_info needs no extra embed.
+    const selectParts = ['*'];
+    if (query.include_variants) {
+      selectParts.push('variants:product_variants!product_id(*)');
+    }
+
     let queryBuilder = ctx.supabase
       .from('products')
-      .select(`
-        *,
-        ${query.include_variants ? 'variants:product_variants!product_id(*)' : ''},
-        ${query.include_stock_info ? 'stock_info:get_product_stock(product_id)' : ''}
-      `)
+      .select(selectParts.join(','))
       .in('tenant_id', tenantIds);
 
     // Apply filters

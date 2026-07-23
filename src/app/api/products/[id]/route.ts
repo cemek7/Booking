@@ -30,13 +30,11 @@ export const GET = createHttpHandler(
     const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
     // Fetch product first to determine its tenant
+    // get_product_stock is a function, not an embeddable resource (embedding it
+    // errors with PGRST200). Stock lives on the products row already.
     const { data: product, error } = await ctx.supabase
       .from('products')
-      .select(`
-        *,
-        variants:product_variants!product_id(*),
-        stock_info:get_product_stock(product_id)
-      `)
+      .select('*,variants:product_variants!product_id(*)')
       .eq('id', id)
       .in('tenant_id', tenantIds)
       .single();
