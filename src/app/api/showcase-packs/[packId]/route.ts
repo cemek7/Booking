@@ -6,11 +6,11 @@ export const runtime = 'nodejs';
 
 export async function GET(
   request: Request,
-  { params }: { params: { packId: string } }
+  { params }: { params: Promise<{ packId: string }> }
 ) {
+  const { packId } = await params;
   try {
     const access = await resolveApiTenantAccess(request);
-    const { packId } = params;
     const supabase = createSupabaseAdminClient();
     const { data, error } = await supabase
       .from('whatsapp_showcase_packs')
@@ -44,11 +44,11 @@ export async function GET(
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { packId: string } }
+  { params }: { params: Promise<{ packId: string }> }
 ) {
+  const { packId } = await params;
   try {
     const access = await resolveApiTenantAccess(request);
-    const { packId } = params;
     const body = await request.json();
     const supabase = createSupabaseAdminClient();
 
@@ -91,11 +91,11 @@ export async function PATCH(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { packId: string } }
+  { params }: { params: Promise<{ packId: string }> }
 ) {
+  const { packId } = await params;
   try {
     const access = await resolveApiTenantAccess(request);
-    const { packId } = params;
     const supabase = createSupabaseAdminClient();
     const { error } = await supabase
       .from('whatsapp_showcase_packs')

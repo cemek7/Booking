@@ -30,8 +30,9 @@ async function uploadMediaToStorage(tenantId: string, file: File) {
 
 export async function GET(
   request: Request,
-  { params }: { params: { packId: string } }
+  { params }: { params: Promise<{ packId: string }> }
 ) {
+  const { packId } = await params;
   try {
     const access = await resolveApiTenantAccess(request);
     const supabase = createSupabaseAdminClient();
@@ -39,7 +40,7 @@ export async function GET(
       .from('whatsapp_showcase_pack_items')
       .select('*')
       .eq('tenant_id', access.tenantId)
-      .eq('pack_id', params.packId)
+      .eq('pack_id', packId)
       .order('sort_order', { ascending: true })
       .order('created_at', { ascending: false });
 
@@ -56,8 +57,9 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  { params }: { params: { packId: string } }
+  { params }: { params: Promise<{ packId: string }> }
 ) {
+  const { packId } = await params;
   try {
     const access = await resolveApiTenantAccess(request);
     const supabase = createSupabaseAdminClient();
@@ -110,7 +112,7 @@ export async function POST(
       .from('whatsapp_showcase_pack_items')
       .insert({
         tenant_id: access.tenantId,
-        pack_id: params.packId,
+        pack_id: packId,
         item_type: payload.item_type || 'image',
         title,
         caption: payload.caption || null,
@@ -139,8 +141,9 @@ export async function POST(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { packId: string } }
+  { params }: { params: Promise<{ packId: string }> }
 ) {
+  const { packId } = await params;
   try {
     const access = await resolveApiTenantAccess(request);
     const itemId = new URL(request.url).searchParams.get('id');
@@ -153,7 +156,7 @@ export async function DELETE(
       .from('whatsapp_showcase_pack_items')
       .delete()
       .eq('tenant_id', access.tenantId)
-      .eq('pack_id', params.packId)
+      .eq('pack_id', packId)
       .eq('id', itemId);
 
     if (error) {

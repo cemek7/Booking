@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState } from 'react';
+import { useState, use } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useTenant } from '@/lib/supabase/tenant-context';
@@ -13,12 +13,14 @@ import { toast } from '@/components/ui/toast';
 import ProductVariants from '@/components/admin/products/ProductVariants';
 
 interface ProductDetailPageProps {
-  params: {
+  // Next 16: client-page params arrive as a Promise; unwrap with React.use().
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default function ProductDetailPage({ params }: ProductDetailPageProps) {
+  const { id } = use(params);
   const router = useRouter();
   const { tenant } = useTenant();
   const [isEditing, setIsEditing] = useState(false);
@@ -26,11 +28,11 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
 
   // Fetch product details
   const { data: productData, isLoading } = useQuery({
-    queryKey: ['product', params.id, tenant?.id],
+    queryKey: ['product', id, tenant?.id],
     queryFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${params.id}`, {
+      const res = await fetch(`/api/products/${id}`, {
         headers: {
           'X-Tenant-ID': tenant.id,
         },
@@ -45,7 +47,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
 
       return res.json();
     },
-    enabled: !!tenant?.id && !!params.id,
+    enabled: !!tenant?.id && !!id,
   });
 
   const product = productData?.product as ProductWithDetails;
@@ -63,7 +65,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     mutationFn: async (updateData: UpdateProductRequest) => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${params.id}`, {
+      const res = await fetch(`/api/products/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -94,7 +96,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     mutationFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${params.id}`, {
+      const res = await fetch(`/api/products/${id}`, {
         method: 'DELETE',
         headers: {
           'X-Tenant-ID': tenant.id,
