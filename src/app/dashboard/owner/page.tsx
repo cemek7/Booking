@@ -101,7 +101,7 @@ export default async function OwnerDashboardPage() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Your business at a glance</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                Here&rsquo;s how things are going today — your bookings, your team, and anything that needs your attention.
+                Here&rsquo;s how things are going today — bookings, sales, your team, and anything that needs your attention.
               </p>
             </div>
           </div>
@@ -113,7 +113,7 @@ export default async function OwnerDashboardPage() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold text-slate-900">How business is going</h2>
-              <p className="text-sm text-slate-500">Your bookings, revenue, and customers at a glance.</p>
+              <p className="text-sm text-slate-500">Bookings, sales, revenue, and customers at a glance.</p>
             </div>
             <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-slate-600">
               Live data

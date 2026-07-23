@@ -272,22 +272,20 @@ export class AnalyticsService {
     try {
       const dateRange = this.getDateRange(period);
 
-      const [{ data: staffData, error }, { data: feedbackData }] = await Promise.all([
+      // Query the REAL schema: team members live in `tenant_users`, and their
+      // work is in `reservations` (joined by staff_id = tenant_users.user_id).
+      // The previous `.from('staff')` targeted a table that does not exist.
+      const [staffRes, reservationsRes, feedbackRes] = await Promise.all([
         this.supabase
-          .from('staff')
-          .select(`
-            id,
-            name,
-            reservations!inner(
-              id,
-              start_at,
-              status,
-              metadata
-            )
-          `)
+          .from('tenant_users')
+          .select('user_id, name, email, role')
+          .eq('tenant_id', tenantId),
+        this.supabase
+          .from('reservations')
+          .select('staff_id, status, metadata, start_at')
           .eq('tenant_id', tenantId)
-          .gte('reservations.start_at', dateRange.start.toISOString())
-          .lte('reservations.start_at', dateRange.end.toISOString()),
+          .gte('start_at', dateRange.start.toISOString())
+          .lte('start_at', dateRange.end.toISOString()),
         this.supabase
           .from('customer_feedback')
           .select('staff_user_id, score')
@@ -296,44 +294,52 @@ export class AnalyticsService {
           .lte('created_at', dateRange.end.toISOString()),
       ]);
 
-      // NOTE: this query targets a `staff` table that does not exist in the
-      // current schema (staff live in `tenant_users`). Rather than 500 the whole
-      // dashboard, fail soft to an empty result — the widget renders its empty
-      // state. TODO(launch-follow-up): rewrite against tenant_users + reservations
-      // to surface real per-staff performance.
-      if (error) {
-        span.recordException(error as Error);
+      if (staffRes.error) {
+        span.recordException(staffRes.error as unknown as Error);
         return { success: true, performance: [] };
       }
 
-      // Index feedback by staff id (staff.id matches customer_feedback.staff_user_id)
-      const feedbackByStaff: Record<string, number[]> = {};
-      for (const fb of feedbackData || []) {
-        const row = fb as { staff_user_id: string; score: number };
-        if (!feedbackByStaff[row.staff_user_id]) feedbackByStaff[row.staff_user_id] = [];
-        feedbackByStaff[row.staff_user_id].push(row.score);
+      const staffRows = (staffRes.data ?? []) as Array<{
+        user_id: string; name: string | null; email: string | null; role: string | null;
+      }>;
+      const reservationRows = (reservationsRes.data ?? []) as Array<{
+        staff_id: string | null; status: string | null; metadata: { revenue?: number; tip?: number } | null;
+      }>;
+
+      // Group reservations by staff member (user_id).
+      const reservationsByStaff: Record<string, typeof reservationRows> = {};
+      for (const r of reservationRows) {
+        if (!r.staff_id) continue;
+        (reservationsByStaff[r.staff_id] ??= []).push(r);
       }
 
-      const performanceData: StaffPerformanceData[] = (staffData || []).map(staff => {
-        const reservations = staff.reservations || [];
-        const completedBookings = reservations.filter(r => r.status === 'completed').length;
+      // Index feedback by staff user id (customer_feedback.staff_user_id = user_id).
+      const feedbackByStaff: Record<string, number[]> = {};
+      for (const fb of feedbackRes.data || []) {
+        const row = fb as { staff_user_id: string; score: number };
+        if (!row.staff_user_id) continue;
+        (feedbackByStaff[row.staff_user_id] ??= []).push(row.score);
+      }
+
+      const performanceData: StaffPerformanceData[] = staffRows.map((staff) => {
+        const reservations = reservationsByStaff[staff.user_id] ?? [];
+        const completedBookings = reservations.filter((r) => r.status === 'completed').length;
         const totalRevenue = reservations.reduce((sum, r) => sum + (r.metadata?.revenue || 0), 0);
         const totalTips = reservations.reduce((sum, r) => sum + (r.metadata?.tip || 0), 0);
 
-        // Calculate utilization (simplified - would need working hours data)
+        // Simplified utilization: booked hours vs available hours in the period.
         const totalHoursInPeriod = this.getWorkingHoursInPeriod(period);
-        const bookedHours = reservations.length * 1; // Assuming 1 hour per booking
+        const bookedHours = reservations.length * 1; // ~1 hour per booking
         const utilizationRate = totalHoursInPeriod > 0 ? (bookedHours / totalHoursInPeriod) * 100 : 0;
 
-        // Derive customer rating from customer_feedback table
-        const scores = feedbackByStaff[staff.id] || [];
+        const scores = feedbackByStaff[staff.user_id] || [];
         const customer_rating = scores.length > 0
           ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2))
           : 0;
 
         return {
-          staff_id: staff.id,
-          staff_name: staff.name,
+          staff_id: staff.user_id,
+          staff_name: staff.name || staff.email || staff.user_id,
           bookings_count: completedBookings,
           revenue_total: Number(totalRevenue),
           utilization_rate: Math.min(utilizationRate, 100),
@@ -665,8 +671,9 @@ export class AnalyticsService {
   private async getStaffUtilization(tenantId: string, start: Date, end: Date): Promise<number> {
     // Simplified calculation - would need actual working hours data
     const totalBookings = await this.getBookingsCount(tenantId, start, end);
+    // Team members live in tenant_users, not a `staff` table.
     const { count: staffCount } = await this.supabase
-      .from('staff')
+      .from('tenant_users')
       .select('*', { count: 'exact', head: true })
       .eq('tenant_id', tenantId);
 

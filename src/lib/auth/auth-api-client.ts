@@ -134,8 +134,12 @@ async function fetchWithAuth<T = unknown>(
       }
 
       try {
-        const { getSupabaseBrowserClient } = await import('@/lib/supabase/client');
-        const supabase = getSupabaseBrowserClient();
+        // Use the async client. The sync getSupabaseBrowserClient() returns a
+        // no-op proxy when Supabase config comes from runtime (not build) env —
+        // its auth.getSession() yields a null session, so no token is attached
+        // and authenticated GETs 401. The async client loads runtime config.
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const supabase = await getSupabaseBrowserClientAsync();
         const { data } = await supabase.auth.getSession();
         const accessToken = data.session?.access_token;
 

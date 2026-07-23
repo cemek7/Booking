@@ -3,30 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthHeaders } from '@/hooks/useAuthHeaders';
 import { authFetch } from '@/lib/auth/auth-api-client';
-import { SIAS_BILLING_PLANS, SIAS_OUTCOME_ATRIBUTION } from '@/lib/sias';
 
 interface DashboardMetrics {
   total_bookings?: number;
   active_staff?: number;
   monthly_revenue?: number;
-}
-
-interface SiasOutcomeSummary {
-  id: string;
-  label: string;
-  count: number;
-  value: number;
-}
-
-interface SiasSummary {
-  open_escalations: number;
-  pending_campaigns: number;
-  retrying_campaigns: number;
-  memory_signals: number;
-  attribution_records: number;
-  attributed_revenue: number;
-  campaign_success_rate: number;
-  outcomes: SiasOutcomeSummary[];
 }
 
 interface WalletLedgerEntry {
@@ -66,7 +47,6 @@ export default function BillingClient() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(true);
   const [metricsError, setMetricsError] = useState<string | null>(null);
-  const [sias, setSias] = useState<SiasSummary | null>(null);
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -87,7 +67,6 @@ export default function BillingClient() {
           return;
         }
         setMetrics((res.data as { metrics?: DashboardMetrics })?.metrics ?? null);
-        setSias((res.data as { sias?: SiasSummary })?.sias ?? null);
         setMetricsError(null);
       })
       .catch(() => {
@@ -129,12 +108,6 @@ export default function BillingClient() {
   }, [wallet]);
 
   const lowBalanceThreshold = wallet?.low_balance_threshold_credits ?? 0;
-  const outcomeCards = [
-    { id: 'revenue_recovery', label: 'Revenue recovered' },
-    { id: 'no_show_reduction', label: 'No-show interventions' },
-    { id: 'repeat_booking_lift', label: 'Repeat-booking signals' },
-    { id: 'reactivation_lift', label: 'Reactivation signals' },
-  ];
 
   async function submitTopUp() {
     setTopUpMessage(null);
@@ -164,151 +137,13 @@ export default function BillingClient() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">SIAS billing</p>
-        <h1 className="mt-2 text-2xl font-semibold">Outcome-based pricing and wallet controls</h1>
+        <h1 className="text-2xl font-semibold">Billing &amp; usage</h1>
         <p className="mt-1 text-sm text-gray-600">
-          Manage subscription, usage, managed service tiers, and real profit in one place.
+          Your balance, what you&rsquo;ve used this month, and how to top up.
         </p>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Billing model</p>
-              <h2 className="mt-1 text-lg font-semibold text-slate-950">Subscription + usage + managed services</h2>
-              <p className="mt-2 max-w-xl text-sm text-slate-600">
-                Booka stops being sold as a calendar. It becomes a managed operating layer priced by the work it removes and the revenue it recovers.
-              </p>
-            </div>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3 text-right">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Current reserve</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{wallet?.profit_reserve_credits?.toFixed(2) ?? '0.00'} credits</p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {SIAS_BILLING_PLANS.map((plan) => (
-              <div key={plan.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{plan.name}</p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">{plan.price}</p>
-                <p className="mt-1 text-sm text-slate-600">{plan.description}</p>
-                <div className="mt-3 space-y-1">
-                  {plan.included.slice(0, 3).map((item) => (
-                    <div key={item} className="text-xs text-slate-500">• {item}</div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Outcome attribution</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-950">Measure the business impact, not just usage</h2>
-          <div className="mt-4 space-y-3">
-            {SIAS_OUTCOME_ATRIBUTION.map((item, index) => (
-              <div key={item.id} className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">{item.label}</div>
-                  <div className="mt-1 text-sm text-slate-600">{item.description}</div>
-                </div>
-                <div className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm">
-                  {String(index + 1).padStart(2, '0')}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Billing-grade SIAS reporting</p>
-            <h2 className="text-lg font-semibold text-slate-950">Operational outcomes, not just product usage</h2>
-            <p className="max-w-2xl text-sm text-slate-600">
-              The report below groups reminders, reactivation, escalations, and memory updates into the same business language you would use when reviewing ROI with a client.
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Open escalations</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{sias?.open_escalations ?? 0}</p>
-            </div>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Campaign success</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{Math.round(sias?.campaign_success_rate ?? 0)}%</p>
-            </div>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Memory signals</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{sias?.memory_signals ?? 0}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Attributed revenue</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{Number(sias?.attributed_revenue ?? 0).toFixed(2)} credits</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Attribution records</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{sias?.attribution_records ?? 0}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Pending campaigns</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{sias?.pending_campaigns ?? 0}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Retrying campaigns</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{sias?.retrying_campaigns ?? 0}</p>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {outcomeCards.map((card) => {
-            const outcome = sias?.outcomes?.find((item) => item.id === card.id);
-            return (
-              <div key={card.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{card.label}</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-950">{outcome?.count ?? 0}</p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Value: {Number(outcome?.value ?? 0).toFixed(2)} credits
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Pricing model</p>
-            <h2 className="text-lg font-semibold text-slate-950">Subscription + included credits + overage</h2>
-            <p className="max-w-2xl text-sm text-slate-600">
-              Tenants pay for the platform, the automation they consume, and the managed service tier they need. Heavy usage stays isolated inside the tenant wallet.
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Included credits</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">Plan-based</p>
-            </div>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Overage</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">Wallet-based</p>
-            </div>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Reserve</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{wallet?.profit_reserve_credits?.toFixed(2) ?? '0.00'} credits</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Wallet balance</p>
           <p className="mt-2 text-3xl font-semibold text-slate-900">
@@ -317,32 +152,11 @@ export default function BillingClient() {
           <p className="mt-1 text-sm text-slate-500">Available for AI, messaging, and managed workflows</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Tokens left</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">AI usage remaining</p>
           <p className="mt-2 text-3xl font-semibold text-slate-900">
-            {walletLoading ? '—' : (estimatedTokensLeft != null ? estimatedTokensLeft.toLocaleString() : '—')}
+            {walletLoading ? '—' : (estimatedTokensLeft != null ? `~${estimatedTokensLeft.toLocaleString()}` : '—')}
           </p>
-          <p className="mt-1 text-sm text-slate-500">Estimated from your token rate</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Recognized revenue</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-900">
-            {walletLoading ? '—' : `${wallet?.month_usage_revenue_credits?.toFixed(2) ?? '0.00'} credits`}
-          </p>
-          <p className="mt-1 text-sm text-slate-500">What Booka earned from assistant and managed ops usage</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Actual cost</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-900">
-            {walletLoading ? '—' : `${wallet?.month_actual_cost_credits?.toFixed(2) ?? '0.00'} credits`}
-          </p>
-          <p className="mt-1 text-sm text-slate-500">What OpenRouter or the model stack actually cost</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Withdrawable profit</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-900">
-            {walletLoading ? '—' : `${wallet?.withdrawable_profit_credits?.toFixed(2) ?? '0.00'} credits`}
-          </p>
-          <p className="mt-1 text-sm text-slate-500">Realized profit after reserve</p>
+          <p className="mt-1 text-sm text-slate-500">Estimated AI messages left on your balance</p>
         </div>
       </div>
 
@@ -398,21 +212,9 @@ export default function BillingClient() {
                 )}
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Cash collected</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">
-                  {walletLoading ? '—' : `${wallet?.cash_collected_credits?.toFixed(2) ?? '0.00'} credits`}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">AI spend</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500">AI usage this month</p>
                 <p className="mt-2 text-2xl font-semibold text-slate-900">
                   {walletLoading ? '—' : `${wallet?.month_spent_credits?.toFixed(2) ?? '0.00'} credits`}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">AI tokens</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">
-                  {walletLoading ? '—' : wallet?.month_tokens?.toLocaleString() ?? '—'}
                 </p>
               </div>
             </div>
@@ -425,11 +227,10 @@ export default function BillingClient() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">How it works</p>
             <ul className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
-              <li>Your subscription covers platform access and a managed outcome layer.</li>
-              <li>Extra usage draws from the tenant wallet as overage, so one tenant never absorbs another tenant&apos;s spend.</li>
-              <li>Every AI call reserves credits before generation and settles on the provider&apos;s exact usage cost when available.</li>
-              <li>Outcome attribution will eventually connect campaigns, reminders, and escalations to recovered revenue and repeat visits.</li>
-              <li>If the wallet is empty, only that tenant is blocked.</li>
+              <li>Your plan covers your workspace — bookings, sales, inventory, and everyday operations.</li>
+              <li>AI features — assistant replies, reminders, follow-ups — draw from your balance as you use them.</li>
+              <li>Top up any time. You&rsquo;re only ever charged for what you use.</li>
+              <li>If your balance runs out, AI features pause until you top up — your bookings and sales keep working.</li>
             </ul>
           </div>
         </div>
@@ -439,7 +240,7 @@ export default function BillingClient() {
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-base font-semibold text-slate-900">Recent ledger</h2>
-            <p className="text-sm text-slate-500">Top-ups, reservations, settlements, and refunds for this tenant.</p>
+            <p className="text-sm text-slate-500">Your top-ups, usage, and refunds.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full">
