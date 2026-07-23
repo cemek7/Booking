@@ -8,7 +8,7 @@ jest.mock('@/lib/supabase/client', () => {
   const mock = {
     auth: { getSession: jest.fn().mockResolvedValue({ data: { session: { access_token: 'tok' } } }) },
   }
-  return { getSupabaseBrowserClient: () => mock, getBrowserSupabase: () => mock, default: mock, supabase: mock }
+  return { getSupabaseBrowserClient: () => mock, getSupabaseBrowserClientAsync: async () => mock, getBrowserSupabase: () => mock, default: mock, supabase: mock }
 })
 
 describe('ReservationForm', () => {

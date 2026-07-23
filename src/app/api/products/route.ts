@@ -279,5 +279,5 @@ export const POST = createHttpHandler(
     };
   },
   'POST',
-  { auth: true, roles: ['admin', 'manager', 'product_manager'] }
+  { auth: true, roles: ['superadmin', 'owner', 'manager'] }
 );

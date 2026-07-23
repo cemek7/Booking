@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 
 export interface AnalyticsRealtimeConfig {
   tenantId: string;
@@ -124,30 +124,35 @@ export function useAnalyticsRealtime({
   useEffect(() => {
     if (!enabled || !tenantId) return;
 
-    const supabase = getSupabaseBrowserClient();
+    let cancelled = false;
+    // The sync browser client returns a realtime-less proxy under runtime
+    // config (its .channel() yields a Promise, so .on throws). Resolve the
+    // async client, which loads runtime config and supports realtime.
+    let activeSupabase: Awaited<ReturnType<typeof getSupabaseBrowserClientAsync>> | null = null;
 
-    try {
-      // Create a unique channel for this tenant
-      const channelName = `analytics-${tenantId}`;
-      const channel = supabase.channel(channelName);
+    (async () => {
+      try {
+        const supabase = await getSupabaseBrowserClientAsync();
+        if (cancelled) return;
+        activeSupabase = supabase;
 
-      // Subscribe to each table
-      tables.forEach((table) => {
-        channel.on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table,
-            filter: `tenant_id=eq.${tenantId}`,
-          },
-          handleRealtimeUpdate
-        );
-      });
+        const channelName = `analytics-${tenantId}`;
+        const channel = supabase.channel(channelName);
 
-      // Subscribe to the channel
-      channel
-        .subscribe((status: string) => {
+        tables.forEach((table) => {
+          channel.on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table,
+              filter: `tenant_id=eq.${tenantId}`,
+            },
+            handleRealtimeUpdate
+          );
+        });
+
+        channel.subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             setIsConnected(true);
             setError(null);
@@ -162,23 +167,25 @@ export function useAnalyticsRealtime({
           }
         });
 
-      channelRef.current = channel;
-
-      // Cleanup function
-      return () => {
-        if (channelRef.current) {
-          supabase.removeChannel(channelRef.current);
-          channelRef.current = null;
-        }
-        if (refreshTimeoutRef.current) {
-          clearTimeout(refreshTimeoutRef.current);
-        }
+        channelRef.current = channel;
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err : new Error('Unknown error'));
         setIsConnected(false);
-      };
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error'));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (channelRef.current && activeSupabase) {
+        activeSupabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
       setIsConnected(false);
-    }
+    };
   }, [enabled, tenantId, tables, handleRealtimeUpdate]);
 
   /**

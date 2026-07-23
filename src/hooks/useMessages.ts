@@ -1,7 +1,7 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import type { ChatMessage as Message } from '@/components/chat/ChatThread';
 import { messageSendSchema } from '@/lib/validation';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
@@ -30,9 +30,14 @@ export function useMessages(bookingId: string) {
   useEffect(() => {
     if (!bookingId) return;
     let channel: RealtimeChannel | null = null;
-    try {
-      const sb = getSupabaseBrowserClient();
-      if (sb?.channel) {
+    let cancelled = false;
+    // Sync client returns a realtime-less proxy under runtime config; use async.
+    let activeSb: Awaited<ReturnType<typeof getSupabaseBrowserClientAsync>> | null = null;
+    (async () => {
+      try {
+        const sb = await getSupabaseBrowserClientAsync();
+        if (cancelled) return;
+        activeSb = sb;
         channel = sb.channel(`public:messages:booking:${bookingId}`)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `booking_id=eq.${bookingId}` }, (payload: RealtimePostgresChangesPayload<MessageRow>) => {
             const newMsg = payload.new as MessageRow | null;
@@ -53,9 +58,9 @@ export function useMessages(bookingId: string) {
             }
           })
           .subscribe();
-      }
-    } catch { /* ignore subscription errors */ }
-    return () => { try { channel && getSupabaseBrowserClient()?.removeChannel?.(channel); } catch { /* ignore */ } };
+      } catch { /* ignore subscription errors */ }
+    })();
+    return () => { cancelled = true; try { channel && activeSb?.removeChannel?.(channel); } catch { /* ignore */ } };
   }, [bookingId, qc]);
   return q;
 }

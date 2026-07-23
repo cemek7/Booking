@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 import { generateAITemplate, TemplateGenerationRequest } from '@/lib/aiTemplateGenerator';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 
 interface TemplateVariable {
   name: string;
@@ -144,7 +144,7 @@ export default function TemplateEditor({ initialTemplate, onSave, onCancel }: Te
   useEffect(() => {
     (async () => {
       try {
-        const supabase = getSupabaseBrowserClient();
+        const supabase = await getSupabaseBrowserClientAsync();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
         const userId = user.id;

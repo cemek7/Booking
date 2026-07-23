@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 import type SupabaseLite from '@/types/supabase';
 
 type Props = {
@@ -11,7 +11,6 @@ type Props = {
 };
 
 export default function ReservationForm({ tenantId, defaultDateIso, onCreated }: Props) {
-  const supabase = getSupabaseBrowserClient();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [service, setService] = useState('');
@@ -27,6 +26,7 @@ export default function ReservationForm({ tenantId, defaultDateIso, onCreated }:
 
     try {
       // Simple conflict check: call server-side create endpoint which performs robust checks
+      const supabase = await getSupabaseBrowserClientAsync();
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
       if (!token) {
