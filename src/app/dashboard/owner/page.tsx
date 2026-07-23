@@ -40,13 +40,13 @@ const quickLinks = [
   {
     href: '/dashboard/services',
     title: 'Services',
-    description: 'Manage your service catalog and pricing structure.',
+    description: 'Set up the services you offer and their prices.',
     icon: Package,
   },
   {
     href: '/dashboard/customers',
     title: 'Customers',
-    description: 'Search and manage your customer database.',
+    description: 'Find and manage the people you serve.',
     icon: Users,
   },
   {
@@ -64,25 +64,25 @@ const quickLinks = [
   {
     href: '/dashboard/reports',
     title: 'Reports',
-    description: 'Generate business reports and review trends.',
+    description: 'See how your business is trending over time.',
     icon: FileText,
   },
   {
     href: '/dashboard/settings',
     title: 'Settings',
-    description: 'Configure preferences, business details, and AI settings.',
+    description: 'Your business details, team, and how your assistant replies.',
     icon: Settings2,
   },
   {
     href: '/dashboard/billing',
     title: 'Billing & Usage',
-    description: 'Review subscription, costs, and usage metrics.',
+    description: 'See your plan and balance, and top up when you need to.',
     icon: DollarSign,
   },
   {
     href: '/dashboard/usage',
     title: 'Usage Analytics',
-    description: 'Track feature usage and system performance.',
+    description: 'See which features you use most.',
     icon: Activity,
   },
 ];
@@ -99,9 +99,9 @@ export default async function OwnerDashboardPage() {
               Owner dashboard
             </Badge>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Owner Dashboard</h1>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Your business at a glance</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                Manage operations, review performance, and jump into the parts of the business that need attention now.
+                Here&rsquo;s how things are going today — your bookings, your team, and anything that needs your attention.
               </p>
             </div>
           </div>
@@ -112,8 +112,8 @@ export default async function OwnerDashboardPage() {
         <div className="border-b border-slate-200 px-6 py-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Business Analytics</h2>
-              <p className="text-sm text-slate-500">A wider, calmer view of your business performance.</p>
+              <h2 className="text-base font-semibold text-slate-900">How business is going</h2>
+              <p className="text-sm text-slate-500">Your bookings, revenue, and customers at a glance.</p>
             </div>
             <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-slate-600">
               Live data
@@ -133,7 +133,7 @@ export default async function OwnerDashboardPage() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Quick actions</h2>
-            <p className="text-sm text-slate-500">Jump to the workspace you need without hunting through the sidebar.</p>
+            <p className="text-sm text-slate-500">The things you&rsquo;ll reach for most, one tap away.</p>
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

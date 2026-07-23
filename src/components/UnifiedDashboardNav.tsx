@@ -80,6 +80,19 @@ const Icons = {
       <circle cx="7" cy="7" r="1" fill="currentColor" />
     </svg>
   ),
+  products: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M10 2.5l6.5 3.5v8L10 17.5 3.5 14V6L10 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M3.5 6L10 9.5 16.5 6M10 9.5v8" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  ),
+  inventory: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="2.5" y="11" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="11.5" y="11" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="7" y="3" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  ),
   chats: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v9a1 1 0 01-1 1H7l-4 3V4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
@@ -167,6 +180,9 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/reports', label: 'Reports', icon: Icons.reports, roles: ['owner', 'manager'] },
   // Orders
   { href: '/dashboard/orders', label: 'Orders', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
+  // Commerce: Booka handles sales + inventory, not just bookings.
+  { href: '/dashboard/products', label: 'Products', icon: Icons.products, roles: ['owner', 'manager'] },
+  { href: '/dashboard/products/inventory', label: 'Inventory', icon: Icons.inventory, roles: ['owner', 'manager'] },
   // Showcase packs
   { href: '/dashboard/showcase', label: 'Showcase', icon: Icons.showcase, roles: ['owner', 'manager'] },
   // Chats
@@ -174,7 +190,9 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   // Support
   { href: '/dashboard/support', label: 'Support', icon: Icons.support, roles: ['owner', 'manager', 'staff'] },
   { href: '/dashboard/superadmin/support', label: 'Support Queue', icon: Icons.support, roles: ['superadmin'] },
-  { href: '/dashboard/mentions', label: 'Mentions', icon: Icons.mentions, roles: ['owner', 'manager'] },
+  // Social mentions / listening is intentionally not shipped for launch (no
+  // reliable provider yet). Nav item removed; the page redirects (see below).
+  // { href: '/dashboard/mentions', label: 'Mentions', icon: Icons.mentions, roles: ['owner', 'manager'] },
   // Settings
   { href: '/dashboard/settings', label: 'Settings', icon: Icons.settings, roles: ['owner'] },
   // Billing
@@ -199,6 +217,9 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/bookings')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/schedule')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/services')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('owner'))!,
       ],
@@ -208,10 +229,8 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('owner'))!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/showcase' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('owner'))!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('owner'))!,
       ],
     },
@@ -234,6 +253,9 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/bookings')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/schedule')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('manager'))!,
       ],
@@ -243,9 +265,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/mentions' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,
       ],
     },

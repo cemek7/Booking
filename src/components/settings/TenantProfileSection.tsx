@@ -126,7 +126,7 @@ export function TenantProfileSection({ values, onChange }: { values: TenantProfi
           </label>
         </div>
       </FormSection>
-      <FormSection title="LLM Tone & Guidance" description="Provide examples & style rules so automated replies match your brand voice." aside={<span className="text-[10px] leading-tight">JSON parsed on blur; phrases help fine-tune prompts.</span>}>
+      <FormSection title="Assistant tone & guidance" description="Give examples and style rules so your assistant's replies sound like your brand.">
         <label className="flex flex-col gap-1 text-xs font-medium">Tone / Voice Adjectives
           <input className="border rounded px-2 py-1 text-sm" value={local.tone || ''} onChange={e=>update('tone', e.target.value)} placeholder="friendly, concise, professional" />
         </label>

@@ -379,40 +379,9 @@ export function AgentConfigSection({ values, onChange, tenantId }: Props) {
 
             {(values.voice_notes_enabled || values.voice_calls_enabled) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t">
-                <div>
-                  <label className="block text-sm font-medium mb-1">STT provider</label>
-                  <select
-                    value={values.voice_stt_provider ?? 'openai'}
-                    onChange={(e) => onChange({ voice_stt_provider: e.target.value as 'openai' | 'local' })}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="openai">OpenAI Whisper</option>
-                    <option value="local">Local (whisper.cpp)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">TTS provider</label>
-                  <select
-                    value={values.voice_tts_provider ?? 'openai'}
-                    onChange={(e) => onChange({ voice_tts_provider: e.target.value as 'openai' | 'local' })}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="openai">OpenAI TTS</option>
-                    <option value="local">Local (Coqui/Piper)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Voice character</label>
-                  <select
-                    value={values.voice_character ?? 'alloy'}
-                    onChange={(e) => onChange({ voice_character: e.target.value as AgentConfigValues['voice_character'] })}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
-                  >
-                    {(['alloy', 'nova', 'echo', 'shimmer', 'onyx', 'fable'] as const).map((v) => (
-                      <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Technical model/provider controls (STT/TTS provider, voice model)
+                    intentionally removed — tenants don't need that plumbing. The
+                    platform picks sensible defaults. */}
                 <div>
                   <label className="block text-sm font-medium mb-1">Reply with audio</label>
                   <select
