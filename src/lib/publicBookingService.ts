@@ -149,20 +149,28 @@ export async function getAvailability(
 
   const durationMinutes = service.duration_minutes || 60;
 
-  // Get business hours for the day
-  const { data: hours, error: hoursError } = await supabase
-    .from('business_hours')
-    .select('start_time, end_time')
-    .eq('tenant_id', tenantId)
-    .eq('day_of_week', targetDate.getDay())
-    .maybeSingle();
-
-  if (hoursError) {
-    throw ApiErrorFactory.databaseError(new Error(hoursError.message));
-  }
-
-  if (!hours) {
-    return []; // Closed on this day
+  // Business hours: the `business_hours` table is not present in the deployed
+  // schema yet. Read it if it exists, otherwise fall back to a sensible default
+  // window so customers can still book (a 500 here would block all bookings).
+  // TODO(launch-follow-up): create business_hours + a settings UI for real hours.
+  const DEFAULT_START = '09:00:00';
+  const DEFAULT_END = '17:00:00';
+  let startTime = DEFAULT_START;
+  let endTime = DEFAULT_END;
+  try {
+    const { data: hours, error: hoursError } = await supabase
+      .from('business_hours')
+      .select('start_time, end_time')
+      .eq('tenant_id', tenantId)
+      .eq('day_of_week', targetDate.getDay())
+      .maybeSingle();
+    if (!hoursError && hours?.start_time && hours?.end_time) {
+      startTime = hours.start_time;
+      endTime = hours.end_time;
+    }
+    // hoursError (e.g. table missing) or no row -> keep the default window.
+  } catch {
+    // keep the default window
   }
 
   // Get existing reservations
@@ -180,8 +188,8 @@ export async function getAvailability(
 
   // Generate slots
   const slots = generateTimeSlots(
-    hours.start_time,
-    hours.end_time,
+    startTime,
+    endTime,
     durationMinutes,
     reservations || [],
     targetDate
@@ -298,7 +306,14 @@ export async function createPublicBooking(
     if (lockResult.isConflict) {
       throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
     }
-    throw ApiErrorFactory.internalServerError(new Error(lockResult.error || 'Failed to acquire booking lock'));
+    // The reservation_locks table is absent in the deployed schema, so the
+    // distributed lock is unavailable. Do NOT fail the booking — the
+    // reservations-based conflict check below still guards against double
+    // bookings (slightly wider race window until reservation_locks exists).
+    // TODO(launch-follow-up): create reservation_locks for full race safety.
+    defaultLogger.warn('createPublicBooking: slot lock unavailable, proceeding with conflict check only', {
+      error: lockResult.error,
+    });
   }
 
   try {

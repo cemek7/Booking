@@ -94,10 +94,17 @@ export async function getContextForTenant(
   // Recent chat summary (single)
   let recentChat: LlmContext['recentChat'] = null;
   try {
-    type ChatRow = { id?: unknown; customer_id?: string | null; message?: string | null; created_at?: string | null; metadata?: Record<string, unknown> | null };
-    const { data: chatRow } = await supabaseClient.from('chats').select('id, customer_id, message, created_at, metadata').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(1).maybeSingle() as { data?: ChatRow };
+    // chats has no `message` column (message text lives in the messages table);
+    // selecting it errored the whole query. Derive a preview from metadata.
+    type ChatRow = { id?: unknown; customer_id?: string | null; created_at?: string | null; metadata?: Record<string, unknown> | null };
+    const { data: chatRow } = await supabaseClient.from('chats').select('id, customer_id, created_at, metadata').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(1).maybeSingle() as { data?: ChatRow };
     if (chatRow) {
-      recentChat = { id: String(chatRow.id), customer_id: chatRow.customer_id ?? null, message: redactAndTruncate(chatRow.message ?? null), created_at: chatRow.created_at ?? null, metadata: chatRow.metadata ?? null };
+      const md = chatRow.metadata;
+      const previewVal = md && typeof md === 'object'
+        ? ((md as Record<string, unknown>)['last_message'] ?? (md as Record<string, unknown>)['subject'])
+        : null;
+      const preview = typeof previewVal === 'string' ? previewVal : null;
+      recentChat = { id: String(chatRow.id), customer_id: chatRow.customer_id ?? null, message: redactAndTruncate(preview), created_at: chatRow.created_at ?? null, metadata: chatRow.metadata ?? null };
       // prefer an existing summarized version stored in metadata
       try {
         const md = chatRow.metadata ?? null;
@@ -117,7 +124,8 @@ export async function getContextForTenant(
   }
 
   // LLM calls sample
-  const { data: llmCalls, error: callsErr } = await supabaseClient.from('llm_calls').select('id, model, tokens, created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
+  // llm_calls has no `tokens` column — token data lives in `usage` (jsonb).
+  const { data: llmCalls, error: callsErr } = await supabaseClient.from('llm_calls').select('id, model, usage, created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5);
   if (callsErr) defaultLogger.warn('llmContextManager: llm_calls fetch error', callsErr);
 
   // top faqs — keyword-based relevance if customerMessage provided, else recency

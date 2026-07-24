@@ -7,11 +7,11 @@ import { estimatePromptTokens, withTenantWalletSpend } from './billing/ai-wallet
 
 export async function summarizeChat(supabase: SupabaseClient, chatId: string, tenantId?: string) {
   // fetch recent messages for chat (limit to 200)
-  const { data: msgs, error: msgsErr } = await supabase.from('messages').select('id, content, sender, created_at').eq('chat_id', chatId).eq('tenant_id', tenantId ?? '').order('created_at', { ascending: true }).limit(200);
+  const { data: msgs, error: msgsErr } = await supabase.from('messages').select('id, content, direction, created_at').eq('chat_id', chatId).eq('tenant_id', tenantId ?? '').order('created_at', { ascending: true }).limit(200);
   if (msgsErr) defaultLogger.warn('summarizer: failed to fetch messages', msgsErr);
 
-  type MessageRow = { id?: string; content?: string | null; sender?: string | null; created_at?: string | null };
-  const safeMsgs = Array.isArray(msgs) ? (msgs as MessageRow[]).map((m) => ({ role: (m.sender === 'customer' || m.sender === 'user') ? 'user' : 'assistant', content: redactAndTruncate(m.content || '') })) : [];
+  type MessageRow = { id?: string; content?: string | null; direction?: string | null; created_at?: string | null };
+  const safeMsgs = Array.isArray(msgs) ? (msgs as MessageRow[]).map((m) => ({ role: (m.direction === 'inbound') ? 'user' : 'assistant', content: redactAndTruncate(m.content || '') })) : [];
 
   // Build prompt: ask for a concise summary of the conversation suitable for context
   const system = 'You are a concise summarizer for Booka. Produce a short one-paragraph summary (2-4 sentences) capturing the customer\'s intent, any reservations requested, and relevant details. Keep it under 200 words.';

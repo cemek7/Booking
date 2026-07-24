@@ -58,8 +58,12 @@ describe('publicBookingService - getAvailability fixes', () => {
       mockSupabase.from.mockReturnValue(mockChain);
 
       const result = await getAvailability('tenant-id', 'service-id', '2024-03-15');
-      // Should return empty array when no business hours
-      expect(result).toEqual([]);
+      // A valid date is accepted. With no configured business hours (and no
+      // business_hours table in the deployed schema), the service falls back to
+      // a default window and still returns bookable slots (rather than 500ing).
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0]).toMatchObject({ available: true });
     });
   });
 
