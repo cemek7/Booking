@@ -117,7 +117,7 @@ export const GET = createHttpHandler(
     const supabase = createSupabaseAdminClient();
     const migrationChecks = await Promise.allSettled([
       supabase.from('tenants').select('id', { head: true, count: 'exact' }).limit(1),
-      supabase.from('users').select('id', { head: true, count: 'exact' }).limit(1),
+      supabase.from('tenant_users').select('user_id', { head: true, count: 'exact' }).limit(1),
       supabase.from('whatsapp_provider_secrets').select('tenant_id', { head: true, count: 'exact' }).limit(1),
       supabase.from('cron_locks').select('key', { head: true, count: 'exact' }).limit(1),
       supabase.from('whatsapp_message_queue').select('id', { head: true, count: 'exact' }).limit(1),

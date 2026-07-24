@@ -126,7 +126,7 @@ class LLMAlertService {
 
       // Get tenant owner email for notifications
       const { data: owner, error: ownerError } = await this.supabase
-        .from('profiles')
+        .from('tenant_users')
         .select('email, phone')
         .eq('tenant_id', tenantId)
         .eq('role', 'owner')

@@ -33,27 +33,7 @@ export const POST = createHttpHandler(
       const userId = session.user.id;
       const email = session.user.email;
 
-      // Ensure user record exists
-      try {
-        const { error: upsertError } = await ctx.supabase
-          .from('users')
-          .upsert(
-            {
-              id: userId,
-              email: email ?? null,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          );
-
-        if (upsertError) {
-          defaultLogger.warn('[auth/finish] user upsert failed:', upsertError);
-          // Don't fail the whole request, just log
-        }
-      } catch (err) {
-        defaultLogger.warn('[auth/finish] service role not configured or upsert error:', err);
-        // Continue anyway - service role might not be available
-      }
+      // Identity lives in auth.users + tenant_users; no public.users mirror to sync.
 
       return {
         success: true,
