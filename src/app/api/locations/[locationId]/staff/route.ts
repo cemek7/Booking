@@ -42,22 +42,28 @@ export const GET = createHttpHandler(
         return { success: true, staff: [] };
       }
 
-      // Fetch staff members linked to the specified location and tenant
+      // Fetch staff members linked to the specified location and tenant.
+      // Staff identity lives in tenant_users (staff_locations.staff_id = tenant_users.user_id).
       const { data: staff, error } = await ctx.supabase
-        .from('staff')
-        .select(`
-          *,
-          user:users(id, email, raw_user_meta_data)
-        `)
-        .in('id', staffIds)
+        .from('tenant_users')
+        .select('user_id, role, email, name, phone')
+        .in('user_id', staffIds)
         .eq('tenant_id', tenantId);
 
       if (error) {
         throw ApiErrorFactory.databaseError(error);
       }
 
-      span.setAttribute('db.results.count', staff?.length || 0);
-      return { success: true, staff: staff || [] };
+      const rows = (staff || []).map((row: { user_id: string; role: string; email: string | null; name: string | null; phone: string | null }) => ({
+        id: row.user_id,
+        name: row.name || row.email || row.user_id,
+        email: row.email,
+        phone: row.phone,
+        role: row.role,
+      }));
+
+      span.setAttribute('db.results.count', rows.length);
+      return { success: true, staff: rows };
     } finally {
       span.end();
     }
