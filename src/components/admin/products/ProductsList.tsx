@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from "@/lib/supabase/tenant-context";
 import { Product, ProductListQuery, PRODUCT_ROLE_PERMISSIONS, ProductPermissions } from '@/types/product-catalogue';
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
+import { LayoutGrid, Package, Table2 } from 'lucide-react';
 import Button from "@/components/ui/button";
 import { toast } from '@/components/ui/toast';
 import ProductFilters from './ProductFilters';
@@ -54,7 +55,7 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
             />
           ) : (
             <div className="h-10 w-10 rounded-lg bg-gray-200 flex items-center justify-center">
-              📦
+              <Package className="h-5 w-5 text-gray-500" aria-hidden="true" />
             </div>
           )}
           <div>
@@ -273,7 +274,7 @@ export default function ProductsList() {
                 viewMode === 'table' ? 'bg-white shadow-sm' : ''
               }`}
             >
-              📋 Table
+              <span className="inline-flex items-center gap-1.5"><Table2 className="h-4 w-4" aria-hidden="true" /> Table</span>
             </button>
             <button
               onClick={() => setViewMode('grid')}
@@ -281,7 +282,7 @@ export default function ProductsList() {
                 viewMode === 'grid' ? 'bg-white shadow-sm' : ''
               }`}
             >
-              ⊞ Grid
+              <span className="inline-flex items-center gap-1.5"><LayoutGrid className="h-4 w-4" aria-hidden="true" /> Grid</span>
             </button>
           </div>
           <span className="text-sm text-gray-600">

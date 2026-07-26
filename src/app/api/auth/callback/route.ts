@@ -103,9 +103,10 @@ function buildRedirectUrl(request: NextRequest, nextPath: string | null) {
 }
 
 function getTenantRedirectPath(role: 'owner' | 'manager' | 'staff'): string {
-  if (role === 'owner') return '/dashboard';
-  if (role === 'manager') return '/dashboard?role=manager';
-  return '/dashboard?role=staff';
+  // One home per role: owner/manager share the merged /dashboard,
+  // staff have their dedicated staff-dashboard.
+  if (role === 'staff') return '/dashboard/staff-dashboard';
+  return '/dashboard';
 }
 
 async function classifyUser(userId: string | null, email: string | null): Promise<CallbackFound> {

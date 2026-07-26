@@ -56,7 +56,8 @@ export function Select({ className, value, defaultValue, onValueChange, name, di
 
   return (
     <SelectContext.Provider value={context}>
-      <div ref={wrapperRef} className={cn('relative inline-block w-full', className)} {...props}>
+      {/* z-50 while open so the dropdown paints above sibling cards' stacking contexts */}
+      <div ref={wrapperRef} className={cn('relative inline-block w-full', open && 'z-50', className)} {...props}>
         {name ? <input type="hidden" name={name} value={selectedValue} readOnly /> : null}
         {disabled ? <input type="hidden" disabled value={selectedValue} readOnly /> : null}
         {children}

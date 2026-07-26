@@ -31,6 +31,8 @@ export const PROTECTED_ROUTES: Record<string, string[]> = {
   '/dashboard/settings': ['owner'],
 
   // Manager + owner (more-specific staff sub-paths first)
+  '/dashboard/ops': ['manager', 'owner'],
+  '/dashboard/leads': ['manager', 'owner'],
   '/dashboard/staff/management': ['manager', 'owner'],
   '/dashboard/staff/scheduling': ['manager', 'owner'],
   '/dashboard/staff': ['manager', 'owner'],

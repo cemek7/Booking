@@ -663,16 +663,27 @@ export function canAccessRoute(userRole: Role, route: string): boolean {
   const routePermissions: Record<string, string[]> = {
     '/dashboard/superadmin': ['superadmin'],
     '/dashboard/superadmin/support': ['superadmin'],
+    '/dashboard/superadmin/tenants': ['superadmin'],
+    '/dashboard/superadmin/analytics': ['superadmin'],
+    '/dashboard/superadmin/reservations': ['superadmin'],
+    '/dashboard/superadmin/reservation-logs': ['superadmin'],
     '/dashboard/calendar': ['owner', 'manager', 'staff'],
     '/dashboard/bookings': ['owner', 'manager', 'staff'],
+    '/dashboard/schedule': ['owner', 'manager', 'staff'],
     '/dashboard/orders': ['owner', 'manager', 'staff'],
+    '/dashboard/customers': ['owner', 'manager'],
+    '/dashboard/leads': ['owner', 'manager'],
+    '/dashboard/faqs': ['owner', 'manager'],
     '/dashboard/mentions': ['owner', 'manager'],
+    '/dashboard/ops': ['owner', 'manager'],
     '/dashboard/support': ['owner', 'manager', 'staff'],
     '/dashboard/staff/scheduling': ['owner', 'manager'],
     '/dashboard/settings': ['owner'],
     '/dashboard/billing': ['owner'],
+    '/dashboard/usage': ['owner'],
+    '/dashboard/owner/llm-metrics': ['owner'],
     '/dashboard/reports': ['owner', 'manager'],
-    '/dashboard/tasks': ['staff', 'manager'],
+    '/dashboard/tasks': ['owner', 'staff', 'manager'],
   };
   const allowed = routePermissions[route];
   if (!allowed) return true; // unprotected route

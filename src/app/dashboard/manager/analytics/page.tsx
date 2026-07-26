@@ -29,7 +29,7 @@ export default async function ManagerAnalyticsPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>
-            <Link href="/dashboard/manager">← Back to Dashboard</Link>
+            <Link href="/dashboard">← Back to Dashboard</Link>
           </Button>
         </div>
       </div>

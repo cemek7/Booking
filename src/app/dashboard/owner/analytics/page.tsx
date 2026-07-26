@@ -30,7 +30,7 @@ export default async function OwnerAnalyticsPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>
-            <Link href="/dashboard/owner">← Back to Dashboard</Link>
+            <Link href="/dashboard">← Back to Dashboard</Link>
           </Button>
         </div>
       </div>

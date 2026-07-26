@@ -167,15 +167,21 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   // Schedule (owner / manager / staff each have own path)
   { href: '/dashboard/owner/schedule', label: 'Schedule', icon: Icons.schedule, roles: ['owner'] },
   { href: '/dashboard/manager/schedule', label: 'Schedule', icon: Icons.schedule, roles: ['manager'] },
+  { href: '/dashboard/schedule', label: 'My Schedule', icon: Icons.schedule, roles: ['staff'] },
   // Services
   { href: '/dashboard/services', label: 'Services', icon: Icons.services, roles: ['owner', 'manager'] },
-  // Customers
-  { href: '/dashboard/customers', label: 'Customers', icon: Icons.customers, roles: ['owner', 'manager', 'staff'] },
+  // Customers (middleware allows owner/manager only)
+  { href: '/dashboard/customers', label: 'Customers', icon: Icons.customers, roles: ['owner', 'manager'] },
+  // Leads — CRM pipeline fed by the AI front desk
+  { href: '/dashboard/leads', label: 'Leads', icon: Icons.customers, roles: ['owner', 'manager'] },
   // Staff
   { href: '/dashboard/staff', label: 'Staff', icon: Icons.staff, roles: ['owner', 'manager'] },
   // Analytics
   { href: '/dashboard/owner/analytics', label: 'Analytics', icon: Icons.analytics, roles: ['owner'] },
   { href: '/dashboard/manager/analytics', label: 'Analytics', icon: Icons.analytics, roles: ['manager'] },
+  // AI metrics + feature usage (owner)
+  { href: '/dashboard/owner/llm-metrics', label: 'AI Metrics', icon: Icons.analytics, roles: ['owner'] },
+  { href: '/dashboard/usage', label: 'Usage', icon: Icons.analytics, roles: ['owner'] },
   // Reports
   { href: '/dashboard/reports', label: 'Reports', icon: Icons.reports, roles: ['owner', 'manager'] },
   // Orders
@@ -197,12 +203,16 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/settings', label: 'Settings', icon: Icons.settings, roles: ['owner'] },
   // Billing
   { href: '/dashboard/billing', label: 'Billing', icon: Icons.billing, roles: ['owner'] },
-  // FAQs
-  { href: '/dashboard/faqs', label: 'FAQs', icon: Icons.faqs, roles: ['owner'] },
-  // Tasks
-  { href: '/dashboard/tasks', label: 'Tasks', icon: Icons.tasks, roles: ['manager', 'staff'] },
+  // FAQs (middleware allows owner + manager; both feed the assistant's answers)
+  { href: '/dashboard/faqs', label: 'FAQs', icon: Icons.faqs, roles: ['owner', 'manager'] },
+  // Tasks (middleware allows all tenant roles)
+  { href: '/dashboard/tasks', label: 'Tasks', icon: Icons.tasks, roles: ['owner', 'manager', 'staff'] },
   // Super admin
   { href: '/dashboard/superadmin', label: 'Super Admin', icon: Icons.superadmin, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/tenants', label: 'Tenants', icon: Icons.staff, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/analytics', label: 'Analytics', icon: Icons.analytics, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/reservations', label: 'Reservations', icon: Icons.bookings, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/reservation-logs', label: 'Reservation Logs', icon: Icons.reports, roles: ['superadmin'] },
 ];
 
 const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
@@ -221,13 +231,16 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/leads' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/tasks' && i.roles.includes('owner'))!,
       ],
     },
     {
       title: 'Intelligence',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/analytics')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/llm-metrics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/showcase' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('owner'))!,
@@ -239,7 +252,8 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/settings')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/billing')!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/usage')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs' && i.roles.includes('owner'))!,
       ],
     },
   ],
@@ -256,8 +270,10 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/services' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/leads' && i.roles.includes('manager'))!,
       ],
     },
     {
@@ -267,6 +283,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs' && i.roles.includes('manager'))!,
       ],
     },
     {
@@ -279,7 +296,10 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
   staff: [
     {
       title: 'My Work',
-      items: [],
+      items: [
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/bookings' && i.roles.includes('staff'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/schedule' && i.roles.includes('staff'))!,
+      ],
     },
     {
       title: 'Communication',
@@ -296,6 +316,10 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       title: 'System',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/tenants')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/analytics')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservations')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservation-logs')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
       ],
     },
