@@ -21,10 +21,10 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
   const sendMessage = useSendMessage(booking.id);
   const [pendingMessages, setPendingMessages] = useState<any[]>([]);
 
-  // Clear pending if fresh server messages contain a matching text (basic heuristic)
+  // Clear pending once a matching server message (same text) has arrived.
   useEffect(() => {
     if (!messages || messages.length === 0 || pendingMessages.length === 0) return;
-    setPendingMessages(pm => pm.filter(p => !messages.some(m => (m as any).text === p.text && (m as any).createdAt !== p.createdAt)));
+    setPendingMessages(pm => pm.filter(p => !messages.some(m => (m as any).content === p.content)));
   }, [messages, pendingMessages]);
   const runAction = async (a: 'confirm'|'cancel'|'reschedule'|'mark_paid') => {
     if (onAction) return onAction(a);
@@ -67,10 +67,12 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
           </div>
           <div className="mt-2">
             <ChatComposer onSend={(async (m: any) => {
-              const optimistic = { id: `tmp_${Date.now()}`, bookingId: booking.id, direction: 'outbound', channel: 'app', text: m.text ?? m, status: 'pending', createdAt: new Date().toISOString() };
+              const text = m.text ?? m;
+              // ChatThread renders { role, content, createdAt } — match that shape.
+              const optimistic = { id: `tmp_${Date.now()}`, chatId: '', author: 'You', role: 'assistant', content: text, createdAt: new Date().toISOString() };
               setPendingMessages(p => [...p, optimistic]);
               try {
-                await sendMessage.mutateAsync({ channel: 'app', text: m.text ?? m, attachments: m.attachments });
+                await sendMessage.mutateAsync({ channel: 'app', text, attachments: m.attachments });
               } catch (err) {
                 setPendingMessages(p => p.map(msg => msg.id === optimistic.id ? { ...msg, status: 'failed' } : msg));
               }
