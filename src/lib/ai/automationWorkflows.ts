@@ -622,8 +622,9 @@ class AutomationWorkflows {
     const daysAgo = new Date(Date.now() - options.days_back * 24 * 60 * 60 * 1000);
 
     try {
+      // Canonical appointments live in `reservations`.
       const { data: appointments } = await this.supabase
-        .from('bookings')
+        .from('reservations')
         .select('*')
         .eq('tenant_id', tenantId)
         .eq('status', 'no_show')
@@ -866,7 +867,7 @@ class AutomationWorkflows {
   private async getAppointmentDetails(appointmentId: string): Promise<any> {
     try {
       const { data: appointment } = await this.supabase
-        .from('bookings')
+        .from('reservations')
         .select('*')
         .eq('id', appointmentId)
         .single();

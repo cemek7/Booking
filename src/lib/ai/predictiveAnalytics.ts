@@ -413,15 +413,21 @@ class PredictiveAnalyticsEngine {
     const daysBack = timeHorizon === 'yearly' ? 730 : timeHorizon === 'quarterly' ? 180 : 90;
     
     try {
-      const { data: bookings } = await this.supabase
-        .from('bookings')
-        .select('total_amount, created_at, status')
+      // Revenue lives in `transactions` (the `bookings` table has no amount).
+      const { data: txns } = await this.supabase
+        .from('transactions')
+        .select('amount, created_at, status')
         .eq('tenant_id', tenantId)
-        .eq('status', 'completed')
+        .in('status', ['completed', 'paid'])
         .gte('created_at', new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString())
         .order('created_at');
 
-      return bookings || [];
+      // Preserve the { total_amount, created_at, status } shape downstream expects.
+      return (txns || []).map((t) => ({
+        total_amount: Number((t as { amount?: number }).amount || 0),
+        created_at: (t as { created_at?: string }).created_at,
+        status: (t as { status?: string }).status,
+      }));
     } catch (error) {
       console.error('Error fetching historical revenue data:', error);
       return [];
@@ -434,15 +440,24 @@ class PredictiveAnalyticsEngine {
     monthStart.setHours(0, 0, 0, 0);
 
     try {
-      const { data: bookings } = await this.supabase
-        .from('bookings')
-        .select('total_amount')
-        .eq('tenant_id', tenantId)
-        .eq('status', 'completed')
-        .gte('created_at', monthStart.toISOString());
+      // Revenue from `transactions`; booking count from completed `reservations`.
+      const [{ data: txns }, { count: reservationCount }] = await Promise.all([
+        this.supabase
+          .from('transactions')
+          .select('amount')
+          .eq('tenant_id', tenantId)
+          .in('status', ['completed', 'paid'])
+          .gte('created_at', monthStart.toISOString()),
+        this.supabase
+          .from('reservations')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .eq('status', 'completed')
+          .gte('start_at', monthStart.toISOString()),
+      ]);
 
-      const revenue = (bookings || []).reduce((sum, b) => sum + (b.total_amount || 0), 0);
-      const bookingCount = bookings?.length || 0;
+      const revenue = (txns || []).reduce((sum, t) => sum + Number((t as { amount?: number }).amount || 0), 0);
+      const bookingCount = reservationCount || 0;
       const avgBookingValue = bookingCount > 0 ? revenue / bookingCount : 0;
 
       return {

@@ -596,14 +596,15 @@ class SmartBookingRecommendations {
     try {
       const date = preferredDate || new Date().toISOString().split('T')[0];
       
-      // Get booking density for this date and service
+      // Get booking density for this date and service from `reservations`
+      // (canonical appointments table; `bookings` has no service_id/scheduled_at).
       const { data: bookings } = await this.supabase
-        .from('bookings')
+        .from('reservations')
         .select('id')
         .eq('tenant_id', tenantId)
         .eq('service_id', serviceId)
-        .gte('scheduled_at', `${date}T00:00:00`)
-        .lt('scheduled_at', `${date}T23:59:59`);
+        .gte('start_at', `${date}T00:00:00`)
+        .lt('start_at', `${date}T23:59:59`);
 
       const bookingCount = bookings?.length || 0;
       
