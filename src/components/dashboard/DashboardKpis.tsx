@@ -438,13 +438,15 @@ export default function DashboardKpis({
           { id: 'low_stock_items', label: 'Low-Stock Items' },
         ]
       : [
-          // Manager: team-scoped booking view
+          // Manager: team bookings + tenant-wide sales/CRM/inventory
           { id: 'total_bookings', label: 'Team Bookings' },
-          { id: 'no_show_rate', label: 'No-Show Rate' },
-          { id: 'avg_booking_value', label: 'Avg Booking Value' },
-          { id: 'total_revenue', label: 'Team Revenue' },
-          { id: 'new_customers', label: 'New Customers' },
+          { id: 'total_revenue', label: 'Booking Revenue' },
           { id: 'staff_utilization', label: 'Staff Utilization' },
+          { id: 'retail_orders', label: 'Retail Orders' },
+          { id: 'sales_revenue', label: 'Sales Revenue' },
+          { id: 'new_customers', label: 'New Customers' },
+          { id: 'new_leads', label: 'New Leads' },
+          { id: 'low_stock_items', label: 'Low-Stock Items' },
         ];
 
   return (

@@ -11,8 +11,9 @@ import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
 import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
-import { Users, Calendar, Clock, TrendingUp, DollarSign, Star } from 'lucide-react';
+import { Users, Calendar, Clock, TrendingUp, DollarSign, Star, ShoppingBag, UserPlus, Package } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import type { ManagerOverviewMetrics, StaffPerformanceData } from '@/types/analytics-api';
 import type { ManagerRevenueData, ManagerBookingData } from '@/lib/services/manager-analytics-service';
 import { PERIOD_TO_STAFF_PERIOD } from './shared/analytics-constants';
@@ -46,6 +47,7 @@ const PERIOD_TO_MANAGER_PERIOD: Record<TimePeriod, 'week' | 'month' | 'quarter' 
 };
 
 export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps) {
+  const { format: tenantFormatCurrency } = useTenantCurrency();
   const [period, setPeriod] = useState<TimePeriod>('month');
 
   const managerPeriod = PERIOD_TO_MANAGER_PERIOD[period];
@@ -109,6 +111,26 @@ export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps
     enabled: !!tenantId,
   });
 
+  // Tenant-wide Sales / CRM / Inventory pillars from the shared team endpoint —
+  // managers see Booka is more than bookings.
+  const dashboardPeriod = (['day', 'week', 'month', 'quarter'] as const).includes(managerPeriod as 'day' | 'week' | 'month' | 'quarter')
+    ? (managerPeriod as 'day' | 'week' | 'month' | 'quarter')
+    : 'month';
+  const { data: pillars } = useQuery({
+    queryKey: ['managerPillars', tenantId, dashboardPeriod],
+    queryFn: async () => {
+      const res = await authFetch<{ metrics?: Array<{ id: string; value: number }> }>(
+        `/api/analytics/dashboard?scope=team&period=${dashboardPeriod}`,
+        { headers }
+      );
+      const map = new Map<string, number>();
+      (res.data?.metrics ?? []).forEach((m) => map.set(m.id, m.value));
+      return map;
+    },
+    enabled: !!tenantId,
+  });
+  const pillar = (id: string) => pillars?.get(id) ?? 0;
+
   const loading = overviewLoading || teamLoading || revenueLoading || bookingLoading;
 
   // Derive team-scoped booking trend from the already-fetched bookingData
@@ -116,7 +138,7 @@ export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps
   const teamBookingTrends = (bookingData?.bookingTrends || []).map((t) => ({ ...t, value: t.bookings }));
 
   const hasData = Boolean(overview) || teamBookingTrends.length > 0 || staffPerformance.length > 0;
-  const formatCurrency = (value: number | string) => `$${Number(value || 0).toLocaleString()}`;
+  const formatCurrency = (value: number | string) => tenantFormatCurrency(Number(value) || 0);
 
   const bookingStatusData = bookingData?.bookingsByStatus
     ? [
@@ -156,6 +178,17 @@ export default function ManagerMetrics({ tenantId, userId }: ManagerMetricsProps
         <MetricCard label="Schedule Utilization" value={`${(overview?.scheduleUtilization || 0).toFixed(1)}%`} icon={Clock} colorScheme="success" loading={loading} />
         <MetricCard label="Completion Rate" value={`${(overview?.completionRate || 0).toFixed(1)}%`} icon={TrendingUp} colorScheme="success" loading={loading} />
       </StatsGrid>
+
+      {/* Sales · CRM · Inventory — tenant-wide, beyond team bookings */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Sales, CRM &amp; Inventory</h3>
+        <StatsGrid columns={4}>
+          <MetricCard label="Retail Orders" value={pillar('retail_orders')} icon={ShoppingBag} colorScheme="info" loading={loading} />
+          <MetricCard label="Sales Revenue" value={pillar('sales_revenue')} icon={DollarSign} formatValue={formatCurrency} colorScheme="success" loading={loading} />
+          <MetricCard label="New Leads" value={pillar('new_leads')} icon={UserPlus} colorScheme="default" loading={loading} />
+          <MetricCard label="Low-Stock Items" value={pillar('low_stock_items')} icon={Package} colorScheme={pillar('low_stock_items') > 0 ? 'warning' : 'default'} loading={loading} />
+        </StatsGrid>
+      </div>
 
       {/* Booking & Revenue Trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

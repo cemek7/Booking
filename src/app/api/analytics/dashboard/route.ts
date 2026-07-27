@@ -44,6 +44,59 @@ function getTransactionStaffId(row: TransactionRow): string | null {
   return row.staff_id || row.user_id || fromMeta || null;
 }
 
+// Sales / CRM / Inventory pillar metrics, tenant-wide. Shared by manager
+// (team) scope so managers also see that Booka is more than bookings.
+// Every query is fail-soft so a missing table never breaks the dashboard.
+async function getTenantPillarMetrics(
+  supabase: SupabaseClient,
+  tenantId: string,
+  period: 'day' | 'week' | 'month' | 'quarter'
+): Promise<DashboardMetric[]> {
+  const now = new Date();
+  const start = new Date(now.getTime() - PERIOD_MS[period]);
+  const prevStart = new Date(start.getTime() - PERIOD_MS[period]);
+  const ts = now.toISOString();
+
+  const safeCount = async (build: () => PromiseLike<{ count: number | null }>): Promise<number> => {
+    try { return (await build()).count || 0; } catch { return 0; }
+  };
+  const safeRows = async <T,>(build: () => PromiseLike<{ data: T[] | null }>): Promise<T[]> => {
+    try { return (await build()).data || []; } catch { return []; }
+  };
+
+  const [ordersNow, ordersPrev, salesNow, salesPrev, leads, lowStock] = await Promise.all([
+    safeCount(() => supabase.from('retail_orders').select('*', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).in('status', ['paid', 'fulfilled', 'completed'])
+      .gte('created_at', start.toISOString()).lte('created_at', now.toISOString())),
+    safeCount(() => supabase.from('retail_orders').select('*', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).in('status', ['paid', 'fulfilled', 'completed'])
+      .gte('created_at', prevStart.toISOString()).lte('created_at', start.toISOString())),
+    safeRows<{ total_cents?: number }>(() => supabase.from('retail_orders').select('total_cents')
+      .eq('tenant_id', tenantId).in('status', ['paid', 'fulfilled', 'completed'])
+      .gte('created_at', start.toISOString()).lte('created_at', now.toISOString())),
+    safeRows<{ total_cents?: number }>(() => supabase.from('retail_orders').select('total_cents')
+      .eq('tenant_id', tenantId).in('status', ['paid', 'fulfilled', 'completed'])
+      .gte('created_at', prevStart.toISOString()).lte('created_at', start.toISOString())),
+    safeCount(() => supabase.from('leads').select('*', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).gte('created_at', start.toISOString()).lte('created_at', now.toISOString())),
+    safeRows<{ stock_quantity?: number; low_stock_threshold?: number }>(() =>
+      supabase.from('products').select('stock_quantity, low_stock_threshold')
+        .eq('tenant_id', tenantId).eq('track_inventory', true)),
+  ]);
+
+  const salesRevenue = salesNow.reduce((s, o) => s + Number(o.total_cents || 0), 0) / 100;
+  const salesRevenuePrev = salesPrev.reduce((s, o) => s + Number(o.total_cents || 0), 0) / 100;
+  const lowStockCount = lowStock.filter((p) => (p.stock_quantity ?? 0) <= (p.low_stock_threshold ?? 0)).length;
+  const trend = (cur: number, prev: number) => (prev === 0 ? (cur > 0 ? 100 : 0) : ((cur - prev) / prev) * 100);
+
+  return [
+    { id: 'retail_orders', name: 'Retail Orders', value: ordersNow, trend: trend(ordersNow, ordersPrev), type: 'count', period, last_updated: ts },
+    { id: 'sales_revenue', name: 'Sales Revenue', value: salesRevenue, trend: trend(salesRevenue, salesRevenuePrev), type: 'currency', period, last_updated: ts },
+    { id: 'new_leads', name: 'New Leads', value: leads, trend: 0, type: 'count', period, last_updated: ts },
+    { id: 'low_stock_items', name: 'Low-Stock Items', value: lowStockCount, trend: 0, type: 'count', period, last_updated: ts },
+  ];
+}
+
 async function getTeamDashboardMetrics(
   ctx: { supabase: SupabaseClient; user?: { role?: string; id?: string } },
   tenantId: string,
@@ -342,11 +395,14 @@ export const GET = createHttpHandler(
     const currency = await getTenantCurrency(ctx.supabase, tenantId, 'USD');
 
     if (scope === 'team') {
-      const teamMetrics = await getTeamDashboardMetrics(ctx, tenantId, period);
-      const sias = await getSiasDashboardSummary(ctx, tenantId);
+      const [teamMetrics, pillarMetrics, sias] = await Promise.all([
+        getTeamDashboardMetrics(ctx, tenantId, period),
+        getTenantPillarMetrics(ctx.supabase, tenantId, period),
+        getSiasDashboardSummary(ctx, tenantId),
+      ]);
       return {
         success: true,
-        metrics: teamMetrics,
+        metrics: [...teamMetrics, ...pillarMetrics],
         sias,
         scope,
         currency,
