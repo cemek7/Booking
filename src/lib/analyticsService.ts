@@ -76,7 +76,8 @@ export class AnalyticsService {
       const dateRange = this.getDateRange(period);
       const previousRange = this.getPreviousDateRange(period);
 
-      // Current period metrics
+      // Current period metrics — Booka spans booking, sales, CRM, and
+      // inventory, so the dashboard measures every pillar, not just bookings.
       const [
         currentBookings,
         currentRevenue,
@@ -86,7 +87,13 @@ export class AnalyticsService {
         currentUtilization,
         previousBookings,
         previousRevenue,
-        avgBookingValue
+        avgBookingValue,
+        currentRetailOrders,
+        previousRetailOrders,
+        currentSalesRevenue,
+        previousSalesRevenue,
+        currentLeads,
+        lowStockCount
       ] = await Promise.all([
         this.getBookingsCount(tenantId, dateRange.start, dateRange.end),
         this.getTotalRevenue(tenantId, dateRange.start, dateRange.end),
@@ -96,7 +103,13 @@ export class AnalyticsService {
         this.getStaffUtilization(tenantId, dateRange.start, dateRange.end),
         this.getBookingsCount(tenantId, previousRange.start, previousRange.end),
         this.getTotalRevenue(tenantId, previousRange.start, previousRange.end),
-        this.getAverageBookingValue(tenantId, dateRange.start, dateRange.end)
+        this.getAverageBookingValue(tenantId, dateRange.start, dateRange.end),
+        this.getRetailOrdersCount(tenantId, dateRange.start, dateRange.end),
+        this.getRetailOrdersCount(tenantId, previousRange.start, previousRange.end),
+        this.getRetailSalesRevenue(tenantId, dateRange.start, dateRange.end),
+        this.getRetailSalesRevenue(tenantId, previousRange.start, previousRange.end),
+        this.getNewLeadsCount(tenantId, dateRange.start, dateRange.end),
+        this.getLowStockCount(tenantId)
       ]);
 
       const metrics: AnalyticsMetric[] = [
@@ -160,6 +173,45 @@ export class AnalyticsService {
           value: avgBookingValue,
           trend: 0,
           type: 'currency',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        // ── Sales pillar ──
+        {
+          id: 'retail_orders',
+          name: 'Retail Orders',
+          value: currentRetailOrders,
+          trend: this.calculateTrend(currentRetailOrders, previousRetailOrders),
+          type: 'count',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        {
+          id: 'sales_revenue',
+          name: 'Sales Revenue',
+          value: currentSalesRevenue,
+          trend: this.calculateTrend(currentSalesRevenue, previousSalesRevenue),
+          type: 'currency',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        // ── CRM pillar ──
+        {
+          id: 'new_leads',
+          name: 'New Leads',
+          value: currentLeads,
+          trend: 0,
+          type: 'count',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        // ── Inventory pillar ──
+        {
+          id: 'low_stock_items',
+          name: 'Low-Stock Items',
+          value: lowStockCount,
+          trend: 0,
+          type: 'count',
           period,
           last_updated: new Date().toISOString(),
         },
@@ -688,8 +740,71 @@ export class AnalyticsService {
   private async getAverageBookingValue(tenantId: string, start: Date, end: Date): Promise<number> {
     const totalRevenue = await this.getTotalRevenue(tenantId, start, end);
     const totalBookings = await this.getBookingsCount(tenantId, start, end);
-    
+
     return totalBookings > 0 ? totalRevenue / totalBookings : 0;
+  }
+
+  // ── Sales pillar: retail orders sold through WhatsApp/Instagram chats ──
+  private async getRetailOrdersCount(tenantId: string, start: Date, end: Date): Promise<number> {
+    try {
+      const { count } = await this.supabase
+        .from('retail_orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .in('status', ['paid', 'fulfilled', 'completed'])
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      return count || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async getRetailSalesRevenue(tenantId: string, start: Date, end: Date): Promise<number> {
+    try {
+      const { data } = await this.supabase
+        .from('retail_orders')
+        .select('total_cents')
+        .eq('tenant_id', tenantId)
+        .in('status', ['paid', 'fulfilled', 'completed'])
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      return (data || []).reduce((sum, o) => sum + Number((o as { total_cents?: number }).total_cents || 0), 0) / 100;
+    } catch {
+      return 0;
+    }
+  }
+
+  // ── CRM pillar: new leads the AI front desk surfaced ──
+  private async getNewLeadsCount(tenantId: string, start: Date, end: Date): Promise<number> {
+    try {
+      const { count } = await this.supabase
+        .from('leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      return count || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  // ── Inventory pillar: tracked products at or below their reorder point ──
+  private async getLowStockCount(tenantId: string): Promise<number> {
+    try {
+      const { data } = await this.supabase
+        .from('products')
+        .select('stock_quantity, low_stock_threshold')
+        .eq('tenant_id', tenantId)
+        .eq('track_inventory', true);
+      return (data || []).filter((p) => {
+        const row = p as { stock_quantity?: number; low_stock_threshold?: number };
+        return (row.stock_quantity ?? 0) <= (row.low_stock_threshold ?? 0);
+      }).length;
+    } catch {
+      return 0;
+    }
   }
 
   private getWorkingHoursInPeriod(period: string): number {

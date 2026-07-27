@@ -409,7 +409,10 @@ export default function DashboardKpis({
     );
   }
 
-  const isStaff = userRole === 'staff';
+  const roleLower = (userRole || '').toLowerCase();
+  const isStaff = roleLower === 'staff';
+  const isOwner = roleLower === 'owner' || roleLower === 'superadmin';
+
   const cards = isStaff
     ? [
         { id: 'my_completed_bookings', label: 'Completed Bookings' },
@@ -419,14 +422,30 @@ export default function DashboardKpis({
         { id: 'my_rating', label: 'My Rating' },
         { id: 'my_avg_service_time', label: 'Avg Service Time' },
       ]
-    : [
-        { id: 'total_bookings', label: 'Bookings (24h)' },
-        { id: 'no_show_rate', label: 'No-Show Rate' },
-        { id: 'avg_booking_value', label: 'Avg Booking Value' },
-        { id: 'total_revenue', label: 'Revenue (24h)' },
-        { id: 'new_customers', label: 'New Customers' },
-        { id: 'staff_utilization', label: 'Staff Utilization' },
-      ];
+    : isOwner
+      ? [
+          // Booking pillar
+          { id: 'total_bookings', label: 'Bookings' },
+          { id: 'no_show_rate', label: 'No-Show Rate' },
+          { id: 'total_revenue', label: 'Booking Revenue' },
+          // Sales pillar
+          { id: 'retail_orders', label: 'Retail Orders' },
+          { id: 'sales_revenue', label: 'Sales Revenue' },
+          // CRM pillar
+          { id: 'new_customers', label: 'New Customers' },
+          { id: 'new_leads', label: 'New Leads' },
+          // Inventory pillar
+          { id: 'low_stock_items', label: 'Low-Stock Items' },
+        ]
+      : [
+          // Manager: team-scoped booking view
+          { id: 'total_bookings', label: 'Team Bookings' },
+          { id: 'no_show_rate', label: 'No-Show Rate' },
+          { id: 'avg_booking_value', label: 'Avg Booking Value' },
+          { id: 'total_revenue', label: 'Team Revenue' },
+          { id: 'new_customers', label: 'New Customers' },
+          { id: 'staff_utilization', label: 'Staff Utilization' },
+        ];
 
   return (
     <div className="space-y-4">
