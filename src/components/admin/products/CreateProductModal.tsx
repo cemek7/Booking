@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import { CreateProductRequest, PRODUCT_VALIDATION_RULES } from '@/types/product-catalogue';
 import Button from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
@@ -16,13 +17,14 @@ interface CreateProductModalProps {
 
 export default function CreateProductModal({ isOpen, onClose, onSuccess }: CreateProductModalProps) {
   const { tenant } = useTenant();
+  const { currency: tenantCurrency } = useTenantCurrency();
   const [formData, setFormData] = useState<CreateProductRequest>({
     name: '',
     description: '',
     short_description: '',
     sku: '',
     price_cents: 0,
-    currency: 'USD',
+    currency: 'NGN',
     cost_price_cents: 0,
     track_inventory: false,
     stock_quantity: 0,
@@ -38,6 +40,11 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Default a new product's currency to the tenant's currency when the modal opens.
+  useEffect(() => {
+    if (isOpen) setFormData((prev) => ({ ...prev, currency: tenantCurrency }));
+  }, [isOpen, tenantCurrency]);
 
   // Fetch categories for dropdown
   const { data: categoriesData } = useQuery({
@@ -138,7 +145,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
       short_description: '',
       sku: '',
       price_cents: 0,
-      currency: 'USD',
+      currency: tenantCurrency,
       cost_price_cents: 0,
       track_inventory: false,
       stock_quantity: 0,
@@ -343,10 +350,13 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
                     onChange={(e) => handleInputChange('currency', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                   >
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                    <option value="GBP">GBP</option>
-                    <option value="CAD">CAD</option>
+                    <option value="NGN">NGN (₦)</option>
+                    <option value="GHS">GHS (₵)</option>
+                    <option value="KES">KES</option>
+                    <option value="ZAR">ZAR (R)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="EUR">EUR (€)</option>
                   </select>
                 </div>
               </div>

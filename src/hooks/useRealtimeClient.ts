@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getRealtimeClient, RealtimeClient, RealtimeStatus } from '@/lib/realtimeClient';
 import { useTenant } from '@/lib/supabase/tenant-context';
 
@@ -17,10 +17,12 @@ export function useRealtimeClient() {
     return () => { /* keep singleton; do not stop */ };
   }, [token]);
 
-  function subscribe(type: string, handler: (e: any) => void) {
+  // Stable identity so consumers can safely place `subscribe` in effect deps
+  // without re-subscribing on every render.
+  const subscribe = useCallback((type: string, handler: (e: any) => void) => {
     client?.addHandler(type, handler);
     return () => client?.removeHandler(handler);
-  }
+  }, [client]);
 
-  return { status, subscribe };
+  return useMemo(() => ({ status, subscribe }), [status, subscribe]);
 }

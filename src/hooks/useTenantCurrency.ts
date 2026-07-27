@@ -1,6 +1,6 @@
 'use client';
 
-import { useContext } from 'react';
+import { useContext, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { TenantContext } from '@/lib/supabase/tenant-context';
 import { authFetch } from '@/lib/auth/auth-api-client';
@@ -38,16 +38,18 @@ export function useTenantCurrency() {
     },
   });
 
-  const locale = CURRENCY_LOCALE[currency] ?? undefined;
-
-  const format = (amount: number, opts?: { fromCents?: boolean }) => {
-    const value = opts?.fromCents ? (amount || 0) / 100 : amount || 0;
-    try {
-      return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(value);
-    } catch {
-      return `${currency} ${value.toFixed(2)}`;
-    }
-  };
-
-  return { currency, locale, format };
+  // Memoize on `currency` so the returned object and `format` keep a stable
+  // identity across renders — safe to place in dependency arrays.
+  return useMemo(() => {
+    const locale = CURRENCY_LOCALE[currency] ?? undefined;
+    const format = (amount: number, opts?: { fromCents?: boolean }) => {
+      const value = opts?.fromCents ? (amount || 0) / 100 : amount || 0;
+      try {
+        return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(value);
+      } catch {
+        return `${currency} ${value.toFixed(2)}`;
+      }
+    };
+    return { currency, locale, format };
+  }, [currency]);
 }
