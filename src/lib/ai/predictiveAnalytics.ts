@@ -601,14 +601,14 @@ class PredictiveAnalyticsEngine {
 
       const { data: txRecent } = await this.supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', recent30Start);
 
       const { data: txPrev } = await this.supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', prev30Start)
@@ -616,7 +616,7 @@ class PredictiveAnalyticsEngine {
 
       const aggregate = (rows: any[]) =>
         rows.reduce((acc: Record<string, number>, r) => {
-          const svc = r.metadata?.service_name || r.metadata?.service || 'Other';
+          const svc = r.raw?.service_name || r.raw?.service || 'Other';
           acc[svc] = (acc[svc] || 0) + Number(r.amount || 0);
           return acc;
         }, {});
@@ -653,14 +653,14 @@ class PredictiveAnalyticsEngine {
       // Get per-customer totals for recent + previous periods
       const { data: recentTx } = await this.supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', recent30Start);
 
       const { data: prevTx } = await this.supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', prev30Start)
@@ -671,7 +671,7 @@ class PredictiveAnalyticsEngine {
 
       const byCustomer = (rows: any[]) =>
         rows.reduce((acc: Record<string, number>, r) => {
-          const cid = r.metadata?.customer_id || 'unknown';
+          const cid = r.raw?.customer_id || 'unknown';
           acc[cid] = (acc[cid] || 0) + Number(r.amount || 0);
           return acc;
         }, {});
@@ -995,7 +995,7 @@ class PredictiveAnalyticsEngine {
       ] = await Promise.all([
         this.supabase
           .from('transactions')
-          .select('amount, metadata')
+          .select('amount, raw')
           .eq('tenant_id', tenantId)
           .in('status', ['completed', 'paid'])
           .gte('created_at', since),

@@ -30,10 +30,14 @@ type TransactionRow = {
   user_id?: string | null;
   staff_id?: string | null;
   metadata?: Record<string, unknown> | null;
+  raw?: Record<string, unknown> | null;
 };
 
 function getTransactionStaffId(row: TransactionRow): string | null {
-  const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : null;
+  // transactions has no user_id/staff_id/metadata columns — attribution
+  // lives inside the `raw` jsonb payload.
+  const meta = (row.raw && typeof row.raw === 'object' ? row.raw : null)
+    ?? (row.metadata && typeof row.metadata === 'object' ? row.metadata : null);
   const fromMeta = meta
     ? (meta.staff_id as string | undefined) || (meta.user_id as string | undefined)
     : undefined;
@@ -99,14 +103,14 @@ async function getTeamDashboardMetrics(
         .lte('start_at', start.toISOString()),
       ctx.supabase
         .from('transactions')
-        .select('amount, user_id, staff_id, metadata')
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', start.toISOString())
         .lte('created_at', now.toISOString()),
       ctx.supabase
         .from('transactions')
-        .select('amount, user_id, staff_id, metadata')
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', previousStart.toISOString())

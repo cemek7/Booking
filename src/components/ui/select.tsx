@@ -123,7 +123,9 @@ export function SelectContent({ children, className }: SelectContentProps) {
     <div
       role="listbox"
       className={cn(
-        'absolute z-50 mt-2 w-full min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md',
+        // Solid background: the `popover` color token is not defined in
+        // tailwind.config, so bg-popover resolved to transparent.
+        'absolute z-50 mt-2 w-full min-w-[8rem] overflow-hidden rounded-md border border-slate-200 bg-white text-slate-900 shadow-lg',
         className
       )}
     >

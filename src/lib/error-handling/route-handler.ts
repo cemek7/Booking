@@ -215,15 +215,19 @@ export function createApiHandler(
         // routes can support tenant users and superadmins from the same handler.
         // Default to true when undefined for backward compatibility.
         const requireTenantMembership = options.requireTenantMembership !== false;
-        // Accept the tenant from the x-tenant-id header OR a ?tenant_id= query
-        // param. Many client pages fetch with the query param (e.g.
-        // /api/staff?tenant_id=...), and only sending the header would 400 them.
+        // Accept the tenant from the x-tenant-id header, a ?tenant_id= query
+        // param, OR a [tenantId] route param. Many client pages fetch with the
+        // query param (e.g. /api/staff?tenant_id=...), and routes like
+        // /api/tenants/[tenantId]/settings carry the tenant in the path —
+        // requiring the header there 400'd legitimate requests.
         const requestedTenantId =
           request.headers.get('x-tenant-id') ||
           (() => {
             try { return new URL(request.url).searchParams.get('tenant_id'); }
             catch { return null; }
-          })();
+          })() ||
+          params?.tenantId ||
+          null;
         const shouldResolveTenantMembership = requireTenantMembership || Boolean(requestedTenantId);
 
         let tenantUser: { tenant_id: string; role: string } | null = null;

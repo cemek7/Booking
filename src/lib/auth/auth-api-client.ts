@@ -192,11 +192,36 @@ async function fetchWithAuth<T = unknown>(
     console.debug(`[AuthAPIClient] ${method} ${url}`);
 
     // Execute fetch
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers,
       body,
     });
+
+    // Right after login the Supabase session may not be persisted yet, so the
+    // first burst of queries can go out without (or with a stale) Authorization
+    // header and 401. Recover the token from the live session and retry ONCE
+    // instead of surfacing a transient failure.
+    if (response.status === 401 && typeof window !== 'undefined') {
+      try {
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const supabase = await getSupabaseBrowserClientAsync();
+        const { data } = await supabase.auth.getSession();
+        const freshToken = data.session?.access_token;
+        const sentAuth = (headers as Record<string, string>).Authorization;
+        if (freshToken && `Bearer ${freshToken}` !== sentAuth) {
+          setStoredAccessToken(freshToken);
+          console.debug('[AuthAPIClient] 401 with stale/missing token — retrying with fresh session token');
+          response = await fetch(url, {
+            ...options,
+            headers: { ...(headers as Record<string, string>), Authorization: `Bearer ${freshToken}` },
+            body,
+          });
+        }
+      } catch {
+        // fall through with the original 401 response
+      }
+    }
 
     // Parse response
     const contentType =
@@ -217,7 +242,7 @@ async function fetchWithAuth<T = unknown>(
     if (!response.ok) {
       console.warn(`[AuthAPIClient] ${method} ${url} returned ${response.status}`);
       if (response.status === 401) {
-        console.warn('[AuthAPIClient] Received 401 - Authorization failed. Clearing session.');
+        console.warn('[AuthAPIClient] Received 401 - request not authorized (no session change made).');
       }
       return {
         error: {

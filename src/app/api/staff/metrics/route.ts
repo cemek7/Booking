@@ -43,13 +43,16 @@ export const GET = createHttpHandler(
       staffQuery,
       ctx.supabase
         .from('reservations')
-        .select('raw, status, start_at, end_at, staff_id')
+        // reservations carries `metadata` jsonb (there is no `raw` column)
+        .select('metadata, status, start_at, end_at, staff_id')
         .eq('tenant_id', tenantId)
         .eq('status', 'completed')
         .gte('created_at', since),
       ctx.supabase
         .from('transactions')
-        .select('amount, metadata, staff_id')
+        // transactions carries `raw` jsonb and no staff_id column —
+        // staff attribution lives inside raw.staff_id / raw.user_id
+        .select('amount, raw')
         .eq('tenant_id', tenantId)
         .in('status', ['completed', 'paid'])
         .gte('created_at', since),
@@ -74,10 +77,10 @@ export const GET = createHttpHandler(
 
     for (const r of reservationsResult.data || []) {
       const row = r as Record<string, unknown>;
-      const raw = row.raw as Record<string, unknown> | undefined;
+      const meta = row.metadata as Record<string, unknown> | undefined;
       const staffId = (row.staff_id as string | undefined)
-        || (raw?.staff_id as string | undefined)
-        || (raw?.user_id as string | undefined);
+        || (meta?.staff_id as string | undefined)
+        || (meta?.user_id as string | undefined);
       if (!staffId) continue;
       completedByUser[staffId] = (completedByUser[staffId] || 0) + 1;
       const start = r.start_at ? new Date(r.start_at).getTime() : 0;
@@ -92,14 +95,13 @@ export const GET = createHttpHandler(
     const tipsByUser: Record<string, number> = {};
     for (const t of revenueResult.data || []) {
       const row = t as Record<string, unknown>;
-      const meta = row.metadata as Record<string, unknown> | undefined;
-      const staffId = (row.staff_id as string | undefined)
-        || (meta?.staff_id as string | undefined)
-        || (meta?.user_id as string | undefined);
+      const raw = row.raw as Record<string, unknown> | undefined;
+      const staffId = (raw?.staff_id as string | undefined)
+        || (raw?.user_id as string | undefined);
       if (!staffId) continue;
       revenueByUser[staffId] = (revenueByUser[staffId] || 0) + Number(t.amount || 0);
-      // Tips may be stored in metadata.tips or metadata.tip_amount
-      const tipAmount = Number(meta?.tips || meta?.tip_amount || 0);
+      // Tips may be stored in raw.tips or raw.tip_amount
+      const tipAmount = Number(raw?.tips || raw?.tip_amount || 0);
       if (tipAmount > 0) {
         tipsByUser[staffId] = (tipsByUser[staffId] || 0) + tipAmount;
       }

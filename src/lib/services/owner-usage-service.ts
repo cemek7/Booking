@@ -109,7 +109,7 @@ export async function getOwnerUsage(
         .gte('created_at', sevenDaysAgo.toISOString()),
       supabase
         .from('reservations')
-        .select('id, status, raw')
+        .select('id, status, metadata')
         .eq('tenant_id', validatedTenantId.data)
         .gte('created_at', startOfMonth.toISOString()),
     ]);
@@ -142,7 +142,7 @@ export async function getOwnerUsage(
     // AI conversion: reservations where raw.ai_assisted is true (or status was triggered by AI)
     const reservations = reservationsResult.data || [];
     const aiAssistedCount = reservations.filter(r => {
-      const raw = r.raw as Record<string, unknown> | null;
+      const raw = (r as { metadata?: Record<string, unknown> | null }).metadata ?? null;
       return raw?.ai_assisted === true || raw?.source === 'ai' || raw?.channel === 'whatsapp';
     }).length;
     const totalBookings = reservations.length;
