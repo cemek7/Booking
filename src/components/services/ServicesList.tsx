@@ -7,6 +7,7 @@ import Button from "../ui/button";
 import { Badge } from '../ui/badge';
 import { toast } from '../ui/toast';
 import { useTenant } from "@/lib/supabase/tenant-context";
+import { useTenantCurrency } from "@/hooks/useTenantCurrency";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authFetch, authDelete } from "@/lib/auth/auth-api-client";
 
@@ -26,7 +27,11 @@ interface ServiceRowProps {
   onDelete: (id: number) => void;
 }
 
-const ServiceRow = memo<ServiceRowProps>(function ServiceRow({ service, onEdit, onDelete }) {
+interface ServiceRowExtraProps extends ServiceRowProps {
+  formatPrice: (amount: number) => string;
+}
+
+const ServiceRow = memo<ServiceRowExtraProps>(function ServiceRow({ service, onEdit, onDelete, formatPrice }) {
   const handleEdit = useCallback(() => {
     onEdit(service.id);
   }, [onEdit, service.id]);
@@ -39,7 +44,7 @@ const ServiceRow = memo<ServiceRowProps>(function ServiceRow({ service, onEdit, 
     <TR>
       <TD className="font-medium text-slate-900">{service.name}</TD>
       <TD className="max-w-[26rem] whitespace-normal text-slate-600">{service.description || '—'}</TD>
-      <TD className="font-medium text-slate-900">{typeof service.price === 'number' ? service.price : '—'}</TD>
+      <TD className="font-medium text-slate-900">{typeof service.price === 'number' ? formatPrice(service.price) : '—'}</TD>
       <TD>{typeof service.duration === 'number' ? `${service.duration} min` : '—'}</TD>
       <TD>{service.category || '—'}</TD>
       <TD>{service.created_at ? new Date(service.created_at).toLocaleString() : '—'}</TD>
@@ -53,6 +58,7 @@ const ServiceRow = memo<ServiceRowProps>(function ServiceRow({ service, onEdit, 
 
 export default function ServicesList() {
   const { tenant } = useTenant();
+  const { format: formatPrice } = useTenantCurrency();
   const qc = useQueryClient();
   const router = useRouter();
   const { data, error, isLoading } = useQuery({
@@ -138,6 +144,7 @@ export default function ServicesList() {
                   service={service}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
+                  formatPrice={formatPrice}
                 />
               ))
             ) : (

@@ -8,6 +8,7 @@ import { useTenant } from "@/lib/supabase/tenant-context";
 import { Product, ProductListQuery, PRODUCT_ROLE_PERMISSIONS, ProductPermissions } from '@/types/product-catalogue';
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 import { LayoutGrid, Package, Table2 } from 'lucide-react';
+import { useTenantCurrency, CURRENCY_LOCALE } from '@/hooks/useTenantCurrency';
 import Button from "@/components/ui/button";
 import { toast } from '@/components/ui/toast';
 import ProductFilters from './ProductFilters';
@@ -136,6 +137,7 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
 
 export default function ProductsList() {
   const { tenant, role } = useTenant();
+  const { currency: tenantCurrency } = useTenantCurrency();
   const queryClient = useQueryClient();
   const router = useRouter();
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -226,12 +228,17 @@ export default function ProductsList() {
     setFilters(prev => ({ ...prev, page }));
   }, []);
 
-  const formatPrice = useCallback((priceInCents: number, currency: string = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency,
-    }).format(priceInCents / 100);
-  }, []);
+  const formatPrice = useCallback((priceInCents: number, currency?: string) => {
+    // Product rows may not carry a currency — fall back to the tenant's
+    // configured default (NGN for the primary market) instead of USD.
+    const code = currency && currency.length === 3 ? currency.toUpperCase() : tenantCurrency;
+    const locale = CURRENCY_LOCALE[code];
+    try {
+      return new Intl.NumberFormat(locale, { style: 'currency', currency: code }).format((priceInCents ?? 0) / 100);
+    } catch {
+      return `${code} ${((priceInCents ?? 0) / 100).toFixed(2)}`;
+    }
+  }, [tenantCurrency]);
 
   const getStockStatus = useCallback((product: Product) => {
     if (!product.track_inventory) return { text: 'Not tracked', color: 'text-gray-500' };
