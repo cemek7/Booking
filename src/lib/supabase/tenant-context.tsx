@@ -11,7 +11,7 @@ type TenantContextValue = {
   clearTenant: () => void;
 };
 
-const TenantContext = createContext<TenantContextValue | undefined>(undefined);
+export const TenantContext = createContext<TenantContextValue | undefined>(undefined);
 
 interface TenantProviderProps {
   children: React.ReactNode;

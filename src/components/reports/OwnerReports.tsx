@@ -2,10 +2,12 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuthHeaders } from '@/hooks/useAuthHeaders';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import type { DashboardMetric } from '@/types/analytics-api';
 
 export default function OwnerReports() {
   const headers = useAuthHeaders();
+  const { format: fmtMoney } = useTenantCurrency();
   const [metrics, setMetrics] = useState<DashboardMetric[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,8 +49,7 @@ export default function OwnerReports() {
     return map;
   }, [metrics]);
 
-  const fmt = (n: number) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+  const fmt = (n: number) => fmtMoney(n);
 
   return (
     <div>
@@ -77,14 +78,22 @@ export default function OwnerReports() {
       {!loading && !error && metrics.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[
+            // Bookings
             { label: 'Total Bookings', value: metricById.get('total_bookings')?.value ?? '—' },
-            { label: 'Total Revenue', value: metricById.get('total_revenue')?.value != null ? fmt(metricById.get('total_revenue')!.value) : '—' },
-            { label: 'New Customers', value: metricById.get('new_customers')?.value ?? '—' },
+            { label: 'Booking Revenue', value: metricById.get('total_revenue')?.value != null ? fmt(metricById.get('total_revenue')!.value) : '—' },
             { label: 'Avg Booking Value', value: metricById.get('avg_booking_value')?.value != null ? fmt(metricById.get('avg_booking_value')!.value) : '—' },
             {
               label: 'Cancellation Rate',
               value: metricById.get('cancellation_rate')?.value != null ? `${metricById.get('cancellation_rate')!.value.toFixed(1)}%` : '—',
             },
+            // Sales
+            { label: 'Retail Orders', value: metricById.get('retail_orders')?.value ?? '—' },
+            { label: 'Sales Revenue', value: metricById.get('sales_revenue')?.value != null ? fmt(metricById.get('sales_revenue')!.value) : '—' },
+            // CRM
+            { label: 'New Customers', value: metricById.get('new_customers')?.value ?? '—' },
+            { label: 'New Leads', value: metricById.get('new_leads')?.value ?? '—' },
+            // Inventory
+            { label: 'Low-Stock Items', value: metricById.get('low_stock_items')?.value ?? '—' },
           ].map(({ label, value }) => (
             <div key={label} className="bg-white border rounded-xl p-4">
               <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>

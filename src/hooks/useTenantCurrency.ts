@@ -1,7 +1,8 @@
 'use client';
 
+import { useContext } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useTenant } from '@/lib/supabase/tenant-context';
+import { TenantContext } from '@/lib/supabase/tenant-context';
 import { authFetch } from '@/lib/auth/auth-api-client';
 
 // Currency → locale for correct symbol + grouping. NGN is the primary market.
@@ -22,8 +23,9 @@ export const CURRENCY_LOCALE: Record<string, string> = {
  * `fromCents` is set.
  */
 export function useTenantCurrency() {
-  const { tenant } = useTenant();
-  const tenantId = tenant?.id;
+  // Read the context defensively: if used outside a TenantProvider we simply
+  // fall back to the NGN default rather than crashing the page.
+  const tenantId = useContext(TenantContext)?.tenant?.id;
 
   const { data: currency = 'NGN' } = useQuery({
     queryKey: ['tenant-currency', tenantId],

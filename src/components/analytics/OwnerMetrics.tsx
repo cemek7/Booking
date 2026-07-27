@@ -11,8 +11,9 @@ import PieChart from './charts/PieChart';
 import AreaChart from './charts/AreaChart';
 import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
-import { DollarSign, Calendar, Users, Star, AlertTriangle, TrendingDown, BarChart2 } from 'lucide-react';
+import { DollarSign, Calendar, Users, Star, AlertTriangle, TrendingDown, BarChart2, ShoppingBag, UserPlus, Package } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import type { DashboardMetric, BookingTrendData, StaffPerformanceData } from '@/types/analytics-api';
 import { PERIOD_TO_STAFF_PERIOD, PERIOD_DAYS } from './shared/analytics-constants';
 
@@ -43,6 +44,7 @@ interface AnalyticsData {
 }
 
 export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
+  const { format: tenantFormatCurrency } = useTenantCurrency();
   const [period, setPeriod] = useState<TimePeriod>('month');
 
   const { data: metrics = [], isLoading: metricsLoading } = useQuery({
@@ -111,12 +113,17 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
   const noShowRate = metricById.get('no_show_rate')?.value || 0;
   const avgBookingValue = metricById.get('avg_booking_value')?.value || 0;
   const staffUtilization = metricById.get('staff_utilization')?.value || 0;
+  // Sales / CRM / Inventory pillars — Booka is more than bookings.
+  const retailOrders = metricById.get('retail_orders')?.value || 0;
+  const salesRevenue = metricById.get('sales_revenue')?.value || 0;
+  const newLeads = metricById.get('new_leads')?.value || 0;
+  const lowStockItems = metricById.get('low_stock_items')?.value || 0;
 
   const averageRating = staffPerformance.length
     ? staffPerformance.reduce((sum, row) => sum + (row.customer_rating || 0), 0) / staffPerformance.length
     : 0;
 
-  const formatCurrency = (value: number | string) => `$${Number(value).toLocaleString()}`;
+  const formatCurrency = (value: number | string) => tenantFormatCurrency(Number(value) || 0);
 
   const bookingStatusData = useMemo(() => {
     const totalBookingsCount = trends.reduce((sum, row) => sum + (row.bookings || 0), 0);
@@ -209,6 +216,44 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
           loading={loading}
         />
       </StatsGrid>
+
+      {/* Sales · CRM · Inventory — Booka spans more than bookings */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Sales, CRM &amp; Inventory</h3>
+        <StatsGrid columns={4}>
+          <MetricCard
+            label="Retail Orders"
+            value={retailOrders}
+            trend={metricById.get('retail_orders')?.trend}
+            icon={ShoppingBag}
+            colorScheme="info"
+            loading={loading}
+          />
+          <MetricCard
+            label="Sales Revenue"
+            value={salesRevenue}
+            trend={metricById.get('sales_revenue')?.trend}
+            icon={DollarSign}
+            formatValue={formatCurrency}
+            colorScheme="success"
+            loading={loading}
+          />
+          <MetricCard
+            label="New Leads"
+            value={newLeads}
+            icon={UserPlus}
+            colorScheme="default"
+            loading={loading}
+          />
+          <MetricCard
+            label="Low-Stock Items"
+            value={lowStockItems}
+            icon={Package}
+            colorScheme={lowStockItems > 0 ? 'warning' : 'default'}
+            loading={loading}
+          />
+        </StatsGrid>
+      </div>
 
       {/* Revenue Forecast (predictive analytics) */}
       {forecastData && (
