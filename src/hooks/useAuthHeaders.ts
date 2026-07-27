@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import { getStoredAccessToken, getStoredIsAdmin, setStoredAccessToken } from '@/lib/auth/token-storage';
 
@@ -51,20 +51,25 @@ export function useAuthHeaders(): Record<string, string> | null {
     return () => { cancelled = true; };
   }, []);
 
-  if (!token) return null;
+  const tenantId = tenant?.id;
 
-  const hasTenant = Boolean(tenant?.id);
-  const isSuperadmin = role === 'superadmin' || (getStoredIsAdmin() && !hasTenant);
-  if (!isSuperadmin && !hasTenant) return null;
+  // Memoize on the primitive inputs so the returned object keeps a STABLE
+  // identity across renders. Consumers put this in useEffect/useCallback
+  // dependency arrays; returning a fresh object every render caused those
+  // effects to refire on every render — an infinite fetch/reload loop
+  // (e.g. the showcase builder repeatedly reloading its packs).
+  return useMemo<Record<string, string> | null>(() => {
+    if (!token) return null;
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-  };
+    const hasTenant = Boolean(tenantId);
+    const isSuperadmin = role === 'superadmin' || (getStoredIsAdmin() && !hasTenant);
+    if (!isSuperadmin && !hasTenant) return null;
 
-  if (tenant?.id) {
-    headers['x-tenant-id'] = tenant.id;
-  }
-
-  return headers;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (tenantId) headers['x-tenant-id'] = tenantId;
+    return headers;
+  }, [token, tenantId, role]);
 }
