@@ -99,22 +99,28 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantI
   );
 }
 
-// Show services for a reservation
+// Show services for a reservation, by name (not internal UUID).
+interface ReservationServiceLine { service_id: string; name: string; quantity: number; price: number | null }
+
 function ReservationServicesCell({ reservationId }: { reservationId: string }) {
   const { data, error, isLoading } = useQuery({
     queryKey: ['reservation-services', reservationId],
-    queryFn: async () => {
+    queryFn: async (): Promise<ReservationServiceLine[]> => {
       if (!reservationId) return [];
-      const res = await fetch(`/api/reservations/${reservationId}/services`);
-      if (!res.ok) throw new Error('Failed reservation services fetch');
-      return res.json();
+      const res = await authFetch<ReservationServiceLine[]>(`/api/reservations/${reservationId}/services`);
+      if (res.error) throw new Error(res.error.message || 'Failed reservation services fetch');
+      return res.data ?? [];
     },
-    enabled: !!reservationId
+    enabled: !!reservationId,
   });
-  if (isLoading) return <span>Loading...</span>;
-  if (error) return <span>Error</span>;
-  if (!data || data.length === 0) return <span>-</span>;
-  return <span>{data.map((s: any) => `${s.service_id} (${s.quantity})`).join(', ')}</span>;
+  if (isLoading) return <span className="text-slate-400">…</span>;
+  if (error) return <span className="text-slate-400">—</span>;
+  if (!data || data.length === 0) return <span className="text-slate-400">—</span>;
+  return (
+    <span>
+      {data.map((s) => (s.quantity > 1 ? `${s.name} ×${s.quantity}` : s.name)).join(', ')}
+    </span>
+  );
 }
 
 export default ReservationsList;
