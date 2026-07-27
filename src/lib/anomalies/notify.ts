@@ -18,12 +18,16 @@ function formatMoney(cents: number) {
 }
 
 async function findOwnerPhone(admin: SupabaseClient, tenantId: string): Promise<string | null> {
+  // Owner phone lives directly on tenant_users.phone (there is no public.users
+  // table to embed — the canonical lookup used elsewhere in the codebase).
   const { data, error } = await admin
     .from('tenant_users')
-    .select('users!inner(phone)')
+    .select('phone')
     .eq('tenant_id', tenantId)
     .eq('role', 'owner')
-    .maybeSingle();
+    .not('phone', 'is', null)
+    .limit(1)
+    .maybeSingle<{ phone?: string | null }>();
 
   if (error) {
     defaultLogger.warn('[anomaly.notify] owner phone lookup failed', {
@@ -33,7 +37,7 @@ async function findOwnerPhone(admin: SupabaseClient, tenantId: string): Promise<
     return null;
   }
 
-  return (data?.users as { phone?: string | null } | null)?.phone ?? null;
+  return data?.phone ?? null;
 }
 
 function atRiskCents(detection: DetectedAnomaly): number {

@@ -8,6 +8,23 @@ import { processBusinessEventForCustomerProfile } from '@/lib/customers/profileS
 export { BUSINESS_EVENT_ACTIONS } from '@/lib/audit/businessEventActions';
 export type { BusinessEventAction } from '@/lib/audit/businessEventActions';
 
+/** Serialize a subscriber error — PostgREST errors are plain objects (message/code/details), not Error instances. */
+function describeSubscriberError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const e = err as { message?: unknown; code?: unknown; details?: unknown };
+    if (e.message || e.code || e.details) {
+      return [e.code && `[${e.code}]`, e.message, e.details].filter(Boolean).join(' ');
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
 export type BusinessEventActorType = 'user' | 'staff' | 'customer' | 'ai' | 'system';
 export type BusinessEventSource = 'whatsapp' | 'dashboard' | 'api' | 'system';
 
@@ -78,10 +95,7 @@ export async function recordBusinessEvent(
         console.warn('[businessEvents] anomaly subscriber failed', {
           tenantId: event.tenantId,
           action: event.action,
-          error:
-            subscriberError instanceof Error
-              ? subscriberError.message
-              : String(subscriberError),
+          error: describeSubscriberError(subscriberError),
         });
       });
 
@@ -94,10 +108,7 @@ export async function recordBusinessEvent(
         console.warn('[businessEvents] customer profile subscriber failed', {
           tenantId: event.tenantId,
           action: event.action,
-          error:
-            subscriberError instanceof Error
-              ? subscriberError.message
-              : String(subscriberError),
+          error: describeSubscriberError(subscriberError),
         });
       });
     }

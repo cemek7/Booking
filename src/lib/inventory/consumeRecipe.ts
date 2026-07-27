@@ -9,7 +9,6 @@ type ReservationRow = {
   service_id?: string | null;
   staff_id?: string | null;
   tenant_staff_id?: string | null;
-  location_id?: string | null;
 };
 
 type ReservationServiceLine = {
@@ -84,7 +83,7 @@ export async function consumeForReservation(
 ): Promise<void> {
   const { data: reservation, error: reservationError } = await admin
     .from('reservations')
-    .select('id, service_id, staff_id, tenant_staff_id, location_id')
+    .select('id, service_id, staff_id, tenant_staff_id')
     .eq('tenant_id', tenantId)
     .eq('id', reservationId)
     .maybeSingle<ReservationRow>();
@@ -134,7 +133,10 @@ export async function consumeForReservation(
     ((products ?? []) as ProductRow[]).map((product) => [product.id, product]),
   );
 
-  let locationId = reservation.location_id ?? null;
+  // Reservations do not carry a per-booking location; consumption is scoped to
+  // the tenant's default inventory location. (`reservations.location_id` was
+  // never added by any migration — selecting it errored on a real DB.)
+  let locationId: string | null = null;
   if (!locationId) {
     const { data: defaultLocation, error: locationError } = await admin
       .from('inventory_locations')

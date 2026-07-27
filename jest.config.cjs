@@ -16,6 +16,8 @@ module.exports = {
     '<rootDir>/src/**/__tests__/**/*.(ts|tsx)',
     '<rootDir>/tests/**/*.test.(ts|tsx)'
   ],
+  // Live-DB smoke runs only via jest.livesmoke.config.cjs (needs SUPABASE creds).
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/tests/live-smoke/'],
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest'
   },

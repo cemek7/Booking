@@ -167,9 +167,35 @@ read-only re-probe confirms the migrations landed cleanly on the target project:
   is enabled in the applied DDL (runtime leak-test inconclusive while tables are
   empty and no tenant-scoped anon JWT is used).
 
-The schema floor is now 136 on the target. Exercising the **write-heavy** flows
-still requires owner consent to write test data to this shared project (or a
-scoped, self-cleaning test tenant) — pending.
+The schema floor is now 136 on the target.
+
+### Live scoped smoke run (2026-07-24 → 07-27) — 3 real bugs found & fixed
+
+With owner consent, a **scoped, self-cleaning** live smoke was run against the
+target Supabase (`tests/live-smoke/ops-intel-live.smoke.test.ts`, run via
+`jest.livesmoke.config.cjs`). It creates one throwaway tenant + minimal fixtures,
+runs the **real flow code**, asserts the writes, and deletes the tenant in
+`afterAll` (verified: no `__livesmoke` rows remain). Final run: **2/2 pass, zero
+subscriber warnings.** Both live tests are excluded from `npm test` (they need
+live creds).
+
+The run exercised the load-bearing completion seam and the G1 claim gate against
+real Postgres — and caught **three real defects that every mocked test missed**
+(mocks don't enforce columns/relationships):
+
+| # | File | Defect (real DB error) | Severity | Fix |
+|---|------|------------------------|----------|-----|
+| L1 | `src/lib/inventory/consumeRecipe.ts` | Selected `reservations.location_id` — column never created by any migration → `column reservations.location_id does not exist`. **Every reservation completion would throw** (recipe consumption is in the completion hook). | **High** | Removed the non-existent column; use the existing default-location fallback (`inventory_locations.is_default`). Unit test updated. |
+| L2 | `src/lib/anomalies/notify.ts` | `findOwnerPhone` embedded `tenant_users → users!inner(phone)`; there is no `public.users` table → `Could not find a relationship`. **Owner never receives anomaly alerts.** | Medium | Read `tenant_users.phone` directly (the canonical pattern used elsewhere). |
+| L3 | `src/lib/customers/profile.ts` | `recomputeProfile` selected `transactions.reservation_id` — column doesn't exist (transactions link polymorphically via `subject_type`/`subject_id`) → `column transactions.reservation_id does not exist`. **Customer profiles never recompute** (best-effort subscriber silently failed). | Medium | Removed the dead, invalid clause; matching already uses `subject_type`/`subject_id`. |
+
+Also hardened `businessEvents.ts` subscriber error logging (PostgREST errors were
+logged as `[object Object]`, which masked L2/L3) to serialize `code/message/details`.
+
+All three were best-effort-or-completion-path writes that unit tests couldn't
+catch. Live verification confirmed: completion writes the multi-service snapshot
+(₦100 = 10000 cents for qty 2) + `reservation.completed` event, and the G1
+approval claim is a single-winner gate on real Postgres.
 
 **To exercise the ops-intel flows live**, use a **dedicated test/staging Supabase
 project** (or local DB) with migrations 122–136 applied, then either run the
@@ -189,9 +215,14 @@ met:
    (failing-suite set identical to `staging`).
 2. Both residual gaps (**G1** money-safety, **G2** vocabulary) **closed** with
    tests; typecheck green.
-3. Remaining pre-merge item is the **live DB integration run**, which is
-   environment-blocked here — run it once real credentials are available, or
-   accept the mocked-suite coverage.
+3. Migrations 122–136 applied on the target and verified (21/21 tables).
+4. **Live scoped smoke run — done:** completion + G1 flows pass against real
+   Postgres, and it surfaced **three real DB-schema defects (L1–L3) that are now
+   fixed** (see above). This is the highest-value outcome of the pass — those
+   bugs were invisible to every mocked test.
+
+Recommend a quick owner review of L1–L3 (esp. L1, which would have broken every
+reservation completion) before merge, but they are fixed and re-verified live.
 
 Do **not** port this stack into `release/vps-launch`; cherry-pick only specific
 launch-safe fixes later if required.

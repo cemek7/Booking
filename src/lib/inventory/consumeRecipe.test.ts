@@ -41,10 +41,23 @@ function createAdminMock() {
                     service_id: null,
                     tenant_staff_id: 'staff-1',
                     staff_id: 'staff-1',
-                    location_id: 'loc-1',
                   },
                   error: null,
                 }),
+              }),
+            }),
+          }),
+        };
+      }
+
+      if (table === 'inventory_locations') {
+        // Reservations carry no per-booking location; consumption resolves the
+        // tenant's default inventory location.
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: { id: 'loc-default' }, error: null }),
               }),
             }),
           }),
@@ -155,7 +168,7 @@ describe('consumeForReservation', () => {
         quantityChange: -6,
         referenceType: 'reservation',
         referenceId: RESERVATION_ID,
-        locationId: 'loc-1',
+        locationId: 'loc-default',
       }),
     );
 
@@ -169,7 +182,7 @@ describe('consumeForReservation', () => {
         quantityChange: -6,
         referenceType: 'reservation',
         referenceId: RESERVATION_ID,
-        locationId: 'loc-1',
+        locationId: 'loc-default',
       }),
     );
 

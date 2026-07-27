@@ -23,7 +23,6 @@ type TransactionProfileRow = {
   status?: string | null;
   subject_type?: string | null;
   subject_id?: string | null;
-  reservation_id?: string | null;
 };
 
 function isSuccessfulTransaction(row: TransactionProfileRow): boolean {
@@ -75,7 +74,7 @@ export async function recomputeProfile(
   if (reservationIds.length > 0 || retailOrderIds.length > 0) {
     const { data: transactionRows, error: transactionsError } = await admin
       .from('transactions')
-      .select('amount, type, status, subject_type, subject_id, reservation_id')
+      .select('amount, type, status, subject_type, subject_id')
       .eq('tenant_id', tenantId);
 
     if (transactionsError) throw transactionsError;
@@ -89,8 +88,7 @@ export async function recomputeProfile(
     if (!isSuccessfulTransaction(row) || !isPositivePayment(row)) return sum;
 
     const reservationMatch =
-      (row.subject_type === 'reservation' && row.subject_id && reservationIdSet.has(row.subject_id)) ||
-      (row.reservation_id && reservationIdSet.has(row.reservation_id));
+      row.subject_type === 'reservation' && !!row.subject_id && reservationIdSet.has(row.subject_id);
     const retailMatch =
       row.subject_type === 'retail_order' && row.subject_id && retailOrderIdSet.has(row.subject_id);
 
