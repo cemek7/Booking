@@ -34,7 +34,6 @@ const BookingRow = memo<BookingRowProps>(function BookingRow({ booking, onEdit, 
 
   return (
     <TR>
-      <TD>{booking.id}</TD>
       <TD>{booking.title}</TD>
       <TD>{booking.status}</TD>
       <TD>{booking.capacity}</TD>
@@ -105,7 +104,6 @@ function BookingsList() {
       <Table>
         <THead>
           <TR>
-            <TH>ID</TH>
             <TH>Title</TH>
             <TH>Status</TH>
             <TH>Capacity</TH>
@@ -126,7 +124,7 @@ function BookingsList() {
             ))
           ) : (
             <TR>
-              <TD colSpan={7} className="text-center">
+              <TD colSpan={6} className="text-center">
                 No bookings found.
               </TD>
             </TR>

@@ -63,7 +63,6 @@ const CustomerListRow = memo<CustomerListRowProps>(function CustomerListRow({
 
   return (
     <TR className="cursor-pointer hover:bg-slate-50" onClick={handleRowClick}>
-      <TD className="font-medium text-slate-900">{customer.id}</TD>
       <TD className="font-medium text-slate-900">{customer.name}</TD>
       <TD className="font-mono text-slate-700">{customer.phone || '—'}</TD>
       <TD className="max-w-[28rem] whitespace-normal text-slate-600">{customer.notes || '—'}</TD>
@@ -194,7 +193,6 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
         <Table className="min-w-[860px]">
           <THead>
             <TR>
-              <TH className="w-16">ID</TH>
               <TH className="w-40">Name</TH>
               <TH className="w-36">Phone</TH>
               <TH className="min-w-[280px]">Notes</TH>
@@ -215,7 +213,7 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
               ))
             ) : (
               <TR>
-                <TD colSpan={6} className="text-center text-slate-500">{filter ? 'No matches.' : 'No customers found.'}</TD>
+                <TD colSpan={5} className="text-center text-slate-500">{filter ? 'No matches.' : 'No customers found.'}</TD>
               </TR>
             )}
           </TBody>

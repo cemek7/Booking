@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useState } from "react";
 import { toast } from "../ui/toast";
 import { Table, THead, TBody, TR, TH, TD } from "../ui/table";
@@ -54,7 +53,6 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantI
       <Table>
         <THead>
           <TR>
-            <TH>ID</TH>
             <TH>Status</TH>
             <TH>Customer</TH>
             <TH>Staff</TH>
@@ -69,14 +67,9 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantI
           {data && data.length > 0 ? (
             data.map((r: any) => (
               <TR key={r.id}>
-                <TD>
-                  <Link href={`/dashboard/reservations/${r.id}`} className="text-blue-600 underline">
-                    {r.id}
-                  </Link>
-                </TD>
                 <TD>{r.status}</TD>
-                <TD>{r.customer_id}</TD>
-                <TD>{r.staff_id || '-'}</TD>
+                <TD>{r.customer_number || r.customer_name || '—'}</TD>
+                <TD>{r.staff_id ? 'Assigned' : 'Unassigned'}</TD>
                 <TD>{r.date ? new Date(r.date).toLocaleString() : '-'}</TD>
                 <TD>
                   <ReservationServicesCell reservationId={r.id} />
@@ -97,7 +90,7 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantI
             ))
           ) : (
             <TR>
-              <TD colSpan={9} className="text-center text-gray-400 py-8">No reservations found.<br /><span className="text-xs">Try adjusting your filters or add a new reservation.</span></TD>
+              <TD colSpan={8} className="text-center text-gray-400 py-8">No reservations found.<br /><span className="text-xs">Try adjusting your filters or add a new reservation.</span></TD>
             </TR>
           )}
         </TBody>

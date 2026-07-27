@@ -18,8 +18,9 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
 const { authFetch } = require('@/lib/auth/auth-api-client')
 
 const mockReservations = [
-  { id: 'r1', tenant_id: 'tenant-1', customer_id: 'Alice', status: 'confirmed', date: new Date().toISOString(), created_at: new Date().toISOString() },
-  { id: 'r2', tenant_id: 'tenant-1', customer_id: 'Bob', status: 'pending', date: new Date().toISOString(), created_at: new Date().toISOString() }
+  // customer is shown by number/name (not the internal customer_id UUID)
+  { id: 'r1', tenant_id: 'tenant-1', customer_id: 'cust-uuid-1', customer_number: 'Alice', status: 'confirmed', date: new Date().toISOString(), created_at: new Date().toISOString() },
+  { id: 'r2', tenant_id: 'tenant-1', customer_id: 'cust-uuid-2', customer_number: 'Bob', status: 'pending', date: new Date().toISOString(), created_at: new Date().toISOString() }
 ]
 
 describe('ReservationsList', () => {

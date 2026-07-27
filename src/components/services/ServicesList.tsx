@@ -37,7 +37,6 @@ const ServiceRow = memo<ServiceRowProps>(function ServiceRow({ service, onEdit, 
 
   return (
     <TR>
-      <TD className="font-medium text-slate-900">{service.id}</TD>
       <TD className="font-medium text-slate-900">{service.name}</TD>
       <TD className="max-w-[26rem] whitespace-normal text-slate-600">{service.description || '—'}</TD>
       <TD className="font-medium text-slate-900">{typeof service.price === 'number' ? service.price : '—'}</TD>
@@ -122,7 +121,6 @@ export default function ServicesList() {
         <Table className="min-w-[960px]">
           <THead>
             <TR>
-              <TH className="w-16">ID</TH>
               <TH className="w-40">Name</TH>
               <TH className="min-w-[280px]">Description</TH>
               <TH className="w-24">Price</TH>
@@ -144,7 +142,7 @@ export default function ServicesList() {
               ))
             ) : (
               <TR>
-                <TD colSpan={8} className="text-center text-slate-500">No services found.</TD>
+                <TD colSpan={7} className="text-center text-slate-500">No services found.</TD>
               </TR>
             )}
           </TBody>
