@@ -1,10 +1,11 @@
 export const dynamic = 'force-dynamic';
 import { requireAuth } from '@/lib/auth/server-auth';
 import TenantSettingsHost from '@/components/TenantSettingsHost';
+import CalendarSettings from '@/components/calendar/CalendarSettings';
 
 export default async function SettingsPage() {
   // Only owners can access tenant settings
-  await requireAuth(['owner']);
+  const user = await requireAuth(['owner']);
 
   return (
     <div className="p-6">
@@ -13,6 +14,15 @@ export default async function SettingsPage() {
       <div className="mt-6">
         <TenantSettingsHost />
       </div>
+      {user.tenantId && (
+        <div className="mt-8">
+          <CalendarSettings
+            tenantId={user.tenantId}
+            userRole={(user.role as 'owner' | 'admin' | 'manager' | 'staff') ?? 'owner'}
+            currentUserId={user.id}
+          />
+        </div>
+      )}
     </div>
   );
 }

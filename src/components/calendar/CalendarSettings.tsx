@@ -1,3 +1,5 @@
+'use client';
+
 import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { toast } from '@/components/ui/toast';
+import { authFetch, authPost, authPatch, authDelete } from '@/lib/auth/auth-api-client';
 import {
   Calendar,
   Link,
@@ -57,10 +60,9 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const loadCalendarIntegrations = async () => {
     try {
-      const response = await fetch(`/api/calendar/integrations?tenant_id=${tenantId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setIntegrations(data.integrations || []);
+      const response = await authFetch<{ integrations?: CalendarIntegration[] }>(`/api/calendar/integrations?tenant_id=${tenantId}`);
+      if (!response.error) {
+        setIntegrations(response.data?.integrations || []);
       }
     } catch (error) {
       defaultLogger.error('Failed to load calendar integrations:', error);
@@ -72,10 +74,9 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const loadStaffMembers = async () => {
     try {
-      const response = await fetch(`/api/staff?tenant_id=${tenantId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setStaffMembers(data.staff || []);
+      const response = await authFetch<{ staff?: any[] }>(`/api/staff?tenant_id=${tenantId}`);
+      if (!response.error) {
+        setStaffMembers(response.data?.staff || []);
       }
     } catch (error) {
       defaultLogger.error('Failed to load staff members:', error);
@@ -94,10 +95,9 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
         params.append('staff_id', staffId);
       }
 
-      const response = await fetch(`/api/calendar/auth?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-        window.location.href = data.authorization_url;
+      const response = await authFetch<{ authorization_url?: string }>(`/api/calendar/auth?${params}`);
+      if (!response.error && response.data?.authorization_url) {
+        window.location.href = response.data.authorization_url;
       } else {
         throw new Error('Failed to initiate calendar connection');
       }
@@ -111,11 +111,9 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const disconnectCalendar = async (integrationId: string) => {
     try {
-      const response = await fetch(`/api/calendar/integrations/${integrationId}`, {
-        method: 'DELETE'
-      });
+      const response = await authDelete(`/api/calendar/integrations/${integrationId}`);
 
-      if (response.ok) {
+      if (!response.error) {
         await loadCalendarIntegrations();
         toast('success', 'Calendar disconnected successfully');
       } else {
@@ -130,15 +128,12 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
   const syncNow = async (integrationId: string) => {
     setSyncing(integrationId);
     try {
-      const response = await fetch(`/api/calendar/sync/${integrationId}`, {
-        method: 'POST'
-      });
+      const response = await authPost<{ events_synced?: number; conflicts_detected?: number }>(`/api/calendar/sync/${integrationId}`, {});
 
-      if (response.ok) {
-        const result = await response.json();
+      if (!response.error && response.data) {
+        const result = response.data;
         await loadCalendarIntegrations();
-        
-        toast('success', `Synced ${result.events_synced} events${result.conflicts_detected > 0 ? `, ${result.conflicts_detected} conflicts detected` : ''}`);
+        toast('success', `Synced ${result.events_synced ?? 0} events${(result.conflicts_detected ?? 0) > 0 ? `, ${result.conflicts_detected} conflicts detected` : ''}`);
       } else {
         throw new Error('Sync failed');
       }
@@ -155,13 +150,9 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
     settings: Partial<CalendarIntegration>
   ) => {
     try {
-      const response = await fetch(`/api/calendar/integrations/${integrationId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
-      });
+      const response = await authPatch(`/api/calendar/integrations/${integrationId}`, settings);
 
-      if (response.ok) {
+      if (!response.error) {
         await loadCalendarIntegrations();
         toast('success', 'Calendar settings updated');
       } else {
