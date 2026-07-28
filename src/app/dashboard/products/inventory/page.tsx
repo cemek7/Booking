@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import { Product, InventoryMovement, CreateInventoryMovementRequest } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/supabase/auth';
 import Button from '@/components/ui/button';
@@ -13,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 
 export default function InventoryPage() {
   const { tenant } = useTenant();
+  const { format: formatMoney } = useTenantCurrency();
   const queryClient = useQueryClient();
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
@@ -219,7 +221,7 @@ export default function InventoryPage() {
 
           <div className="bg-white p-6 rounded-lg shadow-sm">
             <h3 className="text-sm font-medium text-gray-500 mb-2">Total Inventory Value</h3>
-            <p className="text-2xl font-bold text-green-600">${totalValue.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-green-600">{formatMoney(totalValue)}</p>
           </div>
         </div>
 

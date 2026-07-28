@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import { Product } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/supabase/auth';
 import Button from '@/components/ui/button';
@@ -13,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 
 export default function RecommendationsPage() {
   const { tenant } = useTenant();
+  const { format: formatMoney } = useTenantCurrency();
   const queryClient = useQueryClient();
   const [selectedContext, setSelectedContext] = useState<'booking' | 'product_view' | 'cart' | 'general'>('general');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
@@ -334,7 +336,7 @@ export default function RecommendationsPage() {
                             <TD>
                               <div>
                                 <div className="font-medium">{product.name}</div>
-                                <div className="text-sm text-gray-500">${(product.price_cents / 100).toFixed(2)}</div>
+                                <div className="text-sm text-gray-500">{formatMoney((product.price_cents ?? 0) / 100)}</div>
                               </div>
                             </TD>
                             <TD>

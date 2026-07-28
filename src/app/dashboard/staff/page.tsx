@@ -3,6 +3,8 @@
 export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
+import { authFetch, authPatch } from '@/lib/auth/auth-api-client';
 import { useStaff, StaffDto } from '@/hooks/useStaff';
 import StaffInviteModal from '@/components/staff/StaffInviteModal';
 import StaffRolesModal from '@/components/staff/StaffRolesModal';
@@ -11,6 +13,7 @@ import { Role } from '@/types/roles';
 
 export default function StaffPage() {
   const { tenant, role } = useTenant();
+  const { format: formatMoney } = useTenantCurrency();
   const [canInvite, setCanInvite] = useState(false);
   const { data: staff = [], isLoading, mutateAttributes } = useStaff(tenant?.id);
   const [search, setSearch] = useState('');
@@ -23,9 +26,9 @@ export default function StaffPage() {
     async function load() {
       if (!tenant?.id) { if (mounted) setCanInvite(false); return; }
       try {
-        const res = await fetch(`/api/tenants/${tenant.id}/settings`);
-        if (!res.ok) { if (mounted) setCanInvite(false); return; }
-        const s = await res.json();
+        const resp = await authFetch<{ allowedInviterRoles?: Role[]; allowInvitesFromStaffPage?: boolean }>(`/api/tenants/${tenant.id}/settings`);
+        if (resp.error) { if (mounted) setCanInvite(false); return; }
+        const s = resp.data;
         const allowed = (s?.allowedInviterRoles as Role[] | undefined) || ['owner','manager'] as Role[];
         const allowFromStaff = s?.allowInvitesFromStaffPage !== false;
         const r = (role || '').toLowerCase() as Role;
@@ -41,9 +44,9 @@ export default function StaffPage() {
     async function loadMetrics() {
       if (!tenant?.id) return;
       try {
-        const res = await fetch(`/api/staff/metrics?tenant_id=${tenant.id}`);
-        if (!res.ok) return;
-        const json = await res.json();
+        const resp = await authFetch<{ metrics?: Array<{ user_id: string; rating: number|null; completed: number; revenue: number }> }>(`/api/staff/metrics?tenant_id=${tenant.id}`);
+        if (resp.error) return;
+        const json = resp.data;
         const map: Record<string, { rating: number|null; completed: number; revenue: number }> = {};
         for (const m of (json?.metrics||[])) map[m.user_id] = { rating: m.rating, completed: m.completed, revenue: m.revenue };
         if (!cancel) setMetrics(map);
@@ -115,10 +118,8 @@ export default function StaffPage() {
               const prev = localStatus as 'active'|'on_leave';
               if (id) setStatusOverrides(map => ({ ...map, [id]: next as 'active'|'on_leave' }));
               try {
-                const res = await fetch(`/api/staff/${encodeURIComponent(id as string)}/status?tenant_id=${tenant.id}`, {
-                  method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: next })
-                });
-                if (!res.ok) throw new Error('Failed to update status');
+                const res = await authPatch(`/api/staff/${encodeURIComponent(id as string)}/status?tenant_id=${tenant.id}`, { status: next });
+                if (res.error) throw new Error('Failed to update status');
                 toast.success('Status updated');
               } catch (e) {
                 if (id) setStatusOverrides(map => ({ ...map, [id]: prev }));
@@ -155,7 +156,7 @@ export default function StaffPage() {
                   </div>
                   <div className="p-2 bg-gray-50 rounded">
                     <div className="text-xs text-gray-500">Revenue</div>
-                    <div className="font-medium">{m.revenue.toLocaleString(undefined, { style: 'currency', currency: 'NGN' })}</div>
+                    <div className="font-medium">{formatMoney(m.revenue)}</div>
                   </div>
                 </div>
                 <div className="flex justify-between items-center">

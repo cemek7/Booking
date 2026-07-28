@@ -8,6 +8,7 @@ import { getUserRole } from '@/lib/supabase/auth';
 import Button from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
+import { authFetch, authPost, authPut, authDelete } from '@/lib/auth/auth-api-client';
 
 interface ProductVariantsProps {
   productId: string;
@@ -32,14 +33,9 @@ export default function ProductVariants({ productId, productName }: ProductVaria
     queryFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${productId}/variants`, {
-        headers: {
-          'X-Tenant-ID': tenant.id,
-        },
-      });
-
-      if (!res.ok) throw new Error('Failed to fetch variants');
-      return res.json();
+      const res = await authFetch<{ variants?: ProductVariant[] }>(`/api/products/by-product-id/variants?product_id=${productId}`);
+      if (res.error) throw new Error(res.error.message || 'Failed to fetch variants');
+      return res.data;
     },
     enabled: !!tenant?.id && !!productId,
   });
@@ -52,21 +48,9 @@ export default function ProductVariants({ productId, productName }: ProductVaria
     mutationFn: async (variantData: CreateVariantRequest) => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${productId}/variants`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenant.id,
-        },
-        body: JSON.stringify(variantData),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to create variant');
-      }
-
-      return res.json();
+      const res = await authPost(`/api/products/by-product-id/variants?product_id=${productId}`, variantData);
+      if (res.error) throw new Error(res.error.message || 'Failed to create variant');
+      return res.data;
     },
     onSuccess: () => {
       toast.success('Variant created successfully');
@@ -83,21 +67,9 @@ export default function ProductVariants({ productId, productName }: ProductVaria
     mutationFn: async ({ id, data }: { id: string; data: Partial<CreateVariantRequest> }) => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${productId}/variants/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenant.id,
-        },
-        body: JSON.stringify(data),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to update variant');
-      }
-
-      return res.json();
+      const res = await authPut(`/api/products/by-product-id/variants/${id}`, data);
+      if (res.error) throw new Error(res.error.message || 'Failed to update variant');
+      return res.data;
     },
     onSuccess: () => {
       toast.success('Variant updated successfully');
@@ -114,19 +86,9 @@ export default function ProductVariants({ productId, productName }: ProductVaria
     mutationFn: async (id: string) => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${productId}/variants/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'X-Tenant-ID': tenant.id,
-        },
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to delete variant');
-      }
-
-      return res.json();
+      const res = await authDelete(`/api/products/by-product-id/variants/${id}`);
+      if (res.error) throw new Error(res.error.message || 'Failed to delete variant');
+      return res.data;
     },
     onSuccess: () => {
       toast.success('Variant deleted successfully');

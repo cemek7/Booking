@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAuthHeaders } from '@/hooks/useAuthHeaders';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 
 interface Reservation {
   id: string;
@@ -33,6 +34,7 @@ interface CustomerProfileProps {
 
 export default function CustomerProfile({ customerId, onNewBooking, onMessage }: CustomerProfileProps) {
   const headers = useAuthHeaders();
+  const { format: formatMoney } = useTenantCurrency();
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -186,7 +188,7 @@ export default function CustomerProfile({ customerId, onNewBooking, onMessage }:
                 </div>
                 <div className="flex items-center gap-3">
                   {r.total != null && (
-                    <span className="text-green-600 font-medium">${r.total}</span>
+                    <span className="text-green-600 font-medium">{formatMoney(Number(r.total) || 0)}</span>
                   )}
                   {r.status && (
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
