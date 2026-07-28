@@ -36,14 +36,15 @@ customer_number, metadata, calendar_sent, duration…). The `/api/bookings*`
 routes are a naming *facade* that query `reservations`. The old `public.bookings`
 table (title/capacity events) is vestigial/retired — never read it.
 
-**SCHEMA TRUST — READ THIS FIRST.** `db/schema/baseline_2026-07-06.sql` is
-STALE and incomplete. Do NOT treat "column absent from that dump" as proof of a
-ghost column — that produces false positives. Ground every column claim on BOTH
-(a) a fresher live dump if one exists in `db/schema/`, AND (b) write-path
-evidence in code (does working code insert/update that column?). When the two
-disagree or you're unsure, say the finding is schema-dependent and recommend the
-user regenerate the schema (`pg_dump --schema-only` or an information_schema
-dump) — do not assert a 500.
+**SCHEMA TRUST — READ THIS FIRST.** The authoritative column reference is
+`db/schema/live_schema_2026-07-28.md` (from the live information_schema).
+`db/schema/baseline_2026-07-06.sql` is STALE — do NOT use it. Ground every
+column claim on BOTH (a) `live_schema_2026-07-28.md`, AND (b) write-path
+evidence in code (does working code insert/update that column?). The live
+reference itself may lag a migration, so when working code writes a column not
+listed there, trust the code (e.g. `reservations.updated_at`). When the two
+disagree or you're unsure, say the finding is schema-dependent — do not assert a
+500.
 
 **Authoritative column facts (from the live information_schema dump):**
 - `reservations` has: `customer_number` (the phone), `metadata` jsonb,
