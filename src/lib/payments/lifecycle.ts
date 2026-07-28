@@ -1713,7 +1713,8 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
       .eq('id', bookingId)
       .eq('tenant_id', tenantId)
       .not('status', 'in', '("cancelled","completed","refunded")')
-      .select('id, start_at, end_at, customer_name, customer_phone, customer_email, notes, service_id')
+      // Authoritative columns only: number is customer_number; name/email live in metadata.
+      .select('id, start_at, end_at, customer_number, notes, service_id, metadata')
       .maybeSingle();
 
     if (resError) {
@@ -1744,6 +1745,16 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
     });
 
     if (!reservation) return;
+
+    // Contact details: number is customer_number; name/email live in metadata.
+    const reservationRow = reservation as typeof reservation & {
+      customer_number?: string | null;
+      metadata?: Record<string, unknown> | null;
+    };
+    const meta = reservationRow.metadata || {};
+    const customerPhone = reservationRow.customer_number || null;
+    const customerEmail = (meta.customer_email as string | undefined) || null;
+    const customerName = (meta.customer_name as string | undefined) || null;
 
     // Fetch service details
     const { data: service } = await supabase
@@ -1777,15 +1788,15 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
     };
 
       // 4. WhatsApp confirmation
-    if (reservation.customer_phone) {
+    if (customerPhone) {
       try {
         const { getTenantWhatsAppConfig } = await import('@/lib/whatsapp/evolutionClient');
         const waConfig = await getTenantWhatsAppConfig(tenantId);
         if (waConfig) {
           const { sendBookingConfirmationWhatsApp } = await import('@/lib/integrations/whatsapp-service');
           await sendBookingConfirmationWhatsApp(
-            reservation.customer_phone,
-            reservation.customer_name || 'there',
+            customerPhone,
+            customerName || 'there',
             { serviceName, date: dateStr, time: timeStr, calendarEvent }
           );
         }
@@ -1795,12 +1806,12 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
     }
 
     // 5. Email confirmation
-    if (reservation.customer_email) {
+    if (customerEmail) {
       try {
         const { sendBookingConfirmation } = await import('@/lib/integrations/email-service');
         await sendBookingConfirmation(
-          reservation.customer_email,
-          reservation.customer_name || 'there',
+          customerEmail,
+          customerName || 'there',
           { serviceName, date: dateStr, time: timeStr, calendarEvent }
         );
       } catch (emailErr) {

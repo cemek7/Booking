@@ -36,14 +36,37 @@ customer_number, metadata, calendar_sent, duration…). The `/api/bookings*`
 routes are a naming *facade* that query `reservations`. The old `public.bookings`
 table (title/capacity events) is vestigial/retired — never read it.
 
-**Money/JSONB column gotchas (verified schema):**
-- `transactions` has `amount` + `raw` jsonb. It has **no** `metadata`, no
-  `staff_id`, no `user_id` column. Staff/service attribution lives in `raw`.
-- `reservations` has `metadata` jsonb. It has **no** `raw` column.
-- `customer_feedback.staff_user_id` is TEXT.
-- `retail_orders` money is `total_cents`; products use `price_cents`.
-- Revenue = `transactions.amount` (status in `completed`/`paid`), not a column
-  on reservations.
+**SCHEMA TRUST — READ THIS FIRST.** `db/schema/baseline_2026-07-06.sql` is
+STALE and incomplete. Do NOT treat "column absent from that dump" as proof of a
+ghost column — that produces false positives. Ground every column claim on BOTH
+(a) a fresher live dump if one exists in `db/schema/`, AND (b) write-path
+evidence in code (does working code insert/update that column?). When the two
+disagree or you're unsure, say the finding is schema-dependent and recommend the
+user regenerate the schema (`pg_dump --schema-only` or an information_schema
+dump) — do not assert a 500.
+
+**Authoritative column facts (from the live information_schema dump):**
+- `reservations` has: `customer_number` (the phone), `metadata` jsonb,
+  `service_id`, `start_at`, `end_at`, `status`, `notes`, `customer_id`,
+  `staff_id`, `confirmed_at`, `completed_at`, `calendar_sent`, `duration`,
+  `price_cents_snapshot`, `discount_cents`. It does **NOT** have `phone`,
+  `customer_name`, `customer_email`, `customer_phone`, `service`, `updated_at`,
+  or `source`. Customer name/email live in `metadata`; the number is
+  `customer_number`; the service is `service_id` (join `services` for the name).
+- `transactions` has `amount` + `raw` jsonb + `provider_reference`,
+  `subject_type`, `subject_id`. It has **no** `metadata`, `staff_id`, `user_id`,
+  `booking_id`, `provider_transaction_id`, or `payment_method`. Attribution
+  lives in `raw`. Revenue = `transactions.amount` (status `completed`/`paid`).
+- `customers` has both `name`/`customer_name` and `phone`/`phone_number` and
+  `email` and `normalized_phone`.
+- `messages` is keyed by `reservation_id`; has `content`, `direction`,
+  `from_number`, `chat_id` (NOT booking_id/text/channel).
+- `customer_feedback.staff_user_id` is TEXT; `staff_services.staff_user_id` TEXT.
+- retail_orders money is `total_cents`; products use `price_cents`; services use
+  both `price` and `price_cents`.
+- The `bookings` table (title/capacity events) is being retired; its two live FK
+  dependents (`booking_notifications.booking_id`, `scheduled_notifications.booking_id`)
+  have a wrong FK to it — those correlate to reservations.
 
 **RLS:** app writes go through the service-role client, which BYPASSES RLS.
 Tenant-scoped tables carry a `tenant_isolation` policy

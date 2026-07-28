@@ -1028,9 +1028,9 @@ class SmartBookingRecommendations {
     try {
       const { data: bookings } = await this.supabase
         .from('reservations')
-        .select('id, status, start_at, service, created_at')
+        .select('id, status, start_at, service_id, created_at')
         .eq('tenant_id', tenantId)
-        .eq('phone', customerPhone)
+        .eq('customer_number', customerPhone)
         .gte('created_at', timeframe.start)
         .lte('created_at', timeframe.end);
 

@@ -5,10 +5,10 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 interface UnconfirmedBooking {
   id: string;
   tenant_id: string;
-  phone: string | null;
-  customer_name: string;
-  service: string | null;
+  customer_number: string | null;
+  service_id: string | null;
   start_at: string;
+  metadata: Record<string, unknown> | null;
 }
 
 interface TenantSettings {
@@ -68,7 +68,7 @@ export const POST = createHttpHandler(
         // Find unconfirmed reservations that are within the auto-cancel window
         const { data: bookings, error: bookingError } = await ctx.supabase
           .from('reservations')
-          .select('id, tenant_id, phone, customer_name, service, start_at')
+          .select('id, tenant_id, customer_number, service_id, start_at, metadata')
           .eq('tenant_id', tenant.id)
           .in('status', ['pending', 'pending_approval', 'unconfirmed'])
           .lte('start_at', cutoffTime.toISOString())
@@ -155,7 +155,12 @@ async function notifyCustomerCancellation(
   booking: UnconfirmedBooking,
   tenantName: string
 ): Promise<void> {
-  if (!booking.phone) return;
+  const phone = booking.customer_number;
+  if (!phone) return;
+
+  const meta = booking.metadata || {};
+  const customerName = (meta.customer_name as string | undefined) || 'there';
+  const serviceName = (meta.service_name as string | undefined) || 'your appointment';
 
   const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
   const client = await getTenantWhatsAppProviderClient(booking.tenant_id);
@@ -174,14 +179,14 @@ async function notifyCustomerCancellation(
   });
 
   const message =
-    `Hi ${booking.customer_name || 'there'},\n\n` +
-    `Your reservation at ${tenantName} for ${booking.service || 'your appointment'} ` +
+    `Hi ${customerName},\n\n` +
+    `Your reservation at ${tenantName} for ${serviceName} ` +
     `on ${bookingDate} at ${bookingTime} was not confirmed in time ` +
     `and has been automatically cancelled.\n\n` +
     `If you'd like to rebook, please contact us or visit our booking page.\n\n` +
     `We apologize for any inconvenience.`;
 
-  await client.sendTextMessage(booking.phone, message);
+  await client.sendTextMessage(phone, message);
 }
 
 // GET endpoint for health check / status
