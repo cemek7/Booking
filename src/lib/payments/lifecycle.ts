@@ -158,6 +158,39 @@ export class PaymentLifecycleService {
   }
 
   /**
+   * Payment tracking for ops: live (pending/processing), hanging (live but
+   * stuck older than `staleMinutes`), and failed transactions for a tenant.
+   * Read-only; uses the real transactions schema.
+   */
+  async getPaymentTracking(
+    tenantId: string,
+    opts?: { staleMinutes?: number; limit?: number }
+  ): Promise<{ live: any[]; hanging: any[]; failed: any[] }> {
+    const staleMinutes = opts?.staleMinutes ?? 30;
+    const staleBefore = new Date(Date.now() - staleMinutes * 60_000).toISOString();
+
+    const { data, error } = await this.supabase
+      .from('transactions')
+      .select('id, amount, currency, type, status, provider_reference, subject_id, subject_type, created_at, updated_at, raw')
+      .eq('tenant_id', tenantId)
+      .in('status', ['pending', 'processing', 'failed'])
+      .order('created_at', { ascending: false })
+      .limit(opts?.limit ?? 500);
+
+    if (error) {
+      throw new Error(`Failed to load payment tracking: ${error.message}`);
+    }
+
+    const rows = data ?? [];
+    const live = rows.filter((t) => t.status === 'pending' || t.status === 'processing');
+    return {
+      live,
+      hanging: live.filter((t) => (t.created_at ?? '') < staleBefore),
+      failed: rows.filter((t) => t.status === 'failed'),
+    };
+  }
+
+  /**
    * Process payment completion from webhook
    */
   async processPaymentCompleted(
@@ -170,8 +203,7 @@ export class PaymentLifecycleService {
       const { data: transaction, error } = await this.supabase
         .from('transactions')
         .select('*, reservation:reservations(*)')
-        .eq('provider_transaction_id', providerPaymentId)
-        .eq('provider', provider)
+        .eq('provider_reference', providerPaymentId)
         .single();
 
       if (error || !transaction) {
@@ -189,14 +221,14 @@ export class PaymentLifecycleService {
         providerMetadata: metadata
       });
 
-      // Confirm reservation after successful payment
+      // Confirm reservation after successful payment (subject_id = reservation id)
       await this.supabase
         .from('reservations')
         .update({
           status: 'confirmed',
           updated_at: new Date().toISOString()
         })
-        .eq('id', transaction.booking_id);
+        .eq('id', transaction.subject_id);
 
       // Record in ledger
       await this.recordLedgerEntry({
@@ -206,19 +238,19 @@ export class PaymentLifecycleService {
         creditAccount: 'revenue',
         amount: transaction.amount,
         currency: transaction.currency,
-        description: `Payment completed for reservation ${transaction.booking_id}`
+        description: `Payment completed for reservation ${transaction.subject_id}`
       });
 
       // Publish payment completed event
       await this.eventBus.publishEvent(
-        transaction.booking_id,
+        transaction.subject_id,
         'booking',
         'payment.completed',
         {
           paymentId: transaction.id,
           amount: transaction.amount,
           currency: transaction.currency,
-          provider: transaction.provider,
+          provider: (transaction.raw as any)?.provider ?? provider,
           providerPaymentId
         },
         { tenantId: transaction.tenant_id }
@@ -245,8 +277,7 @@ export class PaymentLifecycleService {
       const { data: transaction, error } = await this.supabase
         .from('transactions')
         .select('*, reservation:reservations(notes)')
-        .eq('provider_transaction_id', providerPaymentId)
-        .eq('provider', provider)
+        .eq('provider_reference', providerPaymentId)
         .single();
 
       if (error || !transaction) {
@@ -268,18 +299,18 @@ export class PaymentLifecycleService {
           notes: (transaction.reservation?.notes || '') + `\nPayment failed: ${failureReason}`,
           updated_at: new Date().toISOString()
         })
-        .eq('id', transaction.booking_id);
+        .eq('id', transaction.subject_id);
 
       // Publish payment failed event
       await this.eventBus.publishEvent(
-        transaction.booking_id,
+        transaction.subject_id,
         'booking',
         'payment.failed',
         {
           paymentId: transaction.id,
           amount: transaction.amount,
           currency: transaction.currency,
-          provider: transaction.provider,
+          provider: (transaction.raw as any)?.provider ?? provider,
           failureReason
         },
         { tenantId: transaction.tenant_id }
@@ -339,15 +370,15 @@ export class PaymentLifecycleService {
 
       // Create refund transaction
       const refundTransaction = await this.createTransaction({
-        bookingId: originalTransaction.booking_id,
+        bookingId: originalTransaction.subject_id,
         tenantId,
         amount: refundAmount,
         currency: originalTransaction.currency,
         type: refundAmount === originalTransaction.amount ? 'refund' : 'partial_refund',
         status: 'processing',
-        provider: originalTransaction.provider,
+        provider: ((originalTransaction.raw as any)?.provider),
         providerTransactionId: providerRefundResult.providerRefundId,
-        paymentMethod: originalTransaction.payment_method,
+        paymentMethod: (originalTransaction.raw as any)?.payment_method,
         parentTransactionId: originalTransaction.id,
         metadata: {
           reason: validatedRequest.reason,
@@ -364,12 +395,12 @@ export class PaymentLifecycleService {
             status: 'refunded',
             updated_at: new Date().toISOString()
           })
-          .eq('id', originalTransaction.booking_id);
+          .eq('id', originalTransaction.subject_id);
       }
 
       // Publish refund initiated event
       await this.eventBus.publishEvent(
-        originalTransaction.booking_id,
+        originalTransaction.subject_id,
         'booking',
         'refund.initiated',
         {
@@ -406,8 +437,7 @@ export class PaymentLifecycleService {
       const { data: refundTransaction, error } = await this.supabase
         .from('transactions')
         .select('*')
-        .eq('provider_transaction_id', providerRefundId)
-        .eq('provider', provider)
+        .eq('provider_reference', providerRefundId)
         .or('type.eq.refund,type.eq.partial_refund')
         .single();
 
@@ -429,17 +459,17 @@ export class PaymentLifecycleService {
         creditAccount: 'customer_refunds',
         amount: refundTransaction.amount,
         currency: refundTransaction.currency,
-        description: `Refund completed for transaction ${refundTransaction.parent_transaction_id}`
+        description: `Refund completed for transaction ${refundTransaction.original_transaction_id}`
       });
 
       // Publish refund completed event
       await this.eventBus.publishEvent(
-        refundTransaction.booking_id,
+        refundTransaction.subject_id,
         'booking',
         'refund.completed',
         {
           refundId: refundTransaction.id,
-          originalPaymentId: refundTransaction.parent_transaction_id,
+          originalPaymentId: refundTransaction.original_transaction_id,
           amount: refundTransaction.amount,
           currency: refundTransaction.currency
         },
@@ -532,7 +562,7 @@ export class PaymentLifecycleService {
       let query = this.supabase
         .from('transactions')
         .select('*')
-        .eq('provider', provider)
+        .eq('raw->>provider', provider)
         .gte('created_at', startDate)
         .lte('created_at', endDate);
 
@@ -554,7 +584,7 @@ export class PaymentLifecycleService {
       };
 
       const localByProviderTxnId = new Map(
-        localTransactions?.map(txn => [txn.provider_transaction_id, txn]) || []
+        localTransactions?.map(txn => [txn.provider_reference, txn]) || []
       );
 
       const providerByTxnId = new Map(
@@ -729,7 +759,7 @@ export class PaymentLifecycleService {
     const { data: existing, error } = await this.supabase
       .from('transactions')
       .select('*')
-      .eq('booking_id', bookingId)
+      .eq('subject_id', bookingId)
       .eq('type', 'payment')
       .in('status', ['pending', 'processing', 'completed'])
       .single();
@@ -874,20 +904,26 @@ export class PaymentLifecycleService {
     parentTransactionId?: string;
     metadata?: Record<string, any>;
   }) {
+    // Map to the real transactions schema: the reservation id is subject_id
+    // (+ subject_type), the provider ref is provider_reference, refund parent is
+    // original_transaction_id, and provider/method/metadata live in `raw`.
     const { data: transaction, error } = await this.supabase
       .from('transactions')
       .insert({
-        booking_id: data.bookingId,
+        subject_type: 'reservation',
+        subject_id: data.bookingId,
         tenant_id: data.tenantId,
         amount: data.amount,
         currency: data.currency,
         type: data.type,
         status: data.status,
-        provider: data.provider,
-        provider_transaction_id: data.providerTransactionId,
-        payment_method: data.paymentMethod,
-        parent_transaction_id: data.parentTransactionId,
-        metadata: data.metadata,
+        provider_reference: data.providerTransactionId,
+        original_transaction_id: data.parentTransactionId,
+        raw: {
+          provider: data.provider,
+          payment_method: data.paymentMethod,
+          ...(data.metadata ?? {}),
+        },
         created_at: new Date().toISOString()
       })
       .select()
@@ -903,13 +939,24 @@ export class PaymentLifecycleService {
   private async updateTransactionStatus(
     transactionId: string,
     status: PaymentStatus,
-    metadata?: Record<string, any>
+    extra?: Record<string, any>
   ) {
+    // Merge status detail into `raw` (there is no `metadata` column) rather
+    // than clobbering it.
+    const { data: current } = await this.supabase
+      .from('transactions')
+      .select('raw')
+      .eq('id', transactionId)
+      .maybeSingle();
+    const currentRaw = (current?.raw && typeof current.raw === 'object')
+      ? (current.raw as Record<string, any>)
+      : {};
+
     const { error } = await this.supabase
       .from('transactions')
       .update({
         status,
-        metadata: metadata,
+        raw: { ...currentRaw, ...(extra ?? {}) },
         updated_at: new Date().toISOString()
       })
       .eq('id', transactionId);
@@ -923,7 +970,7 @@ export class PaymentLifecycleService {
     const { data, error } = await this.supabase
       .from('transactions')
       .select('amount')
-      .eq('parent_transaction_id', originalTransactionId)
+      .eq('original_transaction_id', originalTransactionId)
       .eq('status', 'completed')
       .in('type', ['refund', 'partial_refund']);
 
@@ -941,11 +988,11 @@ export class PaymentLifecycleService {
     reason: string
   ) {
     const amountMinorUnits = Math.round(amount * 100);
-    switch (originalTransaction.provider) {
+    switch (((originalTransaction.raw as any)?.provider)) {
       case 'stripe':    return this.createStripeRefund(originalTransaction, amountMinorUnits, reason);
       case 'paystack':  return this.createPaystackRefund(originalTransaction, amountMinorUnits, reason);
       case 'flutterwave': return this.createFlutterwaveRefund(originalTransaction, amountMinorUnits, reason);
-      default: throw new Error(`Unsupported refund provider: ${originalTransaction.provider}`);
+      default: throw new Error(`Unsupported refund provider: ${((originalTransaction.raw as any)?.provider)}`);
     }
   }
 
@@ -965,7 +1012,7 @@ export class PaymentLifecycleService {
         'Authorization': `Bearer ${stripeKey}`,
       },
       body: new URLSearchParams({
-        payment_intent: originalTransaction.provider_transaction_id,
+        payment_intent: originalTransaction.provider_reference,
         amount: String(amountMinorUnits),
         reason: stripeReason,
       }),
@@ -992,7 +1039,7 @@ export class PaymentLifecycleService {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${paystackKey}` },
       body: JSON.stringify({
-        transaction: originalTransaction.provider_transaction_id,
+        transaction: originalTransaction.provider_reference,
         amount: amountMinorUnits,
         merchant_note: reason,
       }),
@@ -1016,7 +1063,7 @@ export class PaymentLifecycleService {
 
     const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
     const resp = await fetchWithTimeout(
-      `https://api.flutterwave.com/v3/transactions/${originalTransaction.provider_transaction_id}/refund`,
+      `https://api.flutterwave.com/v3/transactions/${originalTransaction.provider_reference}/refund`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${flwKey}` },
@@ -1037,14 +1084,14 @@ export class PaymentLifecycleService {
   }
 
   private async evaluatePaymentRetry(transaction: any): Promise<void> {
-    const failureReason: string = (transaction.metadata?.failureReason || '').toLowerCase();
+    const failureReason: string = ((transaction.raw as any)?.failureReason || '').toLowerCase();
 
     // Never retry card-holder or fraud-related declines
     const noRetry = ['fraud', 'stolen_card', 'do_not_honor', 'pickup_card', 'card_velocity_exceeded',
                      'insufficient_funds', 'expired_card', 'incorrect_cvc', 'invalid_card'];
     if (noRetry.some(r => failureReason.includes(r))) return;
 
-    const retryCount = Number(transaction.metadata?.retry_count || 0);
+    const retryCount = Number((transaction.raw as any)?.retry_count || 0);
     if (retryCount >= 3) return;
 
     // Only retry transient / network errors

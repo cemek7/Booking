@@ -99,15 +99,27 @@ const _authenticatedPOST = createHttpHandler(
           distinctId: userId,
         });
 
-        // Non-blocking: flag paystack subaccount setup as pending (bank details collected later)
-        void ctx.supabase
-          .from('tenants')
-          .update({ metadata: { paystack_subaccount_pending: true } })
-          .eq('id', tenantId)
-          .then(
-            () => defaultLogger.info('[onboarding] Paystack subaccount flagged pending', { tenantId }),
-            (err: unknown) => defaultLogger.warn('[onboarding] Failed to flag paystack subaccount pending', { tenantId, err })
-          );
+        // Non-blocking: flag paystack subaccount setup as pending (bank details collected later).
+        // Merge into existing metadata rather than clobbering the whole jsonb.
+        void (async () => {
+          try {
+            const { data: existing } = await ctx.supabase
+              .from('tenants')
+              .select('metadata')
+              .eq('id', tenantId)
+              .maybeSingle();
+            const currentMeta = (existing?.metadata && typeof existing.metadata === 'object')
+              ? (existing.metadata as Record<string, unknown>)
+              : {};
+            await ctx.supabase
+              .from('tenants')
+              .update({ metadata: { ...currentMeta, paystack_subaccount_pending: true } })
+              .eq('id', tenantId);
+            defaultLogger.info('[onboarding] Paystack subaccount flagged pending', { tenantId });
+          } catch (err) {
+            defaultLogger.warn('[onboarding] Failed to flag paystack subaccount pending', { tenantId, err });
+          }
+        })();
       }
 
       return { success: true, tenantId, tenantSlug, resumed };
