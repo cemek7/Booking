@@ -17,7 +17,6 @@ export const runtime = 'nodejs';
 // before /dashboard/staff before /dashboard).
 export const PROTECTED_ROUTES: Record<string, string[]> = {
   // Top-level role sections
-  '/owner': ['owner'],
   '/manager': ['manager', 'owner'],
   '/staff': ['staff', 'manager', 'owner'],
 

@@ -107,4 +107,8 @@ Routes organized by domain under `src/app/api/`:
 
 ### Database
 
-PostgreSQL via Supabase with multi-tenant support. Key tables: `tenants`, `users`, `tenant_users`, `reservations`, `messages`, `transactions`. Migrations in `db/migrations/`.
+PostgreSQL via Supabase with multi-tenant support. Identity is `auth.users` (Supabase-owned auth) + `public.tenant_users` (membership + role) — there is **no** `public.users` or `public.profiles` table. Key tables: `tenants`, `tenant_users`, `reservations` (canonical appointments; the `/api/bookings` routes are a facade over it), `messages`, `transactions`. Migrations in `db/migrations/`.
+
+### Self-review
+
+`.claude/agents/booka-self-review.md` is a repo-specific self-review agent that hunts this codebase's recurring bug classes (ghost tables/columns/routes, auth fragility, tenant-scope/RLS mistakes, hardcoded currency, unstable-hook render loops, internal-ID leaks) and verifies findings against the real schema. Use it after changes to API routes, hooks, DB queries, dashboards, or money display, and before preparing a migration.
