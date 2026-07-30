@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 let mockPath = '/';
 jest.mock('next/navigation', () => ({ usePathname: () => mockPath }));
-jest.mock('@/components/analytics/AnalyticsProvider', () => ({ __esModule: true, default: ({ children }: any) => <div data-testid="analytics">{children}</div> }));
+jest.mock('@/components/analytics/AnalyticsProvider', () => ({ __esModule: true, default: ({ children }: { children: React.ReactNode }) => <div data-testid="analytics">{children}</div> }));
 jest.mock('@/components/consent/ConsentBanner', () => ({ __esModule: true, default: () => <div data-testid="consent" /> }));
 jest.mock('@/components/AuthHashRedirect', () => ({ __esModule: true, default: () => null }));
 jest.mock('@/components/ui/toast', () => ({ ToastContainer: () => null }));
