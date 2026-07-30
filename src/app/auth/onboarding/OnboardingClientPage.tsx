@@ -14,6 +14,7 @@ import { sessionVerifiesEmail } from '@/lib/auth/onboarding-verification';
 import BrandMark from '@/components/brand/BrandMark';
 
 interface ServiceDraft { name: string; duration: string; price: string }
+interface ProductDraft { name: string; price: string; stock: string }
 interface StaffDraft { name: string; email: string; phone: string; role: 'manager' | 'staff' }
 interface FaqDraft { question: string; answer: string; category: string }
 
@@ -182,6 +183,8 @@ export default function OnboardingPage({
   const [businessNickname, setBusinessNickname] = useState('');
   const [bookingSources, setBookingSources] = useState<string[]>(['whatsapp']);
   const [services, setServices] = useState<ServiceDraft[]>([{ name: '', duration: '', price: '' }]);
+  // Optional: things the business sells (Booka does sales + inventory, not just bookings).
+  const [products, setProducts] = useState<ProductDraft[]>([{ name: '', price: '', stock: '' }]);
   const [staffList, setStaffList] = useState<StaffDraft[]>([{ name: '', email: '', phone: '', role: 'staff' }]);
   const [faqs, setFaqs] = useState<FaqDraft[]>([{ question: '', answer: '', category: '' }]);
   const [loading, setLoading] = useState(false);
@@ -514,6 +517,37 @@ export default function OnboardingPage({
         toast.error('Some services could not be saved — you can add them from the dashboard.');
       } finally { setLoading(false); }
     }
+    // Optional catalogue: seed anything the business sells. Booka handles sales +
+    // inventory, so a tenant who sells products gets their catalogue started here.
+    const validProducts = products.filter((p) => p.name.trim());
+    if (validProducts.length > 0 && tenantId) {
+      setLoading(true);
+      try {
+        await Promise.all(
+          validProducts.map(async (p) => {
+            const priceMajor = p.price ? Number(p.price) : undefined;
+            const priceCents = Number.isFinite(priceMajor) && (priceMajor ?? -1) >= 0
+              ? Math.round((priceMajor as number) * 100)
+              : 0;
+            const stockQty = p.stock ? Number(p.stock) : undefined;
+            const hasStock = Number.isFinite(stockQty) && (stockQty ?? -1) >= 0;
+            const res = await fetch('/api/products', {
+              method: 'POST',
+              headers: jsonHeaders(tenantHeaders()),
+              body: JSON.stringify({
+                name: p.name.trim(),
+                price_cents: priceCents,
+                currency: 'NGN',
+                ...(hasStock ? { stock_quantity: stockQty, track_inventory: true } : {}),
+              }),
+            });
+            if (!res.ok) throw new Error(`product:${res.status}`);
+          })
+        );
+      } catch {
+        toast.error('Some products could not be saved — you can add them from the dashboard.');
+      } finally { setLoading(false); }
+    }
     if (tenantId) {
       persistTenantSession(tenantId);
     }
@@ -670,6 +704,9 @@ export default function OnboardingPage({
   function updateService(i: number, k: keyof ServiceDraft, v: string) {
     setServices((p) => p.map((s, idx) => (idx === i ? { ...s, [k]: v } : s)));
   }
+  function updateProduct(i: number, k: keyof ProductDraft, v: string) {
+    setProducts((p) => p.map((s, idx) => (idx === i ? { ...s, [k]: v } : s)));
+  }
   function updateStaff<K extends keyof StaffDraft>(i: number, k: K, v: StaffDraft[K]) {
     setStaffList((p) => p.map((s, idx) => (idx === i ? { ...s, [k]: v } : s)));
   }
@@ -731,7 +768,7 @@ export default function OnboardingPage({
             <div className="space-y-5">
               <div>
                 <h1 className={sectionTitleCls}>Welcome to Booka</h1>
-                <p className={sectionCopyCls}>Let&apos;s set up your business in a few quick steps.</p>
+                <p className={sectionCopyCls}>Your AI front desk for bookings <em>and</em> sales — over WhatsApp &amp; Instagram. Let&apos;s set up your business in a few quick steps.</p>
               </div>
               <div className="space-y-3">
                 <div>
@@ -884,9 +921,10 @@ export default function OnboardingPage({
           {step === 'services' && (
             <div className="space-y-5">
               <div>
-                <h2 className={sectionTitleCls}>Your services</h2>
-                <p className={sectionCopyCls}>Add the services clients can book. You can always add more later.</p>
+                <h2 className={sectionTitleCls}>What you offer</h2>
+                <p className={sectionCopyCls}>Add the services clients can book — and, if you sell products too, your catalogue. You can always add more later.</p>
               </div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Services (bookable)</p>
               <div className="space-y-3 max-h-72 overflow-y-auto pr-0.5">
                 {services.map((s, i) => (
                   <div key={i} className={cardCls}>
@@ -912,6 +950,38 @@ export default function OnboardingPage({
                 className="text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800">
                 + Add another service
               </button>
+
+              {/* Optional catalogue — Booka also handles sales + inventory */}
+              <div className="mt-4 border-t border-[var(--brand-line)] pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Products (sellable) — optional</p>
+                <p className="mt-1 text-xs text-gray-500">Selling physical products too? Add them so your AI agent can take orders and track stock.</p>
+                <div className="mt-3 space-y-3 max-h-60 overflow-y-auto pr-0.5">
+                  {products.map((p, i) => (
+                    <div key={i} className={cardCls}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Product {i + 1}</span>
+                        {products.length > 1 && (
+                          <button onClick={() => setProducts((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="text-xs text-red-400 hover:text-red-600 font-medium transition-colors">Remove</button>
+                        )}
+                      </div>
+                      <input value={p.name} onChange={(e) => updateProduct(i, 'name', e.target.value)}
+                        className={inputCls} placeholder="Product name (e.g. Shea butter 250g)" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input value={p.price} onChange={(e) => updateProduct(i, 'price', e.target.value)}
+                          className={inputCls} placeholder="Price" inputMode="decimal" />
+                        <input value={p.stock} onChange={(e) => updateProduct(i, 'stock', e.target.value)}
+                          className={inputCls} placeholder="In stock (optional)" inputMode="numeric" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setProducts((prev) => [...prev, { name: '', price: '', stock: '' }])}
+                  className="mt-2 text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800">
+                  + Add another product
+                </button>
+              </div>
+
               <div className="flex gap-3">
                 <button onClick={back} className={secondaryBtn}>← Back</button>
                 <button onClick={submitServices} disabled={loading} className={primaryBtn}>
@@ -1017,7 +1087,7 @@ export default function OnboardingPage({
             <div className="space-y-5">
               <div>
                 <h2 className={sectionTitleCls}>AI agent setup</h2>
-                <p className={sectionCopyCls}>Personalise how your agent talks to customers. All settings are editable later.</p>
+                <p className={sectionCopyCls}>Personalise how your agent handles bookings, product enquiries &amp; orders. All settings are editable later.</p>
               </div>
               <div className="space-y-3">
                 <div>
