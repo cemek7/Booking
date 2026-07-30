@@ -1,10 +1,7 @@
 import type { Metadata } from "next";
 import { Mulish, Fraunces } from "next/font/google";
 import "./globals.css";
-import AuthHashRedirect from "@/components/AuthHashRedirect";
-import { ToastContainer } from "@/components/ui/toast";
-import AnalyticsProvider from "@/components/analytics/AnalyticsProvider";
-import ConsentBanner from "@/components/consent/ConsentBanner";
+import RootChrome from "@/components/system/RootChrome";
 
 const brandSans = Mulish({
   subsets: ["latin"],
@@ -36,12 +33,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${brandSans.variable} ${brandDisplay.variable}`}>
       <body className="brand-theme antialiased">
-        <AnalyticsProvider posthogKey={posthogKey} posthogHost={posthogHost}>
-          <AuthHashRedirect />
-          <ToastContainer />
+        <RootChrome posthogKey={posthogKey} posthogHost={posthogHost}>
           {children}
-          <ConsentBanner />
-        </AnalyticsProvider>
+        </RootChrome>
       </body>
     </html>
   );
