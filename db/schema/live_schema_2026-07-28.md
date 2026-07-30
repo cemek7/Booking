@@ -57,9 +57,13 @@ business_type, tone_config, timezone, **metadata** (jsonb), preferred_llm_model,
 llm_token_rate, industry, slug, routing_code, buffer_minutes, v2_enabled,
 lifecycle_state, offboarding_reason, offboarded_by, offboarded_at,
 scheduled_purge_at, financials_purge_at, display_name, brand_emoji,
-previous_names, renamed_at, close_report_enabled, close_report_time.
-(No dedicated `settings` column here — UI settings live under `metadata`; the
-`/api/tenants/[tenantId]/settings` route resolves from `settings`/`metadata`.)
+previous_names, renamed_at, close_report_enabled, close_report_time,
+**settings** (jsonb), updated_at, status.
+(`settings` jsonb DOES exist — created in `0001_init.sql`, confirmed by
+migration 066 and read by many routes: owner-settings-service, tenant-currency,
+apikey, invites, whatsapp/connect, superadmin. The 2026-07-28 live dump omitted
+it, but write-path evidence is authoritative. UI settings live in `settings`;
+`metadata.ui_settings` is only a legacy fallback.)
 
 ## services
 id, tenant_id, name, description, duration, price (numeric), category,
