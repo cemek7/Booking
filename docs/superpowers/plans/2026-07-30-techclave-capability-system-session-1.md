@@ -388,7 +388,7 @@ export default function SunGridLayout({ children }: { children: React.ReactNode 
 }
 ```
 
-- [ ] **Step 2: Build each page** with `export const metadata` (unique title/description per route), semantic sections, and the required content: Home (Hero + residential/commercial paths + trust/process teaser + CTA), Solutions, Savings (embeds a client estimator widget calling `estimateSolarSavings`, clearly labeled "Illustrative"), Projects (gallery — use `public/images` placeholders you add, never hotlinked), Process (ProcessSteps timeline), Contact (LeadForm site-assessment fields — name/phone/address/property type/monthly bill; local mock). Each page uses only `sc-*`/Tailwind + capability components.
+- [ ] **Step 2: Build each page** with `export const metadata` (unique title/description per route), semantic sections, and the required content: Home (Hero + residential/commercial paths + trust/process teaser + CTA), Solutions, Savings (embeds a client estimator widget calling `estimateSolarSavings`, clearly labeled "Illustrative"), Projects (gallery — **source royalty-free web images** (Unsplash/Pexels license) and **download** them into `public/images/sungrid-energy/`; never hotlink), Process (ProcessSteps timeline), Contact (LeadForm site-assessment fields — name/phone/address/property type/monthly bill; local mock). Each page uses only `sc-*`/Tailwind + capability components.
 - [ ] **Step 3: Verify** `npm run dev` → walk all 6 routes at 390/768/1280/1440 widths: no overflow, no clipped text, no broken images, theme applied, disclosure present, estimator labeled illustrative, form shows success locally.
 - [ ] **Step 4: typecheck + lint. Commit** `feat(showcase): complete SunGrid Energy demonstrator (6 pages)`.
 

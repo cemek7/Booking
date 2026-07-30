@@ -129,3 +129,18 @@ no placeholders in shipped SunGrid pages.
 7. Tests + QA + build; docs/DECISIONS.md + docs/OPEN_ISSUES.md entries.
 
 Ship as small reviewable units; do not start multiple demonstrators.
+
+## 13. Full session roadmap (plans cover the entire north-star spec)
+Image policy (all sessions): **source royalty-free web images (Unsplash/Pexels commercial license), download** into `public/images/<slug>/`, never hotlink; record source+license in `public/images/<slug>/CREDITS.md`; render via `next/image`.
+
+| Session | Deliverable | Plan file |
+|---|---|---|
+| 1 | Foundation + design system + SunGrid + schemas + deck shell + work grid | plans/2026-07-30-techclave-capability-system-session-1.md |
+| — | Reusable demonstrator build template | plans/2026-07-30-techclave-demonstrator-template.md |
+| 2–8 | Northstar → Ember → Haven → Meridian → Forge → Crestfield → Atelier (each: theme+pages+case study) | plans/2026-07-30-techclave-sessions-2-8-demonstrators.md |
+| 9 | Corporate showcase pages (services/methodology/capabilities/contact) | plans/2026-07-30-techclave-sessions-9-12-finish.md |
+| 10 | Export renderers (Upwork/LinkedIn/proposal from canonical case-study data) | plans/2026-07-30-techclave-sessions-9-12-finish.md |
+| 11 | Capability deck (35–50 slides) + print/PDF | plans/2026-07-30-techclave-sessions-9-12-finish.md |
+| 12 | Screenshot automation + SEO/a11y/perf audits + final QA | plans/2026-07-30-techclave-sessions-9-12-finish.md |
+
+Demonstrator order (chosen): SunGrid → Northstar Clinic → Ember Table → Haven Realty → Meridian Legal → Forge Build → Crestfield Academy → Atelier Soso.
