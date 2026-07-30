@@ -63,9 +63,11 @@ export const POST = createHttpHandler(
     const links = generateCalendarLinks(event);
 
     // Flag the reservation as having had its calendar sent.
+    // NB: reservations has no `updated_at` column — writing it errors the whole
+    // update, so calendar_sent never persists. Set only real columns.
     await ctx.supabase
       .from('reservations')
-      .update({ calendar_sent: true, updated_at: new Date().toISOString() })
+      .update({ calendar_sent: true })
       .eq('id', reservationId)
       .eq('tenant_id', tenantId);
 

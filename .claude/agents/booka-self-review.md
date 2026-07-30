@@ -37,14 +37,15 @@ routes are a naming *facade* that query `reservations`. The old `public.bookings
 table (title/capacity events) is vestigial/retired — never read it.
 
 **SCHEMA TRUST — READ THIS FIRST.** The authoritative column reference is
-`db/schema/live_schema_2026-07-28.md` (from the live information_schema).
-`db/schema/baseline_2026-07-06.sql` is STALE — do NOT use it. Ground every
-column claim on BOTH (a) `live_schema_2026-07-28.md`, AND (b) write-path
-evidence in code (does working code insert/update that column?). The live
-reference itself may lag a migration, so when working code writes a column not
-listed there, trust the code (e.g. `reservations.updated_at`). When the two
-disagree or you're unsure, say the finding is schema-dependent — do not assert a
-500.
+`db/schema/live_schema_2026-07-30.md` (from the live information_schema).
+`db/schema/baseline_2026-07-06.sql` is STALE — do NOT use it. Ground column
+claims on `live_schema_2026-07-30.md` for the tables it lists, and on
+`db/migrations/` + `supabase/migrations/` for whether a table/column exists at
+all — the live dump is INCOMPLETE (it omits products/retail/inventory/
+observability subsystems that exist via migration). When code writes a column
+that no migration creates AND the dump omits, that's a likely ghost write (e.g.
+`reservations.updated_at`, `tenants.status`). When unsure, say the finding is
+schema-dependent — do not assert a 500.
 
 **Authoritative column facts (from the live information_schema dump):**
 - `reservations` has: `customer_number` (the phone), `metadata` jsonb,
