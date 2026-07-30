@@ -7,14 +7,11 @@ Reviews + `.claude/agents/booka-self-review.md` ground column claims here.
 > Ghost columns only 500 inside PostgREST ops (`.select/.eq/.insert/.update/
 > .order/.filter`), never a plain JS property read of a missing key.
 
-## Code↔schema divergences (verified this dump) — fixed 2026-07-30
-1. **`tenants` is missing `settings`, `updated_at`, and `status`** on live (also
-   absent from the 2026-07-06 baseline) — yet code writes/reads all three
-   (superadmin tenant patch, settings route, whatsapp connect, owner-settings,
-   tenant-currency…). The superadmin patch 500s every call on the final select.
-   Being **restored** by `db/migrations/2026-07-30_add_missing_tenants_columns.sql`
-   (idempotent ADD IF NOT EXISTS; backfills settings from `metadata.ui_settings`,
-   status→'active', updated_at→created_at). No-op if the columns already exist.
+## Code↔schema divergences (verified this dump) — RESOLVED 2026-07-30
+1. ~~`tenants` missing `settings`, `updated_at`, `status`~~ — **FIXED**: the
+   migration `db/migrations/2026-07-30_add_missing_tenants_columns.sql` was run
+   on live; `tenants` now has all three (confirmed by the post-migration dump).
+   `settings` backfilled from `metadata.ui_settings`.
 2. **`reservations` has NO `updated_at`** — the one stray writer
    (`send-calendar/route.ts`, which broke `calendar_sent` persistence) was fixed
    to drop the column instead of adding an unused one. Any future
@@ -36,8 +33,9 @@ whatsapp_connected_at, email, business_type, tone_config, timezone, metadata,
 preferred_llm_model, llm_token_rate, industry, slug, routing_code,
 buffer_minutes, v2_enabled, lifecycle_state, offboarding_reason, offboarded_by,
 offboarded_at, scheduled_purge_at, financials_purge_at, display_name,
-brand_emoji, previous_names, renamed_at, close_report_enabled, close_report_time.
-**NO `settings` (pending migration), NO `updated_at`, NO `status`.**
+brand_emoji, previous_names, renamed_at, close_report_enabled, close_report_time,
+**settings** (jsonb), **updated_at**, **status** (added 2026-07-30). `status` is
+distinct from `lifecycle_state` (the offboarding state machine).
 
 **reservations**: id, tenant_id, date, time, notes, created_at, customer_id,
 booking_id, status, duration, calendar_sent, reminder_sent, customer_number,
