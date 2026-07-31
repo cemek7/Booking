@@ -79,4 +79,10 @@ Superadmin items are unaffected (platform scope, not tenant capability).
 
 ### Remaining / follow-ups
 - **Page guards** (defense-in-depth): a sales-only owner can still *type* `/dashboard/bookings` and see their own (empty) surface. Not a security issue (own tenant data), but for polish add a `requireCapability()` redirect in the relevant `dashboard/*/layout.tsx`.
-- **Public storefront preview (requested).** The public booking page (`src/app/book`, `/api/public/[slug]/services|book`) has no sales equivalent. A tenant with `bookings` off / `sales` on needs a **public storefront**: product catalogue + cart/order over `/api/public/[slug]/products` mirroring the booking page's structure, and the public "preview" link in Settings should point to the storefront instead of the booking page based on capabilities. This is a net-new build (public page + products API + order intake) — scoped as its own task.
+- ~~Public storefront preview~~ — **SHIPPED (2026-07-31).** Distinct from the
+  booking page (separate route + service, never merged):
+  - `src/lib/publicStorefrontService.ts` — `getTenantProducts` + `createPublicOrder` (writes the existing retail_orders engine; no new "store" table).
+  - `/api/public/[slug]/products` (GET catalogue) + `/api/public/[slug]/order` (POST, Zod-validated, `{auth:false}`).
+  - `src/app/store/[slug]/` — layout + SSR page + `StorefrontContainer` (catalogue, cart, checkout, inline success + pay-now link).
+  - `PublicLinksCard` on owner Settings — capability-aware: shows Booking page when `bookings` on, Storefront when `sales` on.
+  - Bonus: fixed a pre-existing ghost — `createPublicBooking` inserted `reservations.source` (no column ⇒ public booking 500'd). Added `source` via `db/migrations/2026-07-31_add_reservations_source.sql`.

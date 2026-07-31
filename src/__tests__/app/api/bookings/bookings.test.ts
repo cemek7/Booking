@@ -34,6 +34,9 @@ const createMockSupabase = () => ({
   gt: jest.fn().mockReturnThis(),
   order: jest.fn().mockReturnThis(),
   single: jest.fn(),
+  // staff_id validation looks up the member in tenant_users; default to a
+  // non-owner staff member so a supplied staff_id passes validation.
+  maybeSingle: jest.fn().mockResolvedValue({ data: { user_id: 'staff-user', role: 'staff' }, error: null }),
 });
 
 const createMockContext = (overrides = {}) => ({
