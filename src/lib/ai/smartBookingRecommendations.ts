@@ -910,8 +910,9 @@ class SmartBookingRecommendations {
         .from('reservations')
         .select('id')
         .eq('tenant_id', customer.tenant_id)
-        .eq('phone', customer.phone)
-        .eq('staff_user_id', staff.id)
+        // reservations has no phone/staff_user_id — use customer_number + staff_id.
+        .eq('customer_number', customer.phone)
+        .eq('staff_id', staff.id)
         .eq('status', 'completed');
 
       const count = pastBookings?.length || 0;
