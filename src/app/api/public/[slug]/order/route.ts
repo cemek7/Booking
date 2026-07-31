@@ -52,13 +52,25 @@ export const POST = createHttpHandler(
     }
 
     const tenantId = await getTenantIdBySlug(slug);
-    const result = await publicStorefrontService.createPublicOrder(tenantId, {
-      items: parsed.data.items,
-      customer_name: parsed.data.customer_name,
-      customer_phone: parsed.data.customer_phone,
-      customer_email: parsed.data.customer_email || undefined,
-      notes: parsed.data.notes,
-    });
+
+    // After paying on Paystack, return the customer to the storefront's
+    // confirmation page (Paystack appends ?reference=… to this URL).
+    let callbackUrl: string | null = null;
+    try {
+      callbackUrl = new URL(`/store/${slug}/confirmation`, ctx.request.url).toString();
+    } catch { /* origin unavailable — order still created, just no auto-redirect */ }
+
+    const result = await publicStorefrontService.createPublicOrder(
+      tenantId,
+      {
+        items: parsed.data.items,
+        customer_name: parsed.data.customer_name,
+        customer_phone: parsed.data.customer_phone,
+        customer_email: parsed.data.customer_email || undefined,
+        notes: parsed.data.notes,
+      },
+      { callbackUrl }
+    );
 
     return { success: true, ...result };
   },

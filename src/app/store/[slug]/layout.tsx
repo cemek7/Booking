@@ -6,9 +6,7 @@ export const metadata: Metadata = {
 };
 
 export default function StorefrontLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <main className="container mx-auto max-w-4xl px-4 py-8 md:py-12">{children}</main>
-    </div>
-  );
+  // Full-bleed: the storefront manages its own sticky header, width and padding
+  // so it reads like a real shop rather than a boxed form.
+  return <div className="min-h-screen bg-slate-50">{children}</div>;
 }
