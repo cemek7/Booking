@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import TenantProvider from '@/lib/supabase/tenant-context';
-import type { TenantCapabilities } from '@/lib/capabilities';
+import { isRouteEnabled, type TenantCapabilities } from '@/lib/capabilities';
 import UnifiedDashboardNav from '@/components/UnifiedDashboardNav';
 import PostHogIdentity from '@/components/analytics/PostHogIdentity';
 import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
@@ -28,8 +29,21 @@ interface DashboardLayoutContentProps {
 }
 
 function DashboardLayoutContent({ children, userEmail: initialEmail }: DashboardLayoutContentProps) {
-  const { role } = useTenant();
+  const { role, capabilities } = useTenant();
+  const pathname = usePathname();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Page-guard (defense-in-depth for capability scoping — not a security
+  // boundary, all data is the tenant's own). If a surface's capability is
+  // disabled, a typed/bookmarked URL redirects home instead of showing a
+  // feature the tenant turned off. Always-on routes (capabilityForHref===null)
+  // and enabled capabilities pass through.
+  useEffect(() => {
+    if (pathname && !isRouteEnabled(pathname, capabilities)) {
+      router.replace('/dashboard');
+    }
+  }, [pathname, capabilities, router]);
   // When the layout passes email from server-auth we know the session is valid —
   // no need to re-verify on the client before showing the chrome.
   const [userEmail] = useState<string | null>(initialEmail ?? null);
