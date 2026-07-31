@@ -1,10 +1,13 @@
 'use client';
 
+import { useContext } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Role } from '@/types/roles';
 import { canAccessRoute, getRoleDashboardPath } from '@/types/unified-permissions';
+import { TenantContext } from '@/lib/supabase/tenant-context';
+import { isRouteEnabled, DEFAULT_CAPABILITIES } from '@/lib/capabilities';
 
 interface UnifiedDashboardNavProps {
   userRole: Role;
@@ -340,6 +343,11 @@ const ROLE_LABELS: Record<Role, string> = {
 export default function UnifiedDashboardNav({ userRole, onNavigate }: UnifiedDashboardNavProps) {
   const pathname = usePathname();
 
+  // Tenant capabilities gate which workflows appear. Read defensively — some
+  // layouts render this nav outside TenantProvider; default is all-on.
+  const tenantCtx = useContext(TenantContext);
+  const capabilities = tenantCtx?.capabilities ?? DEFAULT_CAPABILITIES;
+
   const dashboardHref = getRoleDashboardPath(userRole);
 
   const groups = ROLE_GROUPS[userRole] ?? [];
@@ -363,7 +371,11 @@ export default function UnifiedDashboardNav({ userRole, onNavigate }: UnifiedDas
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) => item && item.roles.includes(userRole) && canAccessRoute(userRole, item.href)
+        (item) =>
+          item &&
+          item.roles.includes(userRole) &&
+          canAccessRoute(userRole, item.href) &&
+          isRouteEnabled(item.href, capabilities)
       ),
     }))
     .filter((group) => group.items.length > 0);

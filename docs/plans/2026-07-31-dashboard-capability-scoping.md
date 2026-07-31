@@ -64,3 +64,19 @@ Superadmin items are unaffected (platform scope, not tenant capability).
 ## Non-goals
 - Not touching the vertical-module system (beauty/hospitality/medicine) — that's a separate axis.
 - Not gating superadmin/platform surfaces.
+
+---
+
+## Implementation status (2026-07-31) — SHIPPED (decisions: all-on / owner-only / 5 coarse / tenants.settings)
+- `src/lib/capabilities.ts` — types, `DEFAULT_CAPABILITIES` (all-on), `resolveCapabilities` (inventory⇒sales), `getTenantCapabilities`, `capabilityForHref`, `isRouteEnabled`. Unit-tested (`src/__tests__/lib/capabilities.test.ts`, 10 cases).
+- `tenant-context.tsx` — carries `capabilities`, seeded via `initialCapabilities`.
+- `dashboard/layout.tsx` — fetches capabilities server-side, seeds the client.
+- `UnifiedDashboardNav.tsx` — filters nav items by `isRouteEnabled` (defensive `useContext`, all-on fallback).
+- `/api/tenants/[tenantId]/settings` schema — accepts `capabilities`.
+- `CapabilitiesCard.tsx` on owner Settings — 5 toggles, save.
+- Onboarding — seeds capabilities from services/products declared.
+- Default posture all-on ⇒ zero change for existing tenants until an owner trims.
+
+### Remaining / follow-ups
+- **Page guards** (defense-in-depth): a sales-only owner can still *type* `/dashboard/bookings` and see their own (empty) surface. Not a security issue (own tenant data), but for polish add a `requireCapability()` redirect in the relevant `dashboard/*/layout.tsx`.
+- **Public storefront preview (requested).** The public booking page (`src/app/book`, `/api/public/[slug]/services|book`) has no sales equivalent. A tenant with `bookings` off / `sales` on needs a **public storefront**: product catalogue + cart/order over `/api/public/[slug]/products` mirroring the booking page's structure, and the public "preview" link in Settings should point to the storefront instead of the booking page based on capabilities. This is a net-new build (public page + products API + order intake) — scoped as its own task.

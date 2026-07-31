@@ -548,6 +548,27 @@ export default function OnboardingPage({
         toast.error('Some products could not be saved — you can add them from the dashboard.');
       } finally { setLoading(false); }
     }
+    // Seed dashboard workflows from what they declared: services -> bookings,
+    // products -> sales (+ inventory when stock was given). Only when they
+    // declared at least one side; otherwise leave all-on so nothing is hidden.
+    if (tenantId && (valid.length > 0 || validProducts.length > 0)) {
+      const anyStock = validProducts.some((p) => p.stock && Number.isFinite(Number(p.stock)) && Number(p.stock) >= 0);
+      try {
+        await fetch(`/api/tenants/${tenantId}/settings`, {
+          method: 'PATCH',
+          headers: jsonHeaders(tenantHeaders()),
+          body: JSON.stringify({
+            capabilities: {
+              bookings: valid.length > 0,
+              sales: validProducts.length > 0,
+              inventory: validProducts.length > 0 && anyStock,
+              crm: true,
+              support: true,
+            },
+          }),
+        });
+      } catch { /* non-blocking: capabilities stay all-on by default */ }
+    }
     if (tenantId) {
       persistTenantSession(tenantId);
     }

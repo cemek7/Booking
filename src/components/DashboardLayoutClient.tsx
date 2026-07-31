@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import TenantProvider from '@/lib/supabase/tenant-context';
+import type { TenantCapabilities } from '@/lib/capabilities';
 import UnifiedDashboardNav from '@/components/UnifiedDashboardNav';
 import PostHogIdentity from '@/components/analytics/PostHogIdentity';
 import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
@@ -168,6 +169,7 @@ interface DashboardLayoutClientProps {
   children: React.ReactNode;
   initialTenantId?: string;
   initialRole?: string;
+  initialCapabilities?: TenantCapabilities;
   userEmail?: string;
 }
 
@@ -175,11 +177,12 @@ export default function DashboardLayoutClient({
   children,
   initialTenantId,
   initialRole,
+  initialCapabilities,
   userEmail,
 }: DashboardLayoutClientProps) {
   return (
     <QueryClientProvider client={queryClient}>
-      <TenantProvider initialTenantId={initialTenantId} initialRole={initialRole}>
+      <TenantProvider initialTenantId={initialTenantId} initialRole={initialRole} initialCapabilities={initialCapabilities}>
         <DashboardLayoutContent userEmail={userEmail}>{children}</DashboardLayoutContent>
       </TenantProvider>
     </QueryClientProvider>

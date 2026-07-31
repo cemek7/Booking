@@ -1,12 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { DEFAULT_CAPABILITIES, type TenantCapabilities } from "@/lib/capabilities";
 
 type Tenant = { id: string } | null;
 
 type TenantContextValue = {
   tenant: Tenant;
   role?: string | null;
+  /** Which Booka workflows this tenant runs (server-seeded; all-on by default). */
+  capabilities: TenantCapabilities;
   setTenant: (t: Tenant, role?: string | null) => void;
   clearTenant: () => void;
 };
@@ -20,9 +23,13 @@ interface TenantProviderProps {
   initialTenantId?: string;
   /** Server-resolved role — paired with initialTenantId. */
   initialRole?: string;
+  /** Server-resolved tenant capabilities — all-on when omitted. */
+  initialCapabilities?: TenantCapabilities;
 }
 
-export function TenantProvider({ children, initialTenantId, initialRole }: TenantProviderProps) {
+export function TenantProvider({ children, initialTenantId, initialRole, initialCapabilities }: TenantProviderProps) {
+  // Capabilities are resolved server-side per request; no client state needed.
+  const capabilities = initialCapabilities ?? DEFAULT_CAPABILITIES;
   const isSuperadmin = initialRole === 'superadmin';
   // Seed state immediately from server-provided values when available.
   const [tenant, setTenantState] = useState<Tenant>(
@@ -155,7 +162,7 @@ export function TenantProvider({ children, initialTenantId, initialRole }: Tenan
   }
 
   return (
-    <TenantContext.Provider value={{ tenant, role, setTenant, clearTenant }}>
+    <TenantContext.Provider value={{ tenant, role, capabilities, setTenant, clearTenant }}>
       {children}
     </TenantContext.Provider>
   );
