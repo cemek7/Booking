@@ -121,6 +121,15 @@ const SettingsSchemaBase = z.object({
   operationalMemory: z.record(z.string(), z.any()).optional(),
   campaignDefaults: z.record(z.string(), z.any()).optional(),
   positioning: z.string().min(1).optional(),
+  // Which Booka workflows this tenant runs (gates the dashboard nav). All-on
+  // by default; owners trim what they don't use.
+  capabilities: z.object({
+    bookings: z.boolean().optional(),
+    sales: z.boolean().optional(),
+    inventory: z.boolean().optional(),
+    crm: z.boolean().optional(),
+    support: z.boolean().optional(),
+  }).optional(),
 }).partial();
 
 const SettingsSchema = SettingsSchemaBase.superRefine((val, ctx) => {
