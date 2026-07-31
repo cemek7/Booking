@@ -871,11 +871,12 @@ class SmartBookingRecommendations {
 
   private async calculateExpertiseMatch(staff: any, serviceId: string): Promise<number> {
     try {
-      // Count completed reservations for this staff+service combination
+      // Count completed reservations for this staff+service combination.
+      // reservations has no staff_user_id — the staff ref is staff_id (a user_id).
       const { data: completions } = await this.supabase
         .from('reservations')
         .select('id')
-        .eq('staff_user_id', staff.id)
+        .eq('staff_id', staff.id)
         .eq('service_id', serviceId)
         .eq('status', 'completed');
 
