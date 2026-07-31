@@ -354,7 +354,7 @@ export async function createPublicBooking(
         notes: payload.notes,
         source: 'public_booking',
         metadata: {
-          booking_source: 'public_storefront',
+          booking_source: 'public_booking',
           timestamp: new Date().toISOString(),
         },
       })

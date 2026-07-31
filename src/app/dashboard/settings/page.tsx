@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth/server-auth';
 import TenantSettingsHost from '@/components/TenantSettingsHost';
 import CalendarSettings from '@/components/calendar/CalendarSettings';
 import CapabilitiesCard from '@/components/settings/CapabilitiesCard';
+import PublicLinksCard from '@/components/settings/PublicLinksCard';
 
 export default async function SettingsPage() {
   // Only owners can access tenant settings
@@ -13,8 +14,9 @@ export default async function SettingsPage() {
       <h1 className="text-2xl font-semibold">Settings</h1>
       <p className="text-sm text-gray-600">Manage your business profile, team, and how your AI assistant replies to customers.</p>
       {user.tenantId && (
-        <div className="mt-6">
+        <div className="mt-6 space-y-6">
           <CapabilitiesCard tenantId={user.tenantId} />
+          <PublicLinksCard tenantId={user.tenantId} />
         </div>
       )}
       <div className="mt-6">
