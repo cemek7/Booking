@@ -90,9 +90,11 @@ export const POST = createHttpHandler(
       if (!s) throw ApiErrorFactory.validationError({ service_id: 'Not found in this tenant' });
     }
     if (body.staff_id) {
+      // staff_id must be a non-owner tenant member (staff or manager); owners aren't bookable staff.
       const { data: st } = await ctx.supabase.from('tenant_users')
-        .select('user_id').eq('user_id', body.staff_id).eq('tenant_id', ctx.user!.tenantId).maybeSingle();
+        .select('user_id, role').eq('user_id', body.staff_id).eq('tenant_id', ctx.user!.tenantId).maybeSingle();
       if (!st) throw ApiErrorFactory.validationError({ staff_id: 'Not found in this tenant' });
+      if (st.role === 'owner') throw ApiErrorFactory.validationError({ staff_id: 'Owner cannot be assigned as booking staff' });
     }
 
     const payload = {

@@ -840,12 +840,13 @@ class SmartBookingRecommendations {
       return (staff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
     }
 
-    // 2. Fall back to all active staff for the tenant when no service mapping exists
+    // 2. Fall back to all bookable staff for the tenant when no service mapping exists.
+    // Staff = any tenant member who isn't the owner (staff + manager can take bookings).
     const { data: allStaff } = await this.supabase
       .from('tenant_users')
       .select('user_id, name, email, role')
       .eq('tenant_id', tenantId)
-      .eq('role', 'staff');
+      .neq('role', 'owner');
     return (allStaff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
   }
 

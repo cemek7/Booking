@@ -128,6 +128,16 @@ export const POST = createHttpHandler(
 
     const { start_at, end_at, staff_id, ...bookingData } = bodyValidation.data;
     const tenantId = ctx.user!.tenantId!;
+
+    // A client-supplied staff_id must be a non-owner member of this tenant
+    // (staff or manager). Owners aren't bookable staff; unknown ids are rejected.
+    if (staff_id) {
+      const { data: st } = await ctx.supabase.from('tenant_users')
+        .select('user_id, role').eq('user_id', staff_id).eq('tenant_id', tenantId).maybeSingle();
+      if (!st) throw ApiErrorFactory.validationError({ staff_id: 'Not found in this tenant' });
+      if (st.role === 'owner') throw ApiErrorFactory.validationError({ staff_id: 'Owner cannot be assigned as booking staff' });
+    }
+
     let resolvedStaffId = staff_id ?? null;
 
     // Use the admin client for locking so reservation_locks RLS does not block the operation.
