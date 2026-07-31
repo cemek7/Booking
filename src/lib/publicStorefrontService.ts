@@ -137,7 +137,8 @@ export interface PublicOrderResult {
  */
 export async function createPublicOrder(
   tenantId: string,
-  payload: CreatePublicOrderPayload
+  payload: CreatePublicOrderPayload,
+  opts?: { callbackUrl?: string | null }
 ): Promise<PublicOrderResult> {
   const supabase = createSupabaseAdminClient();
 
@@ -190,6 +191,7 @@ export async function createPublicOrder(
       actorUserId: 'public_storefront',
       orderId: cart.orderId,
       channel: null,
+      callbackUrl: opts?.callbackUrl ?? null,
     });
     paymentUrl = link.paymentUrl ?? null;
   } catch (err) {
