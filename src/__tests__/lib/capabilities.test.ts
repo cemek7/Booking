@@ -45,6 +45,7 @@ describe('capabilities', () => {
       expect(capabilityForHref('/dashboard/orders')).toBe('sales');
       expect(capabilityForHref('/dashboard/products')).toBe('sales');
       expect(capabilityForHref('/dashboard/showcase')).toBe('sales');
+      expect(capabilityForHref('/dashboard/pos')).toBe('sales');
       // inventory is a sub-path of products — must resolve to inventory, not sales
       expect(capabilityForHref('/dashboard/products/inventory')).toBe('inventory');
     });

@@ -91,6 +91,7 @@ export function capabilityForHref(href: string): Capability | null {
   if (h.startsWith('/dashboard/orders')) return 'sales';
   if (h.startsWith('/dashboard/showcase')) return 'sales';
   if (h.startsWith('/dashboard/pos')) return 'sales';
+  if (h.startsWith('/dashboard/pos')) return 'sales';
   if (h.startsWith('/dashboard/bookings')) return 'bookings';
   if (h.startsWith('/dashboard/services')) return 'bookings';
   if (h.startsWith('/dashboard/staff')) return 'bookings';
