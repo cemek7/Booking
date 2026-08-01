@@ -225,8 +225,8 @@ export class PaymentLifecycleService {
       await this.supabase
         .from('reservations')
         .update({
-          status: 'confirmed',
-          updated_at: new Date().toISOString()
+          // reservations has no updated_at column.
+          status: 'confirmed'
         })
         .eq('id', transaction.subject_id);
 
@@ -296,8 +296,7 @@ export class PaymentLifecycleService {
         .from('reservations')
         .update({
           status: 'payment_failed',
-          notes: (transaction.reservation?.notes || '') + `\nPayment failed: ${failureReason}`,
-          updated_at: new Date().toISOString()
+          notes: (transaction.reservation?.notes || '') + `\nPayment failed: ${failureReason}`
         })
         .eq('id', transaction.subject_id);
 
@@ -392,8 +391,8 @@ export class PaymentLifecycleService {
         await this.supabase
           .from('reservations')
           .update({
-            status: 'refunded',
-            updated_at: new Date().toISOString()
+            // reservations has no updated_at column.
+            status: 'refunded'
           })
           .eq('id', originalTransaction.subject_id);
       }

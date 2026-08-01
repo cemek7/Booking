@@ -149,12 +149,18 @@ export class GoogleCalendarIntegration {
         });
       }
 
-      // Update booking with Google event ID
+      // Update booking with Google event ID. reservations has no
+      // google_event_id/last_synced columns — store them in metadata (merged)
+      // and set the real calendar_sent flag.
       await this.supabase
         .from('reservations')
         .update({
-          google_event_id: googleEvent.data.id,
-          last_synced: new Date().toISOString()
+          calendar_sent: true,
+          metadata: {
+            ...(booking.metadata && typeof booking.metadata === 'object' ? booking.metadata : {}),
+            google_event_id: googleEvent.data.id,
+            google_last_synced: new Date().toISOString(),
+          },
         })
         .eq('id', booking.id);
 

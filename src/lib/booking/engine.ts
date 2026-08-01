@@ -318,15 +318,14 @@ export class BookingEngine {
         // Update booking
         const { data: updatedReservation, error } = await this.supabase
           .from('reservations')
+          // reservations has no customer_name/phone/updated_at columns — the
+          // customer name/email live in metadata (via buildReservationMetadata).
           .update({
             service_id: resolvedData.service_id ?? existingBooking.service_id,
             staff_id: resolvedData.provider_id ?? existingBooking.provider_id,
-            customer_name: existingBooking.customer_name,
-            phone: existingBooking.customer_phone,
             start_at: resolvedData.start_time ?? existingBooking.start_time,
             end_at: resolvedData.end_time ?? existingBooking.end_time,
             notes: resolvedData.notes ?? existingBooking.notes ?? null,
-            updated_at: new Date().toISOString(),
             metadata: this.buildReservationMetadata(existingBooking, {
               customer_email: existingBooking.customer_email,
               special_requests: resolvedData.special_requests ?? existingBooking.special_requests ?? null,
@@ -443,11 +442,10 @@ export class BookingEngine {
         // Update booking status
         const { data: cancelledReservation, error } = await this.supabase
           .from('reservations')
+          // reservations has no cancelled_at/cancellation_reason/updated_at columns —
+          // cancellation details go into metadata.
           .update({
             status: 'cancelled',
-            cancelled_at: new Date().toISOString(),
-            cancellation_reason: validatedData.reason,
-            updated_at: new Date().toISOString(),
             metadata: this.buildReservationMetadata(booking, {
               customer_email: booking.customer_email,
               special_requests: booking.special_requests ?? null,
@@ -457,7 +455,9 @@ export class BookingEngine {
               modification_count: booking.modification_count,
               payment_id: booking.payment_id,
               provider_id: booking.provider_id,
-              cancellation_notes: validatedData.notes ?? null
+              cancellation_notes: validatedData.notes ?? null,
+              cancelled_at: new Date().toISOString(),
+              cancellation_reason: validatedData.reason
             })
           })
           .eq('id', data.booking_id)
