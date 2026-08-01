@@ -429,6 +429,14 @@ export async function createRetailOrderPaymentLink(input: {
   const existingReference = typeof paymentMetadata?.reference === 'string' ? paymentMetadata.reference : null;
   const referenceKey = existingReference || `retail_${order.id.replace(/-/g, '').slice(0, 24)}_${randomUUID().slice(0, 8)}`;
 
+  // Split settlement to the tenant's bank (Paystack subaccount), not the platform.
+  const { data: tenantRow } = await admin
+    .from('tenants')
+    .select('metadata')
+    .eq('id', order.tenant_id)
+    .maybeSingle();
+  const subaccountCode = (tenantRow?.metadata as { paystack_subaccount_code?: string } | null)?.paystack_subaccount_code;
+
   const adapter = new PaymentsAdapter();
   const result = await adapter.createStandalonePaymentLink({
     tenant_id: order.tenant_id,
@@ -439,6 +447,7 @@ export async function createRetailOrderPaymentLink(input: {
     customer_phone: order.customer?.phone ?? order.external_customer_ref ?? null,
     description: `Retail order ${order.id}`,
     callback_url: input.callbackUrl ?? null,
+    subaccountCode: subaccountCode ?? null,
     metadata: {
       tenant_id: order.tenant_id,
       retail_order_id: order.id,

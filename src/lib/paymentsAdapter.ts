@@ -40,6 +40,10 @@ export interface StandalonePaymentLinkInput {
   metadata?: Record<string, unknown> | null;
   callback_url?: string | null;
   tenantDefaultProvider?: string;
+  /** Tenant's Paystack subaccount — settles the split to their bank, not the platform. */
+  subaccountCode?: string | null;
+  /** Who bears the Paystack fee when a subaccount is used. Default 'account' (platform). */
+  bearer?: 'account' | 'subaccount';
 }
 
 export interface StandalonePaymentLinkResult {
@@ -197,6 +201,9 @@ async function createPaystackStandalonePaymentLink(
         reference: input.reference_key,
         callback_url: input.callback_url || undefined,
         metadata: input.metadata || {},
+        // Split settlement to the tenant's bank when a subaccount is configured.
+        subaccount: input.subaccountCode || undefined,
+        bearer: input.subaccountCode ? (input.bearer || 'account') : undefined,
       }),
       timeoutMs: 15_000,
     });

@@ -208,6 +208,8 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/settings', label: 'Settings', icon: Icons.settings, roles: ['owner'] },
   // Billing
   { href: '/dashboard/billing', label: 'Billing', icon: Icons.billing, roles: ['owner'] },
+  // Payment links (ad-hoc invoicing — useful for booking-only and sales tenants)
+  { href: '/dashboard/payment-links', label: 'Payment Links', icon: Icons.billing, roles: ['owner', 'manager'] },
   // FAQs (middleware allows owner + manager; both feed the assistant's answers)
   { href: '/dashboard/faqs', label: 'FAQs', icon: Icons.faqs, roles: ['owner', 'manager'] },
   // Tasks (middleware allows all tenant roles)
@@ -258,6 +260,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/settings')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/billing')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/payment-links' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/usage')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs' && i.roles.includes('owner'))!,
       ],
@@ -288,6 +291,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/payment-links' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs' && i.roles.includes('manager'))!,
