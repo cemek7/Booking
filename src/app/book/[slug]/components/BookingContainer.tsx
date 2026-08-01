@@ -105,6 +105,18 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
         marketingConsent: bookingData.customer.marketingConsent,
       });
 
+      // Deposit required → send the customer to Paystack to secure the slot.
+      // The reservation stays pending until the webhook confirms payment.
+      if (result.depositRequired && result.paymentUrl) {
+        toast({
+          title: 'Almost there — secure your slot',
+          description: 'Redirecting you to pay your deposit…',
+          type: 'success',
+        });
+        window.location.href = result.paymentUrl;
+        return;
+      }
+
       toast({
         title: 'Booking Confirmed! 🎉',
         description: `Your appointment is scheduled for ${bookingData.date} at ${bookingData.time}`,

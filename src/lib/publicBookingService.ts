@@ -13,6 +13,87 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
+import PaymentService from '@/lib/paymentService';
+
+export interface BookingDepositInfo {
+  depositRequired: boolean;
+  paymentUrl?: string | null;
+  depositAmountCents?: number;
+  currency?: string;
+}
+
+/**
+ * If the tenant requires a deposit, initialise a Paystack payment for
+ * depositPercent% of the service price and return the checkout URL. Never
+ * throws — a booking is always created; a failed/absent deposit just means the
+ * owner follows up. The webhook (handlePaymentSuccess) confirms the reservation
+ * on payment via the transaction's subject_id.
+ */
+async function maybeCreateBookingDeposit(input: {
+  tenantId: string;
+  reservationId: string;
+  serviceId?: string;
+  email?: string;
+  callbackUrl?: string | null;
+}): Promise<BookingDepositInfo> {
+  try {
+    if (!input.serviceId || !input.email) return { depositRequired: false };
+    const supabase = createSupabaseAdminClient();
+
+    const { data: tenant } = await supabase
+      .from('tenants')
+      .select('settings, metadata')
+      .eq('id', input.tenantId)
+      .maybeSingle();
+    const settings = (tenant?.settings && typeof tenant.settings === 'object' ? tenant.settings : {}) as Record<string, unknown>;
+    const metadata = (tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {}) as Record<string, unknown>;
+    const uiSettings = (metadata.ui_settings && typeof metadata.ui_settings === 'object' ? metadata.ui_settings : {}) as Record<string, unknown>;
+
+    const requireDeposit = (settings.requireDeposit ?? uiSettings.requireDeposit) === true;
+    const depositPercent = Number(settings.depositPercent ?? uiSettings.depositPercent ?? 0);
+    if (!requireDeposit || !(depositPercent > 0)) return { depositRequired: false };
+
+    const currency = String(settings.defaultCurrency ?? uiSettings.defaultCurrency ?? 'NGN');
+
+    const { data: service } = await supabase
+      .from('services')
+      .select('price_cents, price')
+      .eq('id', input.serviceId)
+      .maybeSingle();
+    const priceCents = typeof service?.price_cents === 'number'
+      ? service.price_cents
+      : (typeof service?.price === 'number' ? Math.round(service.price * 100) : 0);
+    const depositMinor = Math.round((priceCents * depositPercent) / 100);
+    if (!(depositMinor > 0)) return { depositRequired: false };
+
+    const subaccountCode = typeof metadata.paystack_subaccount_code === 'string'
+      ? metadata.paystack_subaccount_code
+      : undefined;
+
+    const paymentService = new PaymentService(supabase);
+    const result = await paymentService.initializePayment({
+      tenantId: input.tenantId,
+      amount: depositMinor,
+      currency,
+      email: input.email,
+      reservationId: input.reservationId,
+      provider: 'paystack',
+      metadata: { type: 'deposit', reservation_id: input.reservationId },
+      subaccountCode,
+      bearer: 'account',
+      callbackUrl: input.callbackUrl ?? undefined,
+    });
+
+    if (result.success && result.authorizationUrl) {
+      return { depositRequired: true, paymentUrl: result.authorizationUrl, depositAmountCents: depositMinor, currency };
+    }
+    defaultLogger.warn('[publicBooking] deposit init failed; booking left pending', { reservationId: input.reservationId, error: result.error });
+    return { depositRequired: false };
+  } catch (err) {
+    defaultLogger.warn('[publicBooking] deposit init threw; booking left pending', { error: err instanceof Error ? err.message : String(err) });
+    return { depositRequired: false };
+  }
+}
 
 const SLOT_INTERVAL_MINUTES = 30;
 
@@ -254,7 +335,8 @@ export async function createPublicBooking(
     customer_email: string;
     customer_phone: string;
     notes?: string;
-  }
+  },
+  opts?: { callbackUrl?: string | null }
 ) {
   const supabase = createSupabaseAdminClient();
 
@@ -365,7 +447,17 @@ export async function createPublicBooking(
       throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
     }
 
-    return booking;
+    // If the tenant requires a deposit, mint a Paystack checkout for it. The
+    // reservation stays 'pending' until the webhook confirms payment.
+    const deposit = await maybeCreateBookingDeposit({
+      tenantId,
+      reservationId: booking.id,
+      serviceId: payload.service_id,
+      email: payload.customer_email,
+      callbackUrl: opts?.callbackUrl ?? null,
+    });
+
+    return { id: booking.id, ...deposit };
   } finally {
     // Always release the lock, even if an error occurs
     // Wrap in try/catch to prevent lock release errors from masking the original exception
