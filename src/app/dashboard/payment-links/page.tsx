@@ -15,6 +15,12 @@ interface LinkRow {
 }
 interface CreateResult { paymentUrl: string; reference: string; amount: number; currency: string }
 
+/** wa.me deep link for a manual staff share (not an automated send). */
+function waShare(phone: string, text: string) {
+  const digits = (phone || '').replace(/[^0-9]/g, '');
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
 export default function PaymentLinksPage() {
   const { format } = useTenantCurrency();
   const [amount, setAmount] = useState('');
@@ -24,6 +30,7 @@ export default function PaymentLinksPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreateResult | null>(null);
+  const [createdPhone, setCreatedPhone] = useState('');
   const [links, setLinks] = useState<LinkRow[]>([]);
 
   async function loadLinks() {
@@ -45,6 +52,7 @@ export default function PaymentLinksPage() {
     setCreating(false);
     if (res.error || !res.data) { setError(res.error?.message || 'Could not create the link.'); return; }
     setCreated(res.data);
+    setCreatedPhone(phone.trim());
     setAmount(''); setDescription(''); setEmail(''); setPhone('');
     void loadLinks();
   }
@@ -78,6 +86,14 @@ export default function PaymentLinksPage() {
                 <input readOnly value={created.paymentUrl} className="min-w-0 flex-1 truncate rounded-md border border-emerald-300 bg-white px-2 py-1 text-xs" />
                 <button onClick={() => navigator.clipboard?.writeText(created.paymentUrl)} className="rounded-md bg-gray-900 px-3 py-1 text-xs font-medium text-white">Copy</button>
               </div>
+              <a
+                href={waShare(createdPhone, `Hi! Here's your payment link for ${format(created.amount)}: ${created.paymentUrl}`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-emerald-700"
+              >
+                Send via WhatsApp
+              </a>
             </div>
           )}
         </div>
