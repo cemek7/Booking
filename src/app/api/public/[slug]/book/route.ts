@@ -28,9 +28,10 @@ function escapeHtml(str: string): string {
  */
 async function getTenantBySlug(ctx: RouteContext, slug: string) {
   const supabase = createSupabaseAdminClient();
+  // tenants has no `is_active` column — the active/offboarded state is lifecycle_state.
   const { data: tenant, error: tenantErr } = await supabase
     .from('tenants')
-    .select('id, is_active')
+    .select('id, lifecycle_state')
     .eq('slug', slug)
     .maybeSingle();
 
@@ -42,8 +43,8 @@ async function getTenantBySlug(ctx: RouteContext, slug: string) {
     throw ApiErrorFactory.notFound('Tenant');
   }
 
-  // Treat inactive tenants as not found to prevent bookings being created for disabled businesses
-  if (tenant.is_active === false) {
+  // Block bookings for disabled/offboarded businesses (anything not 'active').
+  if (tenant.lifecycle_state && tenant.lifecycle_state !== 'active') {
     throw ApiErrorFactory.notFound('Tenant');
   }
 
@@ -90,14 +91,21 @@ export const POST = createHttpHandler(
 
     const tenant = await getTenantBySlug(ctx, slug);
 
-    // Create booking
+    // Where Paystack returns the customer after paying a deposit.
+    let callbackUrl: string | null = null;
+    try {
+      callbackUrl = new URL(`/book/${slug}/confirmation`, ctx.request.url).toString();
+    } catch { /* origin unavailable — deposit still works, webhook confirms */ }
+
+    // Create booking (and a deposit checkout when the tenant requires one)
     const booking = await publicBookingService.createPublicBooking(
       tenant.id,
       {
         ...validated,
         date: validated.date,
         time: validated.time,
-      }
+      },
+      { callbackUrl }
     );
 
     // Record explicit opt-in for business-initiated messaging (fire-and-forget,
@@ -166,7 +174,15 @@ export const POST = createHttpHandler(
       }
     })();
 
-    return { booking_id: booking.id, status: 'pending' };
+    return {
+      booking_id: booking.id,
+      status: 'pending',
+      // When a deposit is required, the client redirects to Paystack to secure the slot.
+      depositRequired: booking.depositRequired ?? false,
+      paymentUrl: booking.paymentUrl ?? null,
+      depositAmountCents: booking.depositAmountCents ?? null,
+      currency: booking.currency ?? null,
+    };
   },
   'POST',
   { auth: false }

@@ -1105,12 +1105,9 @@ export class PaymentLifecycleService {
     await this.supabase
       .from('transactions')
       .update({
-        metadata: {
-          ...transaction.metadata,
-          retry_count: retryCount + 1,
-          retry_at: retryAt,
-          retry_scheduled: true,
-        },
+        // transactions has real retry columns — no `metadata` column exists.
+        retry_count: retryCount + 1,
+        next_retry_at: retryAt,
         updated_at: new Date().toISOString(),
       })
       .eq('id', transaction.id);

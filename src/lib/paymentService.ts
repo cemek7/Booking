@@ -536,10 +536,11 @@ export class PaymentService {
     userAgent?: string;
     subaccountCode?: string;
     bearer?: 'account' | 'subaccount';
-  }): Promise<{ 
-    success: boolean; 
-    transactionId?: string; 
-    authorizationUrl?: string; 
+    callbackUrl?: string;
+  }): Promise<{
+    success: boolean;
+    transactionId?: string;
+    authorizationUrl?: string;
     error?: string;
     requiresReview?: boolean;
     riskScore?: number;
@@ -617,12 +618,16 @@ export class PaymentService {
           currency: params.currency,
           type: 'deposit',
           status: 'pending',
-          provider: provider.id,
           provider_reference: reference,
+          // reservations is the payment subject; the webhook confirms via subject_id.
+          subject_type: params.reservationId ? 'reservation' : null,
+          subject_id: params.reservationId ?? null,
+          // transactions has no `provider` column — provider/email live in raw.
           raw: {
             ref: reference,
             email: params.email,
             reservation_id: params.reservationId,
+            provider: provider.id,
           },
         })
         .select('id')
@@ -645,6 +650,7 @@ export class PaymentService {
         },
         subaccountCode: params.subaccountCode,
         bearer: params.bearer,
+        callbackUrl: params.callbackUrl,
       });
 
       // Update the record with provider response (non-fatal if this fails — record is reconcilable)
@@ -746,10 +752,12 @@ export class PaymentService {
           currency: transaction.currency,
           type: 'refund',
           status: 'pending',
-          provider: transaction.provider,
+          subject_type: transaction.subject_type ?? null,
+          subject_id: transaction.subject_id ?? null,
           refund_amount: refundAmount,
           refund_reason: params.reason,
-          raw: { original_reference: transaction.provider_reference },
+          // transactions has no `provider` column — it lives in raw.
+          raw: { original_reference: transaction.provider_reference, provider: (transaction.raw as { provider?: string } | null)?.provider ?? null },
         })
         .select('id')
         .single();
