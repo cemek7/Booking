@@ -19,6 +19,13 @@ interface PosProduct {
 type PayMethod = 'cash' | 'transfer' | 'card';
 interface SaleResult { orderId: string; totalCents: number; itemCount: number; paid: boolean; paymentUrl: string | null }
 
+/** wa.me deep link — opens WhatsApp on the staff device to send the customer a
+ *  message. Manual staff share (not an automated business-initiated send). */
+function waShare(phone: string | undefined, text: string) {
+  const digits = (phone || '').replace(/[^0-9]/g, '');
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
 export default function PosPage() {
   const { format } = useTenantCurrency();
   const money = (cents: number) => format(cents / 100);
@@ -100,7 +107,17 @@ export default function PosPage() {
               <input readOnly value={receipt.paymentUrl} className="min-w-0 flex-1 truncate rounded-md border border-gray-300 bg-white px-2 py-1 text-xs" />
               <button onClick={() => navigator.clipboard?.writeText(receipt.paymentUrl!)} className="rounded-md bg-gray-900 px-3 py-1 text-xs font-medium text-white">Copy</button>
             </div>
-            <a href={receipt.paymentUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs font-medium text-emerald-700">Open checkout ↗</a>
+            <div className="mt-2 flex items-center gap-3">
+              <a
+                href={waShare(customer.phone, `Hi! Here's your payment link for ${money(receipt.totalCents)}: ${receipt.paymentUrl}`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-emerald-700"
+              >
+                Send via WhatsApp
+              </a>
+              <a href={receipt.paymentUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-emerald-700">Open checkout ↗</a>
+            </div>
           </div>
         )}
         <p className="mt-4 text-xs text-gray-400">Order {receipt.orderId}</p>
