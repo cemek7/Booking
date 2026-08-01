@@ -86,10 +86,15 @@ export const POST = createHttpHandler(
             // Cancel the reservation
             const { error: updateError } = await ctx.supabase
               .from('reservations')
+              // reservations has no cancelled_at/cancellation_reason columns —
+              // record them in metadata (merged, not clobbered).
               .update({
                 status: 'cancelled',
-                cancellation_reason: 'Auto-cancelled: Not confirmed within required timeframe',
-                cancelled_at: new Date().toISOString()
+                metadata: {
+                  ...(booking.metadata && typeof booking.metadata === 'object' ? booking.metadata : {}),
+                  cancelled_at: new Date().toISOString(),
+                  cancellation_reason: 'Auto-cancelled: Not confirmed within required timeframe',
+                },
               })
               .eq('id', booking.id);
 
