@@ -350,7 +350,7 @@ export function AgentConfigSection({ values, onChange, tenantId }: Props) {
           <div className="flex flex-col items-center gap-3 py-4 text-center">
             <p className="text-sm text-gray-600">Upgrade to Pro to enable inbound voice booking.</p>
             <a
-              href="/settings?tab=payments"
+              href="/dashboard/settings?tab=payments"
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm"
             >
               Upgrade Plan

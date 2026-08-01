@@ -28,19 +28,19 @@ const navByRole: Record<string, { label: string; href: string }[]> = {
     { label: 'System Logs', href: '/dashboard/superadmin/reservation-logs' },
     { label: 'Clients', href: '/clients' },
     { label: 'Staff', href: '/staff' },
-    { label: 'Settings', href: '/settings' },
+    { label: 'Settings', href: '/dashboard/settings' },
     { label: 'Select Business', href: '/select-tenant' }
   ],
   owner: [
     { label: 'Clients', href: '/clients' },
     { label: 'Staff', href: '/staff' },
-    { label: 'Settings', href: '/settings' },
+    { label: 'Settings', href: '/dashboard/settings' },
     { label: 'Select Business', href: '/select-tenant' }
   ],
   manager: [
     { label: 'Clients', href: '/clients' },
     { label: 'Staff', href: '/staff' },
-    { label: 'Settings', href: '/settings' }
+    { label: 'Settings', href: '/dashboard/settings' }
   ],
   staff: [
     // Staff sees only common + possibly limited settings later
