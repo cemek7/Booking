@@ -189,6 +189,8 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/reports', label: 'Reports', icon: Icons.reports, roles: ['owner', 'manager'] },
   // Orders
   { href: '/dashboard/orders', label: 'Orders', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
+  // Point of sale (in-store walk-in sales)
+  { href: '/dashboard/pos', label: 'POS', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
   // Commerce: Booka handles sales + inventory, not just bookings.
   { href: '/dashboard/products', label: 'Products', icon: Icons.products, roles: ['owner', 'manager'] },
   { href: '/dashboard/products/inventory', label: 'Inventory', icon: Icons.inventory, roles: ['owner', 'manager'] },
@@ -233,6 +235,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/pos' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/leads' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('owner'))!,
@@ -273,6 +276,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/pos' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/services' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('manager'))!,
@@ -308,6 +312,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       title: 'Communication',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('staff'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/pos' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/tasks' && i.roles.includes('staff'))!,
