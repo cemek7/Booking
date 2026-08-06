@@ -7,10 +7,11 @@ describe('demonstrator content', () => {
     expect(DEMONSTRATORS).toHaveLength(8);
     for (const d of DEMONSTRATORS) expect(d.projectType).toBe('Capability Demonstrator');
   });
-  it('has SunGrid published and the rest planned', () => {
+  it('has SunGrid and Northstar published and the remaining demonstrators planned', () => {
     const sg = DEMONSTRATORS.find((d) => d.slug === 'sungrid-energy')!;
     expect(sg.status).toBe('published');
-    expect(DEMONSTRATORS.filter((d) => d.status === 'planned')).toHaveLength(7);
+    expect(DEMONSTRATORS.find((d) => d.slug === 'northstar-clinic')?.status).toBe('published');
+    expect(DEMONSTRATORS.filter((d) => d.status === 'planned')).toHaveLength(6);
   });
   it('carries the required disclosure text', () => {
     expect(DISCLOSURE).toMatch(/capability demonstrator/i);

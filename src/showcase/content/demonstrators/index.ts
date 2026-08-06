@@ -1,6 +1,7 @@
 import type { Demonstrator } from '../types';
 import { DISCLOSURE } from '../disclosure';
 import { SUNGRID } from './sungrid-energy';
+import { NORTHSTAR } from './northstar-clinic';
 
 /**
  * Minimal, honest stub for a demonstrator that has not been built yet.
@@ -36,13 +37,7 @@ function plannedStub(input: {
 
 export const DEMONSTRATORS: Demonstrator[] = [
   SUNGRID,
-  plannedStub({
-    slug: 'northstar-clinic',
-    name: 'Northstar Clinic',
-    industry: 'Medical clinic scheduling',
-    oneLineSummary: 'Planned demonstrator: a multi-provider medical clinic booking and patient-intake experience.',
-    targetAudience: 'Prospective patients choosing a clinic and booking an appointment.',
-  }),
+  NORTHSTAR,
   plannedStub({
     slug: 'ember-table',
     name: 'Ember Table',

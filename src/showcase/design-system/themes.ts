@@ -6,3 +6,10 @@ export const SUNGRID_THEME: SiteTheme = {
   typography: { display: 'Space Grotesk', body: 'Inter' },
   radius: 'medium', density: 'balanced', motion: 'subtle',
 };
+
+export const NORTHSTAR_THEME: SiteTheme = {
+  id: 'northstar',
+  colors: { background: '#f7fafc', foreground: '#0f2231', muted: '#5b7183', surface: '#ffffff', primary: '#2f6fed', primaryForeground: '#ffffff', accent: '#34c3a0', border: '#dce6ee' },
+  typography: { display: 'Manrope', body: 'Inter' },
+  radius: 'large', density: 'spacious', motion: 'minimal',
+};
