@@ -19,6 +19,7 @@ import {
 } from '@/lib/whatsapp/product-service';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { createRetailOrderPaymentLinkForCustomer } from '@/lib/commerce/retail-orders';
+import { dispatchExecute, dispatchValidate } from '@/lib/booking/handlers/registry';
 import type { Product } from '@/types/product-catalogue';
 
 const supabaseAdmin = createSupabaseAdminClient();
@@ -37,6 +38,31 @@ export type AIAction =
   | 'offer_upsell'
   | 'offer_cross_sell'
   | 'create_retail_payment_link'
+  | 'add_product'
+  | 'adjust_stock'
+  | 'set_price'
+  | 'set_availability'
+  | 'low_stock_query'
+  | 'record_retail_sale'
+  | 'record_expense'
+  | 'record_purchase'
+  | 'record_supplier_payment'
+  | 'record_stock_receipt'
+  | 'create_stock_count_session'
+  | 'complete_service_capture'
+  | 'refund_sale'
+  | 'record_outstanding_balance'
+  | 'create_order'
+  | 'set_order_fulfillment'
+  | 'add_delivery_fee'
+  | 'cancel_order_restock'
+  | 'lapsed_customers_query'
+  | 'add_customer_note'
+  | 'customer_history'
+  | 'set_customer_tag'
+  | 'staff_sales_query'
+  | 'staff_discount_query'
+  | 'set_staff_capability'
   | 'recover_lead'
   | 'cancel_booking'
   | 'reschedule_booking'
@@ -49,14 +75,14 @@ export type AIAction =
   | 'walk_in'
   | 'get_insights'
   | 'owner_query'
+  | 'owner_analytics_query'
   | 'general_reply'
   | 'needs_info'
   | 'escalate';
 
 export interface AIResponse {
   action: AIAction;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: Record<string, any>;
+  params: Record<string, unknown>;
   reply: string;
   confidence: 'high' | 'medium' | 'low';
 }
@@ -72,6 +98,17 @@ export async function validateAction(
   aiResponse: AIResponse
 ): Promise<ValidationResult> {
   const { action, params } = aiResponse;
+  const registryResult = await dispatchValidate(
+    supabaseAdmin as unknown as import('@supabase/supabase-js').SupabaseClient,
+    tenantId,
+    action,
+    params as Record<string, unknown>,
+    {}
+  );
+
+  if (registryResult.handled && registryResult.result) {
+    return registryResult.result;
+  }
 
   switch (action) {
     case 'create_booking':
@@ -80,10 +117,10 @@ export async function validateAction(
     case 'cancel_booking':
     case 'reschedule_booking':
     case 'mark_no_show':
-      return validateReservationOwnership(tenantId, params.reservation_id);
+      return validateReservationOwnership(tenantId, typeof params.reservation_id === 'string' ? params.reservation_id : undefined);
 
     case 'update_service':
-      return validateServiceOwnership(tenantId, params.service_id);
+      return validateServiceOwnership(tenantId, typeof params.service_id === 'string' ? params.service_id : undefined);
 
     case 'add_service':
       return params.name && params.price !== undefined
@@ -117,6 +154,14 @@ export async function validateAction(
     case 'walk_in':
       return validateWalkIn(tenantId, params);
 
+    case 'record_expense':
+    case 'record_purchase':
+    case 'record_supplier_payment':
+    case 'record_stock_receipt':
+    case 'create_stock_count_session':
+    case 'complete_service_capture':
+      return { valid: true };
+
     case 'get_availability':
     case 'list_services':
     case 'list_staff':
@@ -132,6 +177,7 @@ export async function validateAction(
     case 'recover_lead':
     case 'get_insights':
     case 'owner_query':
+    case 'owner_analytics_query':
     case 'general_reply':
     case 'needs_info':
     case 'escalate':
@@ -144,8 +190,7 @@ export async function validateAction(
 
 async function validateCreateBooking(
   tenantId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<ValidationResult> {
   const required = ['service_id', 'start_at'];
   for (const field of required) {
@@ -243,10 +288,11 @@ async function validateServiceOwnership(
 
 async function validateWalkIn(
   tenantId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<ValidationResult> {
-  let staffId: string | undefined = params.tenant_staff_id ?? params.staff_id;
+  let staffId = typeof params.tenant_staff_id === 'string'
+    ? params.tenant_staff_id
+    : (typeof params.staff_id === 'string' ? params.staff_id : undefined);
 
   if (!staffId && params.staff_name) {
     const { data: staff } = await supabaseAdmin
@@ -266,7 +312,7 @@ async function validateWalkIn(
     };
   }
 
-  let serviceId: string | undefined = params.service_id;
+  let serviceId = typeof params.service_id === 'string' ? params.service_id : undefined;
   let durationMinutes = 60;
 
   if (!serviceId && params.service_name) {
@@ -341,7 +387,7 @@ async function resolveCustomerIdForNoShow(
 
 async function lookupServiceQuote(
   tenantId: string,
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<{ id: string; name: string; price: number; duration: number } | null> {
   if (typeof params.service_id === 'string') {
     const { data } = await supabaseAdmin
@@ -389,6 +435,8 @@ export async function executeAction(
   tenantId: string,
   aiResponse: AIResponse,
   context: {
+    actorId?: string | null;
+    permissions?: string[];
     customerPhone?: string;
     tenantStaffId?: string;
     customerId?: string;
@@ -397,9 +445,39 @@ export async function executeAction(
     userRole?: 'owner' | 'staff' | 'customer';
   }
 ): Promise<{ success: boolean; data?: unknown; error?: string }> {
-  const { action, params } = aiResponse;
+  const { action } = aiResponse;
+  // AI action payloads are validated before execution. Keep the dynamic boundary
+  // here rather than leaking `unknown` through every domain service call below.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: Record<string, any> = aiResponse.params;
 
   try {
+    const registryResult = await dispatchExecute(
+      supabaseAdmin as unknown as import('@supabase/supabase-js').SupabaseClient,
+      tenantId,
+      action,
+      params as Record<string, unknown>,
+      {
+        channel: context.channel,
+        actorId: context.actorId ?? context.customerId ?? null,
+        permissions: context.permissions,
+        role: context.userRole,
+        customerPhone: context.customerPhone,
+        tenantStaffId: context.tenantStaffId,
+        customerId: context.customerId,
+        messageId: context.messageId,
+        userRole: context.userRole,
+      }
+    );
+
+    if (registryResult.handled && registryResult.result) {
+      return {
+        success: registryResult.result.success,
+        error: registryResult.result.error,
+        data: registryResult.result.data ?? (registryResult.result.reply ? { reply: registryResult.result.reply } : undefined),
+      };
+    }
+
     switch (action) {
       case 'create_booking': {
         const startAt = params.start_at;
@@ -407,7 +485,7 @@ export async function executeAction(
         const quotedService = params.service_id
           ? await lookupServiceQuote(tenantId, { service_id: params.service_id })
           : null;
-        const reservation = await createReservation(supabaseAdmin as any, {
+        const reservation = await createReservation(supabaseAdmin, {
           tenant_id: tenantId,
           customer_id: params.customer_id ?? context.customerId ?? null,
           customer_name: params.customer_name,
@@ -455,7 +533,7 @@ export async function executeAction(
       }
 
       case 'cancel_booking': {
-        const reservation = await cancelReservation(supabaseAdmin as any, {
+        const reservation = await cancelReservation(supabaseAdmin, {
           tenant_id: tenantId,
           reservation_id: params.reservation_id,
           reason: params.reason ?? null,
@@ -522,7 +600,7 @@ export async function executeAction(
       }
 
       case 'reschedule_booking': {
-        const reservation = await rescheduleReservation(supabaseAdmin as any, {
+        const reservation = await rescheduleReservation(supabaseAdmin, {
           tenant_id: tenantId,
           reservation_id: params.reservation_id,
           start_at: params.new_start_at,
@@ -987,7 +1065,7 @@ export async function executeAction(
         const serviceId = params.resolved_service_id ?? params.service_id;
         const startAt = params.walk_in_start_at ?? new Date().toISOString();
         const endAt = params.walk_in_end_at ?? new Date(Date.now() + 60 * 60 * 1000).toISOString();
-        const reservation = await createReservation(supabaseAdmin as any, {
+        const reservation = await createReservation(supabaseAdmin, {
           tenant_id: tenantId,
           customer_id: params.customer_id ?? context.customerId ?? null,
           customer_name: params.customer_name ?? 'Walk-in',
@@ -1028,7 +1106,7 @@ type ProductSelection = {
   track_inventory: boolean;
 };
 
-function getShowcaseTriggerText(params: Record<string, any>): string | undefined {
+function getShowcaseTriggerText(params: Record<string, unknown>): string | undefined {
   const candidates = [
     params.trigger_text,
     params.showcase_name,
@@ -1086,7 +1164,7 @@ async function sendCatalogInteractively(
   tenantId: string,
   customerPhone: string,
   products: ProductSelection[],
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<boolean> {
   const client = await getTenantWhatsAppProviderClient(tenantId);
   if (!client) return false;
@@ -1169,7 +1247,7 @@ function parseIdList(value: unknown): string[] {
 
 async function resolveCatalogProducts(
   tenantId: string,
-  params: Record<string, any>
+  params: Record<string, unknown>
 ): Promise<ProductSelection[]> {
   const rows = await loadActiveProducts(tenantId);
   if (rows.length === 0) return [];
@@ -1191,7 +1269,7 @@ async function resolveCatalogProducts(
 
 async function resolveRecommendedProducts(
   tenantId: string,
-  params: Record<string, any>,
+  params: Record<string, unknown>,
   mode: 'recommendation' | 'upsell' | 'cross_sell' = 'recommendation',
 ): Promise<ProductSelection[]> {
   const rows = await loadActiveProducts(tenantId);

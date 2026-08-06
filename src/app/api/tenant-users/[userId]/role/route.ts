@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const VALID_ROLES = ['owner', 'manager', 'staff'] as const;
 
@@ -64,5 +65,5 @@ export const PATCH = createHttpHandler(
     return { ok: true, userId, role };
   },
   'PATCH',
-  { auth: true, roles: ['owner', 'superadmin'] }
+  { auth: true, roles: ['owner', 'superadmin'], permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );

@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
 import { publishEvent } from './eventBus';
@@ -662,6 +661,7 @@ export class PaymentService {
             ref: reference,
             email: params.email,
             reservation_id: params.reservationId,
+            provider: provider.id,
             provider_response: response,
           },
         })
@@ -733,7 +733,8 @@ export class PaymentService {
         return { success: false, error: 'Transaction not found' };
       }
 
-      const provider = this.getProvider(transaction.provider);
+      const providerId = (transaction.raw as { provider?: string } | null)?.provider;
+      const provider = this.getProvider(providerId);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
       }
@@ -777,7 +778,14 @@ export class PaymentService {
         // Mark the pre-inserted record as failed
         await this.supabase
           .from('transactions')
-          .update({ status: 'failed', raw: { original_reference: transaction.provider_reference, refund_response: refundResponse } })
+          .update({
+            status: 'failed',
+            raw: {
+              original_reference: transaction.provider_reference,
+              provider: provider.id,
+              refund_response: refundResponse,
+            },
+          })
           .eq('id', pendingRefund.id);
         refundProcessed(params.tenantId, 'failed');
         return { success: false, error: refundResponse.error };
@@ -793,6 +801,7 @@ export class PaymentService {
           provider_reference: refundResponse.refundReference,
           raw: {
             original_reference: transaction.provider_reference,
+            provider: provider.id,
             refund_response: refundResponse,
           },
         })
@@ -863,7 +872,7 @@ export class PaymentService {
         return { success: false, error: 'Maximum retry attempts exceeded' };
       }
 
-      const provider = this.getProvider(transaction.provider);
+      const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
       }
@@ -945,7 +954,7 @@ export class PaymentService {
       for (const transaction of transactions || []) {
         if (!transaction.provider_reference) continue;
 
-        const provider = this.getProvider(transaction.provider);
+        const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
         if (!provider) continue;
 
         try {
@@ -1024,8 +1033,8 @@ export class PaymentService {
     });
   }
 
-  private getProvider(providerId: string): PaymentProvider | undefined {
-    return this.providers.get(providerId);
+  private getProvider(providerId?: string): PaymentProvider | undefined {
+    return providerId ? this.providers.get(providerId) : undefined;
   }
 
   private generateReference(): string {

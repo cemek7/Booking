@@ -149,5 +149,5 @@ export async function POST(request: Request): Promise<Response> {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
-  return _authenticatedPOST(request as NextRequest);
+  return _authenticatedPOST(request as NextRequest) as Promise<Response>;
 }

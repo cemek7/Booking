@@ -115,7 +115,7 @@ ${retryBlock}Customer message:
 
 Respond ONLY with valid JSON:
 {
-  "action": "create_booking | get_availability | list_services | list_staff | get_price | send_quote | qualify_lead | show_catalog | show_showcase | recommend_products | offer_upsell | offer_cross_sell | create_retail_payment_link | recover_lead | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | general_reply | needs_info | escalate",
+  "action": "create_booking | get_availability | list_services | list_staff | get_price | send_quote | qualify_lead | show_catalog | show_showcase | recommend_products | offer_upsell | offer_cross_sell | create_retail_payment_link | recover_lead | cancel_booking | reschedule_booking | mark_no_show | add_service | update_service | add_staff | update_schedule | block_slot | walk_in | get_insights | owner_query | owner_analytics_query | general_reply | needs_info | escalate",
   "params": {},
   "reply": "natural language reply",
   "confidence": "high | medium | low"
@@ -135,6 +135,7 @@ Rules:
 - Use "offer_cross_sell" for a complementary service or retail recommendation.
 - Use "create_retail_payment_link" only when there is already a draft retail order in the conversation context and the customer is clearly ready to pay now.
 - Use "recover_lead" when the customer is interested but not ready, has objections, or wants a follow-up later. Include reason and optionally follow_up_at.
+- Use "owner_analytics_query" for owner/manager business questions about revenue, stock, top customers, top services, staff performance, lapsed customers, or outstanding balances.
 - For "show_catalog" and "recommend_products", prefer product IDs from the grounded context when possible. You may also pass "product_name", "query", or "category".
 - For "show_showcase", prefer a grounded showcase pack ID when possible. You may also pass "showcase_name" or "trigger_text".
 - Do not interrupt an active booking flow with sales actions unless the customer explicitly pivots or the sales action directly supports conversion.

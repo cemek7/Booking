@@ -14,6 +14,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 import PaymentService from '@/lib/paymentService';
+import { resolveCustomer } from '@/lib/customers/identity';
 
 export interface BookingDepositInfo {
   depositRequired: boolean;
@@ -204,6 +205,7 @@ export async function getAvailability(
   date: string,
   _staffId?: string
 ) {
+  void _staffId;
   const supabase = createSupabaseAdminClient();
 
   // Date is interpreted in the server timezone. Clients should send YYYY-MM-DD in the tenant's timezone.
@@ -287,37 +289,19 @@ async function getCustomer(tenantId: string, payload: {
   customer_email: string;
   customer_phone: string;
 }) {
-  const supabase = createSupabaseAdminClient();
-  
-  // Get or create customer
-  const { data: customer } = await supabase
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('email', payload.customer_email)
-    .maybeSingle();
+  const admin = createSupabaseAdminClient();
 
-  if (!customer) {
-    const { data: newCustomer, error: createErr } = await supabase
-      .from('customers')
-      .insert({
-        tenant_id: tenantId,
-        name: payload.customer_name,
-        email: payload.customer_email,
-        phone: payload.customer_phone,
-        source: 'public_booking',
-      })
-      .select('id')
-      .single();
+  const customerId = await resolveCustomer(admin, tenantId, payload.customer_phone, {
+    name: payload.customer_name,
+    email: payload.customer_email,
+    source: 'public_booking',
+  });
 
-    if (createErr || !newCustomer) {
-      throw ApiErrorFactory.databaseError(new Error(createErr?.message || 'Failed to create customer'));
-    }
-
-    return newCustomer;
+  if (!customerId) {
+    throw ApiErrorFactory.databaseError(new Error('Failed to resolve customer'));
   }
 
-  return customer;
+  return { id: customerId };
 }
 
 /**

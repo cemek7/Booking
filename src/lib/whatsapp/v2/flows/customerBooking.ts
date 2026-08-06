@@ -27,6 +27,7 @@ import { addProductsToRetailCart } from '@/lib/commerce/retail-orders';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 import { captureBookaException } from '@/lib/observability/sentry';
+import { findCustomerByPhone, resolveCustomer } from '@/lib/customers/identity';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -196,7 +197,10 @@ async function handleGetAvailability(
   conv: ConvState,
   channel: ConvChannel = 'whatsapp'
 ): Promise<string> {
-  const { service_id, tenant_staff_id, date } = aiResp.params;
+  // This action payload has passed the action validator before reaching the
+  // booking flow; keep the untyped boundary local to the AI integration.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { service_id, tenant_staff_id, date } = aiResp.params as Record<string, any>;
 
   if (!service_id || !date) return aiResp.reply;
 
@@ -298,7 +302,8 @@ async function handleCreateBooking(
 ): Promise<string> {
   // Alias for clarity — the externalId is used as phone for WA, IGSID for IG
   const phone = externalId;
-  const { service_id, tenant_staff_id, date, start_time, end_time, customer_name } = aiResp.params;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { service_id, tenant_staff_id, date, start_time, end_time, customer_name } = aiResp.params as Record<string, any>;
 
   if (!service_id || !date || !start_time) return aiResp.reply;
 
@@ -327,12 +332,7 @@ async function handleCreateBooking(
   const servicePrice = Number(service?.price ?? 0);
   const price = service ? `₦${Math.round(servicePrice).toLocaleString()}` : '';
   const depositConfig = getDepositConfig(tenantSettings);
-  const { data: customerRow } = await supabaseAdmin
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('phone', phone)
-    .maybeSingle();
+  const customerRow = await findCustomerByPhone(supabaseAdmin, tenantId, phone, 'id, merged_into');
 
   const { data: customerProfile } = customerRow?.id
     ? await supabaseAdmin
@@ -449,11 +449,18 @@ async function confirmBooking(
     .maybeSingle();
 
   // Upsert customer record
-  const { data: customer } = await supabaseAdmin
-    .from('customers')
-    .upsert({ tenant_id: tenantId, phone, name: customer_name ?? null }, { onConflict: 'tenant_id,phone' })
-    .select('id, total_bookings, email')
-    .single();
+  const customerId = await resolveCustomer(supabaseAdmin, tenantId, phone, {
+    name: customer_name ?? phone,
+    source: 'whatsapp_customer_booking',
+  });
+  const { data: customer } = customerId
+    ? await supabaseAdmin
+        .from('customers')
+        .select('id, total_bookings, email')
+        .eq('tenant_id', tenantId)
+        .eq('id', customerId)
+        .maybeSingle()
+    : { data: null };
 
   // Create reservation
   const startAt = `${date}T${start_time}:00`;
@@ -1038,12 +1045,12 @@ async function getCustomerGreeting(tenantId: string, externalId: string): Promis
     .eq('id', tenantId)
     .maybeSingle();
 
-  const { data: customer } = await supabaseAdmin
-    .from('customers')
-    .select('id, name, customer_name')
-    .eq('tenant_id', tenantId)
-    .eq('phone', externalId)
-    .maybeSingle();
+  const customer = await findCustomerByPhone(
+    supabaseAdmin,
+    tenantId,
+    externalId,
+    'id, name, customer_name, merged_into',
+  );
 
   const salonName = tenant?.name ?? 'us';
   const tenantSettings = getTenantSettings(tenant);

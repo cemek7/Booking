@@ -13,9 +13,15 @@ interface PaymentWebhookPayload {
   source?: string;
   reference?: string;
   id?: string;
-  data?: { reference?: string; status?: string; metadata?: Record<string, unknown> | null };
+  data?: {
+    reference?: string;
+    status?: string;
+    created_at?: string;
+    metadata?: Record<string, unknown> | null;
+  };
   status?: string;
   event?: string;
+  created_at?: string;
   metadata?: { reservation_id?: string; tenant_id?: string } | null;
 }
 
@@ -43,7 +49,6 @@ export const POST = createHttpHandler(
     const ref = parsed?.reference || parsed?.id || parsed?.data?.reference || null;
     const status = parsed?.status || parsed?.data?.status || parsed?.event || 'unknown';
     const reservationId = parsed?.metadata?.reservation_id || parsed?.data?.metadata?.reservation_id || null;
-    const _payloadTenantId = parsed?.metadata?.tenant_id || parsed?.data?.metadata?.tenant_id || null;
 
     // Signature verification (Paystack, Stripe, Flutterwave)
     // At least one recognised signature header must be present and verified.
@@ -78,9 +83,11 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.externalServiceError('Stripe secret not configured');
       }
       try {
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || stripeSecret, { apiVersion: '2024-11-20' as any });
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || stripeSecret, {
+          apiVersion: '2024-11-20' as Stripe.LatestApiVersion,
+        });
         stripe.webhooks.constructEvent(rawText, stripeSigHeader, stripeSecret);
-      } catch (e) {
+      } catch {
         throw ApiErrorFactory.validationError({ signature: 'Invalid Stripe signature' });
       }
       signatureVerified = true;
@@ -110,7 +117,7 @@ export const POST = createHttpHandler(
     }
 
     // Reject webhooks with a timestamp older than 72 hours
-    const webhookTimestamp = (parsed as any)?.data?.created_at || (parsed as any)?.created_at || null;
+    const webhookTimestamp = parsed.data?.created_at || parsed.created_at || null;
     if (webhookTimestamp) {
       const webhookAge = Date.now() - new Date(webhookTimestamp).getTime();
       const seventyTwoHoursMs = 72 * 60 * 60 * 1000;
@@ -152,7 +159,7 @@ export const POST = createHttpHandler(
       // Find transaction by provider reference alone — never use payload-supplied tenant_id
       const { data: transaction } = await ctx.supabase
         .from('transactions')
-        .select('id, status, provider, tenant_id')
+        .select('id, status, raw, tenant_id')
         .eq('provider_reference', ref)
         .maybeSingle();
 
@@ -169,7 +176,9 @@ export const POST = createHttpHandler(
         if (transaction.status !== status && /success|paid|completed/i.test(status)) {
           // Verify with provider for high-value status changes
           try {
-            const txProvider = paymentService['getProvider'](transaction.provider);
+            const txProvider = paymentService['getProvider'](
+              (transaction.raw as { provider?: string } | null)?.provider,
+            );
             if (txProvider) {
               const verification = await txProvider.verifyPayment(ref);
               finalStatus = verification.status;

@@ -115,6 +115,8 @@ function makeBearerClient(tenantId: string, role = 'owner') {
             capturedFilters[col] = val;
             return this;
           }),
+          // GET now excludes merged customer rows via .is('merged_into', null)
+          is: jest.fn().mockReturnThis(),
           order: jest.fn().mockReturnThis(),
           range: jest.fn().mockResolvedValue({ data: [], error: null }),
         };

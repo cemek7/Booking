@@ -22,6 +22,8 @@ import { hasPermission } from '@/types/unified-permissions';
 import type { Role } from '@/types/roles';
 import { createApiLogger } from '@/lib/logger/api-logger';
 import { getAlertService } from '@/lib/monitoring/alerting';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 
 /**
  * Lifecycle access gate — pure predicate (no I/O).
@@ -43,6 +45,7 @@ export interface RouteContext {
   request: NextRequest;
   user?: {
     id: string;
+    tenantUserId?: string;
     email: string;
     role: string;
     tenantId?: string;
@@ -57,7 +60,7 @@ export interface RouteContext {
 /**
  * Route handler function
  */
-export type RouteHandler<T = any> = (context: RouteContext) => Promise<T>;
+export type RouteHandler<T = unknown> = (context: RouteContext) => Promise<T>;
 
 /**
  * Route handler options
@@ -115,6 +118,7 @@ export function createApiHandler(
       params?: Promise<Record<string, string>> | Record<string, string>;
       user?: {
         id: string;
+        tenantUserId?: string;
         email?: string;
         role?: string;
         tenantId?: string;
@@ -152,6 +156,7 @@ export function createApiHandler(
           params,
           user: {
             id: legacyUser.id,
+            tenantUserId: legacyUser.tenantUserId,
             email: legacyUser.email || '',
             role: legacyUser.role || '',
             tenantId: legacyUser.tenantId,
@@ -230,7 +235,8 @@ export function createApiHandler(
           null;
         const shouldResolveTenantMembership = requireTenantMembership || Boolean(requestedTenantId);
 
-        let tenantUser: { tenant_id: string; role: string } | null = null;
+        let tenantUser: { id: string; tenant_id: string; role: string } | null = null;
+        let userPermissions: string[] = [];
 
         if (shouldResolveTenantMembership) {
           if (!requestedTenantId) {
@@ -244,7 +250,7 @@ export function createApiHandler(
           // when the row exists. Membership validation is a server-side trust check.
           const { data: tenantUserData, error: tenantUserError } = await createSupabaseAdminClient()
             .from('tenant_users')
-            .select('tenant_id, role')
+            .select('id, tenant_id, role')
             .eq('user_id', authData.user.id)
             .eq('tenant_id', requestedTenantId)
             .maybeSingle();
@@ -260,7 +266,11 @@ export function createApiHandler(
             return error.toResponse();
           }
 
-          tenantUser = tenantUserData;
+          const membership = tenantUserData;
+          tenantUser = membership;
+          userPermissions = Array.from(
+            await getEffectivePermissions(createSupabaseAdminClient(), membership.tenant_id, membership.id)
+          );
         }
 
         // Check role requirements — always validate roles if specified,
@@ -282,12 +292,29 @@ export function createApiHandler(
         if (options.permissions && options.permissions.length > 0) {
           const userRole = tenantUser?.role as Role | undefined;
           const denied = options.permissions.filter(permission => {
+            if (isGlobalAdmin) return false;
+            if (userPermissions.includes(permission)) return false;
             const colonIdx = permission.indexOf(':');
             const resource = colonIdx >= 0 ? permission.slice(0, colonIdx) : permission;
             const action = colonIdx >= 0 ? permission.slice(colonIdx + 1) : 'read';
             return !hasPermission(userRole ?? 'staff', resource, action as 'read' | 'write' | 'delete' | 'admin');
           });
           if (denied.length > 0) {
+            if (tenantUser?.tenant_id) {
+              await recordBusinessEvent(createSupabaseAdminClient(), {
+                tenantId: tenantUser.tenant_id,
+                actorType: 'user',
+                actorId: authData.user.id,
+                action: BUSINESS_EVENT_ACTIONS.ACCESS_DENIED,
+                entityType: 'api_route',
+                entityId: new URL(request.url).pathname,
+                source: 'api',
+                metadata: {
+                  denied_permissions: denied,
+                  role: userRole ?? 'staff',
+                },
+              });
+            }
             const error = ApiErrorFactory.insufficientPermissions(options.permissions);
             return error.toResponse();
           }
@@ -325,10 +352,11 @@ export function createApiHandler(
           request,
           user: {
             id: authData.user.id,
+            tenantUserId: tenantUser?.id,
             email: authData.user.email || '',
             role: isGlobalAdmin ? 'superadmin' : (tenantUser?.role || ''),
             tenantId: tenantUser?.tenant_id,
-            permissions: [],
+            permissions: isGlobalAdmin ? ['*'] : userPermissions,
           },
           supabase,
           params,
@@ -423,7 +451,7 @@ export function getPaginationParams(request: NextRequest): PaginationParams {
 /**
  * Helper to extract and validate JSON body
  */
-export async function parseJsonBody<T = any>(request: NextRequest): Promise<T> {
+export async function parseJsonBody<T = unknown>(request: NextRequest): Promise<T> {
   try {
     return await request.json();
   } catch (error) {
@@ -469,7 +497,7 @@ export function getRouteParam(
 /**
  * Type-safe API handler builder
  */
-export class ApiHandlerBuilder<T = any> {
+export class ApiHandlerBuilder<T = unknown> {
   private config: RouteHandlerOptions = {};
   private handler?: RouteHandler<T>;
   private preHandlers: Array<(ctx: RouteContext) => Promise<void>> = [];
@@ -499,7 +527,12 @@ export class ApiHandlerBuilder<T = any> {
     return this;
   }
 
-  handle(fn: RouteHandler<T>): (request: NextRequest, ctx?: any) => Promise<NextResponse> {
+  handle(
+    fn: RouteHandler<T>
+  ): (
+    request: NextRequest,
+    ctx?: { params?: Promise<Record<string, string>> | Record<string, string> }
+  ) => Promise<NextResponse> {
     this.handler = fn;
     const preHandlers = this.preHandlers;
     const capturedHandler = this.handler;
@@ -510,9 +543,12 @@ export class ApiHandlerBuilder<T = any> {
         for (const preHandler of preHandlers) {
           await preHandler(ctx);
         }
-        return capturedHandler ? await capturedHandler(ctx) : null;
+        return (capturedHandler ? await capturedHandler(ctx) : NextResponse.json({ ok: true })) as NextResponse;
       },
       this.config,
-    );
+    ) as (
+      request: NextRequest,
+      ctx?: { params?: Promise<Record<string, string>> | Record<string, string> }
+    ) => Promise<NextResponse>;
   }
 }

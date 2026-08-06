@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 import {
   getStaffData,
   inviteStaffMember,
@@ -38,7 +39,7 @@ export const GET = createHttpHandler(
     return { success: true, ...staffData };
   },
   'GET',
-  { auth: true, roles: ['owner'] }
+  { auth: true, roles: ['owner'], permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );
 
 export const POST = createHttpHandler(
@@ -72,5 +73,5 @@ export const POST = createHttpHandler(
     return { success: true, ...result };
   },
   'POST',
-  { auth: true, roles: ['owner'] }
+  { auth: true, roles: ['owner'], permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );

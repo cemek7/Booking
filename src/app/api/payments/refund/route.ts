@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import PaymentService from '@/lib/paymentService';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const RefundSchema = z.object({
   transactionId: z.string().min(1, 'Transaction ID is required'),
@@ -41,5 +42,5 @@ export const POST = createHttpHandler(
     };
   },
   'POST',
-  { auth: true, roles: ['manager', 'owner', 'superadmin'] }
+  { auth: true, roles: ['manager', 'owner', 'superadmin'], permissions: [BOOKA_PERMISSIONS.ISSUE_REFUNDS] }
 );

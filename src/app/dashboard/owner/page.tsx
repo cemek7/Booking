@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+
 import { redirect } from 'next/navigation';
 
 // The owner home was merged into /dashboard (single role-aware home page).

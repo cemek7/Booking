@@ -30,6 +30,8 @@ module.exports = {
     // "ENDPOINT_NAME", calls jest.mock() inside a helper, and imports the
     // non-existent @/lib/auth. Kept as a reference, excluded from the run.
     '<rootDir>/src/__tests__/api/template.test.ts',
+    // Live-DB smoke runs only via jest.livesmoke.config.cjs (needs SUPABASE creds).
+    '<rootDir>/tests/live-smoke/',
   ],
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest'

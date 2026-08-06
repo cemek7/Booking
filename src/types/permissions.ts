@@ -53,7 +53,7 @@ export interface Permission {
 export interface PermissionCondition {
   type: 'time' | 'location' | 'data' | 'user' | 'tenant';
   operator: 'equals' | 'contains' | 'greater' | 'less' | 'in' | 'not_in';
-  value: any;
+  value: unknown;
   description: string;
 }
 
@@ -70,7 +70,7 @@ export interface PermissionRestriction {
   permissionId: string;
   restrictionType: 'time' | 'data' | 'feature' | 'rate';
   description: string;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 // Permission check result
@@ -79,7 +79,7 @@ export interface PermissionCheckResult {
   permission: Permission;
   reason?: string;
   restrictions?: PermissionRestriction[];
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 // System-wide permission registry
@@ -87,8 +87,181 @@ export interface PermissionRegistry {
   [key: string]: Permission;
 }
 
+export const BOOKA_PERMISSIONS = {
+  VIEW_APPOINTMENTS: 'VIEW_APPOINTMENTS',
+  MANAGE_APPOINTMENTS: 'MANAGE_APPOINTMENTS',
+  COMPLETE_SERVICES: 'COMPLETE_SERVICES',
+  VIEW_PRODUCTS: 'VIEW_PRODUCTS',
+  MANAGE_PRODUCTS: 'MANAGE_PRODUCTS',
+  RECORD_SALES: 'RECORD_SALES',
+  RECORD_EXPENSES: 'RECORD_EXPENSES',
+  RECORD_PURCHASES: 'RECORD_PURCHASES',
+  ISSUE_DISCOUNTS: 'ISSUE_DISCOUNTS',
+  RECORD_PAYMENTS: 'RECORD_PAYMENTS',
+  ISSUE_REFUNDS: 'ISSUE_REFUNDS',
+  ADJUST_INVENTORY: 'ADJUST_INVENTORY',
+  PERFORM_STOCK_COUNTS: 'PERFORM_STOCK_COUNTS',
+  VIEW_ANALYTICS: 'VIEW_ANALYTICS',
+  VIEW_REVENUE: 'VIEW_REVENUE',
+  MANAGE_STAFF: 'MANAGE_STAFF',
+  VIEW_CUSTOMER_NOTES: 'VIEW_CUSTOMER_NOTES',
+  MERGE_CUSTOMERS: 'MERGE_CUSTOMERS',
+  APPROVE_ANOMALIES: 'APPROVE_ANOMALIES',
+  APPROVE_LARGE_DISCOUNTS: 'APPROVE_LARGE_DISCOUNTS',
+  APPROVE_REFUNDS: 'APPROVE_REFUNDS',
+} as const;
+
+type BookaPermissionId = typeof BOOKA_PERMISSIONS[keyof typeof BOOKA_PERMISSIONS];
+
 // Permission constants
 export const PERMISSIONS: PermissionRegistry = {
+  [BOOKA_PERMISSIONS.VIEW_APPOINTMENTS]: {
+    id: BOOKA_PERMISSIONS.VIEW_APPOINTMENTS,
+    category: 'booking',
+    action: 'view',
+    scope: 'tenant',
+    description: 'View appointments and booking schedules',
+  },
+  [BOOKA_PERMISSIONS.MANAGE_APPOINTMENTS]: {
+    id: BOOKA_PERMISSIONS.MANAGE_APPOINTMENTS,
+    category: 'booking',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Create, reschedule, and cancel appointments',
+  },
+  [BOOKA_PERMISSIONS.COMPLETE_SERVICES]: {
+    id: BOOKA_PERMISSIONS.COMPLETE_SERVICES,
+    category: 'booking',
+    action: 'update',
+    scope: 'tenant',
+    description: 'Mark services and appointments as completed',
+  },
+  [BOOKA_PERMISSIONS.VIEW_PRODUCTS]: {
+    id: BOOKA_PERMISSIONS.VIEW_PRODUCTS,
+    category: 'tenant',
+    action: 'view',
+    scope: 'tenant',
+    description: 'View products, inventory, and retail catalogue data',
+  },
+  [BOOKA_PERMISSIONS.MANAGE_PRODUCTS]: {
+    id: BOOKA_PERMISSIONS.MANAGE_PRODUCTS,
+    category: 'tenant',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Create and update products and retail catalogue data',
+  },
+  [BOOKA_PERMISSIONS.RECORD_SALES]: {
+    id: BOOKA_PERMISSIONS.RECORD_SALES,
+    category: 'billing',
+    action: 'create',
+    scope: 'tenant',
+    description: 'Record retail sales and completed commerce transactions',
+  },
+  [BOOKA_PERMISSIONS.RECORD_EXPENSES]: {
+    id: BOOKA_PERMISSIONS.RECORD_EXPENSES,
+    category: 'billing',
+    action: 'create',
+    scope: 'tenant',
+    description: 'Record supplier expenses and operating costs',
+  },
+  [BOOKA_PERMISSIONS.RECORD_PURCHASES]: {
+    id: BOOKA_PERMISSIONS.RECORD_PURCHASES,
+    category: 'billing',
+    action: 'create',
+    scope: 'tenant',
+    description: 'Record purchases, stock receipts, and supplier-side obligations',
+  },
+  [BOOKA_PERMISSIONS.ISSUE_DISCOUNTS]: {
+    id: BOOKA_PERMISSIONS.ISSUE_DISCOUNTS,
+    category: 'billing',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Apply discounts to services and retail orders',
+  },
+  [BOOKA_PERMISSIONS.RECORD_PAYMENTS]: {
+    id: BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+    category: 'billing',
+    action: 'create',
+    scope: 'tenant',
+    description: 'Record inbound payments, deposits, and settlements',
+  },
+  [BOOKA_PERMISSIONS.ISSUE_REFUNDS]: {
+    id: BOOKA_PERMISSIONS.ISSUE_REFUNDS,
+    category: 'billing',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Issue refunds and reverse customer payments',
+  },
+  [BOOKA_PERMISSIONS.ADJUST_INVENTORY]: {
+    id: BOOKA_PERMISSIONS.ADJUST_INVENTORY,
+    category: 'tenant',
+    action: 'update',
+    scope: 'tenant',
+    description: 'Adjust live stock levels and inventory movements',
+  },
+  [BOOKA_PERMISSIONS.PERFORM_STOCK_COUNTS]: {
+    id: BOOKA_PERMISSIONS.PERFORM_STOCK_COUNTS,
+    category: 'tenant',
+    action: 'execute',
+    scope: 'tenant',
+    description: 'Run stock counts and count-adjustment workflows',
+  },
+  [BOOKA_PERMISSIONS.VIEW_ANALYTICS]: {
+    id: BOOKA_PERMISSIONS.VIEW_ANALYTICS,
+    category: 'analytics',
+    action: 'view',
+    scope: 'tenant',
+    description: 'View tenant analytics and operational insights',
+  },
+  [BOOKA_PERMISSIONS.VIEW_REVENUE]: {
+    id: BOOKA_PERMISSIONS.VIEW_REVENUE,
+    category: 'reporting',
+    action: 'view',
+    scope: 'tenant',
+    description: 'View revenue assurance, close reports, and financial summaries',
+  },
+  [BOOKA_PERMISSIONS.MANAGE_STAFF]: {
+    id: BOOKA_PERMISSIONS.MANAGE_STAFF,
+    category: 'user',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Manage staff access, permissions, and accountability settings',
+  },
+  [BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES]: {
+    id: BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES,
+    category: 'user',
+    action: 'view',
+    scope: 'tenant',
+    description: 'View sensitive customer notes and internal memory',
+  },
+  [BOOKA_PERMISSIONS.MERGE_CUSTOMERS]: {
+    id: BOOKA_PERMISSIONS.MERGE_CUSTOMERS,
+    category: 'user',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Review duplicate customers and merge customer histories',
+  },
+  [BOOKA_PERMISSIONS.APPROVE_ANOMALIES]: {
+    id: BOOKA_PERMISSIONS.APPROVE_ANOMALIES,
+    category: 'reporting',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Review and resolve business anomalies',
+  },
+  [BOOKA_PERMISSIONS.APPROVE_LARGE_DISCOUNTS]: {
+    id: BOOKA_PERMISSIONS.APPROVE_LARGE_DISCOUNTS,
+    category: 'billing',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Approve discount requests above the normal operator threshold',
+  },
+  [BOOKA_PERMISSIONS.APPROVE_REFUNDS]: {
+    id: BOOKA_PERMISSIONS.APPROVE_REFUNDS,
+    category: 'billing',
+    action: 'manage',
+    scope: 'tenant',
+    description: 'Approve refunds that require supervisory sign-off',
+  },
   // System permissions
   'system:manage:all': {
     id: 'system:manage:all',
@@ -323,9 +496,46 @@ export const PERMISSIONS: PermissionRegistry = {
   }
 };
 
+const BOOKA_OWNER_PERMISSIONS: BookaPermissionId[] = Object.values(BOOKA_PERMISSIONS);
+const BOOKA_MANAGER_PERMISSIONS: BookaPermissionId[] = [
+  BOOKA_PERMISSIONS.VIEW_APPOINTMENTS,
+  BOOKA_PERMISSIONS.MANAGE_APPOINTMENTS,
+  BOOKA_PERMISSIONS.COMPLETE_SERVICES,
+  BOOKA_PERMISSIONS.VIEW_PRODUCTS,
+  BOOKA_PERMISSIONS.MANAGE_PRODUCTS,
+  BOOKA_PERMISSIONS.RECORD_SALES,
+  BOOKA_PERMISSIONS.RECORD_EXPENSES,
+  BOOKA_PERMISSIONS.RECORD_PURCHASES,
+  BOOKA_PERMISSIONS.ISSUE_DISCOUNTS,
+  BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  BOOKA_PERMISSIONS.ISSUE_REFUNDS,
+  BOOKA_PERMISSIONS.ADJUST_INVENTORY,
+  BOOKA_PERMISSIONS.PERFORM_STOCK_COUNTS,
+  BOOKA_PERMISSIONS.VIEW_ANALYTICS,
+  BOOKA_PERMISSIONS.VIEW_REVENUE,
+  BOOKA_PERMISSIONS.MANAGE_STAFF,
+  BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES,
+  BOOKA_PERMISSIONS.MERGE_CUSTOMERS,
+  BOOKA_PERMISSIONS.APPROVE_ANOMALIES,
+  BOOKA_PERMISSIONS.APPROVE_LARGE_DISCOUNTS,
+  BOOKA_PERMISSIONS.APPROVE_REFUNDS,
+];
+const BOOKA_STAFF_PERMISSIONS: BookaPermissionId[] = [
+  BOOKA_PERMISSIONS.VIEW_APPOINTMENTS,
+  BOOKA_PERMISSIONS.MANAGE_APPOINTMENTS,
+  BOOKA_PERMISSIONS.COMPLETE_SERVICES,
+  BOOKA_PERMISSIONS.VIEW_PRODUCTS,
+  BOOKA_PERMISSIONS.RECORD_SALES,
+  BOOKA_PERMISSIONS.RECORD_EXPENSES,
+  BOOKA_PERMISSIONS.RECORD_PURCHASES,
+  BOOKA_PERMISSIONS.RECORD_PAYMENTS,
+  BOOKA_PERMISSIONS.VIEW_CUSTOMER_NOTES,
+];
+
 // Role permission mappings
 export const ROLE_PERMISSION_MAP: Record<Role, string[]> = {
   superadmin: [
+    ...BOOKA_OWNER_PERMISSIONS,
     'system:manage:all',
     'system:view:health',
     'system:manage:settings',
@@ -341,6 +551,7 @@ export const ROLE_PERMISSION_MAP: Record<Role, string[]> = {
     'api:access:full'
   ],
   owner: [
+    ...BOOKA_OWNER_PERMISSIONS,
     'tenant:view:settings',
     'tenant:update:settings',
     'user:manage:all',
@@ -361,6 +572,7 @@ export const ROLE_PERMISSION_MAP: Record<Role, string[]> = {
     'api:access:full'
   ],
   manager: [
+    ...BOOKA_MANAGER_PERMISSIONS,
     'user:view:profiles',
     'booking:create',
     'booking:view:all',
@@ -373,6 +585,7 @@ export const ROLE_PERMISSION_MAP: Record<Role, string[]> = {
     'api:access:readonly'
   ],
   staff: [
+    ...BOOKA_STAFF_PERMISSIONS,
     'user:view:own',
     'user:update:own',
     'booking:view:own',
@@ -384,13 +597,14 @@ export const ROLE_PERMISSION_MAP: Record<Role, string[]> = {
 export function hasPermission(
   userRole: Role, // Updated to use standardized Role type
   permissionId: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): PermissionCheckResult {
   // Import enhanced permission checking for better inheritance
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { hasEnhancedPermission } = require('./enhanced-permissions');
     return hasEnhancedPermission(userRole, permissionId, context);
-  } catch (error) {
+  } catch {
     // Fallback to original implementation if enhanced module not available
     defaultLogger.warn('Enhanced permissions not available, using fallback');
     return hasPermissionFallback(userRole, permissionId, context);
@@ -401,7 +615,7 @@ export function hasPermission(
 function hasPermissionFallback(
   userRole: Role,
   permissionId: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): PermissionCheckResult {
   // Check direct permissions
   const rolePermissions = ROLE_PERMISSION_MAP[userRole] || [];
@@ -421,7 +635,13 @@ function hasPermissionFallback(
   if (!permission) {
     return {
       granted: false,
-      permission: permission,
+      permission: {
+        id: permissionId,
+        category: 'api',
+        action: 'read',
+        scope: 'none',
+        description: 'Unknown permission',
+      },
       reason: 'Permission not found'
     };
   }
@@ -437,7 +657,7 @@ function hasPermissionFallback(
 export function checkPermissions(
   userRole: Role, // Updated to use standardized Role type
   requiredPermissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): PermissionCheckResult[] {
   return requiredPermissions.map(permissionId => 
     hasPermission(userRole, permissionId, context)
@@ -447,7 +667,7 @@ export function checkPermissions(
 export function hasAllPermissions(
   userRole: Role, // Updated to use standardized Role type
   requiredPermissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): boolean {
   const results = checkPermissions(userRole, requiredPermissions, context);
   return results.every(result => result.granted);
@@ -456,7 +676,7 @@ export function hasAllPermissions(
 export function hasAnyPermission(
   userRole: Role, // Updated to use standardized Role type
   requiredPermissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): boolean {
   const results = checkPermissions(userRole, requiredPermissions, context);
   return results.some(result => result.granted);
@@ -464,10 +684,11 @@ export function hasAnyPermission(
 
 export function getPermissionsForRole(role: Role): Permission[] {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getAllPermissionsForRole } = require('./enhanced-permissions');
     const permissionIds = getAllPermissionsForRole(role);
     return permissionIds.map((id: string) => PERMISSIONS[id]).filter(Boolean); // Explicitly typed `id`
-  } catch (error) {
+  } catch {
     // Fallback to original implementation
     defaultLogger.warn('Enhanced permissions not available, using fallback for getPermissionsForRole');
     return getPermissionsForRoleFallback(role);
