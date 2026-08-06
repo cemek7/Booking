@@ -26,8 +26,20 @@ jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
 
 const mockSendTextMessage = jest.fn();
 const mockGetTenantChannelProviderClient = jest.fn();
+const mockGetTenantWhatsAppProviderClient = jest.fn();
 jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
   getTenantChannelProviderClient: (...args: unknown[]) => mockGetTenantChannelProviderClient(...args),
+  getTenantWhatsAppProviderClient: (...args: unknown[]) => mockGetTenantWhatsAppProviderClient(...args),
+}));
+
+const mockSendGovernedInitiated = jest.fn();
+jest.mock('@/lib/whatsapp/v2/deliverability/governedSend', () => ({
+  sendGovernedInitiated: (...args: unknown[]) => mockSendGovernedInitiated(...args),
+}));
+
+const mockBrandCustomerText = jest.fn();
+jest.mock('@/lib/whatsapp/v2/outboundBranding', () => ({
+  brandCustomerText: (...args: unknown[]) => mockBrandCustomerText(...args),
 }));
 
 jest.mock('@/lib/eventbus/eventBus', () => ({
@@ -91,6 +103,12 @@ describe('retail payment lifecycle helpers', () => {
     mockGetTenantChannelProviderClient.mockResolvedValue({
       sendTextMessage: mockSendTextMessage,
     });
+    mockGetTenantWhatsAppProviderClient.mockResolvedValue({
+      sendTextMessage: mockSendTextMessage,
+      sendTemplateMessage: jest.fn(),
+    });
+    mockSendGovernedInitiated.mockResolvedValue({ sent: true, mode: 'freeform', reason: 'sent' });
+    mockBrandCustomerText.mockResolvedValue('branded text');
     mockSendTextMessage.mockResolvedValue({ success: true, messageId: 'msg-1' });
     mockRecordFrontDeskEvent.mockResolvedValue(undefined);
   });
@@ -149,6 +167,54 @@ describe('retail payment lifecycle helpers', () => {
       '+2348000000000',
       expect.stringContaining('didn’t go through'),
     );
+  });
+
+  it('routes a WhatsApp retail payment receipt through the governed send path', async () => {
+    mockCreateServerSupabaseClient.mockReturnValue({
+      from: jest.fn((table: string) => {
+        if (table === 'transactions') {
+          return {
+            select: jest.fn(() => ({
+              eq: jest.fn(() => ({
+                eq: jest.fn(() => ({
+                  maybeSingle: jest.fn(async () => ({
+                    data: {
+                      amount: 1850,
+                      currency: 'NGN',
+                      raw: {
+                        retail_order_id: 'ord-1',
+                        external_customer_ref: '+2348000000000',
+                        channel: 'whatsapp',
+                      },
+                    },
+                    error: null,
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
+        return { update: jest.fn(() => ({ eq: jest.fn(() => ({ eq: jest.fn(async () => ({ error: null })) })) })) };
+      }),
+    });
+    mockGetConversation.mockResolvedValue({
+      current_flow: 'managing',
+      flow_data: {},
+      last_inbound_at: new Date().toISOString(),
+      opted_out_at: null,
+    });
+
+    await handlePaymentSuccess({ tenantId: 'tenant-1', reference: 'ref-whatsapp-receipt', provider: 'paystack' });
+
+    expect(mockSendGovernedInitiated).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        recipient: '+2348000000000',
+        messageType: 'payment_receipt',
+      }),
+    );
+    expect(mockGetTenantChannelProviderClient).not.toHaveBeenCalledWith('tenant-1', 'whatsapp');
   });
 
   it('marks a retail order refunded and notifies the customer', async () => {

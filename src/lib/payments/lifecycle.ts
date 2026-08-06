@@ -1428,8 +1428,19 @@ async function sendRetailPaymentMessage(input: {
   externalCustomerRef: string;
   channel: 'whatsapp' | 'instagram';
   text: string;
+  messageType?: string;
 }) {
   try {
+    if (input.channel === 'whatsapp' && input.messageType) {
+      await sendGovernedWhatsAppPaymentMessage({
+        tenantId: input.tenantId,
+        recipient: input.externalCustomerRef,
+        messageType: input.messageType,
+        text: input.text,
+      });
+      return;
+    }
+
     const { getTenantChannelProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
     const provider = await getTenantChannelProviderClient(input.tenantId, input.channel);
     if (!provider) return;
@@ -1437,6 +1448,73 @@ async function sendRetailPaymentMessage(input: {
   } catch (error) {
     defaultLogger.warn('[lifecycle] retail payment message send failed', error);
   }
+}
+
+function toTemplateParameters(paramMapping: unknown[]): Array<{ default: string }> {
+  return paramMapping.map((entry) => {
+    if (entry && typeof entry === 'object' && 'default' in entry) {
+      return { default: String((entry as { default?: unknown }).default ?? '') };
+    }
+    return { default: String(entry ?? '') };
+  });
+}
+
+/**
+ * Paid confirmations are business-initiated WhatsApp sends. They must pass the
+ * shared-number governor and the 24-hour/template gate. A missing conversation
+ * or approved payment_receipt template therefore safely results in no send.
+ */
+async function sendGovernedWhatsAppPaymentMessage(input: {
+  tenantId: string;
+  recipient: string;
+  messageType: 'payment_receipt';
+  text: string;
+}): Promise<boolean> {
+  const { getConversation } = await import('@/lib/whatsapp/v2/conversationState');
+  const { brandCustomerText } = await import('@/lib/whatsapp/v2/outboundBranding');
+  const { sendGovernedInitiated } = await import('@/lib/whatsapp/v2/deliverability/governedSend');
+  const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+
+  const [conversation, client] = await Promise.all([
+    getConversation(input.recipient, input.tenantId, 'whatsapp'),
+    getTenantWhatsAppProviderClient(input.tenantId),
+  ]);
+  if (!client) return false;
+
+  const result = await sendGovernedInitiated(createServerSupabaseClient() as never, {
+    tenantId: input.tenantId,
+    recipient: input.recipient,
+    messageType: input.messageType,
+    lastInboundAt: conversation?.last_inbound_at ?? null,
+    optedOutAt: conversation?.opted_out_at ?? null,
+    buildFreeform: () => input.text,
+    sendFreeform: async (text) => {
+      const branded = await brandCustomerText(input.tenantId, input.recipient, text, {
+        initiated: true,
+        conv: conversation
+          ? {
+              last_inbound_at: conversation.last_inbound_at,
+              opted_out_at: conversation.opted_out_at,
+            }
+          : undefined,
+      });
+      if (!branded) return false;
+      return (await client.sendTextMessage(input.recipient, branded)).success;
+    },
+    sendTemplate: async (name, language, paramMapping) => {
+      if (!client.sendTemplateMessage) return false;
+      return (
+        await client.sendTemplateMessage(
+          input.recipient,
+          name,
+          toTemplateParameters(paramMapping),
+          language,
+        )
+      ).success;
+    },
+  });
+
+  return result.sent;
 }
 
 async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
@@ -1485,6 +1563,7 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
       externalCustomerRef: input.externalCustomerRef,
       channel: input.channel,
       text: `Payment received ✅ Your order is now confirmed. Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. We’ll keep you posted on fulfillment here.`,
+      messageType: 'payment_receipt',
     });
   }
 
@@ -1830,19 +1909,23 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
       endTime: endAt,
     };
 
-      // 4. WhatsApp confirmation
+    // 4. WhatsApp confirmation. Successful-payment confirmations are governed
+    // business-initiated sends; outside the service window an approved template
+    // is required or this intentionally holds.
     if (customerPhone) {
       try {
-        const { getTenantWhatsAppConfig } = await import('@/lib/whatsapp/evolutionClient');
-        const waConfig = await getTenantWhatsAppConfig(tenantId);
-        if (waConfig) {
-          const { sendBookingConfirmationWhatsApp } = await import('@/lib/integrations/whatsapp-service');
-          await sendBookingConfirmationWhatsApp(
-            customerPhone,
-            customerName || 'there',
-            { serviceName, date: dateStr, time: timeStr, calendarEvent }
-          );
-        }
+        const { buildBookingConfirmationWhatsAppText } = await import('@/lib/integrations/whatsapp-service');
+        await sendGovernedWhatsAppPaymentMessage({
+          tenantId,
+          recipient: customerPhone,
+          messageType: 'payment_receipt',
+          text: buildBookingConfirmationWhatsAppText(customerName || 'there', {
+            serviceName,
+            date: dateStr,
+            time: timeStr,
+            calendarEvent,
+          }),
+        });
       } catch (waErr) {
         defaultLogger.warn('[lifecycle] WhatsApp confirmation failed', waErr);
       }

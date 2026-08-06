@@ -73,6 +73,19 @@ jest.mock('@/lib/whatsapp/evolutionClient', () => ({
 }));
 jest.mock('@/lib/integrations/whatsapp-service', () => ({
   sendBookingConfirmationWhatsApp: jest.fn(async () => undefined),
+  buildBookingConfirmationWhatsAppText: jest.fn(() => 'payment confirmed'),
+}));
+const mockPaymentConversation = jest.fn();
+jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
+  getConversation: (...args: unknown[]) => mockPaymentConversation(...args),
+}));
+const mockPaymentBrandText = jest.fn();
+jest.mock('@/lib/whatsapp/v2/outboundBranding', () => ({
+  brandCustomerText: (...args: unknown[]) => mockPaymentBrandText(...args),
+}));
+const mockPaymentGovernedSend = jest.fn();
+jest.mock('@/lib/whatsapp/v2/deliverability/governedSend', () => ({
+  sendGovernedInitiated: (...args: unknown[]) => mockPaymentGovernedSend(...args),
 }));
 jest.mock('@/lib/integrations/email-service', () => ({
   sendBookingConfirmation: jest.fn(async () => undefined),
@@ -443,6 +456,66 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
       expect(updateFn).toHaveBeenCalledTimes(1);
       expect(updateFn).toHaveBeenCalledWith(expect.objectContaining({ status: 'confirmed' }));
     });
+
+    it('routes a paid booking confirmation through the governed send path', async () => {
+      const updateFn = jest.fn(() => ({
+        eq: jest.fn(() => ({
+          eq: jest.fn(() => ({
+            not: jest.fn(() => ({
+              select: jest.fn(() => ({
+                maybeSingle: jest.fn(async () => ({
+                  data: {
+                    id: 'res_governed',
+                    start_at: new Date(Date.now() + 3_600_000).toISOString(),
+                    end_at: null,
+                    customer_number: '+2348000000000',
+                    metadata: { customer_name: 'Jane Smoke' },
+                    notes: null,
+                    service_id: 'svc_smoke',
+                  },
+                  error: null,
+                })),
+              })),
+            })),
+          })),
+        })),
+      }));
+      const txUpdateFn = jest.fn(() => ({
+        eq: jest.fn(() => ({ eq: jest.fn(async () => ({ data: null, error: null })) })),
+      }));
+      (createServerSupabaseClient as jest.Mock).mockReturnValue({
+        from: jest.fn((table: string) => {
+          if (table === 'reservations') return { update: updateFn };
+          if (table === 'transactions') return { update: txUpdateFn };
+          return {
+            select: jest.fn(() => ({
+              eq: jest.fn(() => ({
+                maybeSingle: jest.fn(async () => ({ data: null, error: null })),
+              })),
+            })),
+          };
+        }),
+      });
+
+      const providerSelection = jest.requireMock('@/lib/whatsapp/providers/providerSelection');
+      providerSelection.getTenantWhatsAppProviderClient.mockResolvedValue({
+        sendTextMessage: jest.fn(async () => ({ success: true })),
+        sendTemplateMessage: jest.fn(async () => ({ success: true })),
+      });
+      mockPaymentConversation.mockResolvedValue({ last_inbound_at: new Date().toISOString(), opted_out_at: null });
+      mockPaymentGovernedSend.mockResolvedValue({ sent: true, mode: 'freeform', reason: 'sent' });
+
+      await handlePaymentSuccess({
+        tenantId: 'ten_smoke', reference: 'ref_governed', provider: 'paystack', reservationId: 'res_governed',
+      });
+
+      expect(mockPaymentGovernedSend).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'ten_smoke', recipient: '+2348000000000', messageType: 'payment_receipt',
+        }),
+      );
+    });
   });
 
   // ── Stage 4: Reminders ────────────────────────────────────────────────────
@@ -461,6 +534,8 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
 
     beforeEach(() => {
       (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeAdminMock());
+      const providerSelection = jest.requireMock('@/lib/whatsapp/providers/providerSelection');
+      providerSelection.getTenantWhatsAppProviderClient.mockResolvedValue(null);
     });
 
     it('returns { processed: 0 } when there are no pending reminders', async () => {
