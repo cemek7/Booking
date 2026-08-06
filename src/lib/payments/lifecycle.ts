@@ -1428,7 +1428,7 @@ async function sendRetailPaymentMessage(input: {
   externalCustomerRef: string;
   channel: 'whatsapp' | 'instagram';
   text: string;
-  messageType?: string;
+  messageType?: 'payment_receipt';
 }) {
   try {
     if (input.channel === 'whatsapp' && input.messageType) {
@@ -1831,7 +1831,9 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
     // (prevents reactivating cancelled reservations when a late payment arrives)
     const { data: reservation, error: resError } = await supabase
       .from('reservations')
-      .update({ status: 'confirmed', updated_at: new Date().toISOString() })
+      // reservations has no updated_at column — writing it errors the whole
+      // update, so a paid booking would never flip to confirmed.
+      .update({ status: 'confirmed' })
       .eq('id', bookingId)
       .eq('tenant_id', tenantId)
       .not('status', 'in', '("cancelled","completed","refunded")')
