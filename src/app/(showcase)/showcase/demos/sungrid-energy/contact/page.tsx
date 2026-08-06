@@ -1,0 +1,7 @@
+import { LeadForm } from '@/components/capability/forms/LeadForm';
+import { Container } from '@/components/capability/core/Container';
+import { Heading } from '@/components/capability/core/Heading';
+import { Section } from '@/components/capability/core/Section';
+import { Text } from '@/components/capability/core/Text';
+export const metadata = { title: 'Request a site assessment', description: 'A local-only site assessment form in the SunGrid capability demonstrator.' };
+export default function ContactPage() { return <main><Section><Container width="narrow"><p className="text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--sc-accent)' }}>Assessment request</p><Heading level={1} className="mt-4">Tell us what needs to keep running.</Heading><Text tone="muted" className="mt-4">This form demonstrates a low-friction assessment flow. It does not send, store, or transmit any information.</Text><div className="sc-surface mt-10 rounded-2xl border border-current/10 p-6 sm:p-8"><LeadForm submitLabel="Preview assessment request" fields={[{ name: 'name', label: 'Name', required: true }, { name: 'phone', label: 'Phone number', type: 'tel', required: true }, { name: 'address', label: 'Property area or address', required: true }, { name: 'propertyType', label: 'Property type', required: true }, { name: 'monthlyBill', label: 'Approximate monthly electricity spend', required: true }, { name: 'notes', label: 'What would you like to keep powered?', type: 'textarea' }]} /></div></Container></Section></main>; }
