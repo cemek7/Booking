@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { requireAuth } from '@/lib/auth/server-auth';
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   BarChart3,
   BrainCircuit,
@@ -54,6 +55,12 @@ const OWNER_QUICK_LINKS: QuickLink[] = [
   { href: '/dashboard/chats', title: 'Customer Messages', description: 'View customer chats and respond without losing context.', icon: MessageCircle },
   { href: '/dashboard/owner/analytics', title: 'Business Analytics', description: 'Detailed performance, revenue, and growth insights.', icon: BarChart3 },
   { href: '/dashboard/owner/llm-metrics', title: 'AI Metrics', description: 'How your AI front desk is performing and what it costs.', icon: BrainCircuit },
+  // Operational Intelligence surfaces (owner sub-pages under /dashboard/owner/*).
+  { href: '/dashboard/owner/close-reports', title: 'Daily Close', description: 'Review expected revenue, recorded payments, and unresolved gaps.', icon: DollarSign },
+  { href: '/dashboard/owner/anomalies', title: 'Anomaly Review', description: 'Work through unresolved revenue, refund, and stock exceptions.', icon: AlertTriangle },
+  { href: '/dashboard/owner/approvals', title: 'Approvals Queue', description: 'Review discounts, refunds, and inventory changes waiting for sign-off.', icon: ClipboardList },
+  { href: '/dashboard/owner/stock-counts', title: 'Stock Counts', description: 'Run physical counts, review variance, and approve shrinkage adjustments.', icon: Package },
+  { href: '/dashboard/owner/capture', title: 'Capture Review', description: 'Turn receipts, stock sheets, and voice notes into review-ready records.', icon: ImagePlus },
   { href: '/dashboard/showcase', title: 'Showcase Packs', description: 'Build media packs that can be sent inside WhatsApp chats.', icon: ImagePlus },
   { href: '/dashboard/reports', title: 'Reports', description: 'See how your business is trending over time.', icon: FileText },
   { href: '/dashboard/faqs', title: 'FAQs', description: 'Teach your assistant the answers customers ask for most.', icon: HelpCircle },
