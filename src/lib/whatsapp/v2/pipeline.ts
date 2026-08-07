@@ -56,8 +56,26 @@ const OPENROUTER_V2_FALLBACK_MODELS = (process.env.OPENROUTER_V2_FALLBACK_MODELS
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
+const CLOUDFLARE_V2_MODEL = process.env.CLOUDFLARE_AI_DEFAULT_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+const CLOUDFLARE_V2_FALLBACK_MODELS = (process.env.CLOUDFLARE_AI_FALLBACK_MODELS || '')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
 const V2_AI_PROVIDER = (process.env.WHATSAPP_V2_AI_PROVIDER || 'auto').toLowerCase();
 const V2_DISABLE_GOOGLE = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
+
+function walletProvider(): 'cloudflare' | 'openrouter' | 'google_ai' | 'auto' {
+  if (V2_AI_PROVIDER === 'cloudflare') return 'cloudflare';
+  if (V2_AI_PROVIDER === 'openrouter') return 'openrouter';
+  if (V2_AI_PROVIDER === 'google') return 'google_ai';
+  return 'auto';
+}
+
+function walletModel(googleModel: string): string {
+  if (V2_AI_PROVIDER === 'cloudflare') return CLOUDFLARE_V2_MODEL;
+  if (V2_AI_PROVIDER === 'openrouter') return OPENROUTER_V2_MODEL;
+  return googleModel;
+}
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
@@ -410,8 +428,8 @@ async function callAIWithRetry(
         tenantId,
         {
           estimatedTokens: estimatePromptTokens(prompt.length),
-          provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
-          model: FLASH_LITE_MODEL,
+          provider: walletProvider(),
+          model: walletModel(FLASH_LITE_MODEL),
           requestId: `${messageId}:lite:${attempt}`,
           description: 'WhatsApp v2 L2 AI call',
           metadata: {
@@ -524,8 +542,8 @@ async function callFlash(
       tenantId,
       {
         estimatedTokens: estimatePromptTokens(prompt.length),
-        provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
-        model: FLASH_MODEL,
+        provider: walletProvider(),
+        model: walletModel(FLASH_MODEL),
         requestId: `${messageId}:flash`,
         description: 'WhatsApp v2 L3 AI call',
         metadata: {
@@ -578,6 +596,8 @@ async function callAIProviderWithFallback(
       'openai/gpt-4o-mini',
       ...OPENROUTER_V2_FALLBACK_MODELS,
     ],
+    cloudflareModel: CLOUDFLARE_V2_MODEL,
+    cloudflareFallbackModels: CLOUDFLARE_V2_FALLBACK_MODELS,
     disableGoogle: V2_DISABLE_GOOGLE,
   }).complete({
     messages: messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,

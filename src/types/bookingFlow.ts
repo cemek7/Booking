@@ -149,7 +149,7 @@ export interface ConversationFlowConfig {
   notificationSettings: NotificationSettings;
   
   // AI/NLP settings
-  aiProvider?: 'openrouter' | 'openai' | 'anthropic';
+  aiProvider?: 'cloudflare' | 'openrouter' | 'openai' | 'anthropic';
   aiModel?: string;
   intentThreshold: number;
   entityThreshold: number;
@@ -464,4 +464,3 @@ export function isValidTransition(
   
   return validTransitions[from]?.includes(to) || false;
 }
-

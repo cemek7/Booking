@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
+import { decryptMetaCredential, encryptMetaCredential } from './metaCredentialCrypto';
 
 export type WhatsAppProvider = 'evolution' | 'waha' | 'meta';
 
@@ -18,7 +19,7 @@ export async function getStoredProviderApiKey(
   const normalizedProvider = normalizeProvider(provider);
   const { data, error } = await supabase
     .from('whatsapp_provider_secrets')
-    .select('api_key')
+    .select('api_key, encrypted_api_key, encryption_iv, encryption_key_version, revoked_at')
     .eq('tenant_id', tenantId)
     .eq('provider', normalizedProvider)
     .maybeSingle();
@@ -29,6 +30,24 @@ export async function getStoredProviderApiKey(
       provider: normalizedProvider,
       error: error.message,
     });
+  }
+
+  if (data?.revoked_at) return '';
+  if (data?.encrypted_api_key && data.encryption_iv && data.encryption_key_version) {
+    try {
+      return decryptMetaCredential({
+        encryptedApiKey: data.encrypted_api_key,
+        encryptionIv: data.encryption_iv,
+        encryptionKeyVersion: data.encryption_key_version,
+      });
+    } catch (error) {
+      defaultLogger.error('[whatsapp/providerSecrets] Failed to decrypt provider credential', {
+        tenantId,
+        provider: normalizedProvider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return '';
+    }
   }
 
   const secret = typeof data?.api_key === 'string' ? data.api_key : '';
@@ -45,13 +64,32 @@ export async function upsertStoredProviderApiKey(
   const normalizedProvider = normalizeProvider(provider);
   if (!apiKey) return;
 
+  const secretPayload = normalizedProvider === 'meta'
+    ? (() => {
+        const encrypted = encryptMetaCredential(apiKey);
+        return {
+          api_key: null,
+          encrypted_api_key: encrypted.encryptedApiKey,
+          encryption_iv: encrypted.encryptionIv,
+          encryption_key_version: encrypted.encryptionKeyVersion,
+          revoked_at: null,
+        };
+      })()
+    : {
+        api_key: apiKey,
+        encrypted_api_key: null,
+        encryption_iv: null,
+        encryption_key_version: null,
+        revoked_at: null,
+      };
+
   const { error } = await supabase
     .from('whatsapp_provider_secrets')
     .upsert(
       {
         tenant_id: tenantId,
         provider: normalizedProvider,
-        api_key: apiKey,
+        ...secretPayload,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'tenant_id,provider' }
@@ -59,4 +97,3 @@ export async function upsertStoredProviderApiKey(
 
   if (error) throw error;
 }
-

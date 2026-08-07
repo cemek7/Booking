@@ -15,6 +15,9 @@ export interface WhatsAppSyncValues {
       sendDailySummary?: boolean;
       sendWeeklySummary?: boolean;
       sendCancellationAlerts?: boolean;
+      templateMessagingEnabled?: boolean;
+      monthlyMetaSpendCap?: number;
+      paidTemplateConsent?: boolean;
     };
     instagram?: {
       handle?: string;
@@ -60,6 +63,9 @@ export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSync
         sendDailySummary: true,
         sendWeeklySummary: false,
         sendCancellationAlerts: true,
+        templateMessagingEnabled: false,
+        monthlyMetaSpendCap: 0,
+        paidTemplateConsent: false,
         ...(local.channelConfig?.whatsapp || {}),
         ...patch,
       },
@@ -97,6 +103,23 @@ export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSync
           </label>
         </div>
         <p className="text-[10px] text-gray-500">This is not QR pairing. Customers chat with Booka on the shared number; Booka sends owner notifications and command prompts to this WhatsApp number.</p>
+      </FormSection>
+
+      <FormSection title="WhatsApp messaging costs" description="Meta may charge your business directly for eligible template messages, such as proactive reminders or campaigns. Booka does not add a markup or collect your payment-card details.">
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+            <input type="checkbox" className="mt-0.5" checked={local.channelConfig?.whatsapp?.templateMessagingEnabled ?? false} onChange={(e) => updateWhatsApp({ templateMessagingEnabled: e.target.checked })} />
+            <span><strong>Allow proactive template messages.</strong> Leave this off to use WhatsApp mainly for inbound customer conversations and active service windows.</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5" checked={local.channelConfig?.whatsapp?.paidTemplateConsent ?? false} onChange={(e) => updateWhatsApp({ paidTemplateConsent: e.target.checked })} />
+            <span>I understand that Meta may charge my business directly for eligible delivered template messages.</span>
+          </label>
+          <label className="block max-w-xs text-xs font-medium">Monthly Meta messaging budget (optional, in your billing currency)
+            <input type="number" min={0} step="0.01" className="mt-1 block w-full rounded border px-2 py-1 text-sm" value={local.channelConfig?.whatsapp?.monthlyMetaSpendCap ?? 0} onChange={(e) => updateWhatsApp({ monthlyMetaSpendCap: Number(e.target.value) || 0 })} />
+          </label>
+          <p className="text-[10px] text-gray-500">This records your Booka preference. Automated enforcement will be enabled once Meta usage and pricing data are connected for your account.</p>
+        </div>
       </FormSection>
 
       <FormSection
