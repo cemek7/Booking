@@ -26,6 +26,22 @@ in Booka (committed, tested).
 The `hub.verify_token` / `hub.challenge` handshake hits the **webhook** URL only. The OAuth
 callback never sees it — don't cross them.
 
+## Staging first
+
+Use the same routes with the staging hostname while the Meta app is in Development
+mode. The repository's staging template uses `https://staging.app.techclave.cloud`:
+
+| Meta field | Staging URL |
+|---|---|
+| Instagram Login redirect URI | `https://staging.app.techclave.cloud/api/auth/instagram/callback` |
+| Instagram webhook callback | `https://staging.app.techclave.cloud/api/webhooks/instagram` |
+| WhatsApp Cloud API webhook callback | `https://staging.app.techclave.cloud/api/webhooks/whatsapp/meta` |
+
+Set these same values in `deployment/env/.env.staging`. Do not use the OAuth callback
+as a webhook callback, and do not use `/api/integrations/...` or `/api/webhooks/meta/...`:
+those routes are not implemented by Booka. Once staging tests pass, register the equivalent
+production URLs and update the production environment independently.
+
 ## The verify token
 
 A **secret string you invent** (NOT an email), e.g. `booka_ig_verify_2026`. It must equal

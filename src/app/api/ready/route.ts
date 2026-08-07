@@ -74,9 +74,9 @@ export const GET = createHttpHandler(
       'CRON_SECRET',
     ]);
 
-    if (featureFlagsEnabled) {
-      requiredEnvVars.add('OPENROUTER_API_KEY');
-    }
+    const hasAiProvider = Boolean(
+      process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_AI_API_TOKEN
+    ) || Boolean(process.env.OPENROUTER_API_KEY) || Boolean(process.env.GOOGLE_AI_API_KEY);
 
     if (provider === 'meta') {
       ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_WEBHOOK_VERIFY_TOKEN'].forEach((key) => requiredEnvVars.add(key));
@@ -91,6 +91,9 @@ export const GET = createHttpHandler(
     }
 
     const missingEnvVars = Array.from(requiredEnvVars).filter((envVar) => !process.env[envVar]);
+    if (featureFlagsEnabled && !hasAiProvider) {
+      missingEnvVars.push('an AI provider (Cloudflare Workers AI, OpenRouter, or Google AI)');
+    }
     
     if (missingEnvVars.length === 0) {
       readinessCheck.checks.environment_variables = true;
@@ -100,13 +103,10 @@ export const GET = createHttpHandler(
     }
 
     // Check AI services configuration
-    const aiEnvVars = ['OPENROUTER_API_KEY'];
-    const missingAiVars = aiEnvVars.filter(envVar => !process.env[envVar]);
-    
-    if (missingAiVars.length === 0) {
+    if (hasAiProvider) {
       readinessCheck.checks.ai_services_initialized = true;
     } else {
-      readinessCheck.details.warnings?.push(`AI services may not function properly. Missing: ${missingAiVars.join(', ')}`);
+      readinessCheck.details.warnings?.push('AI services may not function properly. Configure Cloudflare Workers AI, OpenRouter, or Google AI.');
       readinessCheck.checks.ai_services_initialized = false;
     }
 

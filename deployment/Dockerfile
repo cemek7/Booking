@@ -27,25 +27,17 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build arguments
+# Only public values may be supplied at build time. Server secrets must be
+# injected at container runtime by the deployment environment; putting them in
+# build arguments or ENV here can preserve them in image layers and build cache.
 ARG NODE_ENV=production
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG SUPABASE_SERVICE_ROLE_KEY
-ARG ENCRYPTION_KEY
-ARG TOTP_SERVICE_NAME
-ARG NEXTAUTH_URL
-ARG NEXTAUTH_SECRET
 
-# Set environment variables
+# Public browser configuration is intentionally compiled into the client.
 ENV NODE_ENV=$NODE_ENV
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-ENV SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
-ENV ENCRYPTION_KEY=$ENCRYPTION_KEY
-ENV TOTP_SERVICE_NAME=$TOTP_SERVICE_NAME
-ENV NEXTAUTH_URL=$NEXTAUTH_URL
-ENV NEXTAUTH_SECRET=$NEXTAUTH_SECRET
 
 # Build the application
 RUN npm run build

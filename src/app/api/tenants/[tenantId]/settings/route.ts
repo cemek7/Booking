@@ -110,6 +110,9 @@ const SettingsSchemaBase = z.object({
       sendDailySummary: z.boolean().optional(),
       sendWeeklySummary: z.boolean().optional(),
       sendCancellationAlerts: z.boolean().optional(),
+      templateMessagingEnabled: z.boolean().optional(),
+      monthlyMetaSpendCap: z.number().min(0).optional(),
+      paidTemplateConsent: z.boolean().optional(),
     }).optional(),
     instagram: z.object({
       handle: z.string().optional(),

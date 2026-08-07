@@ -6,7 +6,7 @@ export interface LLMUsageRecord {
   id?: string;
   tenant_id: string;
   user_id: string;
-  provider: 'openrouter' | 'openai' | 'anthropic' | 'local' | 'google_ai';
+  provider: 'cloudflare' | 'openrouter' | 'openai' | 'anthropic' | 'local' | 'google_ai';
   model: string;
   operation: 'intent_detection' | 'paraphrasing' | 'conversation' | 'booking_assistant' | 'template_generation';
   input_tokens: number;
@@ -473,7 +473,7 @@ export const llmUsageTracker = new LLMUsageTracker();
 export async function recordLLMUsage(
   tenantId: string,
   userId: string,
-  provider: 'openrouter' | 'openai' | 'anthropic' | 'local' | 'google_ai',
+  provider: 'cloudflare' | 'openrouter' | 'openai' | 'anthropic' | 'local' | 'google_ai',
   model: string,
   operation: LLMUsageRecord['operation'],
   inputTokens: number,
