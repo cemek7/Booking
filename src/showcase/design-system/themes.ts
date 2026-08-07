@@ -13,3 +13,10 @@ export const NORTHSTAR_THEME: SiteTheme = {
   typography: { display: 'Manrope', body: 'Inter' },
   radius: 'large', density: 'spacious', motion: 'minimal',
 };
+
+export const EMBER_THEME: SiteTheme = {
+  id: 'ember',
+  colors: { background: '#140f0c', foreground: '#f4ece2', muted: '#a68f7d', surface: '#211812', primary: '#c8542b', primaryForeground: '#f4ece2', accent: '#e0a458', border: '#35271d' },
+  typography: { display: 'Playfair Display', body: 'Inter' },
+  radius: 'small', density: 'balanced', motion: 'subtle',
+};
