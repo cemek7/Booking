@@ -27,3 +27,10 @@ export const HAVEN_THEME: SiteTheme = {
   typography: { display: 'Cormorant Garamond', body: 'Inter' },
   radius: 'medium', density: 'spacious', motion: 'subtle',
 };
+
+export const MERIDIAN_THEME: SiteTheme = {
+  id: 'meridian',
+  colors: { background: '#f6f4ee', foreground: '#14243a', muted: '#5d6b7d', surface: '#ffffff', primary: '#1f3a5f', primaryForeground: '#ffffff', accent: '#9c7b4d', border: '#dcd6c8' },
+  typography: { display: 'Libre Baskerville', body: 'Source Sans 3' },
+  radius: 'none', density: 'balanced', motion: 'minimal',
+};

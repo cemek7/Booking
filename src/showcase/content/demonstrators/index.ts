@@ -4,6 +4,7 @@ import { SUNGRID } from './sungrid-energy';
 import { NORTHSTAR } from './northstar-clinic';
 import { EMBER } from './ember-table';
 import { HAVEN } from './haven-realty';
+import { MERIDIAN } from './meridian-legal';
 
 /**
  * Minimal, honest stub for a demonstrator that has not been built yet.
@@ -41,13 +42,7 @@ export const DEMONSTRATORS: Demonstrator[] = [
   SUNGRID,
   NORTHSTAR,
   EMBER,
-  plannedStub({
-    slug: 'meridian-legal',
-    name: 'Meridian Legal',
-    industry: 'Legal services',
-    oneLineSummary: 'Planned demonstrator: a law-firm site built around practice areas and consultation requests.',
-    targetAudience: 'Prospective clients researching a legal issue and evaluating firms.',
-  }),
+  MERIDIAN,
   plannedStub({
     slug: 'forge-build',
     name: 'Forge Build',
