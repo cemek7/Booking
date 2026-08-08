@@ -4,6 +4,12 @@ import { decryptMetaCredential, encryptMetaCredential } from './metaCredentialCr
 
 export type WhatsAppProvider = 'evolution' | 'waha' | 'meta';
 
+export function isProviderCredentialExpired(expiresAt: string | null | undefined, now = Date.now()): boolean {
+  if (!expiresAt) return false;
+  const timestamp = Date.parse(expiresAt);
+  return Number.isFinite(timestamp) && timestamp <= now;
+}
+
 function normalizeProvider(provider: string | null | undefined): WhatsAppProvider {
   if (provider === 'waha') return 'waha';
   if (provider === 'meta') return 'meta';
@@ -19,7 +25,7 @@ export async function getStoredProviderApiKey(
   const normalizedProvider = normalizeProvider(provider);
   const { data, error } = await supabase
     .from('whatsapp_provider_secrets')
-    .select('api_key, encrypted_api_key, encryption_iv, encryption_key_version, revoked_at')
+    .select('api_key, encrypted_api_key, encryption_iv, encryption_key_version, revoked_at, token_expires_at')
     .eq('tenant_id', tenantId)
     .eq('provider', normalizedProvider)
     .maybeSingle();
@@ -33,6 +39,13 @@ export async function getStoredProviderApiKey(
   }
 
   if (data?.revoked_at) return '';
+  if (isProviderCredentialExpired(data?.token_expires_at)) {
+    defaultLogger.warn('[whatsapp/providerSecrets] Provider credential has expired', {
+      tenantId,
+      provider: normalizedProvider,
+    });
+    return '';
+  }
   if (data?.encrypted_api_key && data.encryption_iv && data.encryption_key_version) {
     try {
       return decryptMetaCredential({

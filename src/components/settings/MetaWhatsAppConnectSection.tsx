@@ -13,22 +13,25 @@ type Connection = {
   meta_connection_status?: string | null;
   meta_phone_number_id?: string | null;
   meta_waba_id?: string | null;
+  meta_connection_source?: string | null;
   meta_last_error?: string | null;
 };
 
 export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [configured, setConfigured] = useState(false);
+  const [embeddedSignup, setEmbeddedSignup] = useState<{ appId: string; configId: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     fetch(`/api/tenants/${tenantId}/whatsapp/meta/embedded-signup`)
       .then(async (res) => {
         if (!res.ok) throw new Error('Unable to load WhatsApp connection status');
-        return res.json() as Promise<{ configured: boolean; connection: Connection | null }>;
+        return res.json() as Promise<{ configured: boolean; connection: Connection | null; embeddedSignup?: { appId: string; configId: string } | null }>;
       })
-      .then((data) => { setConfigured(data.configured); setConnection(data.connection); })
+      .then((data) => { setConfigured(data.configured); setConnection(data.connection); setEmbeddedSignup(data.embeddedSignup ?? null); })
       .catch((error) => toast.error(error instanceof Error ? error.message : 'Unable to load WhatsApp connection status'))
       .finally(() => setLoading(false));
   }, [tenantId]);
@@ -49,8 +52,8 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
   }
 
   async function connect() {
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID;
-    const configId = process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID;
+    const appId = embeddedSignup?.appId;
+    const configId = embeddedSignup?.configId;
     if (!appId || !configId) {
       toast.error('WhatsApp self-connection is not enabled on this environment yet. Contact Booka support to complete your connection.');
       return;
@@ -68,25 +71,36 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
       });
       window.FB!.init({ appId, cookie: true, xfbml: false, version: 'v18.0' });
 
-      let details: { wabaId?: string; phoneNumberId?: string; businessAccountId?: string } = {};
+      let finishTimeout: ReturnType<typeof setTimeout> | undefined;
       const receiveMessage = (event: MessageEvent) => {
         if (!/^https:\/\/(www\.)?facebook\.com$/.test(event.origin)) return;
         const payload = typeof event.data === 'string' ? (() => { try { return JSON.parse(event.data); } catch { return null; } })() : event.data;
-        if (!payload || payload.type !== 'WA_EMBEDDED_SIGNUP' || payload.event !== 'FINISH') return;
-        details = {
+        if (!payload || payload.type !== 'WA_EMBEDDED_SIGNUP') return;
+        if (payload.event === 'CANCEL' || payload.event === 'ERROR') {
+          finishReject?.(new Error('Meta Embedded Signup was cancelled or could not complete'));
+          return;
+        }
+        if (payload.event !== 'FINISH') return;
+        finishResolve?.({
           wabaId: payload.data?.waba_id,
           phoneNumberId: payload.data?.phone_number_id,
           businessAccountId: payload.data?.business_id,
-        };
+        });
       };
+      let finishResolve: ((details: { wabaId?: string; phoneNumberId?: string; businessAccountId?: string }) => void) | undefined;
+      let finishReject: ((reason: Error) => void) | undefined;
+      const finishPromise = new Promise<{ wabaId?: string; phoneNumberId?: string; businessAccountId?: string }>((resolve, reject) => {
+        finishResolve = resolve;
+        finishReject = reject;
+        finishTimeout = setTimeout(() => reject(new Error('Meta did not confirm the selected WhatsApp account in time')), 90_000);
+      });
       window.addEventListener('message', receiveMessage);
 
-      await new Promise<void>((resolve, reject) => {
+      const codePromise = new Promise<string>((resolve, reject) => {
         window.FB!.login((response) => {
-          window.removeEventListener('message', receiveMessage);
           const code = response.authResponse?.code;
           if (!code) return reject(new Error('Meta connection was cancelled or did not return an authorization code'));
-          complete(code, details).then(resolve, reject);
+          resolve(code);
         }, {
           config_id: configId,
           response_type: 'code',
@@ -94,10 +108,32 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
           extras: { featureType: 'whatsapp_business_messaging' },
         });
       });
+      try {
+        const [code, details] = await Promise.all([codePromise, finishPromise]);
+        await complete(code, details);
+      } finally {
+        if (finishTimeout) clearTimeout(finishTimeout);
+        window.removeEventListener('message', receiveMessage);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not connect WhatsApp');
     } finally {
       setConnecting(false);
+    }
+  }
+
+  async function disconnect() {
+    setDisconnecting(true);
+    try {
+      const response = await fetch(`/api/tenants/${tenantId}/whatsapp/meta/embedded-signup`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({})) as { warning?: string | null };
+      if (!response.ok) throw new Error('Could not disconnect WhatsApp');
+      setConnection((current) => current ? { ...current, meta_connection_status: 'disconnected' } : null);
+      toast.success(data.warning ? 'WhatsApp disconnected; Meta webhook removal needs a follow-up check.' : 'WhatsApp disconnected and credentials revoked.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not disconnect WhatsApp');
+    } finally {
+      setDisconnecting(false);
     }
   }
 
@@ -113,14 +149,17 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
           <p className="font-medium">Connected</p>
           <p>Phone ID: {connection?.meta_phone_number_id}</p>
           <p className="text-xs mt-1">Billing owner: your business (client payment method).</p>
+          <button type="button" onClick={disconnect} disabled={disconnecting} className="mt-3 rounded border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-800 disabled:opacity-60">
+            {disconnecting ? 'Disconnecting…' : 'Disconnect WhatsApp'}
+          </button>
         </div>
       ) : (
         <>
           {connection?.meta_last_error && <p className="text-sm text-rose-700">Last connection issue: {connection.meta_last_error}</p>}
-          <button type="button" onClick={connect} disabled={connecting || !configured} className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">
+          <button type="button" onClick={connect} disabled={connecting || !configured || !embeddedSignup} className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">
             {connecting ? 'Connecting…' : configured ? 'Connect WhatsApp' : 'Connect WhatsApp (coming soon)'}
           </button>
-          {!configured && <p className="text-xs text-gray-600">Booka is waiting for Meta Partner/Embedded Signup configuration in this environment.</p>}
+          {(!configured || !embeddedSignup) && <p className="text-xs text-gray-600">Booka is waiting for Meta Partner/Embedded Signup configuration in this environment.</p>}
         </>
       )}
     </section>
