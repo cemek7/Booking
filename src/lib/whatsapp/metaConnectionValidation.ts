@@ -15,8 +15,17 @@ export type MetaCredentialRevalidationResult = {
   checked: number;
   healthy: number;
   actionRequired: number;
+  transientFailures: number;
   failures: Array<{ tenantId: string; reason: string }>;
 };
+
+type MetaValidationError = Error & { requiresAction?: boolean };
+
+function validationError(message: string, requiresAction: boolean): MetaValidationError {
+  const error = new Error(message) as MetaValidationError;
+  error.requiresAction = requiresAction;
+  return error;
+}
 
 export async function verifyMetaPhone(
   config: MetaApiConfig,
@@ -27,7 +36,12 @@ export async function verifyMetaPhone(
     `${config.apiBase}/${encodeURIComponent(phoneNumberId)}?fields=id,display_phone_number,verified_name`,
     { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 15_000 },
   );
-  if (!response.ok) throw new Error(`Meta phone number validation failed (${response.status})`);
+  if (!response.ok) {
+    throw validationError(
+      `Meta phone number validation failed (${response.status})`,
+      [400, 401, 403, 404].includes(response.status),
+    );
+  }
 }
 
 /**
@@ -46,9 +60,14 @@ export async function verifyMetaPhoneBelongsToWaba(
     { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 15_000 },
   );
   const body = await response.json().catch(() => ({})) as { data?: Array<{ id?: string }> };
-  if (!response.ok) throw new Error(`Meta WABA phone-number validation failed (${response.status})`);
+  if (!response.ok) {
+    throw validationError(
+      `Meta WABA phone-number validation failed (${response.status})`,
+      [400, 401, 403, 404].includes(response.status),
+    );
+  }
   if (!body.data?.some((phone) => phone.id === phoneNumberId)) {
-    throw new Error('The selected phone number is not part of the supplied WhatsApp Business Account');
+    throw validationError('The selected phone number is not part of the supplied WhatsApp Business Account', true);
   }
 }
 
@@ -70,6 +89,14 @@ function safeReason(error: unknown): string {
   return (error instanceof Error ? error.message : 'Meta credential revalidation failed').slice(0, 500);
 }
 
+function requiresTenantAction(error: unknown): boolean {
+  if (error && typeof error === 'object' && 'requiresAction' in error) {
+    return (error as MetaValidationError).requiresAction === true;
+  }
+  const reason = safeReason(error).toLowerCase();
+  return reason.includes('missing its whatsapp business account') || reason.includes('credential is unavailable');
+}
+
 /**
  * Rechecks active tenant-owned Meta credentials before they are used by normal
  * traffic. A failed check disables the connection and asks for reconnection;
@@ -79,7 +106,9 @@ export async function revalidateActiveMetaConnections(
   admin: SupabaseClient,
   config: MetaApiConfig,
 ): Promise<MetaCredentialRevalidationResult> {
-  const result: MetaCredentialRevalidationResult = { checked: 0, healthy: 0, actionRequired: 0, failures: [] };
+  const result: MetaCredentialRevalidationResult = {
+    checked: 0, healthy: 0, actionRequired: 0, transientFailures: 0, failures: [],
+  };
   const { data, error } = await admin
     .from('whatsapp_configurations')
     .select('tenant_id, meta_waba_id, meta_phone_number_id, meta_connection_source')
@@ -119,21 +148,31 @@ export async function revalidateActiveMetaConnections(
       result.healthy += 1;
     } catch (error) {
       const reason = safeReason(error);
-      await admin.from('whatsapp_configurations').update({
-        active: false,
-        meta_connection_status: 'action_required',
-        meta_last_error: reason,
-        updated_at: now,
-      }).eq('tenant_id', connection.tenant_id).eq('provider', 'meta');
-      await admin.from('tenant_meta_connection_events').insert({
-        tenant_id: connection.tenant_id,
-        event_type: 'validation_failed',
-        connection_source: connection.meta_connection_source === 'embedded_signup' ? 'embedded_signup' : 'direct',
-        meta_waba_id: connection.meta_waba_id,
-        meta_phone_number_id: connection.meta_phone_number_id,
-        metadata: { reason },
-      });
-      result.actionRequired += 1;
+      if (requiresTenantAction(error)) {
+        await admin.from('whatsapp_configurations').update({
+          active: false,
+          meta_connection_status: 'action_required',
+          meta_last_error: reason,
+          updated_at: now,
+        }).eq('tenant_id', connection.tenant_id).eq('provider', 'meta');
+        await admin.from('tenant_meta_connection_events').insert({
+          tenant_id: connection.tenant_id,
+          event_type: 'validation_failed',
+          connection_source: connection.meta_connection_source === 'embedded_signup' ? 'embedded_signup' : 'direct',
+          meta_waba_id: connection.meta_waba_id,
+          meta_phone_number_id: connection.meta_phone_number_id,
+          metadata: { reason },
+        });
+        result.actionRequired += 1;
+      } else {
+        // Avoid disconnecting all tenants during a temporary Meta incident.
+        // The next nightly run retries this validation automatically.
+        await admin.from('whatsapp_configurations').update({
+          meta_last_error: reason,
+          updated_at: now,
+        }).eq('tenant_id', connection.tenant_id).eq('provider', 'meta');
+        result.transientFailures += 1;
+      }
       result.failures.push({ tenantId: connection.tenant_id, reason });
     }
   };

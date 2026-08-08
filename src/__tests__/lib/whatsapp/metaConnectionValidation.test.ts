@@ -44,6 +44,7 @@ describe('Meta credential revalidation', () => {
 
   function adminFor(connections: unknown[]) {
     const configUpdate = { eq: jest.fn().mockReturnThis() };
+    const configUpdates: unknown[] = [];
     const secretUpdate = { eq: jest.fn().mockReturnThis() };
     const configSelect = {
       eq: jest.fn().mockReturnThis(),
@@ -55,7 +56,10 @@ describe('Meta credential revalidation', () => {
         if (table === 'whatsapp_configurations') {
           return {
             select: jest.fn(() => configSelect),
-            update: jest.fn(() => configUpdate),
+            update: jest.fn((payload) => {
+              configUpdates.push(payload);
+              return configUpdate;
+            }),
           };
         }
         if (table === 'whatsapp_provider_secrets') return { update: jest.fn(() => secretUpdate) };
@@ -63,6 +67,7 @@ describe('Meta credential revalidation', () => {
         throw new Error(`unexpected table ${table}`);
       }),
       configUpdate,
+      configUpdates,
       eventInsert,
     };
   }
@@ -96,6 +101,20 @@ describe('Meta credential revalidation', () => {
 
     expect(result).toMatchObject({ checked: 1, healthy: 1, actionRequired: 0 });
     expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(admin.eventInsert).not.toHaveBeenCalled();
+  });
+
+  it('records but does not disconnect a tenant during a temporary Meta outage', async () => {
+    const admin = adminFor([{
+      tenant_id: 'tenant-1', meta_waba_id: 'waba-1', meta_phone_number_id: 'phone-1', meta_connection_source: 'direct',
+    }]);
+    mockGetStoredProviderApiKey.mockResolvedValue('token');
+    mockFetch.mockResolvedValue(response(503));
+
+    const result = await revalidateActiveMetaConnections(admin as never, metaConfig);
+
+    expect(result).toMatchObject({ checked: 1, healthy: 0, actionRequired: 0, transientFailures: 1 });
+    expect(admin.configUpdates).toContainEqual(expect.not.objectContaining({ active: false }));
     expect(admin.eventInsert).not.toHaveBeenCalled();
   });
 });
