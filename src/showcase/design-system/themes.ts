@@ -34,3 +34,9 @@ export const MERIDIAN_THEME: SiteTheme = {
   typography: { display: 'Libre Baskerville', body: 'Source Sans 3' },
   radius: 'none', density: 'balanced', motion: 'minimal',
 };
+
+export const FORGE_THEME: SiteTheme = {
+  id: 'forge',
+  colors: { background: '#12140f', foreground: '#f2f3ee', muted: '#9aa08f', surface: '#1c1f18', primary: '#f2a900', primaryForeground: '#12140f', accent: '#3d5a45', border: '#2c3126' },
+  typography: { display: 'Archivo', body: 'Inter' }, radius: 'none', density: 'compact', motion: 'subtle',
+};
