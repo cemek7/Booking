@@ -294,7 +294,7 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
             onChange={patch=>setLocal(l=>({ ...l, ...patch }))}
           />
           <MetaWhatsAppConnectSection tenantId={tenantId!} />
-          <InstagramConnectSection />
+          <InstagramConnectSection tenantId={tenantId!} />
         </div>
       );
       break;
