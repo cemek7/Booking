@@ -7,7 +7,7 @@ describe('demonstrator content', () => {
     expect(DEMONSTRATORS).toHaveLength(8);
     for (const d of DEMONSTRATORS) expect(d.projectType).toBe('Capability Demonstrator');
   });
-  it('has the first seven demonstrators published and one remaining planned', () => {
+  it('has all eight demonstrators published', () => {
     const sg = DEMONSTRATORS.find((d) => d.slug === 'sungrid-energy')!;
     expect(sg.status).toBe('published');
     expect(DEMONSTRATORS.find((d) => d.slug === 'northstar-clinic')?.status).toBe('published');
@@ -16,7 +16,8 @@ describe('demonstrator content', () => {
     expect(DEMONSTRATORS.find((d) => d.slug === 'meridian-legal')?.status).toBe('published');
     expect(DEMONSTRATORS.find((d) => d.slug === 'forge-build')?.status).toBe('published');
     expect(DEMONSTRATORS.find((d) => d.slug === 'crestfield-academy')?.status).toBe('published');
-    expect(DEMONSTRATORS.filter((d) => d.status === 'planned')).toHaveLength(1);
+    expect(DEMONSTRATORS.find((d) => d.slug === 'atelier-soso')?.status).toBe('published');
+    expect(DEMONSTRATORS.filter((d) => d.status === 'planned')).toHaveLength(0);
   });
   it('carries the required disclosure text', () => {
     expect(DISCLOSURE).toMatch(/capability demonstrator/i);

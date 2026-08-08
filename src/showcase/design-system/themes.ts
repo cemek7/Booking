@@ -41,3 +41,4 @@ export const FORGE_THEME: SiteTheme = {
   typography: { display: 'Archivo', body: 'Inter' }, radius: 'none', density: 'compact', motion: 'subtle',
 };
 export const CRESTFIELD_THEME: SiteTheme = { id: 'crestfield', colors: { background: '#fdf9f3', foreground: '#23324a', muted: '#64748b', surface: '#ffffff', primary: '#2b5fa5', primaryForeground: '#ffffff', accent: '#e2954a', border: '#e7ddcc' }, typography: { display: 'Bricolage Grotesque', body: 'Inter' }, radius: 'large', density: 'balanced', motion: 'subtle' };
+export const ATELIER_THEME: SiteTheme = { id: 'atelier', colors: { background: '#f4f1ec', foreground: '#17130f', muted: '#6f665c', surface: '#ffffff', primary: '#17130f', primaryForeground: '#f4f1ec', accent: '#c2410c', border: '#ddd6cc' }, typography: { display: 'Syne', body: 'Inter' }, radius: 'none', density: 'spacious', motion: 'expressive' };

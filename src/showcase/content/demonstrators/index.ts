@@ -7,6 +7,7 @@ import { HAVEN } from './haven-realty';
 import { MERIDIAN } from './meridian-legal';
 import { FORGE } from './forge-build';
 import { CRESTFIELD } from './crestfield-academy';
+import { ATELIER } from './atelier-soso';
 
 /**
  * Minimal, honest stub for a demonstrator that has not been built yet.
@@ -48,11 +49,5 @@ export const DEMONSTRATORS: Demonstrator[] = [
   FORGE,
   HAVEN,
   CRESTFIELD,
-  plannedStub({
-    slug: 'atelier-soso',
-    name: 'Atelier Soso',
-    industry: 'Fashion & beauty studio',
-    oneLineSummary: 'Planned demonstrator: a fashion/beauty studio site with services and booking inquiries.',
-    targetAudience: 'Clients researching a studio and its services before booking.',
-  }),
+  ATELIER,
 ];
