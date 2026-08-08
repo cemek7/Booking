@@ -2,6 +2,7 @@ import type { Demonstrator } from '../types';
 import { DISCLOSURE } from '../disclosure';
 import { SUNGRID } from './sungrid-energy';
 import { NORTHSTAR } from './northstar-clinic';
+import { EMBER } from './ember-table';
 
 /**
  * Minimal, honest stub for a demonstrator that has not been built yet.
@@ -38,13 +39,7 @@ function plannedStub(input: {
 export const DEMONSTRATORS: Demonstrator[] = [
   SUNGRID,
   NORTHSTAR,
-  plannedStub({
-    slug: 'ember-table',
-    name: 'Ember Table',
-    industry: 'Restaurant reservations & dining',
-    oneLineSummary: 'Planned demonstrator: a full-service restaurant site with reservations and menu presentation.',
-    targetAudience: 'Diners deciding where to eat and booking a table.',
-  }),
+  EMBER,
   plannedStub({
     slug: 'meridian-legal',
     name: 'Meridian Legal',
