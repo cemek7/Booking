@@ -1,5 +1,6 @@
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { getInstagramSecret } from '@/lib/instagram/secrets';
 import { EvolutionAdapter } from './evolution';
 import { InstagramAdapter } from './instagram';
 import { MetaAdapter } from './meta';
@@ -83,22 +84,16 @@ export async function getTenantWhatsAppProviderClient(tenantId: string): Promise
 
 async function getTenantInstagramProviderConfig(tenantId: string): Promise<ProviderConfig | null> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('whatsapp_provider_secrets')
-    .select('api_key, base_url, instance_name')
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'instagram')
-    .maybeSingle();
-
-  if (error || !data?.api_key || !data?.base_url || !data?.instance_name) {
+  const secret = await getInstagramSecret(supabase, tenantId);
+  if (!secret) {
     return null;
   }
 
   return {
     provider: 'instagram',
-    baseUrl: trimTrailingSlash(data.base_url),
-    apiKey: data.api_key,
-    instanceName: data.instance_name,
+    baseUrl: trimTrailingSlash(process.env.INSTAGRAM_GRAPH_BASE_URL || 'https://graph.instagram.com/v25.0'),
+    apiKey: secret.accessToken,
+    instanceName: secret.igId,
   };
 }
 

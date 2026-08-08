@@ -42,6 +42,7 @@ import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { getInstagramSecret } from '@/lib/instagram/secrets';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -699,26 +700,14 @@ async function markMessagesProcessed(messageIds: string[]): Promise<void> {
  * and the send is skipped gracefully (logged, not thrown).
  */
 export async function getTenantInstagramConfig(tenantId: string): Promise<ProviderConfig | null> {
-  const { data, error } = await supabaseAdmin
-    .from('whatsapp_provider_secrets')
-    .select('api_key, base_url, instance_name')
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'instagram')
-    .maybeSingle();
-
-  if (error) {
-    console.error('[pipeline] getTenantInstagramConfig error', error);
-    return null;
-  }
-  if (!data?.api_key || !data?.base_url || !data?.instance_name) {
-    return null;
-  }
+  const secret = await getInstagramSecret(supabaseAdmin, tenantId);
+  if (!secret) return null;
 
   return {
     provider: 'instagram',
-    baseUrl: data.base_url as string,
-    apiKey: data.api_key as string,
-    instanceName: data.instance_name as string,
+    baseUrl: process.env.INSTAGRAM_GRAPH_BASE_URL || 'https://graph.instagram.com/v25.0',
+    apiKey: secret.accessToken,
+    instanceName: secret.igId,
   };
 }
 

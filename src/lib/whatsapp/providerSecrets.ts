@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
 import { decryptMetaCredential, encryptMetaCredential } from './metaCredentialCrypto';
 
-export type WhatsAppProvider = 'evolution' | 'waha' | 'meta';
+export type WhatsAppProvider = 'evolution' | 'waha' | 'meta' | 'instagram';
 
 export function isProviderCredentialExpired(expiresAt: string | null | undefined, now = Date.now()): boolean {
   if (!expiresAt) return false;
@@ -13,6 +13,7 @@ export function isProviderCredentialExpired(expiresAt: string | null | undefined
 function normalizeProvider(provider: string | null | undefined): WhatsAppProvider {
   if (provider === 'waha') return 'waha';
   if (provider === 'meta') return 'meta';
+  if (provider === 'instagram') return 'instagram';
   return 'evolution';
 }
 
@@ -77,7 +78,7 @@ export async function upsertStoredProviderApiKey(
   const normalizedProvider = normalizeProvider(provider);
   if (!apiKey) return;
 
-  const secretPayload = normalizedProvider === 'meta'
+  const secretPayload = normalizedProvider === 'meta' || normalizedProvider === 'instagram'
     ? (() => {
         const encrypted = encryptMetaCredential(apiKey);
         return {
