@@ -667,6 +667,13 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       dbApiKey ||
       (provider === 'meta' ? (process.env.WHATSAPP_ACCESS_TOKEN || '') : '');
 
+    // Tenant-owned Meta connections must never inherit a deployment-wide token
+    // after their own credential has expired, been revoked, or failed to decrypt.
+    // That could send a tenant's message through the wrong business account.
+    if (provider === 'meta' && data.meta_connection_source && !dbApiKey) {
+      return null;
+    }
+
     return {
       provider,
       baseUrl:  data.provider_base_url ?? data.evolution_base_url,

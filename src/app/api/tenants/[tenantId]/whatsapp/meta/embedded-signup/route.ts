@@ -6,6 +6,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getStoredProviderApiKey, upsertStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
+import { subscribeMetaWaba, verifyMetaPhone, verifyMetaPhoneBelongsToWaba } from '@/lib/whatsapp/metaConnectionValidation';
 
 const CompletionSchema = z.object({
   code: z.string().min(1),
@@ -53,24 +54,6 @@ async function exchangeCode(config: NonNullable<ReturnType<typeof metaConfig>>, 
     accessToken: body.access_token,
     expiresAt: typeof body.expires_in === 'number' ? new Date(Date.now() + body.expires_in * 1000).toISOString() : null,
   };
-}
-
-async function verifyPhone(config: { apiBase: string }, phoneNumberId: string, accessToken: string): Promise<void> {
-  const response = await fetchWithTimeout(
-    `${config.apiBase}/${encodeURIComponent(phoneNumberId)}?fields=id,display_phone_number,verified_name`,
-    { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 15_000 }
-  );
-  if (!response.ok) throw new Error(`Meta phone number validation failed (${response.status})`);
-}
-
-async function subscribeWaba(config: { apiBase: string }, wabaId: string, accessToken: string): Promise<void> {
-  const response = await fetchWithTimeout(`${config.apiBase}/${encodeURIComponent(wabaId)}/subscribed_apps`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({}),
-    timeoutMs: 15_000,
-  });
-  if (!response.ok) throw new Error(`Meta webhook subscription failed (${response.status})`);
 }
 
 export const GET = createHttpHandler(
@@ -124,8 +107,9 @@ export const POST = createHttpHandler(
       const config = metaApiConfig();
       const { accessToken, wabaId, phoneNumberId, businessAccountId, tokenExpiresAt } = direct.data;
       try {
-        await verifyPhone(config, phoneNumberId, accessToken);
-        await subscribeWaba(config, wabaId, accessToken);
+        await verifyMetaPhone(config, phoneNumberId, accessToken);
+        await verifyMetaPhoneBelongsToWaba(config, wabaId, phoneNumberId, accessToken);
+        await subscribeMetaWaba(config, wabaId, accessToken);
         const { error: configError } = await admin.from('whatsapp_configurations').upsert({
           tenant_id: tenantId,
           instance_name: phoneNumberId,
@@ -192,8 +176,9 @@ export const POST = createHttpHandler(
     const { code, wabaId, phoneNumberId, businessAccountId } = parsed.data;
     try {
       const { accessToken, expiresAt } = await exchangeCode(config, code);
-      await verifyPhone(config, phoneNumberId, accessToken);
-      await subscribeWaba(config, wabaId, accessToken);
+      await verifyMetaPhone(config, phoneNumberId, accessToken);
+      await verifyMetaPhoneBelongsToWaba(config, wabaId, phoneNumberId, accessToken);
+      await subscribeMetaWaba(config, wabaId, accessToken);
 
       const { error: configError } = await admin
         .from('whatsapp_configurations')
