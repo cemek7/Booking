@@ -6,6 +6,7 @@ import { EMBER } from './ember-table';
 import { HAVEN } from './haven-realty';
 import { MERIDIAN } from './meridian-legal';
 import { FORGE } from './forge-build';
+import { CRESTFIELD } from './crestfield-academy';
 
 /**
  * Minimal, honest stub for a demonstrator that has not been built yet.
@@ -46,13 +47,7 @@ export const DEMONSTRATORS: Demonstrator[] = [
   MERIDIAN,
   FORGE,
   HAVEN,
-  plannedStub({
-    slug: 'crestfield-academy',
-    name: 'Crestfield Academy',
-    industry: 'Private school / academy',
-    oneLineSummary: 'Planned demonstrator: a private school site covering admissions and program information.',
-    targetAudience: 'Parents researching schools and starting the admissions process.',
-  }),
+  CRESTFIELD,
   plannedStub({
     slug: 'atelier-soso',
     name: 'Atelier Soso',
