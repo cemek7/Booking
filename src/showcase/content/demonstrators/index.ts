@@ -3,6 +3,7 @@ import { DISCLOSURE } from '../disclosure';
 import { SUNGRID } from './sungrid-energy';
 import { NORTHSTAR } from './northstar-clinic';
 import { EMBER } from './ember-table';
+import { HAVEN } from './haven-realty';
 
 /**
  * Minimal, honest stub for a demonstrator that has not been built yet.
@@ -54,13 +55,7 @@ export const DEMONSTRATORS: Demonstrator[] = [
     oneLineSummary: 'Planned demonstrator: a general-contracting site with project showcase and quote requests.',
     targetAudience: 'Property owners planning a construction or renovation project.',
   }),
-  plannedStub({
-    slug: 'haven-realty',
-    name: 'Haven Realty',
-    industry: 'Residential real estate',
-    oneLineSummary: 'Planned demonstrator: a real-estate agency site with listings and buyer/seller inquiry flows.',
-    targetAudience: 'Home buyers and sellers evaluating an agency to work with.',
-  }),
+  HAVEN,
   plannedStub({
     slug: 'crestfield-academy',
     name: 'Crestfield Academy',

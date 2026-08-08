@@ -7,12 +7,13 @@ describe('demonstrator content', () => {
     expect(DEMONSTRATORS).toHaveLength(8);
     for (const d of DEMONSTRATORS) expect(d.projectType).toBe('Capability Demonstrator');
   });
-  it('has SunGrid, Northstar, and Ember Table published and the remaining demonstrators planned', () => {
+  it('has SunGrid, Northstar, Ember Table, and Haven Realty published and the remaining demonstrators planned', () => {
     const sg = DEMONSTRATORS.find((d) => d.slug === 'sungrid-energy')!;
     expect(sg.status).toBe('published');
     expect(DEMONSTRATORS.find((d) => d.slug === 'northstar-clinic')?.status).toBe('published');
     expect(DEMONSTRATORS.find((d) => d.slug === 'ember-table')?.status).toBe('published');
-    expect(DEMONSTRATORS.filter((d) => d.status === 'planned')).toHaveLength(5);
+    expect(DEMONSTRATORS.find((d) => d.slug === 'haven-realty')?.status).toBe('published');
+    expect(DEMONSTRATORS.filter((d) => d.status === 'planned')).toHaveLength(4);
   });
   it('carries the required disclosure text', () => {
     expect(DISCLOSURE).toMatch(/capability demonstrator/i);

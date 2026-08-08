@@ -20,3 +20,10 @@ export const EMBER_THEME: SiteTheme = {
   typography: { display: 'Playfair Display', body: 'Inter' },
   radius: 'small', density: 'balanced', motion: 'subtle',
 };
+
+export const HAVEN_THEME: SiteTheme = {
+  id: 'haven',
+  colors: { background: '#fbfaf7', foreground: '#1c2530', muted: '#6c7684', surface: '#ffffff', primary: '#14212e', primaryForeground: '#ffffff', accent: '#b08d57', border: '#e6e2d9' },
+  typography: { display: 'Cormorant Garamond', body: 'Inter' },
+  radius: 'medium', density: 'spacious', motion: 'subtle',
+};
