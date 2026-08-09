@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { authFetch } from '@/lib/auth/auth-api-client';
 import { FormSection } from './FormSection';
 
 const STATUS_MESSAGES: Record<string, { text: string; tone: 'ok' | 'error' }> = {
@@ -18,10 +19,10 @@ export function InstagramConnectSection({ tenantId }: { tenantId: string }) {
   const status = params.get('instagram');
   const banner = status ? STATUS_MESSAGES[status] : null;
   const [connection, setConnection] = useState<{ status: string; instagramAccountId?: string | null; tokenExpiresAt?: string | null } | null>(null);
-  useEffect(() => { fetch(`/api/tenants/${tenantId}/instagram/connection`).then(r => r.ok ? r.json() : null).then(setConnection).catch(() => setConnection(null)); }, [tenantId]);
+  useEffect(() => { authFetch<{ status: string; instagramAccountId?: string | null; tokenExpiresAt?: string | null }>(`/api/tenants/${tenantId}/instagram/connection`, { tenantId }).then(r => setConnection(r.data ?? null)).catch(() => setConnection(null)); }, [tenantId]);
   const disconnect = async () => {
-    const response = await fetch(`/api/tenants/${tenantId}/instagram/connection`, { method: 'DELETE' });
-    if (response.ok) setConnection({ status: 'disconnected' });
+    const response = await authFetch(`/api/tenants/${tenantId}/instagram/connection`, { method: 'DELETE', tenantId });
+    if (response.data) setConnection({ status: 'disconnected' });
   };
 
   return (
