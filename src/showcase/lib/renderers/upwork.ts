@@ -1,0 +1,2 @@
+import type { CaseStudy } from '@/showcase/content/types';
+export function renderUpwork(cs: CaseStudy): string { return `${cs.name} — ${cs.projectType}\n\n${cs.executiveSummary}\n\nProblem\n${cs.problem}\n\nSolution\n${cs.solution}\n\nCapabilities\n${cs.capabilitiesShown.map(x => `• ${x}`).join('\n')}\n\nRole & stack\nTechClave designed and built this capability demonstrator with ${cs.stack.join(', ')}.\n\n${cs.disclosure}`; }
