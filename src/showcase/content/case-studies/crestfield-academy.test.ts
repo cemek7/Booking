@@ -1,0 +1,3 @@
+import { expect, describe, it } from '@jest/globals';
+import { CRESTFIELD_CASE_STUDY } from './crestfield-academy';
+describe('CRESTFIELD_CASE_STUDY', () => { it('is truthful and complete', () => { expect(CRESTFIELD_CASE_STUDY.projectType).toBe('Capability Demonstrator'); expect(CRESTFIELD_CASE_STUDY.disclosure).toContain('not presented as commissioned client work'); expect(CRESTFIELD_CASE_STUDY.outcomes.designedImpact.length).toBeGreaterThan(0); expect(CRESTFIELD_CASE_STUDY.outcomes.limitations.length).toBeGreaterThan(0); expect(CRESTFIELD_CASE_STUDY).not.toHaveProperty('measuredScores'); }); });
