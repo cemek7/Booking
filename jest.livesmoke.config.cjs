@@ -13,6 +13,8 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
+  // Prefer IPv4 + retry transient network blips before any test module loads.
+  setupFiles: ['<rootDir>/tests/live-smoke/netRetry.ts'],
   testMatch: ['<rootDir>/tests/live-smoke/**/*.smoke.test.ts'],
   transform: {
     '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
