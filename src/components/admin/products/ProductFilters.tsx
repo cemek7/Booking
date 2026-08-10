@@ -12,6 +12,8 @@ interface ProductFiltersProps {
   onFilterChange: (filters: Partial<ProductListQuery>) => void;
 }
 
+interface CategoriesResponse { categories?: Array<{ name: string }>; }
+
 export default function ProductFilters({ filters, onFilterChange }: ProductFiltersProps) {
   const { tenant } = useTenant();
   const [localFilters, setLocalFilters] = useState(filters);
@@ -23,7 +25,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
     queryFn: async () => {
       if (!tenant?.id) return { categories: [] };
       
-      const response = await authFetch('/api/categories');
+      const response = await authFetch<CategoriesResponse>('/api/categories');
       
       if (response.error) throw new Error('Failed to fetch categories');
       return response.data;
@@ -31,13 +33,13 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
     enabled: !!tenant?.id,
   });
 
-  const categories = ((categoriesData as any)?.categories || []).map((category: any) => category.name);
+  const categories = categoriesData?.categories?.map(category => category.name) ?? [];
 
   useEffect(() => {
     setLocalFilters(filters);
   }, [filters]);
 
-  const handleInputChange = (key: keyof ProductListQuery, value: any) => {
+  const handleInputChange = <Key extends keyof ProductListQuery>(key: Key, value: ProductListQuery[Key]) => {
     const newFilters = { ...localFilters, [key]: value };
     setLocalFilters(newFilters);
   };
