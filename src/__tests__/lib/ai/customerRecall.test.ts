@@ -2,6 +2,19 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { getCustomerRecall } from '@/lib/ai/customerRecall';
 
 type Resp = { data: unknown; error: unknown };
+type FluentMethod = (...args: unknown[]) => RecallChain;
+type RecallChain = {
+  select: FluentMethod;
+  eq: FluentMethod;
+  is: FluentMethod;
+  lt: FluentMethod;
+  not: FluentMethod;
+  order: FluentMethod;
+  limit: FluentMethod;
+  maybeSingle: () => Promise<Resp>;
+  then: PromiseLike<Resp>['then'];
+};
+type RecallClient = { from: () => RecallChain };
 
 const responses: Resp[] = [];
 
@@ -13,18 +26,21 @@ function consume(): Resp {
   return responses.shift() ?? { data: null, error: null };
 }
 
-function makeChain(): any {
-  const chain: any = {};
-  ['select', 'eq', 'is', 'lt', 'not', 'order', 'limit'].forEach((method) => {
+function makeChain(): RecallChain {
+  const chain = {} as RecallChain;
+  const methods: Array<keyof Pick<RecallChain, 'select' | 'eq' | 'is' | 'lt' | 'not' | 'order' | 'limit'>> = [
+    'select', 'eq', 'is', 'lt', 'not', 'order', 'limit',
+  ];
+  methods.forEach((method) => {
     chain[method] = () => chain;
   });
   chain.maybeSingle = async () => consume();
-  chain.then = (resolve: any, reject: any) =>
+  chain.then = (resolve, reject) =>
     Promise.resolve().then(() => consume()).then(resolve, reject);
   return chain;
 }
 
-const admin: any = { from: jest.fn(() => makeChain()) };
+const admin: RecallClient = { from: jest.fn(() => makeChain()) };
 const recent = new Date(Date.now() - 3 * 24 * 3600e3).toISOString();
 const old = new Date(Date.now() - 60 * 24 * 3600e3).toISOString();
 
@@ -38,14 +54,14 @@ describe('getCustomerRecall', () => {
   it('returns null for an unknown customer', async () => {
     pushDb(null);
 
-    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toBeNull();
+    await expect(getCustomerRecall(admin as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toBeNull();
   });
 
   it('returns null when the customer has no past visits', async () => {
     pushDb({ id: 'c1', last_visit: null });
     pushDb([]);
 
-    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toBeNull();
+    await expect(getCustomerRecall(admin as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toBeNull();
   });
 
   it('returns lastService and a single-visit recall without usual staff', async () => {
@@ -60,7 +76,7 @@ describe('getCustomerRecall', () => {
       },
     ]);
 
-    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toMatchObject({
       lastService: 'Trim',
       usualStaff: null,
       visitCount: 1,
@@ -88,7 +104,7 @@ describe('getCustomerRecall', () => {
     ]);
     pushDb({ name: 'Sarah' });
 
-    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toMatchObject({
       usualStaff: 'Sarah',
       visitCount: 2,
     });
@@ -114,7 +130,7 @@ describe('getCustomerRecall', () => {
     ]);
     pushDb(null);
 
-    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toMatchObject({
       usualStaff: null,
     });
   });
@@ -131,13 +147,13 @@ describe('getCustomerRecall', () => {
       },
     ]);
 
-    await expect(getCustomerRecall(admin, 't1', '+2348012345678')).resolves.toMatchObject({
+    await expect(getCustomerRecall(admin as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toMatchObject({
       rebookingDue: true,
     });
   });
 
   it('fails quiet and returns null on query error', async () => {
-    const throwing: any = {
+    const throwing = {
       from: () => ({
         select: () => ({
           eq: () => ({
@@ -149,8 +165,8 @@ describe('getCustomerRecall', () => {
           }),
         }),
       }),
-    };
+    } as unknown as RecallClient;
 
-    await expect(getCustomerRecall(throwing, 't1', '+2348012345678')).resolves.toBeNull();
+    await expect(getCustomerRecall(throwing as unknown as Parameters<typeof getCustomerRecall>[0], 't1', '+2348012345678')).resolves.toBeNull();
   });
 });
