@@ -10,28 +10,48 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 // ── Supabase mock ──────────────────────────────────────────────────────────
 // Each DB call shifts the next response off the queue in the order it was pushed.
 
-type DbRow = Record<string, unknown> | null;
-const responses: Array<{ data: unknown; error: null }> = [];
+type DbResponse = { data: unknown; error: null };
+type FluentMethod = (...args: unknown[]) => MockChain;
+type MockChain = {
+  select: FluentMethod;
+  eq: FluentMethod;
+  neq: FluentMethod;
+  ilike: FluentMethod;
+  in: FluentMethod;
+  lt: FluentMethod;
+  gt: FluentMethod;
+  lte: FluentMethod;
+  gte: FluentMethod;
+  not: FluentMethod;
+  order: FluentMethod;
+  update: FluentMethod;
+  maybeSingle: () => Promise<DbResponse>;
+  limit: () => Promise<DbResponse>;
+  insert: () => Promise<DbResponse>;
+  upsert: () => Promise<DbResponse>;
+};
+const responses: DbResponse[] = [];
 
 function pushDb(data: unknown) {
   responses.push({ data, error: null });
 }
 
 function makeChain() {
-  const chain: Record<string, unknown> = {};
-  const filters = ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order'];
-  filters.forEach(m => {
-    (chain as any)[m] = jest.fn().mockReturnValue(chain);
+  const chain = {} as MockChain;
+  const filters: Array<keyof Pick<MockChain, 'select' | 'eq' | 'neq' | 'ilike' | 'in' | 'lt' | 'gt' | 'lte' | 'gte' | 'not' | 'order' | 'update'>> = [
+    'select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order', 'update',
+  ];
+  filters.forEach(method => {
+    chain[method] = jest.fn().mockReturnValue(chain);
   });
-  (chain as any).maybeSingle = jest.fn().mockImplementation(() =>
+  chain.maybeSingle = jest.fn().mockImplementation(() =>
     Promise.resolve(responses.shift() ?? { data: null, error: null })
   );
-  (chain as any).limit = jest.fn().mockImplementation(() =>
+  chain.limit = jest.fn().mockImplementation(() =>
     Promise.resolve(responses.shift() ?? { data: null, error: null })
   );
-  (chain as any).insert = jest.fn().mockResolvedValue({ data: null, error: null });
-  (chain as any).upsert = jest.fn().mockResolvedValue({ data: null, error: null });
-  (chain as any).update = jest.fn().mockReturnValue(chain);
+  chain.insert = jest.fn().mockResolvedValue({ data: null, error: null });
+  chain.upsert = jest.fn().mockResolvedValue({ data: null, error: null });
   return chain;
 }
 
