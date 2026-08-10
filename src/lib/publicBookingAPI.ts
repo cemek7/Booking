@@ -22,7 +22,7 @@ interface TenantInfo {
   description?: string;
   logo?: string;
   industry?: string;
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
 }
 
 class PublicBookingAPI {

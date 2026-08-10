@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export interface MiddlewareContext {
   request: NextRequest;
   response?: NextResponse;
-  state: Record<string, any>;
+  state: Record<string, unknown>;
   user?: {
     id: string;
     email: string;

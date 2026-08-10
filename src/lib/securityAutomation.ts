@@ -20,7 +20,7 @@ export interface SecurityViolation {
   id: string;
   rule_id: string;
   tenant_id?: string;
-  violation_details: Record<string, any>;
+  violation_details: Record<string, unknown>;
   severity: string;
   status: 'open' | 'investigating' | 'resolved' | 'false_positive';
   detected_at: string;
@@ -294,7 +294,7 @@ export class SecurityAutomationService {
    */
   private async createSecurityViolations(
     rule: SecurityRule, 
-    violationData: Array<Record<string, any>>
+    violationData: Array<Record<string, unknown>>
   ): Promise<void> {
     for (const data of violationData) {
       try {
@@ -332,7 +332,7 @@ export class SecurityAutomationService {
   /**
    * Simulate rule evaluation (replace with actual SQL execution in production)
    */
-  private async simulateRuleEvaluation(rule: SecurityRule): Promise<Array<Record<string, any>>> {
+  private async simulateRuleEvaluation(rule: SecurityRule): Promise<Array<Record<string, unknown>>> {
     // This is a simplified simulation - in production you'd execute the actual SQL
     // against your database with proper sanitization and security
     

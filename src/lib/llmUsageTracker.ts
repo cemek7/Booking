@@ -14,7 +14,7 @@ export interface LLMUsageRecord {
   total_tokens: number;
   cost_usd: number;
   request_id?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at?: string;
 }
 
@@ -479,7 +479,7 @@ export async function recordLLMUsage(
   inputTokens: number,
   outputTokens: number,
   costUsd: number,
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 ): Promise<void> {
   await llmUsageTracker.recordUsage({
     tenant_id: tenantId,

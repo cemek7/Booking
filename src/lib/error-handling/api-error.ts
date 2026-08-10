@@ -99,7 +99,7 @@ export interface ApiErrorResponse {
   error: string;
   code: string;
   message: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
   traceId?: string;
   timestamp?: string;
 }
@@ -110,14 +110,14 @@ export interface ApiErrorResponse {
 export class ApiError extends Error {
   public readonly code: string;
   public readonly statusCode: number;
-  public readonly details?: Record<string, any>;
+  public readonly details?: Record<string, unknown>;
   public readonly originalError?: Error;
 
   constructor(
     code: string,
     message: string,
     statusCode?: number,
-    details?: Record<string, any>,
+    details?: Record<string, unknown>,
     originalError?: Error
   ) {
     super(message);
@@ -175,7 +175,7 @@ export const ApiErrorFactory = {
       'Authorization header is missing or malformed'
     ),
 
-  invalidToken: (details?: string | Record<string, any>) =>
+  invalidToken: (details?: string | Record<string, unknown>) =>
     new ApiError(
       ErrorCodes.INVALID_TOKEN,
       typeof details === 'string' ? details : 'Invalid or malformed token',
@@ -228,7 +228,7 @@ export const ApiErrorFactory = {
       message || 'Bad request'
     ),
 
-  validationError: (details: string | Record<string, any>) =>
+  validationError: (details: string | Record<string, unknown>) =>
     new ApiError(
       ErrorCodes.VALIDATION_ERROR,
       typeof details === 'string' ? details : 'Validation failed',
