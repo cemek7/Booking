@@ -75,7 +75,7 @@ export class PaymentSecurityService {
     metadata?: Record<string, unknown>
   ): Promise<{
     isIdempotent: boolean;
-    existingTransaction?: any;
+    existingTransaction?: Record<string, unknown>;
     fraud_assessment?: FraudAssessment;
     error?: string;
   }> {
@@ -441,7 +441,7 @@ export class PaymentSecurityService {
     }
 
     // Check for duplicate amounts
-    const duplicateAmounts = recentPayments?.filter((p: any) => p.amount === params.amount).length || 0;
+    const duplicateAmounts = (recentPayments as Array<{ amount?: number }> | null)?.filter((payment) => payment.amount === params.amount).length || 0;
     if (duplicateAmounts > 2) {
       score += 15;
       flags.push('duplicate_amounts');
@@ -470,7 +470,7 @@ export class PaymentSecurityService {
       .limit(10);
 
     if (pastTransactions) {
-      const failedCount = pastTransactions.filter((t: any) => t.status === 'failed').length;
+      const failedCount = (pastTransactions as Array<{ status?: string }>).filter((transaction) => transaction.status === 'failed').length;
       if (failedCount > pastTransactions.length * 0.5) {
         return { score: 25, flag: 'email_high_failure_rate' };
       }
