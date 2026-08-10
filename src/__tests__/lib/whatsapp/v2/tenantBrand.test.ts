@@ -3,11 +3,20 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 // ── Supabase mock ──────────────────────────────────────────────────────────
 type DbResponse = { data: unknown; error?: unknown };
 const responses: DbResponse[] = [];
-const updateCalls: Array<Record<string, unknown>> = [];
+type TenantBrandUpdate = { display_name?: string; renamed_at?: string; previous_names?: Array<{ name: string; renamed_at: string }> };
+type MockChain = {
+  select: () => MockChain;
+  eq: () => MockChain;
+  maybeSingle: () => Promise<DbResponse>;
+  update: (payload: TenantBrandUpdate) => MockChain;
+  then: PromiseLike<DbResponse>['then'];
+};
+const updateCalls: TenantBrandUpdate[] = [];
 
 function makeChain() {
-  const chain: any = {};
-  ['select', 'eq'].forEach(m => { chain[m] = jest.fn().mockReturnValue(chain); });
+  const chain = {} as MockChain;
+  chain.select = jest.fn().mockReturnValue(chain);
+  chain.eq = jest.fn().mockReturnValue(chain);
   chain.maybeSingle = jest.fn().mockImplementation(() => Promise.resolve(responses.shift() ?? { data: null, error: null }));
   chain.update = jest.fn().mockImplementation((payload: Record<string, unknown>) => {
     updateCalls.push(payload);
@@ -59,7 +68,7 @@ describe('renameTenantBrand', () => {
     await renameTenantBrand('tenant_1', 'Acme Studio');
 
     expect(updateCalls).toHaveLength(1);
-    const payload = updateCalls[0] as any;
+    const payload = updateCalls[0];
     expect(payload.display_name).toBe('Acme Studio');
     expect(payload.renamed_at).toEqual(expect.any(String));
     expect(payload.previous_names).toEqual([
@@ -75,7 +84,7 @@ describe('renameTenantBrand', () => {
 
     await renameTenantBrand('tenant_1', 'Acme Studio');
 
-    const payload = updateCalls[0] as any;
+    const payload = updateCalls[0];
     expect(payload.previous_names).toEqual([
       { name: 'Old', renamed_at: '2026-01-01T00:00:00Z' },
       { name: 'Acme', renamed_at: expect.any(String) },
