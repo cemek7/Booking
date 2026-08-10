@@ -38,6 +38,19 @@ interface BookingContainerProps {
   tenantId: string;
 }
 
+const progressSteps = ['service', 'datetime', 'customer', 'summary'] as const;
+type ProgressStep = typeof progressSteps[number];
+const progressStepIndex: Record<ProgressStep, number> = {
+  service: 0,
+  datetime: 1,
+  customer: 2,
+  summary: 3,
+};
+
+function isCompletedStep(step: ProgressStep, currentStep: BookingStep['step']): boolean {
+  return currentStep in progressStepIndex && progressStepIndex[step] < progressStepIndex[currentStep as ProgressStep];
+}
+
 export default function BookingContainer({ slug, tenantId }: BookingContainerProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -170,15 +183,13 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
     <div className="space-y-8">
       {/* Progress Indicator */}
       <div className="flex items-center justify-between">
-        {(['service', 'datetime', 'customer', 'summary'] as const).map((step, index) => (
+        {progressSteps.map((step, index) => (
           <div key={step} className="flex items-center">
             <div
               className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
                 step === 'service'
                   ? 'bg-blue-600 text-white'
-                  : ['datetime', 'customer', 'summary'].includes(step) &&
-                      ['datetime', 'customer', 'summary'].indexOf(step as any) <
-                        ['datetime', 'customer', 'summary'].indexOf(currentStep as any)
+                  : isCompletedStep(step, currentStep)
                     ? 'bg-green-600 text-white'
                     : currentStep === step
                       ? 'bg-blue-600 text-white'
@@ -190,14 +201,10 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
             {index < 3 && (
               <div
                 className={`mx-2 h-1 w-8 transition-colors md:w-12 ${
-                  ['datetime', 'customer', 'summary'].includes(step) &&
-                  ['datetime', 'customer', 'summary'].indexOf(step as any) <
-                    ['datetime', 'customer', 'summary'].indexOf(currentStep as any)
+                  isCompletedStep(step, currentStep)
                     ? 'bg-green-600'
                     : currentStep === step ||
-                        (['datetime', 'customer', 'summary'].includes(step) &&
-                          ['datetime', 'customer', 'summary'].indexOf(step as any) <
-                            ['datetime', 'customer', 'summary'].indexOf(currentStep as any))
+                        isCompletedStep(step, currentStep)
                       ? 'bg-blue-600'
                       : 'bg-slate-200'
                 }`}
