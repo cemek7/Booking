@@ -19,7 +19,7 @@ export interface ConnectionStatus {
   is_business: boolean;
   profile_name?: string;
   profile_picture?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

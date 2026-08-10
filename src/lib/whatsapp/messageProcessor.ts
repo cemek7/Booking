@@ -22,7 +22,7 @@ export interface MessageQueueItem {
   scheduled_at?: string;
   processed_at?: string;
   error_message?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
 }
 
@@ -31,7 +31,7 @@ export interface ConversationState {
   phone_number: string;
   session_id: string;
   current_step: string;
-  context: Record<string, any>;
+  context: Record<string, unknown>;
   last_activity: string;
   conversation_history: Array<{
     message: string;
@@ -569,7 +569,7 @@ export async function queueWhatsAppMessage(
   toNumber: string,
   content: string,
   priority: MessageQueueItem['priority'] = 'normal',
-  metadata: Record<string, any> = {}
+  metadata: Record<string, unknown> = {}
 ): Promise<string | null> {
   try {
     const supabase = createSupabaseAdminClient();

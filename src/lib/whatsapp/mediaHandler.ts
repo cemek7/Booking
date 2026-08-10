@@ -17,7 +17,7 @@ export interface MediaFile {
   thumbnail_url?: string;
   caption?: string;
   duration?: number; // For audio/video
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   processed: boolean;
   created_at: string;
 }
@@ -28,7 +28,7 @@ export interface MediaProcessingResult {
   url?: string;
   thumbnailUrl?: string;
   error?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 class WhatsAppMediaHandler {
@@ -461,9 +461,9 @@ class WhatsAppMediaHandler {
     size: number,
     mediaType: string,
     mimeType: string
-  ): Promise<Record<string, any>> {
+  ): Promise<Record<string, unknown>> {
     try {
-      const metadata: Record<string, any> = {
+      const metadata: Record<string, unknown> = {
         size,
         mimeType,
         processedAt: new Date().toISOString()
