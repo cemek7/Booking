@@ -37,6 +37,11 @@ export interface ConnectionMetrics {
   active_conversations: number;
 }
 
+type MonitoredInstanceConfig = {
+  tenant_id: string;
+  instance_name: string;
+};
+
 class WhatsAppConnectionManager {
   private supabase = createSupabaseAdminClient();
   private connectionChecks = new Map<string, NodeJS.Timeout>();
@@ -96,7 +101,7 @@ class WhatsAppConnectionManager {
   /**
    * Start monitoring a specific instance
    */
-  private async startInstanceMonitoring(config: any): Promise<void> {
+  private async startInstanceMonitoring(config: MonitoredInstanceConfig): Promise<void> {
     const instanceName = config.instance_name;
     
     // Stop existing monitoring if any
@@ -120,7 +125,7 @@ class WhatsAppConnectionManager {
   /**
    * Check connection status for a specific instance
    */
-  private async checkInstanceConnection(config: any): Promise<void> {
+  private async checkInstanceConnection(config: MonitoredInstanceConfig): Promise<void> {
     const tenantId = config.tenant_id;
 
     try {
@@ -160,7 +165,7 @@ class WhatsAppConnectionManager {
    * Get instance status from Evolution API
    */
   private async getInstanceStatus(
-    evolutionClient: any,
+    evolutionClient: unknown,
     instanceName: string
   ): Promise<{
     success: boolean;

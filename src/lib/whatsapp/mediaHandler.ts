@@ -31,6 +31,23 @@ export interface MediaProcessingResult {
   metadata?: Record<string, unknown>;
 }
 
+type IncomingMediaMessage = {
+  type: MediaFile['file_type'];
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+};
+
+type DownloadedMedia = {
+  success: boolean;
+  buffer?: Buffer | null;
+  mimeType?: string;
+  fileName?: string;
+  size?: number;
+  originalUrl?: string;
+  error?: string;
+};
+
 class WhatsAppMediaHandler {
   private supabase = createServerSupabaseClient();
   private readonly MAX_FILE_SIZE = 64 * 1024 * 1024; // 64MB
@@ -53,7 +70,7 @@ class WhatsAppMediaHandler {
   async processIncomingMedia(
     tenantId: string,
     phoneNumber: string,
-    message: any
+    message: IncomingMediaMessage
   ): Promise<MediaProcessingResult> {
     try {
       defaultLogger.info(`Processing incoming media from ${phoneNumber}:`, message.type);
@@ -105,7 +122,7 @@ class WhatsAppMediaHandler {
 
       // Release the buffer immediately after upload — it can be up to 64 MB
       const mediaSize = mediaData.size;
-      (mediaData as any).buffer = null;
+      mediaData.buffer = null;
 
       // Generate thumbnail if needed
       let thumbnailUrl;
@@ -334,17 +351,9 @@ class WhatsAppMediaHandler {
    * Download media from WhatsApp
    */
   private async downloadMediaFromWhatsApp(
-    evolutionClient: any,
-    message: any
-  ): Promise<{
-    success: boolean;
-    buffer?: Buffer;
-    mimeType?: string;
-    fileName?: string;
-    size?: number;
-    originalUrl?: string;
-    error?: string;
-  }> {
+    evolutionClient: unknown,
+    message: IncomingMediaMessage
+  ): Promise<DownloadedMedia> {
     try {
       // This would use the Evolution API to download media
       // For now, simulating the process

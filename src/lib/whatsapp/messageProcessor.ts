@@ -420,7 +420,7 @@ class WhatsAppMessageProcessor {
    * Generate contextual response based on intent and conversation state
    */
   private async generateContextualResponse(
-    intentResult: any,
+    intentResult: { intent: string; confidence: number },
     conversationState: ConversationState
   ): Promise<string> {
     const { intent, confidence } = intentResult;
