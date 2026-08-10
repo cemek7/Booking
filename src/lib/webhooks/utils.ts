@@ -75,7 +75,7 @@ export function verifyHmac(
 /**
  * Normalize webhook payload from different providers
  */
-export function normalizePayload(payload: any, provider: string): NormalizedWebhook {
+export function normalizePayload(payload: Record<string, unknown>, provider: string): NormalizedWebhook {
   switch (provider.toLowerCase()) {
     case 'stripe':
       return normalizeStripePayload(payload);
@@ -106,14 +106,14 @@ interface NormalizedWebhook {
   type: string;
   provider: string;
   timestamp: number;
-  data: any;
+  data: Record<string, unknown>;
   metadata: {
     originalType?: string;
     customerId?: string;
     amount?: number;
     currency?: string;
     status?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -121,7 +121,7 @@ interface NormalizedWebhook {
 // PROVIDER-SPECIFIC NORMALIZERS
 // ===============================
 
-function normalizeStripePayload(payload: any): NormalizedWebhook {
+function normalizeStripePayload(payload: Record<string, unknown>): NormalizedWebhook {
   return {
     id: payload.id,
     type: mapStripeEventType(payload.type),
@@ -138,7 +138,7 @@ function normalizeStripePayload(payload: any): NormalizedWebhook {
   };
 }
 
-function normalizePaystackPayload(payload: any): NormalizedWebhook {
+function normalizePaystackPayload(payload: Record<string, unknown>): NormalizedWebhook {
   return {
     id: payload.data?.id || payload.id,
     type: mapPaystackEventType(payload.event),
@@ -155,7 +155,7 @@ function normalizePaystackPayload(payload: any): NormalizedWebhook {
   };
 }
 
-function normalizeEvolutionPayload(payload: any): NormalizedWebhook {
+function normalizeEvolutionPayload(payload: Record<string, unknown>): NormalizedWebhook {
   return {
     id: payload.key || payload.messageId || generateEventId(),
     type: mapEvolutionEventType(payload.event),
@@ -172,7 +172,7 @@ function normalizeEvolutionPayload(payload: any): NormalizedWebhook {
   };
 }
 
-function normalizeWhatsAppPayload(payload: any): NormalizedWebhook {
+function normalizeWhatsAppPayload(payload: Record<string, unknown>): NormalizedWebhook {
   const entry = payload.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -449,7 +449,7 @@ export function validateWebhookEnv(): {
 /**
  * Generate test webhook payload for development
  */
-export function generateTestWebhook(provider: string, eventType: string): any {
+export function generateTestWebhook(provider: string, eventType: string): Record<string, unknown> {
   const basePayload = {
     id: `test_${Date.now()}`,
     created: Math.floor(Date.now() / 1000),
@@ -508,7 +508,7 @@ export function generateTestWebhook(provider: string, eventType: string): any {
  * Sign test webhook for development
  */
 export function signTestWebhook(
-  payload: any,
+  payload: Record<string, unknown>,
   secret: string,
   provider: string
 ): { payload: string; signature: string; headers: Record<string, string> } {
