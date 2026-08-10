@@ -1,10 +1,12 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getRealtimeClient, RealtimeClient, RealtimeStatus } from '@/lib/realtimeClient';
+import type { RealtimeEvent } from '@/lib/realtimeClient';
 import { useTenant } from '@/lib/supabase/tenant-context';
 
 export function useRealtimeClient() {
-  const { token } = useTenant() as any; // assuming tenant-context provides token; fallback below.
+  const tenantContext = useTenant() as unknown as Record<string, unknown>;
+  const token = typeof tenantContext.token === 'string' ? tenantContext.token : undefined;
   const [status, setStatus] = useState<RealtimeStatus>('connecting');
   const [client, setClient] = useState<RealtimeClient | null>(null);
 
@@ -19,7 +21,7 @@ export function useRealtimeClient() {
 
   // Stable identity so consumers can safely place `subscribe` in effect deps
   // without re-subscribing on every render.
-  const subscribe = useCallback((type: string, handler: (e: any) => void) => {
+  const subscribe = useCallback((type: string, handler: (event: RealtimeEvent) => void) => {
     client?.addHandler(type, handler);
     return () => client?.removeHandler(handler);
   }, [client]);
