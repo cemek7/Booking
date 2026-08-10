@@ -39,7 +39,7 @@ const CustomTooltip: React.FC<
     formatValue?: (value: number) => string;
     showPercentage?: boolean;
     total?: number;
-    payload?: any[];
+    payload?: Array<{ value?: number; name?: string; payload?: { fill?: string } }>;
   }
 > = ({ active, payload, formatValue, showPercentage, total }) => {
   if (!active || !payload || !payload.length) {
@@ -173,7 +173,7 @@ export default function PieChart({
               cx="50%"
               cy="50%"
               labelLine={false}
-              label={showPercentage ? (renderCustomLabel as any) : false}
+              label={showPercentage ? renderCustomLabel : false}
               outerRadius={Math.min(height * 0.35, 120)}
               innerRadius={innerRadius}
               fill="#8884d8"
