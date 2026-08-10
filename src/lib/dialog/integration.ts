@@ -42,7 +42,7 @@ const ConversationStateSchema = z.object({
   tenant_id: z.string(),
   current_flow: z.enum(['booking_creation', 'booking_modification', 'booking_cancellation', 'support', 'general']),
   flow_step: z.string(),
-  context: z.record(z.any()),
+  context: z.record(z.unknown()),
   last_interaction: z.string().datetime(),
   session_timeout: z.string().datetime()
 });

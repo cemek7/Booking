@@ -33,7 +33,7 @@ const GetAnalyticsQuerySchema = z.object({
 
 const PostAnalyticsBodySchema = z.object({
   action: AnalyticsActionSchema,
-  data: z.any(),
+  data: z.unknown(),
 });
 
 export const GET = createHttpHandler(

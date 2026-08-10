@@ -30,7 +30,7 @@ const RemoveStaffSchema = z.object({
 
 const PostStaffBodySchema = z.object({
   action: StaffActionSchema,
-  data: z.any(),
+  data: z.unknown(),
 });
 
 export const GET = createHttpHandler(

@@ -16,13 +16,13 @@ const SettingsSchemaBase = z.object({
   businessNickname: z.string().min(1).optional(),
   tone: z.string().min(1).optional(),
   styleGuidelines: z.string().min(1).optional(),
-  voiceParameters: z.record(z.string(), z.any()).optional(),
+  voiceParameters: z.record(z.string(), z.unknown()).optional(),
   samplePhrases: z.array(z.string().min(1)).optional(),
   brandTagline: z.string().optional(),
   greeting: z.string().optional(),
   signature: z.string().optional(),
   preferred_language: z.string().min(1).optional(),
-  tone_config: z.record(z.string(), z.any()).optional(),
+  tone_config: z.record(z.string(), z.unknown()).optional(),
   requireDeposit: z.boolean().optional(),
   // Booking defaults
   bookingBufferMinutes: z.number().int().min(0).optional(),
@@ -121,8 +121,8 @@ const SettingsSchemaBase = z.object({
       useDmReplies: z.boolean().optional(),
     }).optional(),
   }).optional(),
-  operationalMemory: z.record(z.string(), z.any()).optional(),
-  campaignDefaults: z.record(z.string(), z.any()).optional(),
+  operationalMemory: z.record(z.string(), z.unknown()).optional(),
+  campaignDefaults: z.record(z.string(), z.unknown()).optional(),
   positioning: z.string().min(1).optional(),
   // Which Booka workflows this tenant runs (gates the dashboard nav). All-on
   // by default; owners trim what they don't use.

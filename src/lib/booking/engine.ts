@@ -15,7 +15,7 @@ const CreateBookingSchema = z.object({
   start_time: z.string().datetime(),
   end_time: z.string().datetime(),
   notes: z.string().max(1000).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.unknown()).optional(),
   special_requests: z.string().max(500).optional()
 });
 

@@ -10,7 +10,7 @@ const CreateEscalationSchema = z.object({
   sessionId: z.string().min(1),
   reason: z.string().min(1),
   assignedAgentId: z.string().uuid().optional(),
-  conversationSnapshot: z.array(z.any()).optional(),
+  conversationSnapshot: z.array(z.unknown()).optional(),
   status: z.enum(['pending', 'claimed', 'resolved', 'timed_out']).optional(),
 });
 

@@ -10,18 +10,18 @@ export const bookingCreateSchema = z.object({
   staffId: z.string().optional(),
   start: z.string().min(1, 'Start required'),
   end: z.string().min(1, 'End required'),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export const bookingActionSchema = z.object({
   action: z.enum(['confirm','cancel','reschedule','mark_paid']),
-  payload: z.any().optional(),
+  payload: z.unknown().optional(),
 });
 
 export const messageSendSchema = z.object({
   channel: z.enum(['whatsapp','email','sms','app']),
   text: z.string().min(1, 'Message required'),
-  attachments: z.array(z.any()).optional(),
+  attachments: z.array(z.unknown()).optional(),
 });
 
 export const tenantsListQuerySchema = z.object({

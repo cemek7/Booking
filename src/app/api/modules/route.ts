@@ -14,7 +14,7 @@ const ModuleActionSchema = z.enum(['install', 'uninstall', 'configure']);
 const PostModulesBodySchema = z.object({
   action: ModuleActionSchema,
   moduleId: z.string(),
-  configuration: z.any().optional(),
+  configuration: z.unknown().optional(),
 });
 
 export const GET = createHttpHandler(

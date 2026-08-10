@@ -57,7 +57,7 @@ const CreatePaymentSchema = z.object({
   provider: z.enum(PaymentProviders),
   method: z.enum(PaymentMethods),
   customerId: z.string().optional(),
-  metadata: z.record(z.string(), z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   description: z.string().optional()
 });
 
@@ -65,7 +65,7 @@ const RefundRequestSchema = z.object({
   transactionId: z.string().uuid(),
   amount: z.number().positive().optional(), // If not provided, full refund
   reason: z.string().min(5),
-  metadata: z.record(z.string(), z.any()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export type CreatePaymentRequest = z.infer<typeof CreatePaymentSchema>;

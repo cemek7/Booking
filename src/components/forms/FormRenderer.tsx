@@ -533,7 +533,7 @@ export default function FormRenderer({
 
     schema.sections.forEach(section => {
       section.fields.forEach(field => {
-        let fieldSchema: z.ZodSchema = z.any();
+        let fieldSchema: z.ZodSchema = z.unknown();
 
         switch (field.type) {
           case 'text':

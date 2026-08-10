@@ -71,8 +71,8 @@ const WebhookEventSchema = z.object({
   provider: z.string().min(1),
   timestamp: z.number(),
   signature: z.string().min(1),
-  payload: z.record(z.string(), z.any()),
-  metadata: z.record(z.string(), z.any()).optional()
+  payload: z.record(z.string(), z.unknown()),
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 const SecurityValidationResultSchema = z.object({

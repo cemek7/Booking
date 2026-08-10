@@ -60,7 +60,7 @@ export const GET = createHttpHandler(
 const SendSchema = z.object({
   channel: z.enum(['whatsapp', 'email', 'sms', 'app']).default('app'),
   text: z.string().min(1, 'Message required'),
-  attachments: z.array(z.any()).optional(),
+  attachments: z.array(z.unknown()).optional(),
 });
 
 export const POST = createHttpHandler(

@@ -29,7 +29,7 @@ const ScheduleActionSchema = z.enum([
 
 const PostScheduleBodySchema = z.object({
   action: ScheduleActionSchema,
-  data: z.any(),
+  data: z.unknown(),
 });
 
 export const GET = createHttpHandler(
