@@ -42,6 +42,7 @@ import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { getInstagramSecret } from '@/lib/instagram/secrets';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -56,8 +57,26 @@ const OPENROUTER_V2_FALLBACK_MODELS = (process.env.OPENROUTER_V2_FALLBACK_MODELS
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
+const CLOUDFLARE_V2_MODEL = process.env.CLOUDFLARE_AI_DEFAULT_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+const CLOUDFLARE_V2_FALLBACK_MODELS = (process.env.CLOUDFLARE_AI_FALLBACK_MODELS || '')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
 const V2_AI_PROVIDER = (process.env.WHATSAPP_V2_AI_PROVIDER || 'auto').toLowerCase();
 const V2_DISABLE_GOOGLE = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
+
+function walletProvider(): 'cloudflare' | 'openrouter' | 'google_ai' | 'auto' {
+  if (V2_AI_PROVIDER === 'cloudflare') return 'cloudflare';
+  if (V2_AI_PROVIDER === 'openrouter') return 'openrouter';
+  if (V2_AI_PROVIDER === 'google') return 'google_ai';
+  return 'auto';
+}
+
+function walletModel(googleModel: string): string {
+  if (V2_AI_PROVIDER === 'cloudflare') return CLOUDFLARE_V2_MODEL;
+  if (V2_AI_PROVIDER === 'openrouter') return OPENROUTER_V2_MODEL;
+  return googleModel;
+}
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
@@ -410,8 +429,8 @@ async function callAIWithRetry(
         tenantId,
         {
           estimatedTokens: estimatePromptTokens(prompt.length),
-          provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
-          model: FLASH_LITE_MODEL,
+          provider: walletProvider(),
+          model: walletModel(FLASH_LITE_MODEL),
           requestId: `${messageId}:lite:${attempt}`,
           description: 'WhatsApp v2 L2 AI call',
           metadata: {
@@ -524,8 +543,8 @@ async function callFlash(
       tenantId,
       {
         estimatedTokens: estimatePromptTokens(prompt.length),
-        provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
-        model: FLASH_MODEL,
+        provider: walletProvider(),
+        model: walletModel(FLASH_MODEL),
         requestId: `${messageId}:flash`,
         description: 'WhatsApp v2 L3 AI call',
         metadata: {
@@ -578,6 +597,8 @@ async function callAIProviderWithFallback(
       'openai/gpt-4o-mini',
       ...OPENROUTER_V2_FALLBACK_MODELS,
     ],
+    cloudflareModel: CLOUDFLARE_V2_MODEL,
+    cloudflareFallbackModels: CLOUDFLARE_V2_FALLBACK_MODELS,
     disableGoogle: V2_DISABLE_GOOGLE,
   }).complete({
     messages: messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -679,26 +700,14 @@ async function markMessagesProcessed(messageIds: string[]): Promise<void> {
  * and the send is skipped gracefully (logged, not thrown).
  */
 export async function getTenantInstagramConfig(tenantId: string): Promise<ProviderConfig | null> {
-  const { data, error } = await supabaseAdmin
-    .from('whatsapp_provider_secrets')
-    .select('api_key, base_url, instance_name')
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'instagram')
-    .maybeSingle();
-
-  if (error) {
-    console.error('[pipeline] getTenantInstagramConfig error', error);
-    return null;
-  }
-  if (!data?.api_key || !data?.base_url || !data?.instance_name) {
-    return null;
-  }
+  const secret = await getInstagramSecret(supabaseAdmin, tenantId);
+  if (!secret) return null;
 
   return {
     provider: 'instagram',
-    baseUrl: data.base_url as string,
-    apiKey: data.api_key as string,
-    instanceName: data.instance_name as string,
+    baseUrl: process.env.INSTAGRAM_GRAPH_BASE_URL || 'https://graph.instagram.com/v25.0',
+    apiKey: secret.accessToken,
+    instanceName: secret.igId,
   };
 }
 

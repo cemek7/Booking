@@ -6,6 +6,8 @@ export type HeadingProps = {
   level?: 1 | 2 | 3 | 4;
   /** 'display' uses the sc-display (headline) font; 'body' uses the sc-body font. */
   font?: 'display' | 'body';
+  /** Optional anchor id, so headings can be linked/scrolled to in-page. */
+  id?: string;
 };
 
 const LEVEL_CLASSES: Record<NonNullable<HeadingProps['level']>, string> = {
@@ -16,8 +18,8 @@ const LEVEL_CLASSES: Record<NonNullable<HeadingProps['level']>, string> = {
 };
 
 /** Semantic, theme-aware heading. Renders the real h1-h4 element for the given level. */
-export function Heading({ children, className = '', level = 2, font = 'display' }: HeadingProps) {
+export function Heading({ children, className = '', level = 2, font = 'display', id }: HeadingProps) {
   const Tag = (`h${level}` as const);
   const fontClass = font === 'display' ? 'sc-display' : 'sc-body';
-  return <Tag className={`${LEVEL_CLASSES[level]} ${fontClass} ${className}`.trim()}>{children}</Tag>;
+  return <Tag id={id} className={`${LEVEL_CLASSES[level]} ${fontClass} ${className}`.trim()}>{children}</Tag>;
 }

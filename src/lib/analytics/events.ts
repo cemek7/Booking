@@ -45,6 +45,7 @@ export type AnalyticsProvider =
   | 'meta'
   | 'waha'
   | 'evolution'
+  | 'cloudflare'
   | 'openrouter'
   | 'gemini'
   | 'paystack'

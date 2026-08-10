@@ -7,6 +7,7 @@ import { enqueueJob } from '@/lib/webhooks';
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQualityWebhook';
+import { MetaAdapter } from '@/lib/whatsapp/providers/meta';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -155,13 +156,17 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (!config?.tenant_id) {
+      const isSharedGateway =
+        !config?.tenant_id &&
+        process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID === metaPhoneNumberId;
+
+      if (!config?.tenant_id && !isSharedGateway) {
         defaultLogger.warn('[WEBHOOK-META] No active tenant mapped to phone_number_id', { metaPhoneNumberId });
         continue;
       }
 
-      const tenantId = config.tenant_id as string;
-      const instanceName = (config.instance_name as string) || metaPhoneNumberId;
+      const configuredTenantId = config?.tenant_id as string | undefined;
+      const instanceName = (config?.instance_name as string | undefined) || metaPhoneNumberId;
 
       for (const status of value.statuses ?? []) {
         if (!status.id) continue;
@@ -186,8 +191,24 @@ export async function POST(request: NextRequest) {
         );
         if (isDuplicate) continue;
 
+        let tenantId = configuredTenantId;
+        let routedContent = extractMetaMessageContent(message);
+        if (!tenantId && isSharedGateway) {
+          const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
+          const identity = await resolveIncoming('whatsapp', message.from, routedContent);
+          tenantId = identity.tenantId ?? undefined;
+          routedContent = identity.strippedMessage || routedContent;
+
+          if (!tenantId) {
+            await sendSharedGatewayRoutingPrompt(message.from, metaPhoneNumberId);
+            continue;
+          }
+        }
+        if (!tenantId) continue;
+
         const parsed = parseMetaMessage(message, value.metadata?.display_phone_number ?? metaPhoneNumberId, tenantId);
         if (!parsed) continue;
+        parsed.content = routedContent;
 
         const chatId = await upsertChat(supabase, tenantId, parsed.from_number as string);
         if (chatId) parsed.chat_id = chatId;
@@ -201,13 +222,38 @@ export async function POST(request: NextRequest) {
           instanceName,
           parsed.from_number as string,
           parsed.content as string,
-          messageRowId
+          messageRowId,
+          isSharedGateway
         );
       }
     }
   }
 
   return NextResponse.json({ status: 'received' }, { status: 200 });
+}
+
+function extractMetaMessageContent(message: MetaIncomingMessage): string {
+  if (message.type === 'text') return message.text?.body ?? '';
+  if (message.type === 'interactive') {
+    return message.interactive?.button_reply?.title ?? message.interactive?.list_reply?.title ?? '';
+  }
+  if (message.type === 'image') return message.image?.caption ?? '[Image]';
+  if (message.type === 'video') return message.video?.caption ?? '[Video]';
+  if (message.type === 'document') return message.document?.caption ?? message.document?.filename ?? '[Document]';
+  if (message.type === 'audio') return '[Audio]';
+  return '';
+}
+
+async function sendSharedGatewayRoutingPrompt(to: string, phoneNumberId: string): Promise<void> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || '';
+  if (!token) return;
+  const base = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
+  const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
+  const client = new MetaAdapter({ provider: 'meta', baseUrl: `${base}/${version}`, apiKey: token, instanceName: phoneNumberId });
+  await client.sendTextMessage(
+    to,
+    'Welcome to Booka. Please open your business\'s Booka WhatsApp link, or reply with its 6-character business code so we can connect you to the right business.'
+  );
 }
 
 function parseMetaMessage(message: MetaIncomingMessage, toNumber: string, tenantId: string): Record<string, unknown> | null {
@@ -332,7 +378,8 @@ async function routeMessage(
   instance: string,
   fromNumber: string,
   content: string,
-  messageRowId: string
+  messageRowId: string,
+  tenantAlreadyRouted = false
 ): Promise<void> {
   const { data: tenantRow } = await supabase
     .from('tenants')
@@ -345,7 +392,9 @@ async function routeMessage(
     const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
     const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
-    const identity = await resolveIncoming('whatsapp', fromNumber, content);
+    const identity = tenantAlreadyRouted
+      ? { tenantId, role: 'customer' as const, routingCodeFound: false, strippedMessage: content }
+      : await resolveIncoming('whatsapp', fromNumber, content);
     const resolvedTenantId = identity.tenantId ?? tenantId;
     const role = identity.role;
 

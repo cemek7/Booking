@@ -638,6 +638,18 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       .single();
 
     if (error || !data) {
+      const sharedGatewayId = process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID || '';
+      const sharedGatewayToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
+      if (sharedGatewayId && sharedGatewayToken) {
+        const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
+        const apiVersion = process.env.WHATSAPP_API_VERSION || 'v18.0';
+        return {
+          provider: 'meta',
+          baseUrl: `${baseUrl}/${apiVersion}`,
+          apiKey: sharedGatewayToken,
+          instanceName: sharedGatewayId,
+        };
+      }
       return null;
     }
 
@@ -648,10 +660,19 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       provider,
       (data.provider_api_key ?? data.evolution_api_key) as string | null
     );
+    // Tenant-scoped credentials (including Embedded Signup credentials) take
+    // precedence. The deployment-wide token is retained only as a backwards-
+    // compatible fallback for a single legacy Meta connection.
     const resolvedApiKey =
-      provider === 'meta' && process.env.WHATSAPP_ACCESS_TOKEN
-        ? process.env.WHATSAPP_ACCESS_TOKEN
-        : dbApiKey;
+      dbApiKey ||
+      (provider === 'meta' ? (process.env.WHATSAPP_ACCESS_TOKEN || '') : '');
+
+    // Tenant-owned Meta connections must never inherit a deployment-wide token
+    // after their own credential has expired, been revoked, or failed to decrypt.
+    // That could send a tenant's message through the wrong business account.
+    if (provider === 'meta' && data.meta_connection_source && !dbApiKey) {
+      return null;
+    }
 
     return {
       provider,

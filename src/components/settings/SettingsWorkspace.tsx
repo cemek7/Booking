@@ -10,6 +10,7 @@ import { BusinessProfileSection } from '@/components/settings/BusinessProfileSec
 import { NotificationPreferencesSection } from '@/components/settings/NotificationPreferencesSection';
 import { SecuritySettingsSection } from '@/components/settings/SecuritySettingsSection';
 import { WhatsAppSyncSection } from '@/components/settings/WhatsAppSyncSection';
+import { MetaWhatsAppConnectSection } from '@/components/settings/MetaWhatsAppConnectSection';
 import { InstagramConnectSection } from '@/components/settings/InstagramConnectSection';
 import { PaymentSettingsSection } from '@/components/settings/PaymentSettingsSection';
 import { AgentConfigSection } from '@/components/settings/AgentConfigSection';
@@ -87,6 +88,9 @@ interface TenantSettings {
       sendDailySummary?: boolean;
       sendWeeklySummary?: boolean;
       sendCancellationAlerts?: boolean;
+      templateMessagingEnabled?: boolean;
+      monthlyMetaSpendCap?: number;
+      paidTemplateConsent?: boolean;
     };
     instagram?: {
       handle?: string;
@@ -289,7 +293,8 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
             }}
             onChange={patch=>setLocal(l=>({ ...l, ...patch }))}
           />
-          <InstagramConnectSection />
+          <MetaWhatsAppConnectSection tenantId={tenantId!} />
+          <InstagramConnectSection tenantId={tenantId!} />
         </div>
       );
       break;

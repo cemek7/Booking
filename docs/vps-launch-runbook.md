@@ -141,6 +141,24 @@ WHATSAPP_V2_DISABLE_GOOGLE=true
 OPENROUTER_V2_FALLBACK_MODELS=
 ```
 
+To use Cloudflare Workers AI as the primary provider (with OpenRouter as fallback):
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_AI_API_TOKEN=
+CLOUDFLARE_AI_DEFAULT_MODEL=@cf/meta/llama-3.1-8b-instruct
+CLOUDFLARE_AI_FALLBACK_MODELS=
+OPENROUTER_API_KEY=
+OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini
+WHATSAPP_V2_AI_PROVIDER=auto
+WHATSAPP_V2_DISABLE_GOOGLE=true
+```
+
+The API token needs Cloudflare Workers AI Read and Edit permissions. Set
+`WHATSAPP_V2_AI_PROVIDER=cloudflare` to require Cloudflare only, or `openrouter`
+to require OpenRouter only. In `auto` mode, Booka tries Cloudflare, OpenRouter,
+then Google AI (unless Google is disabled).
+
 ## 5. Install and build
 
 ```bash

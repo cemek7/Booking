@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { authFetch } from '@/lib/auth/auth-api-client';
 import { FormSection } from './FormSection';
 
 const STATUS_MESSAGES: Record<string, { text: string; tone: 'ok' | 'error' }> = {
@@ -12,10 +14,16 @@ const STATUS_MESSAGES: Record<string, { text: string; tone: 'ok' | 'error' }> = 
   error: { text: 'Something went wrong connecting Instagram. Please try again.', tone: 'error' },
 };
 
-export function InstagramConnectSection() {
+export function InstagramConnectSection({ tenantId }: { tenantId: string }) {
   const params = useSearchParams();
   const status = params.get('instagram');
   const banner = status ? STATUS_MESSAGES[status] : null;
+  const [connection, setConnection] = useState<{ status: string; instagramAccountId?: string | null; tokenExpiresAt?: string | null } | null>(null);
+  useEffect(() => { authFetch<{ status: string; instagramAccountId?: string | null; tokenExpiresAt?: string | null }>(`/api/tenants/${tenantId}/instagram/connection`, { tenantId }).then(r => setConnection(r.data ?? null)).catch(() => setConnection(null)); }, [tenantId]);
+  const disconnect = async () => {
+    const response = await authFetch(`/api/tenants/${tenantId}/instagram/connection`, { method: 'DELETE', tenantId });
+    if (response.data) setConnection({ status: 'disconnected' });
+  };
 
   return (
     <FormSection
@@ -41,12 +49,7 @@ export function InstagramConnectSection() {
         across tenants.
       </p>
 
-      <a
-        href="/api/auth/instagram/start"
-        className="inline-flex items-center rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"
-      >
-        Connect Instagram
-      </a>
+      {connection?.status === 'connected' ? <div className="flex items-center gap-3 text-sm"><span className="text-emerald-700">Connected</span><button type="button" onClick={disconnect} className="rounded border border-rose-300 px-3 py-1.5 text-rose-800">Disconnect</button></div> : <a href="/api/auth/instagram/start" className="inline-flex items-center rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">{connection?.status === 'action_required' ? 'Reconnect Instagram' : 'Connect Instagram'}</a>}
     </FormSection>
   );
 }

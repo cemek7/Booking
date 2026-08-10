@@ -29,6 +29,15 @@ export const GET = createHttpHandler(
   async () => {
     const timestamp = new Date().toISOString();
     const isProduction = process.env.NODE_ENV === 'production';
+    const supabase = createSupabaseAdminClient();
+    const { data: activeMetaConnection } = await supabase
+      .from('whatsapp_configurations')
+      .select('tenant_id')
+      .eq('provider', 'meta')
+      .eq('active', true)
+      .limit(1)
+      .maybeSingle();
+    const hasTenantScopedMetaConnection = Boolean(activeMetaConnection?.tenant_id);
     const provider = (
       process.env.DEFAULT_WHATSAPP_PROVIDER === 'waha' ||
       process.env.DEFAULT_WHATSAPP_PROVIDER === 'meta' ||
@@ -74,12 +83,15 @@ export const GET = createHttpHandler(
       'CRON_SECRET',
     ]);
 
-    if (featureFlagsEnabled) {
-      requiredEnvVars.add('OPENROUTER_API_KEY');
-    }
+    const hasAiProvider = Boolean(
+      process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_AI_API_TOKEN
+    ) || Boolean(process.env.OPENROUTER_API_KEY) || Boolean(process.env.GOOGLE_AI_API_KEY);
 
-    if (provider === 'meta') {
-      ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_WEBHOOK_VERIFY_TOKEN'].forEach((key) => requiredEnvVars.add(key));
+    if (provider === 'meta' || hasTenantScopedMetaConnection) {
+      ['WHATSAPP_APP_SECRET', 'WHATSAPP_WEBHOOK_VERIFY_TOKEN'].forEach((key) => requiredEnvVars.add(key));
+      if (!hasTenantScopedMetaConnection) {
+        ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID'].forEach((key) => requiredEnvVars.add(key));
+      }
     } else if (provider === 'waha') {
       ['WAHA_API_BASE', 'WAHA_API_KEY', 'EVOLUTION_WEBHOOK_SECRET'].forEach((key) => requiredEnvVars.add(key));
     } else {
@@ -91,6 +103,9 @@ export const GET = createHttpHandler(
     }
 
     const missingEnvVars = Array.from(requiredEnvVars).filter((envVar) => !process.env[envVar]);
+    if (featureFlagsEnabled && !hasAiProvider) {
+      missingEnvVars.push('an AI provider (Cloudflare Workers AI, OpenRouter, or Google AI)');
+    }
     
     if (missingEnvVars.length === 0) {
       readinessCheck.checks.environment_variables = true;
@@ -100,13 +115,10 @@ export const GET = createHttpHandler(
     }
 
     // Check AI services configuration
-    const aiEnvVars = ['OPENROUTER_API_KEY'];
-    const missingAiVars = aiEnvVars.filter(envVar => !process.env[envVar]);
-    
-    if (missingAiVars.length === 0) {
+    if (hasAiProvider) {
       readinessCheck.checks.ai_services_initialized = true;
     } else {
-      readinessCheck.details.warnings?.push(`AI services may not function properly. Missing: ${missingAiVars.join(', ')}`);
+      readinessCheck.details.warnings?.push('AI services may not function properly. Configure Cloudflare Workers AI, OpenRouter, or Google AI.');
       readinessCheck.checks.ai_services_initialized = false;
     }
 
@@ -114,7 +126,6 @@ export const GET = createHttpHandler(
     readinessCheck.checks.storage_accessible = true;
 
     // Smoke-test the core schema we depend on for WhatsApp and background jobs.
-    const supabase = createSupabaseAdminClient();
     const migrationChecks = await Promise.allSettled([
       supabase.from('tenants').select('id', { head: true, count: 'exact' }).limit(1),
       supabase.from('tenant_users').select('user_id', { head: true, count: 'exact' }).limit(1),

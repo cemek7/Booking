@@ -24,6 +24,7 @@ import { runGraduationAdvisor } from '@/lib/whatsapp/v2/deliverability/graduatio
 import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/lib/offboarding/purgeWorker';
 import { recomputeProfile } from '@/lib/customers/profile';
 import { normalizePhone } from '@/lib/customers/identity';
+import { revalidateActiveMetaConnections } from '@/lib/whatsapp/metaConnectionValidation';
 
 const supabaseAdmin = createSupabaseAdminClient();
 type LooseRow = Record<string, unknown>;
@@ -180,6 +181,21 @@ export async function GET(request: Request): Promise<NextResponse> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[cron/nightly] deliverability graduation advisor failed', err);
     results.deliverability_graduation_error = msg;
+  }
+
+  // ── Task 10: Tenant Meta credential revalidation ──────────────────────────
+  // Uses the existing protected VPS nightly schedule. Invalid tenant credentials
+  // are disabled and marked action_required instead of falling back to a global token.
+  try {
+    const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
+    const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
+    results.meta_credential_revalidation = await revalidateActiveMetaConnections(supabaseAdmin, {
+      apiBase: `${baseUrl}/${version}`,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[cron/nightly] Meta credential revalidation failed', err);
+    results.meta_credential_revalidation_error = msg;
   }
 
   await sendTelegramInfo(`Nightly cron complete ✅\n${JSON.stringify(results, null, 2)}`);

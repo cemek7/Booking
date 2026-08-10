@@ -28,6 +28,9 @@ interface EnvConfig {
   REDIS_PASSWORD?: string;
   OPENROUTER_API_KEY?: string;
   OPENROUTER_BASE_URL?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_AI_API_TOKEN?: string;
+  CLOUDFLARE_AI_BASE_URL?: string;
   PAYSTACK_SECRET_KEY?: string;
   PAYSTACK_PUBLIC_KEY?: string;
   STRIPE_SECRET_KEY?: string;
@@ -148,6 +151,9 @@ export function validateEnvironment(): EnvConfig {
     REDIS_PASSWORD: process.env.REDIS_PASSWORD,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL: process.env.OPENROUTER_BASE_URL,
+    CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
+    CLOUDFLARE_AI_API_TOKEN: process.env.CLOUDFLARE_AI_API_TOKEN,
+    CLOUDFLARE_AI_BASE_URL: process.env.CLOUDFLARE_AI_BASE_URL,
     PAYSTACK_SECRET_KEY: process.env.PAYSTACK_SECRET_KEY,
     PAYSTACK_PUBLIC_KEY: process.env.PAYSTACK_PUBLIC_KEY,
     STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
@@ -360,6 +366,12 @@ export function getServiceConfig() {
     openrouter: env.OPENROUTER_API_KEY ? {
       apiKey: env.OPENROUTER_API_KEY,
       baseUrl: env.OPENROUTER_BASE_URL || 'https://api.openrouter.ai'
+    } : null,
+
+    cloudflareAi: env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_AI_API_TOKEN ? {
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: env.CLOUDFLARE_AI_API_TOKEN,
+      baseUrl: env.CLOUDFLARE_AI_BASE_URL || 'https://api.cloudflare.com/client/v4',
     } : null,
     
     payments: {

@@ -1,18 +1,24 @@
 import type { Metadata } from "next";
-import { Mulish, Fraunces } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import RootChrome from "@/components/system/RootChrome";
 
-const brandSans = Mulish({
-  subsets: ["latin"],
+// Self-hosted (latin subset, variable-weight woff2) so production builds do not
+// depend on fetching from Google Fonts at build time. Source files live in
+// ./fonts and are committed to the repo. See src/app/fonts/README.md.
+const brandSans = localFont({
+  src: "./fonts/Mulish-latin-var.woff2",
   display: "swap",
+  weight: "200 1000",
+  style: "normal",
   variable: "--font-booka-sans-loaded",
 });
 
-const brandDisplay = Fraunces({
-  subsets: ["latin"],
+const brandDisplay = localFont({
+  src: "./fonts/Fraunces-latin-var.woff2",
   display: "swap",
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
+  style: "normal",
   variable: "--font-booka-display-loaded",
 });
 

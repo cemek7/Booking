@@ -84,6 +84,15 @@ prepare_directories() {
     install -m 640 "$STAGING_ENV_TEMPLATE" "$STACK_ROOT/staging/.env"
   fi
 
+  # Runtime secrets are deliberately separate from deployment configuration.
+  # They are never committed and are readable only by the deployment user.
+  if [[ ! -f "$STACK_ROOT/prod/.secrets.env" ]]; then
+    install -m 600 /dev/null "$STACK_ROOT/prod/.secrets.env"
+  fi
+  if [[ ! -f "$STACK_ROOT/staging/.secrets.env" ]]; then
+    install -m 600 /dev/null "$STACK_ROOT/staging/.secrets.env"
+  fi
+
   chown -R "$DEPLOY_USER:$DEPLOY_USER" "$STACK_ROOT"
 }
 
@@ -135,6 +144,10 @@ Stack root:
 Environment files:
   $STACK_ROOT/prod/.env
   $STACK_ROOT/staging/.env
+
+Runtime secret files (mode 600; never commit or paste into chat):
+  $STACK_ROOT/prod/.secrets.env
+  $STACK_ROOT/staging/.secrets.env
 
 Nginx vhosts:
   https://$APP_DOMAIN  -> 127.0.0.1:$PROD_PORT
