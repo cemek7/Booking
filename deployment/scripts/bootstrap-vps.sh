@@ -17,6 +17,7 @@ COMPOSE_TEMPLATE="$REPO_ROOT/deployment/docker-compose.vps.yml"
 PROD_ENV_TEMPLATE="$REPO_ROOT/deployment/env/.env.production.example"
 STAGING_ENV_TEMPLATE="$REPO_ROOT/deployment/env/.env.staging.example"
 DEPLOY_SCRIPT_SOURCE="$REPO_ROOT/deployment/scripts/deploy-vps.sh"
+RUNTIME_SECRET_GENERATOR_SOURCE="$REPO_ROOT/deployment/scripts/ensure-generated-runtime-secrets.sh"
 
 usage() {
   cat <<EOF
@@ -74,6 +75,7 @@ ensure_user() {
 prepare_directories() {
   mkdir -p "$STACK_ROOT"/{prod,staging}
   install -m 755 "$DEPLOY_SCRIPT_SOURCE" /usr/local/bin/techclave-deploy
+  install -m 755 "$RUNTIME_SECRET_GENERATOR_SOURCE" /usr/local/bin/techclave-ensure-runtime-secrets
   install -m 644 "$COMPOSE_TEMPLATE" "$STACK_ROOT/prod/docker-compose.yml"
   install -m 644 "$COMPOSE_TEMPLATE" "$STACK_ROOT/staging/docker-compose.yml"
 
@@ -159,6 +161,7 @@ Next actions:
 3. Register Supabase redirect URLs for both domains.
 4. If DNS is already live, rerun with RUN_CERTBOT=true.
 5. Deploy with:
+   techclave-ensure-runtime-secrets staging
    techclave-deploy staging
    techclave-deploy production
 EOF

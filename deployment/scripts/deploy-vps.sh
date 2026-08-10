@@ -4,6 +4,12 @@ set -euo pipefail
 
 STACK_ROOT="${STACK_ROOT:-/opt/techclave}"
 TARGET="${1:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_SECRET_GENERATOR="/usr/local/bin/techclave-ensure-runtime-secrets"
+if [[ ! -x "$DEFAULT_SECRET_GENERATOR" ]]; then
+  DEFAULT_SECRET_GENERATOR="$SCRIPT_DIR/ensure-generated-runtime-secrets.sh"
+fi
+SECRET_GENERATOR="${TECHCLAVE_RUNTIME_SECRET_GENERATOR:-$DEFAULT_SECRET_GENERATOR}"
 
 usage() {
   cat <<EOF
@@ -47,8 +53,17 @@ if [[ ! -f "$STACK_DIR/docker-compose.yml" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$SECRET_GENERATOR" ]]; then
+  echo "Missing runtime-secret generator: $SECRET_GENERATOR" >&2
+  exit 1
+fi
+
+# Generates only Booka-owned secrets when absent and preserves prior values.
+STACK_ROOT="$STACK_ROOT" "$SECRET_GENERATOR" "$TARGET"
+
 set -a
 source "$STACK_DIR/.env"
+source "$STACK_DIR/.secrets.env"
 set +a
 
 if [[ -n "${APP_IMAGE:-}" ]]; then
@@ -64,8 +79,8 @@ if [[ "$APP_IMAGE" == ghcr.io/* ]] && [[ -n "${GHCR_USERNAME:-}" ]] && [[ -n "${
   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 fi
 
-docker compose --env-file "$STACK_DIR/.env" -f "$STACK_DIR/docker-compose.yml" pull
-docker compose --env-file "$STACK_DIR/.env" -f "$STACK_DIR/docker-compose.yml" up -d
+docker compose --env-file "$STACK_DIR/.env" --env-file "$STACK_DIR/.secrets.env" -f "$STACK_DIR/docker-compose.yml" pull
+docker compose --env-file "$STACK_DIR/.env" --env-file "$STACK_DIR/.secrets.env" -f "$STACK_DIR/docker-compose.yml" up -d
 
 install_cron() {
   if [[ "${ENABLE_CRON:-false}" != "true" ]]; then
