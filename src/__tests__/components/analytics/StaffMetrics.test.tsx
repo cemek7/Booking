@@ -3,6 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect } from '@jest/globals';
 import StaffMetrics from '@/components/analytics/StaffMetrics';
 
+type ChartMockProps = { title?: string };
+
 // Mock authFetch so the component resolves to a loaded state
 jest.mock('@/lib/auth/auth-api-client', () => ({
   authFetch: jest.fn().mockResolvedValue({
@@ -18,25 +20,25 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
 
 // Mock all chart components
 jest.mock('@/components/analytics/charts/TrendChart', () => {
-  return function MockTrendChart({ title }: any) {
+  return function MockTrendChart({ title }: ChartMockProps) {
     return <div data-testid="trend-chart">{title}</div>;
   };
 });
 
 jest.mock('@/components/analytics/charts/BarChart', () => {
-  return function MockBarChart({ title }: any) {
+  return function MockBarChart({ title }: ChartMockProps) {
     return <div data-testid="bar-chart">{title}</div>;
   };
 });
 
 jest.mock('@/components/analytics/charts/PieChart', () => {
-  return function MockPieChart({ title }: any) {
+  return function MockPieChart({ title }: ChartMockProps) {
     return <div data-testid="pie-chart">{title}</div>;
   };
 });
 
 jest.mock('@/components/analytics/charts/AreaChart', () => {
-  return function MockAreaChart({ title }: any) {
+  return function MockAreaChart({ title }: ChartMockProps) {
     return <div data-testid="area-chart">{title}</div>;
   };
 });
