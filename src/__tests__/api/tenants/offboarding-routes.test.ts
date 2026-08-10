@@ -6,7 +6,9 @@ import { NextRequest } from 'next/server';
 // Extend the global next/server mock to include NextRequest so that
 // new NextRequest(...) works in jsdom (jest.setup.ts only mocks NextResponse).
 jest.mock('next/server', () => {
-  const g = globalThis as any;
+  type HeaderStore = { get(key: string): string | null; set(key: string, value: string): void };
+  type HeadersConstructor = new () => HeaderStore;
+  const g = globalThis as typeof globalThis & { Headers?: HeadersConstructor };
   const HeadersCtor = g.Headers || class {
     map: Record<string, string> = {};
     get(k: string) { return this.map[k.toLowerCase()] ?? null; }
@@ -18,7 +20,7 @@ jest.mock('next/server', () => {
   class MockNextResponse {
     ok: boolean;
     status: number;
-    headers: any;
+    headers: HeaderStore;
     private _data: unknown;
 
     constructor(data: unknown, init?: { status?: number }) {
@@ -38,7 +40,7 @@ jest.mock('next/server', () => {
   class MockNextRequest {
     url: string;
     method: string;
-    headers: any;
+    headers: HeaderStore;
     private _body: string | undefined;
 
     constructor(url: string, init?: RequestInit & { body?: string }) {
@@ -99,7 +101,18 @@ import { POST as reactivatePOST } from '@/app/api/tenants/[tenantId]/reactivate/
 import { GET as exportGET } from '@/app/api/tenants/[tenantId]/export/route';
 
 // ─── Generic chain helper ─────────────────────────────────────────────────────
-function chain(final: any): any {
+type MockQueryResult = { data: unknown; error: null };
+type MockQueryBuilder = {
+  select: () => MockQueryBuilder;
+  eq: () => MockQueryBuilder;
+  in: () => MockQueryBuilder;
+  update: () => MockQueryBuilder;
+  insert: () => Promise<MockQueryResult>;
+  single: () => Promise<MockQueryResult>;
+  maybeSingle: () => Promise<MockQueryResult>;
+};
+
+function chain(final: MockQueryResult): MockQueryBuilder {
   return {
     select: () => chain(final),
     eq: () => chain(final),
@@ -215,7 +228,7 @@ describe('offboarding API routes', () => {
     it('returns 400 when confirmText does not match the tenant name', async () => {
       const res = await offboardPOST(
         offboardReq({ confirmText: 'Wrong' }) as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof offboardPOST>[1],
       );
       expect(res.status).toBe(400);
       expect(enterOffboarding).not.toHaveBeenCalled();
@@ -224,7 +237,7 @@ describe('offboarding API routes', () => {
     it('returns 200 and lifecycleState when confirmText matches tenant name', async () => {
       const res = await offboardPOST(
         offboardReq({ confirmText: 'Acme' }) as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof offboardPOST>[1],
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -241,7 +254,7 @@ describe('offboarding API routes', () => {
     it('returns 200 success when owner reactivates the tenant', async () => {
       const res = await reactivatePOST(
         reactivateReq() as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof reactivatePOST>[1],
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ success: true });
@@ -254,7 +267,7 @@ describe('offboarding API routes', () => {
     it('returns 200 with the signed export URL', async () => {
       const res = await exportGET(
         exportReq() as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof exportGET>[1],
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ url: 'https://x/export.zip' });
