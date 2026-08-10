@@ -48,6 +48,9 @@ export interface SecurityAuditEvent {
   sensitive_data_accessed?: boolean;
 }
 
+type PiiRegistryRow = { table_name?: string; column_name?: string; data_type?: string; encryption_method?: string | null };
+type FailedLoginRow = { user_id?: string; ip_address?: string };
+
 export class SecurityAutomationService {
   private supabase: SupabaseClient;
   private tracer = trace.getTracer('boka-security');
@@ -345,7 +348,7 @@ export class SecurityAutomationService {
           .in('data_type', ['email', 'phone', 'financial'])
           .or('encryption_method.is.null,encryption_method.eq.');
         
-        return (piiData || []).map((row: any) => ({
+        return ((piiData || []) as PiiRegistryRow[]).map((row) => ({
           table_name: row.table_name,
           column_name: row.column_name,
           data_type: row.data_type,
@@ -361,7 +364,7 @@ export class SecurityAutomationService {
           .gte('created_at', new Date(Date.now() - 15 * 60 * 1000).toISOString());
         
         // Group by user_id and ip_address, count failures
-        const loginGroups = (failedLogins || []).reduce((acc: Record<string, number>, login: any) => {
+        const loginGroups = ((failedLogins || []) as FailedLoginRow[]).reduce((acc: Record<string, number>, login) => {
           const key = `${login.user_id}-${login.ip_address}`;
           acc[key] = (acc[key] || 0) + 1;
           return acc;
@@ -529,7 +532,7 @@ export class SecurityAutomationService {
         .from('pii_data_registry')
         .select('data_type');
       
-      const piiGrouped = (piiSummary || []).reduce((acc: Record<string, number>, item: any) => {
+      const piiGrouped = ((piiSummary || []) as PiiRegistryRow[]).reduce((acc: Record<string, number>, item) => {
         acc[item.data_type] = (acc[item.data_type] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
@@ -558,8 +561,8 @@ export class SecurityAutomationService {
         .from('pii_data_registry')
         .select('encryption_method');
       
-      const encryptedCount = (piiData || []).filter(
-        (item: any) => item.encryption_method && item.encryption_method !== ''
+      const encryptedCount = ((piiData || []) as PiiRegistryRow[]).filter(
+        (item) => item.encryption_method && item.encryption_method !== ''
       ).length;
       
       const encryptionCoverage = piiData?.length 
