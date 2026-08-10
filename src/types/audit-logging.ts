@@ -93,6 +93,26 @@ export type ComplianceFlag =
   | 'iso27001_security'
   | 'regulatory_reporting';
 
+interface AuditDatabaseRow {
+  id?: string;
+  timestamp: string;
+  event_type: AuditEventType;
+  user_id: string;
+  user_role: Role;
+  tenant_id: string;
+  session_id?: string;
+  ip_address?: string;
+  user_agent?: string;
+  resource: string;
+  action: string;
+  permission: string;
+  context: AuditContext;
+  result: AuditResult;
+  security_level: AuditEvent['securityLevel'];
+  compliance_flags: ComplianceFlag[];
+  metadata: Record<string, unknown>;
+}
+
 // ============================================================================
 // AUDIT LOGGER CLASS
 // ============================================================================
@@ -693,7 +713,7 @@ export class AuditLogger {
   }
 
   // Database mapping methods
-  private mapAuditEventToDatabase(event: AuditEvent): any {
+  private mapAuditEventToDatabase(event: AuditEvent): AuditDatabaseRow {
     return {
       timestamp: event.timestamp,
       event_type: event.eventType,
@@ -714,7 +734,7 @@ export class AuditLogger {
     };
   }
 
-  private mapDatabaseToAuditEvent(row: any): AuditEvent {
+  private mapDatabaseToAuditEvent(row: AuditDatabaseRow): AuditEvent {
     return {
       id: row.id,
       timestamp: row.timestamp,
