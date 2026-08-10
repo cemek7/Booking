@@ -10,7 +10,7 @@ export interface BookingEvent {
   serviceId: string;
   staffId?: string;
   customer: { id: string; name?: string; phone?: string; email?: string };
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 export interface CalendarProps {
   view: ViewMode;

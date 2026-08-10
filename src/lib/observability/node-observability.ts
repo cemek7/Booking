@@ -47,7 +47,7 @@ interface AlertRule {
   duration: number; // minutes
   enabled: boolean;
   channels: string[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 interface AlertEvent {
@@ -59,7 +59,7 @@ interface AlertEvent {
   status: 'firing' | 'resolved';
   started_at: Date;
   resolved_at?: Date;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 interface TraceContext {
@@ -76,7 +76,7 @@ interface TraceContext {
     timestamp: Date;
     level: 'info' | 'warn' | 'error' | 'debug';
     message: string;
-    fields?: Record<string, any>;
+    fields?: Record<string, unknown>;
   }>;
 }
 
@@ -499,7 +499,7 @@ export class NodeObservabilityService {
     context: TraceContext, 
     level: 'info' | 'warn' | 'error' | 'debug',
     message: string,
-    fields?: Record<string, any>
+    fields?: Record<string, unknown>
   ): void {
     context.logs.push({
       timestamp: new Date(),
@@ -630,10 +630,10 @@ export class NodeObservabilityService {
    */
   async getHealthStatus(): Promise<{
     status: 'healthy' | 'degraded' | 'unhealthy';
-    checks: Record<string, any>;
+    checks: Record<string, unknown>;
     timestamp: string;
   }> {
-    const checks: Record<string, any> = {};
+    const checks: Record<string, unknown> = {};
     let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
 
     try {

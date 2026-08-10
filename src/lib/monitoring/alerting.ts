@@ -32,7 +32,7 @@ export interface AlertContext {
   /**
    * Additional metadata
    */
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   
   /**
    * Stack trace if available

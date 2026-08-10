@@ -28,7 +28,7 @@ interface TraceContext {
     timestamp: Date;
     level: 'info' | 'warn' | 'error' | 'debug';
     message: string;
-    fields?: Record<string, any>;
+    fields?: Record<string, unknown>;
   }>;
 }
 
@@ -100,7 +100,7 @@ export class EdgeObservabilityService {
     context: TraceContext,
     level: 'info' | 'warn' | 'error' | 'debug',
     message: string,
-    fields?: Record<string, any>
+    fields?: Record<string, unknown>
   ): void {
     context.logs.push({
       timestamp: new Date(),

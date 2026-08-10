@@ -14,7 +14,7 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.badRequest('Nothing to update');
     }
     
-    const patch: Record<string, any> = {};
+    const patch: Record<string, unknown> = {};
     if (role) patch.role = role;
     if (typeof staff_type === 'string') patch.staff_type = staff_type;
     
