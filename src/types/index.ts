@@ -117,7 +117,7 @@ export interface Permission {
 export interface PermissionCondition {
   type: 'time' | 'location' | 'data' | 'user' | 'tenant';
   operator: 'equals' | 'contains' | 'greater' | 'less' | 'in' | 'not_in';
-  value: any;
+  value: unknown;
   description: string;
 }
 
@@ -128,7 +128,7 @@ export interface PermissionRestriction {
   permissionId: string;
   restrictionType: 'time' | 'data' | 'feature' | 'rate';
   description: string;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 /**
@@ -149,7 +149,7 @@ export interface PermissionCheckResult {
   permission?: Permission;
   reason?: string;
   restrictions?: PermissionRestriction[];
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -215,7 +215,7 @@ export interface UnifiedUser {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -299,7 +299,7 @@ export interface AuthOptions {
   requiredRoles?: Role[];
   allowSuperAdmin?: boolean;
   requireTenantAccess?: boolean;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -316,7 +316,7 @@ export interface UserSession {
   is_active: boolean;
   last_activity: Date;
   expires_at: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -345,7 +345,7 @@ export interface AuthenticationEvent {
   session_id?: string;
   success: boolean;
   failure_reason?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at?: Date;
 }
 
@@ -383,7 +383,7 @@ export interface UnifiedPermissionContext {
   ipAddress?: string;
   userAgent?: string;
   requestId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -480,7 +480,7 @@ export const ROLE_VISIBILITY = {
 /**
  * Check if value is a valid Role
  */
-export function isRole(value: any): value is Role {
+export function isRole(value: unknown): value is Role {
   return ['staff', 'manager', 'owner', 'superadmin'].includes(value);
 }
 

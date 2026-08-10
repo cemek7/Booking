@@ -39,7 +39,7 @@ export interface DataPoint {
   timestamp: string;
   value: number;
   label?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 // Time series data
@@ -115,7 +115,7 @@ export interface ChartWidgetConfig {
   xAxis: string;
   yAxis: string[];
   groupBy?: string;
-  filters?: Record<string, any>;
+  filters?: Record<string, unknown>;
   timeRange: TimePeriod;
   granularity: DataGranularity;
 }
@@ -127,7 +127,7 @@ export interface TableWidgetConfig {
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
   pageSize?: number;
-  filters?: Record<string, any>;
+  filters?: Record<string, unknown>;
 }
 
 export interface TableColumn {
@@ -153,7 +153,7 @@ export interface ListWidgetConfig {
   itemTemplate: string;
   maxItems?: number;
   sortBy?: string;
-  filters?: Record<string, any>;
+  filters?: Record<string, unknown>;
 }
 
 // Analytics dashboard layout
@@ -184,7 +184,7 @@ export interface AnalyticsQuery {
 export interface AnalyticsFilter {
   field: string;
   operator: 'equals' | 'not_equals' | 'greater' | 'less' | 'contains' | 'in' | 'between';
-  value: any;
+  value: unknown;
   type: 'string' | 'number' | 'date' | 'boolean';
 }
 
@@ -325,7 +325,7 @@ export interface AnalyticsEvent {
   userId?: string;
   tenantId?: string;
   timestamp: string;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
   sessionId?: string;
   source: 'web' | 'mobile' | 'api' | 'whatsapp';
 }
@@ -336,19 +336,19 @@ export interface RealtimeMetric {
   value: number;
   timestamp: string;
   tenantId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RealtimeUpdate {
   type: 'metric_update' | 'new_booking' | 'cancelled_booking' | 'user_online';
-  data: RealtimeMetric | Record<string, any>;
+  data: RealtimeMetric | Record<string, unknown>;
   timestamp: string;
 }
 
 // Analytics export formats
 export interface AnalyticsExport {
   format: 'csv' | 'xlsx' | 'pdf' | 'json';
-  data: any;
+  data: unknown;
   filters: AnalyticsQuery;
   generatedAt: string;
   generatedBy: string;
@@ -474,4 +474,3 @@ export function getAnalyticsForRole(role: UserRole): {
       };
   }
 }
-
