@@ -5,8 +5,17 @@ import { authFetch, authPost, authDelete, authPatch } from '@/lib/auth/auth-api-
 interface Skill { id: string; name: string; category?: string | null; }
 interface Staff { user_id: string; role: string; email?: string; name?: string; }
 interface Assignment { user_id: string; skill_id: string; skill_name: string; proficiency: number; }
+interface SkillsResponse { skills?: Skill[]; }
+interface StaffResponse { staff?: Staff[]; data?: Staff[]; }
+interface AssignmentsResponse { assignments?: Assignment[]; }
+interface SkillMutationResponse { skill?: Skill; }
+interface AssignmentMutationResponse { assignment?: Assignment; }
 
 interface SkillManagerProps { tenantId: string; className?: string; }
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className }) => {
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -31,14 +40,14 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
       if (!skillsResp.ok) throw new Error('skills fetch failed');
       if (!staffResp.ok) throw new Error('staff fetch failed');
       if (!assignResp.ok) throw new Error('assignments fetch failed');
-      const skillsJson = await skillsResp.json();
-      const staffJson = await staffResp.json();
-      const assignJson = await assignResp.json();
+      const skillsJson = await skillsResp.json() as SkillsResponse;
+      const staffJson = await staffResp.json() as StaffResponse;
+      const assignJson = await assignResp.json() as AssignmentsResponse;
       setSkills(skillsJson.skills || []);
       setStaff(staffJson?.staff || staffJson?.data || []); // new endpoint returns { staff }
       setAssignments(assignJson.assignments || []);
-    } catch (e: any) {
-      setError(e.message || 'Load error');
+    } catch (error: unknown) {
+      setError(errorMessage(error, 'Load error'));
     } finally { setLoading(false); }
   }
 
@@ -52,14 +61,14 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     setSkills(prev => [...prev, optimistic]);
     setNewSkillName(''); setNewSkillCategory('');
     try {
-      const response = await authPost('/api/skills', { tenant_id: tenantId, name: optimistic.name, category: optimistic.category });
+      const response = await authPost<SkillMutationResponse>('/api/skills', { tenant_id: tenantId, name: optimistic.name, category: optimistic.category });
       if (response.error) throw new Error('create failed');
-      const createData = response.data as any;
+      const createData = response.data;
       if (createData?.skill) setSkills(prev => prev.map(s => s.id === tempId ? createData.skill : s));
       else await loadAll();
-    } catch (e: any) {
+    } catch (error: unknown) {
       setSkills(prev => prev.filter(s => s.id !== tempId));
-      setError(e.message || 'Create failed');
+      setError(errorMessage(error, 'Create failed'));
     }
   }
 
@@ -68,14 +77,14 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     const optimistic: Assignment = { user_id: selectedStaff, skill_id: selectedSkill, skill_name: skills.find(s=>s.id===selectedSkill)?.name || 'Skill', proficiency };
     setAssignments(prev => [...prev, optimistic]);
     try {
-      const response = await authPost('/api/staff-skills', { tenant_id: tenantId, user_id: selectedStaff, skill_id: selectedSkill, proficiency });
+      const response = await authPost<AssignmentMutationResponse>('/api/staff-skills', { tenant_id: tenantId, user_id: selectedStaff, skill_id: selectedSkill, proficiency });
       if (response.error) throw new Error('assign failed');
-      const assignData = response.data as any;
+      const assignData = response.data;
       if (assignData?.assignment) setAssignments(prev => prev.map(a => a === optimistic ? assignData.assignment : a));
       else await loadAll();
-    } catch (e: any) {
+    } catch (error: unknown) {
       setAssignments(prev => prev.filter(a => a !== optimistic));
-      setError(e.message || 'Assign failed');
+      setError(errorMessage(error, 'Assign failed'));
     }
   }
 
@@ -86,10 +95,10 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     try {
       const response = await authDelete(`/api/staff-skills/${userId}/${skillId}`);
       if (response.error) throw new Error('unassign failed');
-    } catch (e: any) {
+    } catch (error: unknown) {
       // rollback
       setAssignments(prev => [...prev, existing]);
-      setError(e.message || 'Unassign failed');
+      setError(errorMessage(error, 'Unassign failed'));
     }
   }
 
@@ -102,9 +111,9 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
       if (response.error) throw new Error('delete failed');
       // also remove assignments referencing this skill
       setAssignments(prev => prev.filter(a => a.skill_id !== id));
-    } catch (e: any) {
+    } catch (error: unknown) {
       setSkills(prev => [...prev, existing]);
-      setError(e.message || 'Delete failed');
+      setError(errorMessage(error, 'Delete failed'));
     }
   }
 
@@ -112,12 +121,12 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
     if (!newName.trim()) return;
     setSkills(prev => prev.map(s => s.id === id ? { ...s, name: newName.trim() } : s));
     try {
-      const response = await authPatch(`/api/skills/${id}`, { name: newName.trim() });
+      const response = await authPatch<SkillMutationResponse>(`/api/skills/${id}`, { name: newName.trim() });
       if (response.error) throw new Error('rename failed');
-      const renameData = response.data as any;
+      const renameData = response.data;
       if (renameData?.skill) setSkills(prev => prev.map(s => s.id === id ? renameData.skill : s));
-    } catch (e: any) {
-      setError(e.message || 'Rename failed');
+    } catch (error: unknown) {
+      setError(errorMessage(error, 'Rename failed'));
     }
   }
 
