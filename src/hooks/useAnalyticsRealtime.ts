@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 
 export interface AnalyticsRealtimeConfig {
@@ -15,8 +16,8 @@ export interface AnalyticsRealtimeConfig {
 export interface AnalyticsUpdate {
   type: 'INSERT' | 'UPDATE' | 'DELETE';
   table: string;
-  record: any;
-  old_record?: any;
+  record: Record<string, unknown>;
+  old_record?: Record<string, unknown>;
   timestamp: string;
 }
 
@@ -28,6 +29,7 @@ export interface UseAnalyticsRealtimeReturn {
   updateCount: number;
   clearUpdates: () => void;
   refreshMetrics: () => void;
+  setRefreshCallback: (callback: (() => void) | null) => void;
 }
 
 /**
@@ -87,11 +89,15 @@ export function useAnalyticsRealtime({
     }
   }, []);
 
+  const setRefreshCallback = useCallback((callback: (() => void) | null) => {
+    metricsCallbackRef.current = callback;
+  }, []);
+
   /**
    * Handle realtime update
    */
   const handleRealtimeUpdate = useCallback(
-    (payload: any) => {
+    (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
       const update: AnalyticsUpdate = {
         type: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
         table: payload.table,
@@ -209,6 +215,7 @@ export function useAnalyticsRealtime({
     updateCount,
     clearUpdates,
     refreshMetrics,
+    setRefreshCallback,
   };
 }
 
@@ -235,11 +242,9 @@ export function useAnalyticsRealtimeWithCallback(
   const result = useAnalyticsRealtime(config);
 
   useEffect(() => {
-    const ref = result as any;
-    if (ref.metricsCallbackRef) {
-      ref.metricsCallbackRef.current = onRefresh;
-    }
-  }, [onRefresh, result]);
+    result.setRefreshCallback(onRefresh);
+    return () => result.setRefreshCallback(null);
+  }, [onRefresh, result.setRefreshCallback]);
 
   return result;
 }
