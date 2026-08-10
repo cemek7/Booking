@@ -2,6 +2,7 @@
 import React from 'react';
 import type { BookingEvent } from '../Calendar';
 import { ChatThread } from '../chat/ChatThread';
+import type { ChatMessage } from '../chat/ChatThread';
 import { ChatComposer } from '../chat/ChatComposer';
 import { useBookingActions } from '@/hooks/useBookingActions';
 import { useMessages, useSendMessage } from '@/hooks/useMessages';
@@ -11,7 +12,7 @@ export interface BookingSidePanelProps {
   booking: BookingEvent;
   onClose: () => void;
   onUpdate: (patch: Partial<BookingEvent>) => Promise<void>;
-  onAction?: (action: 'confirm'|'cancel'|'reschedule'|'mark_paid', payload?: any) => Promise<void>;
+  onAction?: (action: 'confirm'|'cancel'|'reschedule'|'mark_paid', payload?: unknown) => Promise<void>;
   locationId?: string;
 }
 
@@ -19,12 +20,12 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
   const actions = useBookingActions(booking.id, locationId);
   const { data: messages, isLoading: messagesLoading, error: messagesError } = useMessages(booking.id);
   const sendMessage = useSendMessage(booking.id);
-  const [pendingMessages, setPendingMessages] = useState<any[]>([]);
+  const [pendingMessages, setPendingMessages] = useState<ChatMessage[]>([]);
 
   // Clear pending once a matching server message (same text) has arrived.
   useEffect(() => {
     if (!messages || messages.length === 0 || pendingMessages.length === 0) return;
-    setPendingMessages(pm => pm.filter(p => !messages.some(m => (m as any).content === p.content)));
+    setPendingMessages(pending => pending.filter(message => !messages.some(serverMessage => serverMessage.content === message.content)));
   }, [messages, pendingMessages]);
   const runAction = async (a: 'confirm'|'cancel'|'reschedule'|'mark_paid') => {
     if (onAction) return onAction(a);
@@ -57,26 +58,22 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
             {messagesError && <div className="text-xs text-red-600">Failed to load messages.</div>}
             {!messagesLoading && !messagesError && (
               <ChatThread
-                {...{
-                  messages: [...(messages || []), ...pendingMessages],
-                  bookingId: booking.id,
-                  onSend: async () => ({ id: `tmp_${Date.now()}`, bookingId: booking.id, direction: 'outbound', channel: 'app', text: '', status: 'pending', createdAt: new Date().toISOString() }),
-                } as any}
+                messages={[...(messages || []), ...pendingMessages]}
+                activeChatId={booking.id}
               />
             )}
           </div>
           <div className="mt-2">
-            <ChatComposer onSend={(async (m: any) => {
-              const text = m.text ?? m;
+            <ChatComposer onSend={async (text: string) => {
               // ChatThread renders { role, content, createdAt } — match that shape.
               const optimistic = { id: `tmp_${Date.now()}`, chatId: '', author: 'You', role: 'assistant', content: text, createdAt: new Date().toISOString() };
               setPendingMessages(p => [...p, optimistic]);
               try {
-                await sendMessage.mutateAsync({ channel: 'app', text, attachments: m.attachments });
+                await sendMessage.mutateAsync({ channel: 'app', text });
               } catch (err) {
                 setPendingMessages(p => p.map(msg => msg.id === optimistic.id ? { ...msg, status: 'failed' } : msg));
               }
-            }) as any} />
+            }} />
           </div>
         </div>
       </div>
