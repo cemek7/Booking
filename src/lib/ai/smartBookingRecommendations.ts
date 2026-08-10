@@ -79,6 +79,65 @@ interface StaffRecommendation {
   }>;
 }
 
+interface ServiceCatalogItem {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  duration: number;
+}
+
+interface BookingHistoryItem {
+  service_id: string;
+  status: string;
+  created_at: string;
+  total_amount?: number;
+}
+
+interface MarketTrends {
+  services: Record<string, { trending_up?: boolean }>;
+  seasonal_demand: Record<string, number>;
+  competitor_analysis: Record<string, unknown>;
+}
+
+interface StaffMember {
+  id: string;
+  name: string;
+  email?: string;
+}
+
+interface SuggestedTimeSlot {
+  date: string;
+  time: string;
+  demand_factor: number;
+}
+
+interface CustomerInteraction {
+  created_at: string;
+  channel: string;
+  action: string;
+  outcome: string;
+}
+
+interface Timeframe {
+  start: string;
+  end: string;
+}
+
+interface DropOffPoint {
+  step: string;
+  drop_off_rate: number;
+  improvement_suggestions: string[];
+}
+
+interface NextBestAction {
+  action: string;
+  timing: string;
+  channel: string;
+  expected_outcome: string;
+  success_probability: number;
+}
+
 class SmartBookingRecommendations {
   private get supabase() { return createServerSupabaseClient(); }
   private customerProfiles = new Map<string, CustomerProfile>();
@@ -475,9 +534,9 @@ class SmartBookingRecommendations {
 
   private async calculateServiceConfidence(
     customerProfile: CustomerProfile,
-    service: any,
-    bookingHistory: any[],
-    marketTrends: any
+    service: ServiceCatalogItem,
+    bookingHistory: BookingHistoryItem[],
+    marketTrends: MarketTrends
   ): Promise<number> {
     let confidence = 0.3; // Base confidence
 
@@ -515,8 +574,8 @@ class SmartBookingRecommendations {
 
   private generateRecommendationReasoning(
     customerProfile: CustomerProfile,
-    service: any,
-    bookingHistory: any[]
+    service: ServiceCatalogItem,
+    bookingHistory: BookingHistoryItem[]
   ): string[] {
     const reasons: string[] = [];
 
@@ -569,8 +628,8 @@ class SmartBookingRecommendations {
 
   private async predictSatisfaction(
     customerProfile: CustomerProfile,
-    service: any,
-    staffSuggestion: any
+    service: ServiceCatalogItem,
+    staffSuggestion: StaffRecommendation | undefined
   ): Promise<number> {
     // Simple satisfaction prediction based on historical data
     let satisfaction = 0.7; // Base satisfaction
@@ -645,7 +704,7 @@ class SmartBookingRecommendations {
     return 0; // No adjustment
   }
 
-  private async getTenantServices(tenantId: string): Promise<any[]> {
+  private async getTenantServices(tenantId: string): Promise<ServiceCatalogItem[]> {
     const { data: services } = await this.supabase
       .from('services')
       .select('*')
@@ -666,7 +725,7 @@ class SmartBookingRecommendations {
     return service?.price || 0;
   }
 
-  private async getCustomerBookingHistory(tenantId: string, customerPhone: string): Promise<any[]> {
+  private async getCustomerBookingHistory(tenantId: string, customerPhone: string): Promise<BookingHistoryItem[]> {
     const { data: bookings } = await this.supabase
       .from('reservations')
       .select('id, service_id, status, start_at, created_at')
@@ -678,7 +737,7 @@ class SmartBookingRecommendations {
     return bookings || [];
   }
 
-  private async getMarketTrends(tenantId: string): Promise<any> {
+  private async getMarketTrends(tenantId: string): Promise<MarketTrends> {
     // This would analyze market trends, seasonal patterns, etc.
     return {
       services: {},
@@ -734,7 +793,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async updateCustomerAnalytics(customer: any): Promise<CustomerProfile> {
+  private async updateCustomerAnalytics(customer: CustomerProfile): Promise<CustomerProfile> {
     // Update analytics calculations
     const bookingHistory = await this.getCustomerBookingHistory(customer.tenant_id, customer.phone);
     
@@ -760,7 +819,7 @@ class SmartBookingRecommendations {
     return customer;
   }
 
-  private extractFavoriteServices(bookings: any[]): string[] {
+  private extractFavoriteServices(bookings: BookingHistoryItem[]): string[] {
     const serviceCounts = bookings.reduce((counts, booking) => {
       const serviceId = booking.service_id;
       counts[serviceId] = (counts[serviceId] || 0) + 1;
@@ -773,7 +832,7 @@ class SmartBookingRecommendations {
       .map(([serviceId]) => serviceId);
   }
 
-  private calculateBookingFrequency(bookings: any[]): number {
+  private calculateBookingFrequency(bookings: BookingHistoryItem[]): number {
     if (bookings.length < 2) return 0;
 
     const firstBooking = new Date(bookings[bookings.length - 1].created_at);
@@ -783,14 +842,14 @@ class SmartBookingRecommendations {
     return monthsDiff > 0 ? bookings.length / monthsDiff : 0;
   }
 
-  private calculateCancellationRate(bookings: any[]): number {
+  private calculateCancellationRate(bookings: BookingHistoryItem[]): number {
     if (bookings.length === 0) return 0;
     
     const cancelledBookings = bookings.filter(b => b.status === 'cancelled').length;
     return cancelledBookings / bookings.length;
   }
 
-  private calculateCustomerSegments(customer: any): string[] {
+  private calculateCustomerSegments(customer: CustomerProfile): string[] {
     const segments = [];
 
     if (customer.history.total_spent > 1000) segments.push('vip');
@@ -801,13 +860,13 @@ class SmartBookingRecommendations {
     return segments.length > 0 ? segments : ['regular'];
   }
 
-  private calculateLifetimeValue(customer: any): number {
+  private calculateLifetimeValue(customer: CustomerProfile): number {
     const monthlyValue = customer.history.avg_booking_value * customer.history.booking_frequency;
     const expectedLifetime = 24; // months
     return monthlyValue * expectedLifetime;
   }
 
-  private calculateChurnProbability(customer: any): number {
+  private calculateChurnProbability(customer: CustomerProfile): number {
     if (!customer.history.last_booking) return 0.1;
 
     const lastBookingDate = new Date(customer.history.last_booking);
@@ -822,7 +881,7 @@ class SmartBookingRecommendations {
 
   // Additional helper methods would be implemented here...
   
-  private async getStaffForService(tenantId: string, serviceId: string): Promise<any[]> {
+  private async getStaffForService(tenantId: string, serviceId: string): Promise<StaffMember[]> {
     // 1. Try explicit staff_services mapping first
     const { data: serviceLinks } = await this.supabase
       .from('staff_services')
@@ -837,7 +896,7 @@ class SmartBookingRecommendations {
         .select('user_id, name, email, role')
         .eq('tenant_id', tenantId)
         .in('user_id', staffIds);
-      return (staff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
+      return (staff || []).map((s: { user_id: string; name: string; email?: string }) => ({ id: s.user_id, name: s.name, email: s.email }));
     }
 
     // 2. Fall back to all bookable staff for the tenant when no service mapping exists.
@@ -847,10 +906,10 @@ class SmartBookingRecommendations {
       .select('user_id, name, email, role')
       .eq('tenant_id', tenantId)
       .neq('role', 'owner');
-    return (allStaff || []).map((s: any) => ({ id: s.user_id, name: s.name, email: s.email }));
+    return (allStaff || []).map((s: { user_id: string; name: string; email?: string }) => ({ id: s.user_id, name: s.name, email: s.email }));
   }
 
-  private async calculateStaffCompatibility(customer: CustomerProfile, staff: any, serviceId: string): Promise<number> {
+  private async calculateStaffCompatibility(customer: CustomerProfile, staff: StaffMember, serviceId: string): Promise<number> {
     try {
       // Use average customer_feedback score for this staff member (0-1 scale from 1-5 rating)
       const { data: feedback } = await this.supabase
@@ -869,7 +928,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async calculateExpertiseMatch(staff: any, serviceId: string): Promise<number> {
+  private async calculateExpertiseMatch(staff: StaffMember, serviceId: string): Promise<number> {
     try {
       // Count completed reservations for this staff+service combination.
       // reservations has no staff_user_id — the staff ref is staff_id (a user_id).
@@ -905,7 +964,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async calculateCustomerStaffPreference(customer: CustomerProfile, staff: any): Promise<number> {
+  private async calculateCustomerStaffPreference(customer: CustomerProfile, staff: StaffMember): Promise<number> {
     try {
       // Count past reservations this customer had with this staff member
       const { data: pastBookings } = await this.supabase
@@ -937,7 +996,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async getStaffNextAvailableSlots(staffId: string, preferredDate?: string): Promise<any[]> {
+  private async getStaffNextAvailableSlots(staffId: string, preferredDate?: string): Promise<StaffRecommendation['next_available_slots']> {
     try {
       const from = preferredDate || new Date().toISOString().split('T')[0];
       const { data: slots } = await this.supabase
@@ -960,7 +1019,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async getOptimalTimeSlots(tenantId: string, serviceId: string, customer: CustomerProfile, preferredDate?: string): Promise<any[]> {
+  private async getOptimalTimeSlots(tenantId: string, serviceId: string, customer: CustomerProfile, preferredDate?: string): Promise<SuggestedTimeSlot[]> {
     try {
       const from = preferredDate || new Date().toISOString().split('T')[0];
       const { data: slots } = await this.supabase
@@ -985,7 +1044,7 @@ class SmartBookingRecommendations {
 
       // Deduplicate and return unique date/time pairs
       const seen = new Set<string>();
-      const result: any[] = [];
+      const result: SuggestedTimeSlot[] = [];
       for (const s of slots) {
         const key = `${s.date}T${s.start_time}`;
         if (!seen.has(key)) {
@@ -1004,7 +1063,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async getCustomerInteractions(tenantId: string, customerPhone: string, timeframe: any): Promise<any[]> {
+  private async getCustomerInteractions(tenantId: string, customerPhone: string, timeframe: Timeframe): Promise<CustomerInteraction[]> {
     try {
       const { data: msgs } = await this.supabase
         .from('messages')
@@ -1015,8 +1074,8 @@ class SmartBookingRecommendations {
         .order('created_at', { ascending: true });
 
       return (msgs || [])
-        .filter((m: any) => m.payload?.phone === customerPhone || m.payload?.from === customerPhone)
-        .map((m: any) => ({
+        .filter((m: { payload?: { phone?: string; from?: string } }) => m.payload?.phone === customerPhone || m.payload?.from === customerPhone)
+        .map((m: { created_at: string; channel?: string; direction?: string }) => ({
           created_at: m.created_at,
           channel: m.channel || 'whatsapp',
           action: m.direction === 'inbound' ? 'inquiry' : 'response',
@@ -1027,7 +1086,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private async getCustomerBookings(tenantId: string, customerPhone: string, timeframe: any): Promise<any[]> {
+  private async getCustomerBookings(tenantId: string, customerPhone: string, timeframe: Timeframe): Promise<BookingHistoryItem[]> {
     try {
       const { data: bookings } = await this.supabase
         .from('reservations')
@@ -1043,7 +1102,7 @@ class SmartBookingRecommendations {
     }
   }
 
-  private calculateConversionProbability(interaction: any): number {
+  private calculateConversionProbability(interaction: CustomerInteraction): number {
     // Higher probability for inbound inquiries and quote requests
     if (interaction.action === 'inquiry') return 0.4;
     if (interaction.action === 'quote_sent') return 0.6;
@@ -1053,8 +1112,8 @@ class SmartBookingRecommendations {
 
   private identifyDropOffPoints(funnel: {
     inquiry: number; quote: number; booking: number; completion: number; repeat: number;
-  }): any[] {
-    const points: any[] = [];
+  }): DropOffPoint[] {
+    const points: DropOffPoint[] = [];
     const steps = [
       { step: 'inquiry_to_quote', from: funnel.inquiry, to: funnel.quote },
       { step: 'quote_to_booking', from: funnel.quote, to: funnel.booking },
@@ -1079,10 +1138,10 @@ class SmartBookingRecommendations {
   private async generateNextBestActions(
     tenantId: string,
     customerPhone: string,
-    touchpoints: any[],
+    touchpoints: CustomerInteraction[],
     funnel: { inquiry: number; quote: number; booking: number; completion: number; repeat: number },
-  ): Promise<any[]> {
-    const actions: any[] = [];
+  ): Promise<NextBestAction[]> {
+    const actions: NextBestAction[] = [];
     const now = new Date();
 
     if (funnel.inquiry > 0 && funnel.booking === 0) {
