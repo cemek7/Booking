@@ -62,6 +62,17 @@ export interface AlertConfig {
   enableDatabaseLogging?: boolean;
 }
 
+interface AlertPayload {
+  severity: AlertSeverity;
+  message: string;
+  operation: string;
+  tenantId?: string;
+  resourceId?: string;
+  metadata: Record<string, unknown>;
+  stackTrace?: string;
+  timestamp: string;
+}
+
 const SEVERITY_LEVELS: Record<AlertSeverity, number> = {
   info: 0,
   warning: 1,
@@ -166,7 +177,7 @@ export class AlertService {
   /**
    * Log alert to console with color coding
    */
-  private logToConsole(alert: any): void {
+  private logToConsole(alert: AlertPayload): void {
     const emoji = {
       info: 'ℹ️',
       warning: '⚠️',
@@ -199,7 +210,7 @@ export class AlertService {
   /**
    * Log alert to database for audit trail
    */
-  private async logToDatabase(alert: any): Promise<void> {
+  private async logToDatabase(alert: AlertPayload): Promise<void> {
     try {
       await this.supabase
         .from('error_logs')
@@ -222,7 +233,7 @@ export class AlertService {
   /**
    * Send alert to Slack
    */
-  private async sendToSlack(alert: any): Promise<void> {
+  private async sendToSlack(alert: AlertPayload): Promise<void> {
     if (!this.config.slackWebhookUrl) {
       return;
     }
@@ -265,7 +276,7 @@ export class AlertService {
   /**
    * Send alert via email using the configured mail transport
    */
-  private async sendToEmail(alert: any): Promise<void> {
+  private async sendToEmail(alert: AlertPayload): Promise<void> {
     if (this.config.emailRecipients.length === 0) {
       return;
     }
