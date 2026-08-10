@@ -123,9 +123,69 @@ interface PredictiveInsight {
   };
 }
 
+interface RevenueRecord {
+  total_amount: number;
+  created_at: string;
+  status?: string;
+}
+
+interface RevenueForecast {
+  base_value: number;
+  trend_adjustment: number;
+  periods: number;
+  forecast_values: number[];
+}
+
+interface TransactionRow {
+  amount?: number | null;
+  raw?: {
+    service_name?: string;
+    service?: string;
+    customer_id?: string;
+  } | null;
+}
+
+interface ReservationRow {
+  status?: string | null;
+  service_id?: string | null;
+  start_at?: string | null;
+  created_at?: string | null;
+  phone?: string | null;
+}
+
+interface CustomerRow {
+  id: string;
+}
+
+type CustomerAnalysisOptions = {
+  includeSegmentation?: boolean;
+  generateRetentionPlan?: boolean;
+  timeHorizon?: 'quarterly' | 'yearly' | 'lifetime';
+};
+
+type ChurnInsights = {
+  overall_churn_rate: number;
+  churn_by_segment: Record<string, number>;
+  top_churn_factors: Array<{ factor: string; impact: number }>;
+  seasonal_patterns: Record<string, number>;
+};
+
+type RetentionStrategy = {
+  strategy: string;
+  target_segments: string[];
+  expected_impact: number;
+  implementation_cost: 'low' | 'medium' | 'high';
+  timeline: string;
+};
+
+type TenantMetrics = TenantBenchmark['metrics'];
+type TenantPerformance = { vertical: string; metrics: TenantMetrics };
+type PerformanceComparison = TenantBenchmark['industry_comparison']['performance_vs_industry'];
+type ImprovementOpportunity = TenantBenchmark['industry_comparison']['improvement_opportunities'][number];
+
 class PredictiveAnalyticsEngine {
   private supabase = createServerSupabaseClient();
-  private modelCache = new Map<string, any>();
+  private modelCache = new Map<string, unknown>();
   private insightCache = new Map<string, PredictiveInsight[]>();
 
   /**
@@ -409,7 +469,7 @@ class PredictiveAnalyticsEngine {
 
   // Private helper methods
 
-  private async getHistoricalRevenueData(tenantId: string, timeHorizon: string): Promise<any[]> {
+  private async getHistoricalRevenueData(tenantId: string, timeHorizon: string): Promise<RevenueRecord[]> {
     const daysBack = timeHorizon === 'yearly' ? 730 : timeHorizon === 'quarterly' ? 180 : 90;
     
     try {
@@ -477,7 +537,7 @@ class PredictiveAnalyticsEngine {
     }
   }
 
-  private async calculateSeasonalFactors(historicalData: any[]): Promise<Record<string, number>> {
+  private async calculateSeasonalFactors(historicalData: RevenueRecord[]): Promise<Record<string, number>> {
     // Group data by month to identify seasonal patterns
     const monthlyData = historicalData.reduce((acc, record) => {
       const month = new Date(record.created_at).getMonth();
@@ -503,7 +563,7 @@ class PredictiveAnalyticsEngine {
     return seasonalFactors;
   }
 
-  private async generateTimSeriesForecast(historicalData: any[], timeHorizon: string): Promise<any> {
+  private async generateTimSeriesForecast(historicalData: RevenueRecord[], timeHorizon: string): Promise<RevenueForecast> {
     // Simple moving average forecast (in production, use more sophisticated models)
     const periods = timeHorizon === 'yearly' ? 12 : timeHorizon === 'quarterly' ? 3 : 1;
     const recentPeriods = historicalData.slice(-30); // Last 30 data points
@@ -521,7 +581,7 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private calculateLinearTrend(data: any[]): number {
+  private calculateLinearTrend(data: RevenueRecord[]): number {
     if (data.length < 2) return 0;
 
     // Simple linear regression to calculate trend
@@ -538,7 +598,7 @@ class PredictiveAnalyticsEngine {
     return slope || 0;
   }
 
-  private applySeasonalAdjustments(forecast: any, seasonalFactors: Record<string, number>): any {
+  private applySeasonalAdjustments(forecast: RevenueForecast, seasonalFactors: Record<string, number>): RevenueForecast {
     const currentMonth = new Date().toLocaleString('default', { month: 'long' });
     const seasonalMultiplier = seasonalFactors[currentMonth] || 1;
 
@@ -549,8 +609,8 @@ class PredictiveAnalyticsEngine {
   }
 
   private calculateConfidenceInterval(
-    forecast: any, 
-    historicalData: any[], 
+    forecast: RevenueForecast,
+    historicalData: RevenueRecord[],
     confidenceLevel: number
   ): { low: number; high: number } {
     // Calculate prediction interval based on historical variance
@@ -571,7 +631,7 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private async generateRevenueTrends(tenantId: string, historicalData: any[]): Promise<RevenueMetrics['trends']> {
+  private async generateRevenueTrends(tenantId: string, historicalData: RevenueRecord[]): Promise<RevenueMetrics['trends']> {
     // Generate daily revenue trend for last 30 days
     const last30Days = historicalData.slice(-30);
     const dailyRevenue = this.groupByDate(last30Days);
@@ -589,7 +649,7 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private groupByDate(data: any[]): Array<{ date: string; amount: number; bookings: number }> {
+  private groupByDate(data: RevenueRecord[]): Array<{ date: string; amount: number; bookings: number }> {
     const grouped = data.reduce((acc, record) => {
       const date = record.created_at.split('T')[0];
       if (!acc[date]) {
@@ -629,7 +689,7 @@ class PredictiveAnalyticsEngine {
         .gte('created_at', prev30Start)
         .lt('created_at', recent30Start);
 
-      const aggregate = (rows: any[]) =>
+      const aggregate = (rows: TransactionRow[]) =>
         rows.reduce((acc: Record<string, number>, r) => {
           const svc = r.raw?.service_name || r.raw?.service || 'Other';
           acc[svc] = (acc[svc] || 0) + Number(r.amount || 0);
@@ -684,7 +744,7 @@ class PredictiveAnalyticsEngine {
       // Segment by total spend: VIP (>500), Regular (100-500), New (<100)
       const segment = (total: number) => total > 500 ? 'VIP' : total > 100 ? 'Regular' : 'New';
 
-      const byCustomer = (rows: any[]) =>
+      const byCustomer = (rows: TransactionRow[]) =>
         rows.reduce((acc: Record<string, number>, r) => {
           const cid = r.raw?.customer_id || 'unknown';
           acc[cid] = (acc[cid] || 0) + Number(r.amount || 0);
@@ -717,7 +777,7 @@ class PredictiveAnalyticsEngine {
     }
   }
 
-  private getForecastValue(forecast: any, period: 'month' | 'quarter'): number {
+  private getForecastValue(forecast: RevenueForecast, period: 'month' | 'quarter'): number {
     if (!forecast.forecast_values || forecast.forecast_values.length === 0) return 0;
     
     if (period === 'month') {
@@ -727,7 +787,7 @@ class PredictiveAnalyticsEngine {
     }
   }
 
-  private calculateGrowthRate(historicalData: any[]): number {
+  private calculateGrowthRate(historicalData: RevenueRecord[]): number {
     if (historicalData.length < 2) return 0;
 
     const recent = historicalData.slice(-30);
@@ -768,7 +828,7 @@ class PredictiveAnalyticsEngine {
 
   // Additional helper methods for customer analytics, churn prediction, etc...
   
-  private async analyzeSingleCustomer(tenantId: string, customerId: string, options: any): Promise<CustomerAnalytics> {
+  private async analyzeSingleCustomer(tenantId: string, customerId: string, options: CustomerAnalysisOptions): Promise<CustomerAnalytics> {
     try {
       // Try customer_analytics cache first
       const { data: cached } = await this.supabase
@@ -829,9 +889,9 @@ class PredictiveAnalyticsEngine {
           .in('status', ['completed', 'paid']),
       ]);
 
-      const totalSpent = (transactions || []).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+      const totalSpent = (transactions as TransactionRow[] || []).reduce((s, t) => s + Number(t.amount || 0), 0);
       const bookingCount = (reservations || []).length;
-      const completedCount = (reservations || []).filter((r: any) => r.status === 'completed').length;
+      const completedCount = (reservations as ReservationRow[] || []).filter((r) => r.status === 'completed').length;
       const lastBookingDate = reservations?.[0]?.created_at ? new Date(reservations[0].created_at) : null;
       const daysSinceLastBooking = lastBookingDate
         ? Math.floor((Date.now() - lastBookingDate.getTime()) / (1000 * 60 * 60 * 24))
@@ -855,7 +915,7 @@ class PredictiveAnalyticsEngine {
         .map(([h]) => `${String(h).padStart(2, '0')}:00`);
 
       // Extract preferred services
-      const serviceIds = [...new Set((reservations || []).map((r: any) => r.service_id).filter(Boolean))];
+      const serviceIds = [...new Set((reservations as ReservationRow[] || []).map((r) => r.service_id).filter((id): id is string => Boolean(id)))];
       const serviceMap = new Map<string, string>();
       if (serviceIds.length > 0) {
         const { data: services } = await this.supabase
@@ -875,7 +935,7 @@ class PredictiveAnalyticsEngine {
 
       // Booking frequency = bookings per month over observed lifespan
       const firstBookingDate = reservations && reservations.length > 0
-        ? new Date((reservations as any[])[reservations.length - 1].created_at)
+        ? new Date((reservations as ReservationRow[])[reservations.length - 1].created_at ?? '')
         : null;
       const observedMonths = firstBookingDate && lastBookingDate
         ? Math.max(1, (lastBookingDate.getTime() - firstBookingDate.getTime()) / (1000 * 60 * 60 * 24 * 30))
@@ -920,7 +980,7 @@ class PredictiveAnalyticsEngine {
     }
   }
 
-  private async getTenantCustomers(tenantId: string): Promise<any[]> {
+  private async getTenantCustomers(tenantId: string): Promise<CustomerRow[]> {
     const { data: customers } = await this.supabase
       .from('customers')
       .select('id, phone, email')
@@ -929,12 +989,12 @@ class PredictiveAnalyticsEngine {
     return customers || [];
   }
 
-  private async calculateChurnProbability(tenantId: string, customer: any): Promise<CustomerAnalytics> {
+  private async calculateChurnProbability(tenantId: string, customer: CustomerRow): Promise<CustomerAnalytics> {
     // Simplified churn calculation
     return await this.analyzeSingleCustomer(tenantId, customer.id, {});
   }
 
-  private async generateChurnInsights(tenantId: string, analytics: CustomerAnalytics[]): Promise<any> {
+  private async generateChurnInsights(tenantId: string, analytics: CustomerAnalytics[]): Promise<ChurnInsights> {
     // Calculate overall churn metrics
     const totalCustomers = analytics.length;
     const churnedCustomers = analytics.filter(a => a.churn_analysis.churn_probability > 0.7).length;
@@ -948,7 +1008,7 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private async generateRetentionStrategies(tenantId: string, highRiskCustomers: CustomerAnalytics[], insights: any): Promise<any[]> {
+  private async generateRetentionStrategies(tenantId: string, highRiskCustomers: CustomerAnalytics[], insights: ChurnInsights): Promise<RetentionStrategy[]> {
     return [
       {
         strategy: 'Personalized Offers',
@@ -997,7 +1057,7 @@ class PredictiveAnalyticsEngine {
 
   // Additional methods for benchmarks and insights...
   
-  private async getTenantPerformanceMetrics(tenantId: string, timeFrame?: string): Promise<any> {
+  private async getTenantPerformanceMetrics(tenantId: string, timeFrame?: string): Promise<TenantPerformance> {
     try {
       const daysBack = timeFrame === 'yearly' ? 365 : timeFrame === 'quarterly' ? 90 : 30;
       const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
@@ -1030,17 +1090,17 @@ class PredictiveAnalyticsEngine {
           .maybeSingle(),
       ]);
 
-      const totalRevenue = (transactions || []).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+      const totalRevenue = (transactions as TransactionRow[] || []).reduce((s, t) => s + Number(t.amount || 0), 0);
       const totalBookings = (reservations || []).length;
-      const completedBookings = (reservations || []).filter((r: any) => r.status === 'completed').length;
-      const uniqueCustomers = new Set((reservations || []).map((r: any) => r.phone).filter(Boolean)).size;
+      const completedBookings = (reservations as ReservationRow[] || []).filter((r) => r.status === 'completed').length;
+      const uniqueCustomers = new Set((reservations as ReservationRow[] || []).map((r) => r.phone).filter(Boolean)).size;
       const avgBookingValue = totalBookings > 0 ? totalRevenue / totalBookings : 0;
       const avgRating = feedback && feedback.length > 0
         ? (feedback as Array<{ score: number }>).reduce((s, f) => s + f.score, 0) / feedback.length
         : 0;
 
       return {
-        vertical: (tenantRow as any)?.industry || 'general',
+        vertical: (tenantRow as { industry?: string } | null)?.industry || 'general',
         metrics: {
           revenue_per_customer: uniqueCustomers > 0 ? totalRevenue / uniqueCustomers : 0,
           booking_frequency: uniqueCustomers > 0 ? totalBookings / uniqueCustomers : 0,
@@ -1066,7 +1126,7 @@ class PredictiveAnalyticsEngine {
     }
   }
 
-  private async getIndustryBenchmarks(vertical: string): Promise<any> {
+  private async getIndustryBenchmarks(vertical: string): Promise<TenantMetrics> {
     return {
       revenue_per_customer: 120,
       booking_frequency: 2.0,
@@ -1077,7 +1137,7 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private calculatePercentileRank(tenantMetrics: any, industryBenchmarks: any): number {
+  private calculatePercentileRank(tenantMetrics: TenantPerformance, industryBenchmarks: TenantMetrics): number {
     // Simple percentile calculation
     const metrics = tenantMetrics.metrics;
     const benchmarks = industryBenchmarks;
@@ -1097,7 +1157,7 @@ class PredictiveAnalyticsEngine {
     return Math.round(avgScore * 50); // Convert to percentile
   }
 
-  private comparePerformance(tenantMetrics: any, industryBenchmarks: any): any {
+  private comparePerformance(tenantMetrics: TenantPerformance, industryBenchmarks: TenantMetrics): PerformanceComparison {
     const metrics = tenantMetrics.metrics;
     const benchmarks = industryBenchmarks;
     
@@ -1108,8 +1168,8 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private async identifyImprovementOpportunities(tenantMetrics: any, industryBenchmarks: any): Promise<any[]> {
-    const opportunities = [];
+  private async identifyImprovementOpportunities(tenantMetrics: TenantPerformance, industryBenchmarks: TenantMetrics): Promise<ImprovementOpportunity[]> {
+    const opportunities: ImprovementOpportunity[] = [];
     const metrics = tenantMetrics.metrics;
     const benchmarks = industryBenchmarks;
     
@@ -1152,7 +1212,7 @@ class PredictiveAnalyticsEngine {
     };
   }
 
-  private async generateSpecificInsight(tenantId: string, type: PredictiveInsight['type'], options: any): Promise<PredictiveInsight> {
+  private async generateSpecificInsight(tenantId: string, type: PredictiveInsight['type'], options: { timeHorizon?: string }): Promise<PredictiveInsight> {
     const insightId = `insight_${type}_${Date.now()}`;
     
     return {
