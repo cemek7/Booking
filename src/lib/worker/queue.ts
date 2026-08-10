@@ -15,7 +15,7 @@ const PaymentJobSchema = z.object({
   payment_provider: z.enum(['stripe', 'paystack', 'flutterwave']).optional(),
   amount: z.number().positive().optional(),
   currency: z.string().length(3).optional(),
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.unknown()).optional()
 });
 
 const NotificationJobSchema = z.object({
@@ -23,7 +23,7 @@ const NotificationJobSchema = z.object({
   recipient: z.string(),
   channel: z.enum(['email', 'sms', 'whatsapp', 'push']),
   template_id: z.string().optional(),
-  template_data: z.record(z.any()).optional(),
+  template_data: z.record(z.unknown()).optional(),
   scheduled_for: z.string().datetime().optional(),
   priority: z.enum(['low', 'normal', 'high', 'critical']).default('normal')
 });
@@ -36,14 +36,14 @@ const DataExportJobSchema = z.object({
     start_date: z.string().datetime(),
     end_date: z.string().datetime()
   }),
-  filters: z.record(z.any()).optional(),
+  filters: z.record(z.unknown()).optional(),
   delivery_method: z.enum(['email', 'download_link', 's3']).default('email')
 });
 
 const MaintenanceJobSchema = z.object({
   type: z.enum(['cleanup_old_data', 'generate_reports', 'send_close_reports', 'sync_external_calendars', 'backup_database']),
   tenant_id: z.string().uuid().optional(),
-  parameters: z.record(z.any()).optional()
+  parameters: z.record(z.unknown()).optional()
 });
 
 interface QueueConfig {
@@ -66,11 +66,31 @@ interface QueueConfig {
 
 interface JobResult {
   success: boolean;
-  result?: any;
+  result?: unknown;
   error?: string;
   duration?: number;
   retryCount?: number;
 }
+
+type BookingWorkflowData = {
+  id: string;
+  price_cents?: number;
+  currency?: string;
+  customer_email?: string;
+} & Record<string, unknown>;
+
+type QueueJobData = {
+  transaction_id?: string;
+  tenant_id?: string;
+  amount?: number;
+  reason?: string;
+  date?: string;
+  recipient?: string;
+  type?: string;
+  export_format?: 'csv' | 'excel' | 'json' | 'pdf';
+  date_range?: { start_date?: string; end_date?: string };
+  template_data?: { html?: string; body?: string; subject?: string };
+};
 
 interface QueueMetrics {
   queued: number;
@@ -91,7 +111,7 @@ export class WorkerQueueService {
   private workers: Map<string, Worker> = new Map();
   private flowProducer: FlowProducer;
   private eventBus: ReturnType<typeof getEventBus>;
-  private supabase: any;
+  private supabase: ReturnType<typeof createServerSupabaseClient>;
   private isInitialized = false;
 
   private config: QueueConfig = {
@@ -485,7 +505,7 @@ export class WorkerQueueService {
    * Create complex workflow using FlowProducer
    */
   async createBookingWorkflow(
-    bookingData: any,
+    bookingData: BookingWorkflowData,
     tenantId: string
   ): Promise<void> {
     try {
@@ -918,7 +938,7 @@ export class WorkerQueueService {
     }
   }
 
-  private async simulatePaymentProcessing(data: any): Promise<void> {
+  private async simulatePaymentProcessing(data: QueueJobData): Promise<void> {
     const supabase = createServerSupabaseClient();
     const PaymentService = (await import('@/lib/paymentService')).default;
     const svc = new PaymentService(supabase);
@@ -927,7 +947,7 @@ export class WorkerQueueService {
     }
   }
 
-  private async simulateRefundProcessing(data: any): Promise<void> {
+  private async simulateRefundProcessing(data: QueueJobData): Promise<void> {
     const supabase = createServerSupabaseClient();
     const PaymentService = (await import('@/lib/paymentService')).default;
     const svc = new PaymentService(supabase);
@@ -936,7 +956,7 @@ export class WorkerQueueService {
     }
   }
 
-  private async simulatePaymentVerification(data: any): Promise<void> {
+  private async simulatePaymentVerification(data: QueueJobData): Promise<void> {
     const supabase = createServerSupabaseClient();
     if (data.transaction_id && data.tenant_id) {
       const PaymentService = (await import('@/lib/paymentService')).default;
@@ -945,7 +965,7 @@ export class WorkerQueueService {
     }
   }
 
-  private async simulatePaymentReconciliation(data: any): Promise<void> {
+  private async simulatePaymentReconciliation(data: QueueJobData): Promise<void> {
     const supabase = createServerSupabaseClient();
     const PaymentService = (await import('@/lib/paymentService')).default;
     const svc = new PaymentService(supabase);
@@ -954,7 +974,7 @@ export class WorkerQueueService {
     }
   }
 
-  private async sendEmailNotification(data: any): Promise<void> {
+  private async sendEmailNotification(data: QueueJobData): Promise<void> {
     const { sendEmail } = await import('@/lib/integrations/email-service');
     if (!data.recipient) return;
     const html = data.template_data?.html || `<p>${data.template_data?.body || data.type}</p>`;
@@ -962,14 +982,14 @@ export class WorkerQueueService {
     await sendEmail({ to: data.recipient, subject, html });
   }
 
-  private async sendSMSNotification(data: any): Promise<void> {
+  private async sendSMSNotification(data: QueueJobData): Promise<void> {
     const { sendSMS } = await import('@/lib/integrations/sms-service');
     if (!data.recipient) return;
     const body = data.template_data?.body || data.type?.replace(/_/g, ' ');
     await sendSMS({ to: data.recipient, body });
   }
 
-  private async sendWhatsAppNotification(data: any): Promise<void> {
+  private async sendWhatsAppNotification(data: QueueJobData): Promise<void> {
     const { sendWhatsApp } = await import('@/lib/integrations/whatsapp-service');
     if (!data.recipient) return;
     await sendWhatsApp({
@@ -978,12 +998,12 @@ export class WorkerQueueService {
     });
   }
 
-  private async sendPushNotification(data: any): Promise<void> {
+  private async sendPushNotification(data: QueueJobData): Promise<void> {
     // Push notifications require a push gateway — log and skip gracefully
     defaultLogger.warn('[WorkerQueue] Push notification not configured:', data.recipient);
   }
 
-  private async generateDataExport(data: any): Promise<any> {
+  private async generateDataExport(data: QueueJobData): Promise<{ rows: unknown[]; format: string }> {
     const supabase = createServerSupabaseClient();
     let query = supabase.from('reservations').select('*').eq('tenant_id', data.tenant_id);
     if (data.date_range?.start_date) query = query.gte('created_at', data.date_range.start_date);
