@@ -25,6 +25,12 @@ jest.mock('@/lib/reservationService', () => ({
 
 import { GET, POST } from '@/app/api/bookings/route';
 
+const asGetContext = (context: ReturnType<typeof createMockContext>) =>
+  context as unknown as Parameters<typeof GET>[0];
+
+const asPostContext = (context: ReturnType<typeof createMockContext>) =>
+  context as unknown as Parameters<typeof POST>[0];
+
 const createMockSupabase = () => ({
   from: jest.fn().mockReturnThis(),
   select: jest.fn().mockReturnThis(),
@@ -80,7 +86,7 @@ describe('GET /api/bookings', () => {
         request: new NextRequest('http://localhost:3000/api/bookings?end=2024-01-31T23:59:59Z'),
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asGetContext(ctx))).rejects.toThrow();
     });
 
     it('should require end parameter', async () => {
@@ -88,14 +94,14 @@ describe('GET /api/bookings', () => {
         request: new NextRequest('http://localhost:3000/api/bookings?start=2024-01-01T00:00:00Z'),
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asGetContext(ctx))).rejects.toThrow();
     });
 
     it('should accept valid datetime strings', async () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -105,7 +111,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asGetContext(ctx));
       expect(response).toHaveProperty('bookings');
     });
 
@@ -116,7 +122,7 @@ describe('GET /api/bookings', () => {
         ),
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asGetContext(ctx))).rejects.toThrow();
     });
 
     it('should reject invalid datetime format for end', async () => {
@@ -126,14 +132,14 @@ describe('GET /api/bookings', () => {
         ),
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asGetContext(ctx))).rejects.toThrow();
     });
 
     it('should accept optional staff_id parameter', async () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -143,7 +149,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asGetContext(ctx));
       expect(response).toHaveProperty('bookings');
     });
 
@@ -154,7 +160,7 @@ describe('GET /api/bookings', () => {
         ),
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asGetContext(ctx))).rejects.toThrow();
     });
   });
 
@@ -165,7 +171,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.eq = mockEq;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -175,7 +181,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await GET(ctx as any);
+      await GET(asGetContext(ctx));
 
       expect(mockEq).toHaveBeenCalledWith('tenant_id', 'tenant-123');
     });
@@ -188,7 +194,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.gt = mockGt;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -198,7 +204,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await GET(ctx as any);
+      await GET(asGetContext(ctx));
 
       expect(mockLt).toHaveBeenCalledWith('start_at', '2024-01-31T23:59:59Z');
       expect(mockGt).toHaveBeenCalledWith('end_at', '2024-01-01T00:00:00Z');
@@ -210,7 +216,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.eq = mockEq;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const staffId = '123e4567-e89b-12d3-a456-426614174000';
@@ -221,7 +227,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await GET(ctx as any);
+      await GET(asGetContext(ctx));
 
       expect(mockEq).toHaveBeenCalledWith('staff_id', staffId);
     });
@@ -232,7 +238,7 @@ describe('GET /api/bookings', () => {
       mockSupabase.order = mockOrder;
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -242,7 +248,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await GET(ctx as any);
+      await GET(asGetContext(ctx));
 
       expect(mockOrder).toHaveBeenCalledWith('start_at', { ascending: true });
     });
@@ -253,7 +259,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -263,7 +269,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asGetContext(ctx));
 
       expect(response.bookings).toEqual([]);
     });
@@ -288,7 +294,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -298,7 +304,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asGetContext(ctx));
 
       expect(response.bookings).toHaveLength(1);
       expect(response.bookings[0]).toEqual({
@@ -329,7 +335,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -339,7 +345,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asGetContext(ctx));
 
       expect(response.bookings[0]).toHaveProperty('status', 'confirmed');
       expect(response.bookings[0]).toHaveProperty('serviceId', 'unknown');
@@ -359,7 +365,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({ data: mockData, error: null }).then(resolve, reject),
       });
 
       const ctx = createMockContext({
@@ -369,7 +375,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asGetContext(ctx));
 
       expect(response.bookings).toHaveLength(5);
     });
@@ -380,7 +386,7 @@ describe('GET /api/bookings', () => {
       const mockSupabase = createMockSupabase();
       mockSupabase.from.mockReturnValue({
         ...mockSupabase,
-        then: (resolve: any, reject: any) => Promise.resolve({
+        then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) => Promise.resolve({
           data: null,
           error: { message: 'Database error' },
         }).then(resolve, reject),
@@ -393,7 +399,7 @@ describe('GET /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asGetContext(ctx))).rejects.toThrow();
     });
   });
 });
@@ -422,7 +428,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should require service_id', async () => {
@@ -437,7 +443,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should require start_at', async () => {
@@ -452,7 +458,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should require end_at', async () => {
@@ -467,7 +473,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should validate service_id as UUID', async () => {
@@ -483,7 +489,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should validate staff_id as UUID when provided', async () => {
@@ -500,7 +506,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should validate datetime formats', async () => {
@@ -516,7 +522,7 @@ describe('POST /api/bookings', () => {
         }),
       });
 
-      await expect(POST(ctx as any)).rejects.toThrow();
+      await expect(POST(asPostContext(ctx))).rejects.toThrow();
     });
 
     it('should accept all optional fields', async () => {
@@ -548,7 +554,7 @@ describe('POST /api/bookings', () => {
       });
 
       // This should not throw
-      await POST(ctx as any);
+      await POST(asPostContext(ctx));
     });
   });
 
@@ -578,7 +584,7 @@ describe('POST /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asPostContext(ctx));
       // The write goes through createReservation(), not ctx.supabase.insert —
       // assert the actual persistence call, scoped to this user's tenant.
       expect(mockCreateReservation).toHaveBeenCalled();
@@ -613,7 +619,7 @@ describe('POST /api/bookings', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asPostContext(ctx));
       // The write goes through createReservation(), not ctx.supabase.insert —
       // assert the actual persistence call, scoped to this user's tenant.
       expect(mockCreateReservation).toHaveBeenCalled();
