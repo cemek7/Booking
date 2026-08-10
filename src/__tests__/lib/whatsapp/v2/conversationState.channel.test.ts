@@ -1,24 +1,47 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 type DbRow = Record<string, unknown> | null;
-const responses: Array<{ data: DbRow; error: null }> = [];
+type DbResponse = { data: DbRow; error: null };
+type FluentMethod = (...args: unknown[]) => MockChain;
+type MockChain = {
+  select: FluentMethod;
+  eq: FluentMethod;
+  neq: FluentMethod;
+  ilike: FluentMethod;
+  in: FluentMethod;
+  lt: FluentMethod;
+  gt: FluentMethod;
+  lte: FluentMethod;
+  gte: FluentMethod;
+  not: FluentMethod;
+  order: FluentMethod;
+  limit: FluentMethod;
+  maybeSingle: () => Promise<DbResponse>;
+  single: () => Promise<DbResponse>;
+  upsert: (values: Record<string, unknown>, opts: Record<string, unknown>) => MockChain;
+  insert: () => Promise<DbResponse>;
+  update: FluentMethod;
+};
+const responses: DbResponse[] = [];
 const upsertCalls: Array<{ values: Record<string, unknown>; opts: Record<string, unknown> }> = [];
 
 function pushDb(data: DbRow) { responses.push({ data, error: null }); }
 
 function makeChain() {
-  const chain: Record<string, unknown> = {};
-  ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order', 'limit'].forEach(m => {
-    (chain as any)[m] = jest.fn().mockReturnValue(chain);
+  const chain = {} as MockChain;
+  const fluentMethods: Array<keyof Pick<MockChain, 'select' | 'eq' | 'neq' | 'ilike' | 'in' | 'lt' | 'gt' | 'lte' | 'gte' | 'not' | 'order' | 'limit' | 'update'>> = [
+    'select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order', 'limit', 'update',
+  ];
+  fluentMethods.forEach(method => {
+    chain[method] = jest.fn().mockReturnValue(chain);
   });
-  (chain as any).maybeSingle = jest.fn().mockImplementation(() => Promise.resolve(responses.shift() ?? { data: null, error: null }));
-  (chain as any).single = jest.fn().mockImplementation(() => Promise.resolve(responses.shift() ?? { data: null, error: null }));
-  (chain as any).upsert = jest.fn().mockImplementation((values: any, opts: any) => {
+  chain.maybeSingle = jest.fn().mockImplementation(() => Promise.resolve(responses.shift() ?? { data: null, error: null }));
+  chain.single = jest.fn().mockImplementation(() => Promise.resolve(responses.shift() ?? { data: null, error: null }));
+  chain.upsert = jest.fn().mockImplementation((values: Record<string, unknown>, opts: Record<string, unknown>) => {
     upsertCalls.push({ values, opts });
     return chain;
   });
-  (chain as any).insert = jest.fn().mockResolvedValue({ data: null, error: null });
-  (chain as any).update = jest.fn().mockReturnValue(chain);
+  chain.insert = jest.fn().mockResolvedValue({ data: null, error: null });
   return chain;
 }
 
