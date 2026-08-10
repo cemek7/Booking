@@ -12,7 +12,7 @@ interface AutomationRule {
     conditions: Array<{
       field: string;
       operator: 'equals' | 'greater_than' | 'less_than' | 'contains' | 'in_range';
-      value: any;
+      value: unknown;
     }>;
     schedule?: {
       frequency: 'hourly' | 'daily' | 'weekly' | 'monthly';
@@ -22,7 +22,7 @@ interface AutomationRule {
   };
   actions: Array<{
     type: 'send_reminder' | 'generate_offer' | 'update_customer' | 'create_booking' | 'send_notification' | 'trigger_workflow';
-    parameters: Record<string, any>;
+    parameters: Record<string, unknown>;
     delay_minutes?: number;
   }>;
   status: 'active' | 'inactive' | 'paused';
@@ -93,8 +93,8 @@ interface ContentGeneration {
   content_type: 'marketing_message' | 'service_description' | 'offer_text' | 'reminder_message' | 'follow_up_message';
   target_audience: {
     customer_segment: string;
-    demographics: Record<string, any>;
-    preferences: Record<string, any>;
+    demographics: Record<string, unknown>;
+    preferences: Record<string, unknown>;
   };
   vertical_context: 'beauty' | 'hospitality' | 'medicine';
   generated_content: {
@@ -132,12 +132,51 @@ interface CrossVerticalInsight {
   validation_status: 'pending' | 'validated' | 'rejected';
 }
 
+type ReminderMetrics = {
+  response_rate: number;
+  booking_confirmation_rate: number;
+  customer_satisfaction: number;
+};
+
+type RebookingMetrics = {
+  rebooking_rate: number;
+  average_recovery_time: number;
+  customer_retention_impact: number;
+};
+
+type MissedAppointment = {
+  id: string;
+  customer_phone: string;
+  service_id: string;
+  scheduled_date: string;
+  cancellation_reason?: string;
+};
+
+type RebookingOptions = {
+  enableIncentives?: boolean;
+  maxRebookingAttempts?: number;
+  customIncentiveRules?: unknown[];
+};
+
+type CommunicationPatterns = {
+  preferred_times: string[];
+  preferred_communication_style?: 'formal' | 'casual' | 'friendly' | 'professional';
+  response_rates_by_channel: Record<string, number>;
+  engagement_patterns: { peak_hours: number[]; peak_days: number[] };
+};
+
+type AppointmentDetails = { scheduled_at: string };
+
+type ReminderTiming = ReminderOptimization['optimal_timing'];
+type MessagePersonalization = ReminderOptimization['message_personalization'];
+type FollowUpStrategy = ReminderOptimization['follow_up_strategy'];
+
 class AutomationWorkflows {
   private supabase = createServerSupabaseClient();
   private smartRecommendations = new SmartBookingRecommendations();
   private predictiveEngine = new PredictiveAnalyticsEngine();
   private activeRules = new Map<string, AutomationRule>();
-  private executionQueue = new Map<string, any[]>();
+  private executionQueue = new Map<string, unknown[]>();
 
   /**
    * Create and manage smart reminder system with optimal timing
@@ -227,7 +266,7 @@ class AutomationWorkflows {
     options: {
       enableIncentives?: boolean;
       maxRebookingAttempts?: number;
-      customIncentiveRules?: any[];
+      customIncentiveRules?: unknown[];
     } = {}
   ): Promise<{
     rebooking_system_id: string;
@@ -292,7 +331,7 @@ class AutomationWorkflows {
     contentRequests: Array<{
       type: ContentGeneration['content_type'];
       target_customer?: string;
-      context?: Record<string, any>;
+      context?: Record<string, unknown>;
       tone?: string;
     }>,
     options: {
@@ -609,7 +648,7 @@ class AutomationWorkflows {
     }
   }
 
-  private async calculateReminderMetrics(tenantId: string): Promise<any> {
+  private async calculateReminderMetrics(tenantId: string): Promise<ReminderMetrics> {
     // Placeholder implementation
     return {
       response_rate: 0.85,
@@ -618,7 +657,7 @@ class AutomationWorkflows {
     };
   }
 
-  private async getMissedAppointments(tenantId: string, options: any): Promise<any[]> {
+  private async getMissedAppointments(tenantId: string, options: { days_back: number; include_customer_context?: boolean }): Promise<MissedAppointment[]> {
     const daysAgo = new Date(Date.now() - options.days_back * 24 * 60 * 60 * 1000);
 
     try {
@@ -639,8 +678,8 @@ class AutomationWorkflows {
 
   private async generateRebookingStrategy(
     tenantId: string,
-    appointment: any,
-    options: any
+    appointment: MissedAppointment,
+    options: RebookingOptions
   ): Promise<RebookingStrategy> {
     // Get customer preferences and history
     const customerRecommendations = await this.smartRecommendations.getServiceRecommendations(
@@ -702,7 +741,7 @@ class AutomationWorkflows {
     console.log(`📞 Executing rebooking outreach for ${strategy.customer_phone}`);
   }
 
-  private async createRebookingAutomationRule(tenantId: string, options: any): Promise<AutomationRule> {
+  private async createRebookingAutomationRule(tenantId: string, options: RebookingOptions): Promise<AutomationRule> {
     const ruleId = `rebooking_${tenantId}_${Date.now()}`;
 
     return {
@@ -739,7 +778,7 @@ class AutomationWorkflows {
     };
   }
 
-  private async calculateRebookingMetrics(tenantId: string): Promise<any> {
+  private async calculateRebookingMetrics(tenantId: string): Promise<RebookingMetrics> {
     // Placeholder implementation
     return {
       rebooking_rate: 0.35,
@@ -750,7 +789,7 @@ class AutomationWorkflows {
 
   // Additional helper methods for content generation, cross-vertical learning, etc.
   
-  private async getCustomerAudienceData(tenantId: string, customerPhone: string): Promise<any> {
+  private async getCustomerAudienceData(tenantId: string, customerPhone: string): Promise<ContentGeneration['target_audience']> {
     // Get customer profile and preferences
     return {
       customer_segment: 'regular',
@@ -759,7 +798,7 @@ class AutomationWorkflows {
     };
   }
 
-  private async getGenericAudienceData(tenantId: string): Promise<any> {
+  private async getGenericAudienceData(tenantId: string): Promise<ContentGeneration['target_audience']> {
     return {
       customer_segment: 'general',
       demographics: {},
@@ -774,16 +813,16 @@ class AutomationWorkflows {
 
   private async generateContentWithAI(
     type: ContentGeneration['content_type'],
-    audience: any,
+    audience: ContentGeneration['target_audience'],
     vertical: string,
-    context: any,
+    context: Record<string, unknown>,
     tone?: string
   ): Promise<ContentGeneration> {
     // AI content generation implementation
     return {
       content_type: type,
       target_audience: audience,
-      vertical_context: vertical as any,
+        vertical_context: vertical as ContentGeneration['vertical_context'],
       generated_content: {
         primary_text: `Generated ${type} content for ${vertical}`,
         alternative_versions: ['Alternative 1', 'Alternative 2'],
@@ -801,7 +840,7 @@ class AutomationWorkflows {
 
   private async optimizeContentForEngagement(
     content: ContentGeneration,
-    audience: any,
+    audience: ContentGeneration['target_audience'],
     vertical: string
   ): Promise<ContentGeneration> {
     // Content optimization implementation
@@ -841,11 +880,11 @@ class AutomationWorkflows {
     ];
   }
 
-  private async identifyBestPractices(verticals: string[]): Promise<any[]> {
+  private async identifyBestPractices(verticals: string[]): Promise<CrossVerticalInsight[]> {
     return []; // Placeholder
   }
 
-  private async createPerformanceComparisons(verticals: string[]): Promise<any[]> {
+  private async createPerformanceComparisons(verticals: string[]): Promise<CrossVerticalInsight[]> {
     return []; // Placeholder
   }
 
@@ -856,7 +895,7 @@ class AutomationWorkflows {
 
   // Communication optimization methods
 
-  private async getCustomerCommunicationPatterns(tenantId: string, customerPhone: string): Promise<any> {
+  private async getCustomerCommunicationPatterns(tenantId: string, customerPhone: string): Promise<CommunicationPatterns> {
     return {
       preferred_times: ['10:00', '14:00', '18:00'],
       response_rates_by_channel: { whatsapp: 0.9, sms: 0.7, email: 0.4 },
@@ -864,7 +903,7 @@ class AutomationWorkflows {
     };
   }
 
-  private async getAppointmentDetails(appointmentId: string): Promise<any> {
+  private async getAppointmentDetails(appointmentId: string): Promise<AppointmentDetails> {
     try {
       const { data: appointment } = await this.supabase
         .from('reservations')
@@ -879,7 +918,7 @@ class AutomationWorkflows {
     }
   }
 
-  private async calculateOptimalReminderTiming(patterns: any, appointment: any): Promise<any> {
+  private async calculateOptimalReminderTiming(patterns: CommunicationPatterns, appointment: AppointmentDetails): Promise<ReminderTiming> {
     // Calculate optimal send time based on customer patterns and appointment time
     const appointmentTime = new Date(appointment.scheduled_at);
     const customerPeakTimes = patterns.preferred_times.map((time: string) => {
@@ -905,7 +944,7 @@ class AutomationWorkflows {
     };
   }
 
-  private async generateMessagePersonalization(patterns: any, appointment: any): Promise<any> {
+  private async generateMessagePersonalization(patterns: CommunicationPatterns, appointment: AppointmentDetails): Promise<MessagePersonalization> {
     return {
       tone: patterns.preferred_communication_style || 'friendly',
       content_elements: ['service_name', 'appointment_time', 'staff_name'],
@@ -913,7 +952,7 @@ class AutomationWorkflows {
     };
   }
 
-  private createFollowUpStrategy(patterns: any): any {
+  private createFollowUpStrategy(patterns: CommunicationPatterns): FollowUpStrategy {
     return {
       intervals: [60, 180, 360], // 1 hour, 3 hours, 6 hours
       escalation_channels: ['whatsapp', 'sms', 'call'],
