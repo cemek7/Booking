@@ -51,6 +51,29 @@ interface AnomalyDetection {
   score: number;
 }
 
+interface ModulesResponse {
+  success?: boolean;
+  active?: VerticalModule[];
+  modules?: VerticalModule[];
+  error?: string;
+}
+
+interface ModuleMutationResponse { success?: boolean; error?: string; }
+
+function asAnomalyDetections(data: unknown): AnomalyDetection[] {
+  if (!Array.isArray(data)) return [];
+  return data.filter((item): item is AnomalyDetection => {
+    if (!item || typeof item !== 'object') return false;
+    const anomaly = item as Record<string, unknown>;
+    return typeof anomaly.id === 'string'
+      && typeof anomaly.timestamp === 'string'
+      && typeof anomaly.type === 'string'
+      && (anomaly.severity === 'low' || anomaly.severity === 'medium' || anomaly.severity === 'high')
+      && typeof anomaly.description === 'string'
+      && typeof anomaly.score === 'number';
+  });
+}
+
 interface VerticalModulesDashboardProps {
   tenantId: string;
   userRole?: string;
@@ -70,23 +93,19 @@ const VerticalModulesDashboard: React.FC<VerticalModulesDashboardProps> = ({ ten
 
     try {
       // Load modules data
-      const modulesRes = await authFetch('/api/modules');
-      const modulesData = modulesRes.data as any;
+      const modulesRes = await authFetch<ModulesResponse>('/api/modules');
+      const modulesData = modulesRes.data;
 
       if (modulesData?.success) {
         setActiveModules(modulesData.active || []);
         // Get available modules for all verticals
         const [beautyRes, hospitalityRes, medicineRes] = await Promise.all([
-          authFetch('/api/modules?vertical=beauty'),
-          authFetch('/api/modules?vertical=hospitality'),
-          authFetch('/api/modules?vertical=medicine')
+          authFetch<ModulesResponse>('/api/modules?vertical=beauty'),
+          authFetch<ModulesResponse>('/api/modules?vertical=hospitality'),
+          authFetch<ModulesResponse>('/api/modules?vertical=medicine')
         ]);
 
-        const [beautyData, hospitalityData, medicineData] = [
-          beautyRes.data as any,
-          hospitalityRes.data as any,
-          medicineRes.data as any
-        ];
+        const [beautyData, hospitalityData, medicineData] = [beautyRes.data, hospitalityRes.data, medicineRes.data];
 
         const allAvailable = [
           ...(beautyData?.modules || []),
@@ -117,7 +136,7 @@ const VerticalModulesDashboard: React.FC<VerticalModulesDashboardProps> = ({ ten
       });
 
       if (anomaliesData?.success) {
-        setAnomalies((anomaliesData as any).data || []);
+        setAnomalies(asAnomalyDetections(anomaliesData.data));
       }
 
     } catch (err) {
@@ -133,12 +152,12 @@ const VerticalModulesDashboard: React.FC<VerticalModulesDashboardProps> = ({ ten
 
   const handleModuleToggle = async (moduleId: string, enable: boolean) => {
     try {
-      const response = await authPost('/api/modules', {
+      const response = await authPost<ModuleMutationResponse>('/api/modules', {
         action: enable ? 'install' : 'uninstall',
         moduleId,
       });
 
-      const result = response.data as any;
+      const result = response.data;
 
       if (result?.success) {
         await loadDashboardData(); // Reload data
