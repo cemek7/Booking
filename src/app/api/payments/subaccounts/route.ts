@@ -1,11 +1,18 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import type { RouteContext } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { fetchSubaccount, createSubaccount, updateSubaccount } from '@/lib/paystack';
 
 const PLATFORM_FEE = Number(process.env.PAYSTACK_PLATFORM_FEE_PERCENT ?? 5);
 
-async function getTenantId(ctx: any): Promise<string> {
+function subaccountCode(metadata: unknown): string | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const value = (metadata as Record<string, unknown>).paystack_subaccount_code;
+  return typeof value === 'string' ? value : undefined;
+}
+
+async function getTenantId(ctx: RouteContext): Promise<string> {
   const { data: tenantUser } = await ctx.supabase
     .from('tenant_users')
     .select('tenant_id')
@@ -26,7 +33,7 @@ export const GET = createHttpHandler(
       .eq('id', tenantId)
       .single();
 
-    const code: string | undefined = (tenant?.metadata as any)?.paystack_subaccount_code;
+    const code = subaccountCode(tenant?.metadata);
     if (!code) return { configured: false };
 
     const result = await fetchSubaccount(code);
@@ -94,7 +101,7 @@ export const PUT = createHttpHandler(
       .eq('id', tenantId)
       .single();
 
-    const code: string | undefined = (tenant?.metadata as any)?.paystack_subaccount_code;
+    const code = subaccountCode(tenant?.metadata);
     if (!code) throw ApiErrorFactory.badRequest('No subaccount configured for this tenant');
 
     const body = await ctx.request.json();
