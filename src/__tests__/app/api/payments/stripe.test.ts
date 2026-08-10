@@ -94,6 +94,9 @@ const createMockContext = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const asRouteContext = (context: ReturnType<typeof createMockContext>) =>
+  context as unknown as Parameters<typeof POST>[0];
+
 const createStripeEvent = (type: string, amount: number, status: string, tenantId?: string) => ({
   id: 'evt_test_123',
   type,
@@ -145,7 +148,7 @@ describe('POST /api/payments/stripe', () => {
         }),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
       expect(await readRouteJson(response)).toMatchObject({ error: 'Webhook not configured' });
     });
 
@@ -159,7 +162,7 @@ describe('POST /api/payments/stripe', () => {
         }),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
       expect(await readRouteJson(response)).toMatchObject({ error: 'Webhook not configured' });
     });
   });
@@ -181,7 +184,7 @@ describe('POST /api/payments/stripe', () => {
         }),
       });
 
-      await POST(ctx as any);
+      await POST(asRouteContext(ctx));
 
       expect(mockVerify).toHaveBeenCalledWith(
         eventBody,
@@ -202,7 +205,7 @@ describe('POST /api/payments/stripe', () => {
         }),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
 
       expect(await readRouteJson(response)).toMatchObject({
         error: 'Invalid signature',
@@ -223,7 +226,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: createMockSupabase(),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
       expect(await readRouteJson(response)).toEqual({ received: true });
     });
   });
@@ -243,7 +246,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: createMockSupabase(),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
       expect(await readRouteJson(response)).toEqual({ received: true });
     });
 
@@ -259,7 +262,7 @@ describe('POST /api/payments/stripe', () => {
         }),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
       expect(await readRouteJson(response)).toMatchObject({ error: 'Invalid JSON' });
     });
   });
@@ -280,7 +283,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asRouteContext(ctx));
 
       expect(mockSupabase.insert).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -323,7 +326,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asRouteContext(ctx));
 
       expect(mockSupabase.insert).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -347,7 +350,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asRouteContext(ctx));
 
       expect(mockSupabase.insert).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -372,7 +375,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
 
       expect(mockSupabase.insert).not.toHaveBeenCalled();
       expect(await readRouteJson(response)).toEqual({ received: true });
@@ -393,7 +396,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asRouteContext(ctx));
 
       expect(mockSupabase.insert).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -419,7 +422,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      await POST(ctx as any);
+      await POST(asRouteContext(ctx));
 
       expect(mockSupabase.from).toHaveBeenCalledWith('transactions');
     });
@@ -440,7 +443,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: mockSupabase,
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
 
       expect(await readRouteJson(response)).toMatchObject({
         error: 'database_error',
@@ -462,7 +465,7 @@ describe('POST /api/payments/stripe', () => {
         supabase: createMockSupabase(),
       });
 
-      const response = await POST(ctx as any);
+      const response = await POST(asRouteContext(ctx));
       expect(await readRouteJson(response)).toEqual({ received: true });
     });
   });
