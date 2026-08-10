@@ -11,6 +11,7 @@ import type { BookingEvent } from '@/lib/integrations/universalCalendar';
 import { z } from 'zod';
 import { defaultLogger } from '@/lib/logger';
 import { siasOperations } from '@/lib/sias-operations';
+import type { UserRole } from '@/types/roles';
 
 // Schema for GET request query parameters
 const GetBookingsQuerySchema = z.object({
@@ -31,16 +32,12 @@ const CreateBookingBodySchema = z.object({
   phone: z.string().optional(),
 });
 
-type Booking = {
-  id: string;
-  start: string;
-  end: string;
-  status: string;
-  serviceId: string;
-  staffId?: string;
-  customer: { id: string; name?: string };
-  metadata: { tenantId: string };
-};
+type ReservationResult = Awaited<ReturnType<typeof createReservation>>;
+type CodedError = Error & { code?: string };
+
+function getErrorCode(error: unknown): string | undefined {
+  return error instanceof Error ? (error as CodedError).code : undefined;
+}
 
 /**
  * GET /api/bookings
@@ -171,7 +168,7 @@ export const POST = createHttpHandler(
     try {
       // Delegate to reservationService which handles conflict detection,
       // event emission, usage metrics, audit logs, and reminder scheduling.
-      let reservation: any;
+      let reservation: ReservationResult;
       try {
         reservation = await createReservation(
           adminClient,
@@ -187,10 +184,10 @@ export const POST = createHttpHandler(
             staff_id: resolvedStaffId,
             status: 'confirmed',
           },
-          { id: ctx.user!.id, role: ctx.user!.role as any }
+          { id: ctx.user!.id, role: ctx.user!.role as UserRole }
         );
-      } catch (err: any) {
-        if (err?.code === 'conflict') {
+      } catch (err: unknown) {
+        if (getErrorCode(err) === 'conflict') {
           await siasOperations.createEscalationTicket({
             tenantId,
             customerPhone: bookingData.phone ?? bookingData.customer_number ?? 'unknown',
@@ -209,7 +206,7 @@ export const POST = createHttpHandler(
           }).catch(() => undefined);
           throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
         }
-        if (err?.code === '23505') {
+        if (getErrorCode(err) === '23505') {
           await siasOperations.createEscalationTicket({
             tenantId,
             customerPhone: bookingData.phone ?? bookingData.customer_number ?? 'unknown',

@@ -1,4 +1,4 @@
-// @ts-nocheck
+import { createHash } from 'crypto';
 import { defaultLogger } from '@/lib/logger';
 /**
  * MIGRATION UTILITIES FOR API ROUTES
@@ -107,7 +107,7 @@ export async function verifyOwnership(
   resourceId: string,
   userIdField = 'creator_id'
 ): Promise<boolean> {
-  const { data, error } = await ctx.supabase
+  const { data } = await ctx.supabase
     .from(table)
     .select(userIdField)
     .eq('id', resourceId)
@@ -132,7 +132,7 @@ export async function verifyTenantOwnership(
   table: string,
   resourceId: string
 ): Promise<boolean> {
-  const { data, error } = await ctx.supabase
+  const { data } = await ctx.supabase
     .from(table)
     .select('tenant_id')
     .eq('id', resourceId)
@@ -152,15 +152,15 @@ export async function verifyTenantOwnership(
 /**
  * Validate JSON body with schema
  */
-export async function validateRequestBody<T = any>(
+export async function validateRequestBody<T = unknown>(
   ctx: RouteContext,
-  schema?: (data: any) => Promise<T> | T
+  schema?: (data: unknown) => Promise<T> | T
 ): Promise<T> {
-  let body: any;
+  let body: unknown;
 
   try {
     body = await ctx.request.json();
-  } catch (error) {
+  } catch {
     throw ApiErrorFactory.validationError({
       message: 'Invalid JSON body',
     });
@@ -184,8 +184,8 @@ export async function validateRequestBody<T = any>(
  */
 export async function executeDb<T>(
   ctx: RouteContext,
-  operation: (supabase: any) => Promise<{ data?: T; error?: any }>,
-  errorMessage = 'Database operation failed'
+  operation: (supabase: RouteContext['supabase']) => Promise<{ data?: T; error?: { code?: string; message?: string } | null }>,
+  _errorMessage = 'Database operation failed'
 ): Promise<T> {
   try {
     const { data, error } = await operation(ctx.supabase);
@@ -225,7 +225,7 @@ export async function executeDb<T>(
  */
 export async function transaction<T>(
   ctx: RouteContext,
-  handler: (supabase: any) => Promise<T>
+  handler: (supabase: RouteContext['supabase']) => Promise<T>
 ): Promise<T> {
   try {
     // Note: Supabase doesn't support transactions in client mode
@@ -268,7 +268,7 @@ export function createPaginatedResponse<T>(
 export async function auditSuperadminAction(
   ctx: RouteContext,
   action: string,
-  details: Record<string, any>
+  details: Record<string, unknown>
 ) {
   try {
     // Log to audit table
@@ -320,9 +320,8 @@ export function checkRateLimit(
 /**
  * Create etag from object
  */
-export function createEtag(data: any): string {
-  const hash = require('crypto')
-    .createHash('md5')
+export function createEtag(data: unknown): string {
+  const hash = createHash('md5')
     .update(JSON.stringify(data))
     .digest('hex');
   return `"${hash}"`;
