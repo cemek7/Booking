@@ -6,7 +6,7 @@
  */
 
 // Base Evolution API response structure
-export interface EvolutionApiResponse<T = any> {
+export interface EvolutionApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;

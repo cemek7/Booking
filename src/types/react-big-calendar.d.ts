@@ -6,26 +6,26 @@ declare module 'react-big-calendar' {
     start: Date;
     end: Date;
     allDay?: boolean;
-    resource?: any;
-    [key: string]: any;
+    resource?: unknown;
+    [key: string]: unknown;
   }
 
   export interface CalendarProps {
     events?: Event[];
-    localizer?: any;
+    localizer?: unknown;
     defaultDate?: Date;
     defaultView?: string;
     views?: string[] | object;
     step?: number;
     showMultiDayTimes?: boolean;
     onSelectEvent?: (event: Event, e: React.SyntheticEvent) => void;
-    onSelectSlot?: (slotInfo: any) => void;
+    onSelectSlot?: (slotInfo: unknown) => void;
     selectable?: boolean;
     style?: React.CSSProperties;
     className?: string;
     eventPropGetter?: (event: Event, start: Date, end: Date, isSelected: boolean) => { className?: string; style?: React.CSSProperties };
     components?: Record<string, unknown>;
-    [key: string]: any;
+    [key: string]: unknown;
   }
 
   export type View = 'month' | 'week' | 'work_week' | 'day' | 'agenda';
@@ -39,6 +39,6 @@ declare module 'react-big-calendar' {
   }
 
   export const Calendar: React.FC<CalendarProps>;
-  export function momentLocalizer(moment: any): any;
-  export function dateFnsLocalizer(config: any): any;
+  export function momentLocalizer(moment: unknown): unknown;
+  export function dateFnsLocalizer(config: unknown): unknown;
 }

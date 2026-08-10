@@ -401,7 +401,7 @@ export async function generateTenantAuditReport(
     format?: 'json' | 'csv' | 'pdf';
   } = {}
 ): Promise<{
-  summary: any;
+  summary: Record<string, unknown>;
   details: AuditEvent[];
   exportUrl?: string;
 }> {
@@ -475,9 +475,9 @@ export async function generateTenantAuditReport(
 export async function getSecurityDashboard(tenantId: string): Promise<{
   alerts: AuditEvent[];
   metrics: {
-    last24Hours: any;
-    last7Days: any;
-    trends: any;
+    last24Hours: Record<string, unknown>;
+    last7Days: Record<string, unknown>;
+    trends: Record<string, unknown>;
   };
   recommendations: string[];
 }> {

@@ -586,7 +586,7 @@ export function hasPermission(
     resourceId: resource,
     operationType: action === 'admin' ? 'manage' : action,
     resourceType: resource,
-    scope: scope as any
+    scope
   };
 
   const enhancedResult = hasEnhancedPermission(role, `${resource}:${action}`, context);
