@@ -24,8 +24,8 @@ const EventSchema = z.object({
   aggregateType: z.string().min(1),
   eventType: z.string().min(1),
   eventVersion: z.number().int().positive(),
-  payload: z.record(z.any()),
-  metadata: z.record(z.any()),
+  payload: z.record(z.unknown()),
+  metadata: z.record(z.unknown()),
   timestamp: z.string().datetime(),
   causedBy: z.string().optional(),
   correlationId: z.string().optional(),
@@ -36,7 +36,7 @@ const OutboxEventSchema = z.object({
   id: z.string().uuid(),
   eventId: z.string().uuid(),
   destination: z.string().min(1),
-  payload: z.record(z.any()),
+  payload: z.record(z.unknown()),
   status: z.enum(['pending', 'processing', 'completed', 'failed', 'dead_letter']),
   attempts: z.number().int().min(0),
   maxAttempts: z.number().int().positive().default(5),
@@ -47,6 +47,16 @@ const OutboxEventSchema = z.object({
 
 export type Event = z.infer<typeof EventSchema>;
 export type OutboxEvent = z.infer<typeof OutboxEventSchema>;
+
+type StoredEvent = Event & { event_type: string };
+type StoredOutboxEvent = {
+  id: string;
+  event_id: string;
+  attempts?: number;
+  max_attempts?: number;
+  created_at?: string;
+  event?: StoredEvent | null;
+};
 
 // ===============================
 // EVENT BUS INTERFACE
@@ -105,9 +115,9 @@ export class EventBusService {
     aggregateId: string,
     aggregateType: string,
     eventType: string,
-    payload: Record<string, any>,
+    payload: Record<string, unknown>,
     options: {
-      metadata?: Record<string, any>;
+      metadata?: Record<string, unknown>;
       causedBy?: string;
       correlationId?: string;
       tenantId?: string;
@@ -164,8 +174,8 @@ export class EventBusService {
     aggregateId: string;
     aggregateType: string;
     eventType: string;
-    payload: Record<string, any>;
-    metadata?: Record<string, any>;
+    payload: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
   }>): Promise<string[]> {
     const eventIds: string[] = [];
 
@@ -341,7 +351,7 @@ export class EventBusService {
   /**
    * Process individual outbox event
    */
-  private async processOutboxEvent(outboxEvent: any): Promise<void> {
+  private async processOutboxEvent(outboxEvent: StoredOutboxEvent): Promise<void> {
     const { event } = outboxEvent;
     
     if (!event) {
@@ -385,8 +395,8 @@ export class EventBusService {
    */
   private async executeHandler(
     handler: EventHandler,
-    event: any,
-    outboxEvent: any
+    event: StoredEvent,
+    outboxEvent: StoredOutboxEvent
   ): Promise<void> {
     try {
       // Check if handler should be idempotent
@@ -427,8 +437,8 @@ export class EventBusService {
    * Handle event processing errors with retry logic
    */
   private async handleEventProcessingError(
-    outboxEvent: any,
-    error: any
+    outboxEvent: StoredOutboxEvent,
+    error: unknown
   ): Promise<void> {
     const newAttempts = (outboxEvent.attempts || 0) + 1;
     const maxAttempts = outboxEvent.max_attempts || this.config.maxRetries;
@@ -481,7 +491,12 @@ export class EventBusService {
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'dead_letter',
     error?: string
   ): Promise<void> {
-    const updates: any = {
+    const updates: {
+      status: 'pending' | 'processing' | 'completed' | 'failed' | 'dead_letter';
+      updated_at: string;
+      error?: string;
+      completed_at?: string;
+    } = {
       status,
       updated_at: new Date().toISOString()
     };
@@ -554,7 +569,7 @@ export class EventBusService {
   /**
    * Publish dead letter event for failed processing
    */
-  private async publishDeadLetterEvent(outboxEvent: any, error: any): Promise<void> {
+  private async publishDeadLetterEvent(outboxEvent: StoredOutboxEvent, error: unknown): Promise<void> {
     try {
       await this.publishEvent(
         'event_bus',
@@ -634,7 +649,7 @@ export class EventBusService {
   /**
    * Get dead letter events
    */
-  async getDeadLetterEvents(): Promise<any[]> {
+  async getDeadLetterEvents(): Promise<StoredOutboxEvent[]> {
     const { data, error } = await this.supabase
       .from('event_outbox')
       .select(`
