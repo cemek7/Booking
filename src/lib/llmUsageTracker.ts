@@ -43,6 +43,22 @@ export interface LLMUsageAlert {
   created_at: string;
 }
 
+export interface LLMDailyAggregate {
+  date: string;
+  total_tokens: number;
+  total_cost: number;
+  total_requests: number;
+}
+
+export interface LLMOperationAggregate extends Omit<LLMDailyAggregate, 'date'> {
+  operation: LLMUsageRecord['operation'];
+}
+
+export interface LLMCostTrend {
+  date: string;
+  cost: number;
+}
+
 class LLMUsageTracker {
   private get supabase() { return createSupabaseAdminClient(); }
 
@@ -196,9 +212,9 @@ class LLMUsageTracker {
    */
   async getUsageStats(tenantId: string, days: number = 30): Promise<{
     total_usage: LLMUsageRecord[];
-    daily_aggregates: any[];
-    operation_breakdown: any[];
-    cost_trend: any[];
+    daily_aggregates: LLMDailyAggregate[];
+    operation_breakdown: LLMOperationAggregate[];
+    cost_trend: LLMCostTrend[];
   } | null> {
     try {
       const startDate = new Date();
@@ -396,8 +412,8 @@ class LLMUsageTracker {
   /**
    * Aggregate usage by day
    */
-  private aggregateUsageByDay(usage: LLMUsageRecord[]): any[] {
-    const dailyMap = new Map();
+  private aggregateUsageByDay(usage: LLMUsageRecord[]): LLMDailyAggregate[] {
+    const dailyMap = new Map<string, LLMDailyAggregate>();
 
     usage.forEach(record => {
       const day = record.created_at?.split('T')[0] || '';
@@ -410,7 +426,7 @@ class LLMUsageTracker {
         });
       }
 
-      const dayData = dailyMap.get(day);
+      const dayData = dailyMap.get(day)!;
       dayData.total_tokens += record.total_tokens;
       dayData.total_cost += record.cost_usd;
       dayData.total_requests += 1;
@@ -422,8 +438,8 @@ class LLMUsageTracker {
   /**
    * Aggregate usage by operation type
    */
-  private aggregateUsageByOperation(usage: LLMUsageRecord[]): any[] {
-    const operationMap = new Map();
+  private aggregateUsageByOperation(usage: LLMUsageRecord[]): LLMOperationAggregate[] {
+    const operationMap = new Map<LLMUsageRecord['operation'], LLMOperationAggregate>();
 
     usage.forEach(record => {
       if (!operationMap.has(record.operation)) {
@@ -435,7 +451,7 @@ class LLMUsageTracker {
         });
       }
 
-      const opData = operationMap.get(record.operation);
+      const opData = operationMap.get(record.operation)!;
       opData.total_tokens += record.total_tokens;
       opData.total_cost += record.cost_usd;
       opData.total_requests += 1;
@@ -447,8 +463,8 @@ class LLMUsageTracker {
   /**
    * Calculate cost trend over time
    */
-  private calculateCostTrend(usage: LLMUsageRecord[]): any[] {
-    const dailyMap = new Map();
+  private calculateCostTrend(usage: LLMUsageRecord[]): LLMCostTrend[] {
+    const dailyMap = new Map<string, number>();
 
     usage.forEach(record => {
       const day = record.created_at?.split('T')[0] || '';
