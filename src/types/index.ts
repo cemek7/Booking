@@ -481,7 +481,7 @@ export const ROLE_VISIBILITY = {
  * Check if value is a valid Role
  */
 export function isRole(value: unknown): value is Role {
-  return ['staff', 'manager', 'owner', 'superadmin'].includes(value);
+  return typeof value === 'string' && ['staff', 'manager', 'owner', 'superadmin'].includes(value);
 }
 
 /**

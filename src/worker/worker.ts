@@ -39,7 +39,10 @@ export async function handler(payload: JobPayload | null) {
       return { error: 'no_target' };
     }
     const body = `Reminder: upcoming booking at ${typedReminder.remind_at ?? 'the scheduled time'}`;
-    const sendRes = await adapter.sendMessage({ tenant_id: typedReminder.tenant_id, channel: (typedReminder.method || 'whatsapp'), to, body });
+    const channel = typedReminder.method === 'sms' || typedReminder.method === 'email' || typedReminder.method === 'whatsapp'
+      ? typedReminder.method
+      : 'whatsapp';
+    const sendRes = await adapter.sendMessage({ tenant_id: typedReminder.tenant_id, channel, to, body });
     const newStatus = sendRes.status === 'sent' ? 'sent' : 'failed';
     await supabase.from('reminders').update({ status: newStatus, attempts: (typedReminder.attempts || 0) + 1 }).eq('id', reminderId);
     return { reminder_id: reminderId, status: newStatus };

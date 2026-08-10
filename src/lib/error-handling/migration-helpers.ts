@@ -117,7 +117,8 @@ export async function verifyOwnership(
     throw ApiErrorFactory.notFound(table);
   }
 
-  if (data[userIdField] !== ctx.user?.id) {
+  const resource = data as Record<string, unknown>;
+  if (resource[userIdField] !== ctx.user?.id) {
     throw ApiErrorFactory.forbidden('You do not have permission to modify this resource');
   }
 
@@ -202,7 +203,7 @@ export async function executeDb<T>(
         throw ApiErrorFactory.validationError({ message: 'Missing required field' });
       }
 
-      throw ApiErrorFactory.databaseError(error);
+      throw ApiErrorFactory.databaseError(new Error(error.message ?? _errorMessage));
     }
 
     if (!data) {

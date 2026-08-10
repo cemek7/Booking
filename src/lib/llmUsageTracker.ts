@@ -471,7 +471,7 @@ class LLMUsageTracker {
       if (!dailyMap.has(day)) {
         dailyMap.set(day, 0);
       }
-      dailyMap.set(day, dailyMap.get(day) + record.cost_usd);
+      dailyMap.set(day, (dailyMap.get(day) ?? 0) + record.cost_usd);
     });
 
     return Array.from(dailyMap.entries())
