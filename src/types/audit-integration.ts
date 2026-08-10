@@ -284,7 +284,7 @@ export async function auditedRequireAuth(request: NextRequest): Promise<UnifiedA
 export async function auditedRequirePermission(
   request: NextRequest,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return auditedUnifiedAuth(request, {
     requiredPermissions: [permission],
@@ -583,4 +583,3 @@ async function setupRealTimeAlerts(supabase: SupabaseClient): Promise<void> {
     )
     .subscribe();
 }
-

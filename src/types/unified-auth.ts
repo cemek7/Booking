@@ -36,7 +36,7 @@ export interface UnifiedAuthOptions {
   requiredRoles?: Role[];
   allowSuperAdmin?: boolean;
   requireTenantAccess?: boolean;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -157,7 +157,7 @@ export async function requireAuth(request: NextRequest): Promise<UnifiedAuthResu
 export async function requirePermission(
   request: NextRequest,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return unifiedAuth(request, {
     requiredPermissions: [permission],
@@ -171,7 +171,7 @@ export async function requirePermission(
 export async function requirePermissions(
   request: NextRequest,
   permissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return unifiedAuth(request, {
     requiredPermissions: permissions,

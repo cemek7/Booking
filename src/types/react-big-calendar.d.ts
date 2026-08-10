@@ -24,7 +24,7 @@ declare module 'react-big-calendar' {
     style?: React.CSSProperties;
     className?: string;
     eventPropGetter?: (event: Event, start: Date, end: Date, isSelected: boolean) => { className?: string; style?: React.CSSProperties };
-    components?: Record<string, any>;
+    components?: Record<string, unknown>;
     [key: string]: any;
   }
 

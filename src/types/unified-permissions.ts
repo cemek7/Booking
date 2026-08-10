@@ -131,7 +131,7 @@ export class UnifiedPermissionChecker {
     userId: string,
     tenantId: string,
     permission: string,
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<boolean> {
     const result = await this.checkAccess(userId, permission, {
       userId,
@@ -148,7 +148,7 @@ export class UnifiedPermissionChecker {
     userId: string,
     tenantId: string,
     permissions: string[],
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<boolean> {
     const results = await Promise.all(
       permissions.map(permission => 
@@ -165,7 +165,7 @@ export class UnifiedPermissionChecker {
     userId: string,
     tenantId: string,
     permissions: string[],
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<boolean> {
     const results = await Promise.all(
       permissions.map(permission => 
@@ -461,7 +461,7 @@ export async function hasUnifiedPermission(
   userId: string,
   tenantId: string,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<boolean> {
   return getUnifiedChecker().hasPermission(userId, tenantId, permission, context);
 }
