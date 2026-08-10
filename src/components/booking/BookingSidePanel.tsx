@@ -66,7 +66,7 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
           <div className="mt-2">
             <ChatComposer onSend={async (text: string) => {
               // ChatThread renders { role, content, createdAt } — match that shape.
-              const optimistic = { id: `tmp_${Date.now()}`, chatId: '', author: 'You', role: 'assistant', content: text, createdAt: new Date().toISOString() };
+              const optimistic: ChatMessage = { id: `tmp_${Date.now()}`, chatId: '', author: 'You', role: 'assistant', content: text, createdAt: new Date().toISOString() };
               setPendingMessages(p => [...p, optimistic]);
               try {
                 await sendMessage.mutateAsync({ channel: 'app', text });

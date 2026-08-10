@@ -140,7 +140,9 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
             onChange={(e) => {
               const [sort, order] = e.target.value.split('-');
               handleInputChange('sort', sort);
-              handleInputChange('order', order);
+              if (order === 'asc' || order === 'desc') {
+                handleInputChange('order', order);
+              }
             }}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
           >

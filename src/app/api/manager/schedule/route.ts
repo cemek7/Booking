@@ -32,6 +32,17 @@ const PostScheduleBodySchema = z.object({
   data: z.unknown(),
 });
 
+const ScheduleOverrideSchema = z.object({
+  staff_id: z.string(),
+  date: z.string(),
+  available: z.boolean(),
+  reason: z.string().optional(),
+});
+const StaffAvailabilitySchema = z.object({
+  staff_id: z.string(),
+  schedule: z.unknown(),
+});
+
 export const GET = createHttpHandler(
   async (ctx) => {
     const { searchParams } = new URL(ctx.request.url);
@@ -65,13 +76,13 @@ export const POST = createHttpHandler(
     let result;
     switch (action) {
       case 'create-override':
-        result = await createScheduleOverride(ctx.supabase, ctx.user!.tenantId!, data);
+        result = await createScheduleOverride(ctx.supabase, ctx.user!.tenantId!, ScheduleOverrideSchema.parse(data));
         break;
       case 'update-availability':
-        result = await updateStaffAvailability(ctx.supabase, ctx.user!.tenantId!, data);
+        result = await updateStaffAvailability(ctx.supabase, ctx.user!.tenantId!, StaffAvailabilitySchema.parse(data));
         break;
       case 'bulk-update':
-        result = await bulkUpdateSchedules(ctx.supabase, ctx.user!.tenantId!, data);
+        result = await bulkUpdateSchedules(ctx.supabase, ctx.user!.tenantId!, z.array(StaffAvailabilitySchema).parse(data));
         break;
       default:
         throw new Error('Invalid schedule action');

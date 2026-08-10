@@ -162,7 +162,7 @@ const VerticalModulesDashboard: React.FC<VerticalModulesDashboardProps> = ({ ten
       if (result?.success) {
         await loadDashboardData(); // Reload data
       } else {
-        setError(result?.error);
+        setError(result?.error ?? 'Unable to update module');
       }
     } catch (err) {
       setError((err as Error).message);

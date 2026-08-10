@@ -64,7 +64,8 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
       const response = await authPost<SkillMutationResponse>('/api/skills', { tenant_id: tenantId, name: optimistic.name, category: optimistic.category });
       if (response.error) throw new Error('create failed');
       const createData = response.data;
-      if (createData?.skill) setSkills(prev => prev.map(s => s.id === tempId ? createData.skill : s));
+      const createdSkill = createData?.skill;
+      if (createdSkill) setSkills(prev => prev.map(s => s.id === tempId ? createdSkill : s));
       else await loadAll();
     } catch (error: unknown) {
       setSkills(prev => prev.filter(s => s.id !== tempId));
@@ -80,7 +81,8 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
       const response = await authPost<AssignmentMutationResponse>('/api/staff-skills', { tenant_id: tenantId, user_id: selectedStaff, skill_id: selectedSkill, proficiency });
       if (response.error) throw new Error('assign failed');
       const assignData = response.data;
-      if (assignData?.assignment) setAssignments(prev => prev.map(a => a === optimistic ? assignData.assignment : a));
+      const createdAssignment = assignData?.assignment;
+      if (createdAssignment) setAssignments(prev => prev.map(a => a === optimistic ? createdAssignment : a));
       else await loadAll();
     } catch (error: unknown) {
       setAssignments(prev => prev.filter(a => a !== optimistic));
@@ -124,7 +126,8 @@ export const SkillManager: React.FC<SkillManagerProps> = ({ tenantId, className 
       const response = await authPatch<SkillMutationResponse>(`/api/skills/${id}`, { name: newName.trim() });
       if (response.error) throw new Error('rename failed');
       const renameData = response.data;
-      if (renameData?.skill) setSkills(prev => prev.map(s => s.id === id ? renameData.skill : s));
+      const renamedSkill = renameData?.skill;
+      if (renamedSkill) setSkills(prev => prev.map(s => s.id === id ? renamedSkill : s));
     } catch (error: unknown) {
       setError(errorMessage(error, 'Rename failed'));
     }
