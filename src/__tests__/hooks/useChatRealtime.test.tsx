@@ -29,14 +29,16 @@ import { getBrowserSupabase, getSupabaseBrowserClient } from '@/lib/supabase/cli
 const mockGetBrowserSupabase = getBrowserSupabase as jest.MockedFunction<typeof getBrowserSupabase>;
 
 describe('useChatRealtime', () => {
-  let onChatsChange: ((payload: any) => void) | null = null;
-  let onMessagesChange: ((payload: any) => void) | null = null;
+  type RealtimePayload = RealtimePostgresChangesPayload<Record<string, unknown>>;
+  type MockRow = Record<string, unknown>;
+  let onChatsChange: ((payload: RealtimePayload) => void) | null = null;
+  let onMessagesChange: ((payload: RealtimePayload) => void) | null = null;
 
   // Helper to create complete mock chain
   const mockFromTable = (
-    chatsData: any[] | { error: any; data: null } = [],
-    messagesData: any[] = [],
-    conversationsData: any[] = []
+    chatsData: MockRow[] | { error: unknown; data: null } = [],
+    messagesData: MockRow[] = [],
+    conversationsData: MockRow[] = []
   ) => {
     mockSupabase.from.mockImplementation((table: string) => {
       if (table === 'chats') {
@@ -105,7 +107,7 @@ describe('useChatRealtime', () => {
 
     mockSupabase.channel.mockImplementation((name: string) => {
       const channel = {
-        on: jest.fn((event: string, config: any, handler: any) => {
+        on: jest.fn((event: string, config: unknown, handler: (payload: RealtimePayload) => void) => {
           if (name.startsWith('rt-chats-')) {
             onChatsChange = handler;
           } else if (name.startsWith('rt-messages-')) {
@@ -116,10 +118,10 @@ describe('useChatRealtime', () => {
         subscribe: jest.fn(() => channel),
         unsubscribe: jest.fn(),
       };
-      return channel as any;
+      return channel as unknown as RealtimeChannel;
     });
 
-    mockGetBrowserSupabase.mockReturnValue(mockSupabase as any);
+    mockGetBrowserSupabase.mockReturnValue(mockSupabase as unknown as ReturnType<typeof getBrowserSupabase>);
   });
 
   describe('Hook Initialization', () => {
