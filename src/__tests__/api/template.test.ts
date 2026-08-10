@@ -56,7 +56,7 @@ describe('API Route: ENDPOINT_NAME', () => {
   const createMockRequest = (
     method: string = 'GET',
     url: string = 'http://localhost/api/endpoint',
-    body?: any
+    body?: unknown
   ): NextRequest => {
     return new NextRequest(new URL(url), {
       method,
@@ -68,13 +68,13 @@ describe('API Route: ENDPOINT_NAME', () => {
     });
   };
 
-  const mockSupabaseAuth = (user: any | null = mockUser) => {
+  const mockSupabaseAuth = (user: typeof mockUser | null = mockUser) => {
     jest.mock('@/lib/auth', () => ({
       getAuthUser: jest.fn().mockResolvedValue(user),
     }));
   };
 
-  const mockSupabaseQuery = (data: any | null = mockData, error: any = null) => {
+  const mockSupabaseQuery = (data: unknown = mockData, error: unknown = null) => {
     return createMockSupabaseClient({
       data,
       error,
