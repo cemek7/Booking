@@ -21,6 +21,19 @@ interface SearchHistoryItem {
   resultCount: number;
 }
 
+interface CategoriesResponse { categories?: Array<{ name: string }>; }
+interface TagsResponse { tags?: string[]; }
+
+function isSearchHistoryItem(value: unknown): value is SearchHistoryItem {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === 'string'
+    && typeof item.query === 'string'
+    && typeof item.timestamp === 'string'
+    && typeof item.resultCount === 'number'
+    && Boolean(item.filters && typeof item.filters === 'object');
+}
+
 export default function AdvancedSearch({ onSearch, initialQuery, onClear }: AdvancedSearchProps) {
   const { tenant } = useTenant();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -47,10 +60,10 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     const savedHistory = localStorage.getItem('product-search-history');
     if (savedHistory) {
       try {
-        const history = JSON.parse(savedHistory).map((item: any) => ({
-          ...item,
-          timestamp: new Date(item.timestamp),
-        }));
+        const parsedHistory: unknown = JSON.parse(savedHistory);
+        const history = Array.isArray(parsedHistory)
+          ? parsedHistory.filter(isSearchHistoryItem).map(item => ({ ...item, timestamp: new Date(item.timestamp) }))
+          : [];
         setSearchHistory(history);
       } catch (error) {
         console.error('Failed to parse search history:', error);
@@ -64,7 +77,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     queryFn: async () => {
       if (!tenant?.id) return { categories: [] };
       
-      const response = await authFetch('/api/categories?is_active=true');
+      const response = await authFetch<CategoriesResponse>('/api/categories?is_active=true');
       
       if (response.error) throw new Error('Failed to fetch categories');
       return response.data;
@@ -78,7 +91,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     queryFn: async () => {
       if (!tenant?.id) return { tags: [] };
       
-      const response = await authFetch('/api/products/tags');
+      const response = await authFetch<TagsResponse>('/api/products/tags');
       
       if (response.error) return { tags: [] };
       return response.data;
@@ -86,8 +99,8 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     enabled: !!tenant?.id,
   });
 
-  const categories = ((categoriesData as any)?.categories || []).map((category: any) => category.name);
-  const popularTags = (tagsData as any)?.tags || [];
+  const categories = categoriesData?.categories?.map(category => category.name) ?? [];
+  const popularTags = tagsData?.tags ?? [];
 
   const handleSearch = () => {
     // Clean up the query - remove empty values
@@ -96,7 +109,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
         acc[key as keyof ProductListQuery] = value;
       }
       return acc;
-    }, {} as any);
+    }, {} as Partial<ProductListQuery>);
 
     // Reset page to 1 for new searches
     cleanQuery.page = 1;
@@ -274,7 +287,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
               <select
                 value={searchQuery.status}
-                onChange={(e) => setSearchQuery(prev => ({ ...prev, status: e.target.value as any }))}
+                onChange={(e) => setSearchQuery(prev => ({ ...prev, status: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="all">All Products</option>
@@ -341,7 +354,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <div className="flex gap-2">
                 <select
                   value={searchQuery.sort}
-                  onChange={(e) => setSearchQuery(prev => ({ ...prev, sort: e.target.value as any }))}
+                  onChange={(e) => setSearchQuery(prev => ({ ...prev, sort: e.target.value }))}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <option value="created_at">Date Created</option>
