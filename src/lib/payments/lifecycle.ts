@@ -196,7 +196,7 @@ export class PaymentLifecycleService {
   async processPaymentCompleted(
     providerPaymentId: string,
     provider: PaymentProvider,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     try {
       // Find transaction by provider payment ID
@@ -250,7 +250,7 @@ export class PaymentLifecycleService {
           paymentId: transaction.id,
           amount: transaction.amount,
           currency: transaction.currency,
-          provider: (transaction.raw as any)?.provider ?? provider,
+          provider: (transaction.raw as { provider?: PaymentProvider } | null)?.provider ?? provider,
           providerPaymentId
         },
         { tenantId: transaction.tenant_id }
@@ -271,7 +271,7 @@ export class PaymentLifecycleService {
     providerPaymentId: string,
     provider: PaymentProvider,
     failureReason: string,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     try {
       const { data: transaction, error } = await this.supabase
@@ -430,7 +430,7 @@ export class PaymentLifecycleService {
   async processRefundCompleted(
     providerRefundId: string,
     provider: PaymentProvider,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     try {
       const { data: refundTransaction, error } = await this.supabase
@@ -496,7 +496,7 @@ export class PaymentLifecycleService {
     amount: number;
     currency: string;
     description: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }): Promise<void> {
     try {
       const { error } = await this.supabase
@@ -901,7 +901,7 @@ export class PaymentLifecycleService {
     providerTransactionId: string;
     paymentMethod: PaymentMethod;
     parentTransactionId?: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }) {
     // Map to the real transactions schema: the reservation id is subject_id
     // (+ subject_type), the provider ref is provider_reference, refund parent is
@@ -938,7 +938,7 @@ export class PaymentLifecycleService {
   private async updateTransactionStatus(
     transactionId: string,
     status: PaymentStatus,
-    extra?: Record<string, any>
+    extra?: Record<string, unknown>
   ) {
     // Merge status detail into `raw` (there is no `metadata` column) rather
     // than clobbering it.
@@ -948,7 +948,7 @@ export class PaymentLifecycleService {
       .eq('id', transactionId)
       .maybeSingle();
     const currentRaw = (current?.raw && typeof current.raw === 'object')
-      ? (current.raw as Record<string, any>)
+      ? (current.raw as Record<string, unknown>)
       : {};
 
     const { error } = await this.supabase
