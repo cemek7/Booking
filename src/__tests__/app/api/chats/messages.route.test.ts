@@ -103,7 +103,7 @@ describe('POST /api/chats/[id]/messages', () => {
       lastInboundAt: '2026-06-20T12:00:00.000Z',
     });
 
-    await expect(POST(createContext(builder) as any)).rejects.toMatchObject<ApiError>({
+    await expect(POST(createContext(builder) as unknown as Parameters<typeof POST>[0])).rejects.toMatchObject<ApiError>({
       statusCode: 423,
       message: expect.stringContaining('Instagram replies are only allowed within 24 hours'),
     });
@@ -120,7 +120,7 @@ describe('POST /api/chats/[id]/messages', () => {
       lastInboundAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     });
 
-    const response = await POST(createContext(builder) as any);
+    const response = await POST(createContext(builder) as unknown as Parameters<typeof POST>[0]);
 
     expect(response).toMatchObject({ ok: true, id: 'msg-1' });
     expect(mockGetTenantChannelProviderClient).toHaveBeenCalledWith('tenant-1', 'instagram');
@@ -138,7 +138,7 @@ describe('POST /api/chats/[id]/messages', () => {
       lastInboundAt: '2026-06-20T12:00:00.000Z',
     });
 
-    await expect(POST(createContext(builder) as any)).rejects.toMatchObject<ApiError>({
+    await expect(POST(createContext(builder) as unknown as Parameters<typeof POST>[0])).rejects.toMatchObject<ApiError>({
       statusCode: 423,
       message: expect.stringContaining('requires explicit messaging consent'),
     });
@@ -156,7 +156,7 @@ describe('POST /api/chats/[id]/messages', () => {
       lastInboundAt: '2026-06-20T12:00:00.000Z',
     });
 
-    const response = await POST(createContext(builder) as any);
+    const response = await POST(createContext(builder) as unknown as Parameters<typeof POST>[0]);
 
     expect(response).toMatchObject({ ok: true, id: 'msg-1' });
     expect(mockGetTenantChannelProviderClient).toHaveBeenCalledWith('tenant-1', 'whatsapp');
