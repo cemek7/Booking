@@ -121,8 +121,11 @@ const SettingsSchemaBase = z.object({
       useDmReplies: z.boolean().optional(),
     }).optional(),
   }).optional(),
+  // Controlled public-storefront composition. The renderer validates block IDs
+  // and ignores unknown values, so this is not an arbitrary page-builder blob.
   operationalMemory: z.record(z.string(), z.unknown()).optional(),
   campaignDefaults: z.record(z.string(), z.unknown()).optional(),
+  storefront: z.record(z.string(), z.unknown()).optional(),
   positioning: z.string().min(1).optional(),
   // Which Booka workflows this tenant runs (gates the dashboard nav). All-on
   // by default; owners trim what they don't use.

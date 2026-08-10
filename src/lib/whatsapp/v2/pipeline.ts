@@ -43,6 +43,7 @@ import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 import { getInstagramSecret } from '@/lib/instagram/secrets';
+import { consumeStorefrontContextMarker } from '@/lib/storefront/context';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -100,14 +101,21 @@ export async function processMessageV2(
   const batch = await claimBatch(externalId, tenantId, channel);
   if (!batch) return false; // Still accumulating — skip this cycle
 
-  const rawMessage = batch.combined;
-  const normalized = normalizePidgin(rawMessage);
+  let rawMessage = batch.combined;
 
   // ── 2. Load conversation state ─────────────────────────────────────────────
   let conv = await getConversation(externalId, tenantId, channel);
   if (!conv) {
     conv = await ensureConversation(externalId, tenantId, 'unknown', channel);
   }
+  const storefrontHandoff = consumeStorefrontContextMarker(rawMessage, tenantId);
+  rawMessage = storefrontHandoff.message;
+  if (storefrontHandoff.context) {
+    const flow_data = { ...(conv.flow_data ?? {}), storefront_context: storefrontHandoff.context };
+    await updateConversation(externalId, tenantId, { flow_data }, channel);
+    conv.flow_data = flow_data;
+  }
+  const normalized = normalizePidgin(rawMessage);
 
   // ── Opt-out keyword (customers only) ──────────────────────────────────────
   const optSignal: OptOutSignal = detectOptOutKeyword(rawMessage);

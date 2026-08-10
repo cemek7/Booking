@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PublicProduct } from '@/lib/publicStorefrontService';
 
 interface StorefrontContainerProps {
@@ -8,11 +8,12 @@ interface StorefrontContainerProps {
   tenant: { name: string; description: string | null; logo: string | null };
   products: PublicProduct[];
   currency: string;
+  initialProductId?: string;
 }
 
 type CheckoutStep = 'cart' | 'details';
 
-export default function StorefrontContainer({ slug, tenant, products, currency }: StorefrontContainerProps) {
+export default function StorefrontContainer({ slug, tenant, products, currency, initialProductId }: StorefrontContainerProps) {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -22,6 +23,13 @@ export default function StorefrontContainer({ slug, tenant, products, currency }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ orderId: string; totalCents: number } | null>(null);
+  useEffect(() => {
+    const product = initialProductId ? products.find((item) => item.id === initialProductId) : undefined;
+    if (product?.in_stock) {
+      setQty((previous) => previous[product.id] ? previous : { ...previous, [product.id]: 1 });
+      setCartOpen(true);
+    }
+  }, [initialProductId, products]);
 
   const money = useMemo(() => {
     const fmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'NGN', maximumFractionDigits: 2 });

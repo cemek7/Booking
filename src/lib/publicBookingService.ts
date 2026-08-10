@@ -168,7 +168,8 @@ export async function getTenantServices(tenantId: string) {
       description,
       duration_minutes,
       price_cents,
-      image_url
+      image_url,
+      category
     `)
     .eq('tenant_id', tenantId)
     .eq('is_active', true);

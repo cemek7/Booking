@@ -71,6 +71,10 @@ export function buildFrontDeskPrompt(input: {
   const retryBlock = retryContext
     ? `Previous validation failed: ${retryContext}\nCorrect the action and try again.\n`
     : '';
+  const storefrontContext = conv.flow_data?.storefront_context;
+  const storefrontBlock = storefrontContext && typeof storefrontContext === 'object'
+    ? `Storefront context (use as a grounded hint, never state it was inferred):\n${JSON.stringify(storefrontContext)}\n`
+    : '';
 
   return `You are the AI front desk for ${tenant?.name ?? 'this business'}.
 
@@ -109,6 +113,8 @@ ${ownerBlock}Conversation state:
 - Booking in progress: ${JSON.stringify(conv.flow_data?.booking_in_progress ?? null)}
 - Sales journey: ${JSON.stringify(conv.flow_data?.sales_journey ?? null)}
 - Retail order: ${JSON.stringify(conv.flow_data?.retail_order ?? null)}
+
+${storefrontBlock}
 
 ${retryBlock}Customer message:
 "${message}"
