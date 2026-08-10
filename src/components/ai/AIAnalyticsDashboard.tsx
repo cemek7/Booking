@@ -68,6 +68,33 @@ interface AIAnalyticsProps {
   timeframe?: 'daily' | 'weekly' | 'monthly' | 'quarterly';
 }
 
+type AIInsight = {
+  insight_id: string;
+  type: string;
+  prediction?: { confidence?: number; time_horizon?: string };
+  recommendations?: Array<{ action: string; priority: string; timeline: string }>;
+};
+
+type ConversationMetrics = {
+  total_conversations?: number;
+  customer_satisfaction?: number | null;
+  escalation_rate?: number;
+  emotion_distribution?: Array<{ emotion: string; count: number; percentage: number }>;
+};
+
+type ContentPerformance = { name?: string; sent?: number; delivered?: number; read?: number };
+type VerticalInsight = {
+  vertical: string;
+  analytics?: { metrics?: { conversion_funnels?: Array<{ step: string; count: number; conversion_rate: number }> } };
+};
+
+type PredictionResponse = {
+  revenue?: RevenueMetrics;
+  customers?: CustomerAnalytics[];
+  benchmark?: TenantBenchmark;
+  insights?: AIInsight[];
+};
+
 const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, userId, timeframe = 'monthly' }) => {
   // All hooks must be declared unconditionally before any early return
   const [loading, setLoading] = useState(true);
@@ -79,10 +106,10 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
   const [customerAnalytics, setCustomerAnalytics] = useState<CustomerAnalytics[]>([]);
   const [tenantBenchmark, setTenantBenchmark] = useState<TenantBenchmark | null>(null);
   const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
-  const [aiInsights, setAiInsights] = useState<any[]>([]);
-  const [conversationMetrics, setConversationMetrics] = useState<any>({});
-  const [contentPerformance, setContentPerformance] = useState<any[]>([]);
-  const [verticalInsights, setVerticalInsights] = useState<any[]>([]);
+  const [aiInsights, setAiInsights] = useState<AIInsight[]>([]);
+  const [conversationMetrics, setConversationMetrics] = useState<ConversationMetrics>({});
+  const [contentPerformance, setContentPerformance] = useState<ContentPerformance[]>([]);
+  const [verticalInsights, setVerticalInsights] = useState<VerticalInsight[]>([]);
 
   // AI engines run server-side via /api/ai/predictions
   useEffect(() => {
@@ -163,11 +190,11 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
         fetch('/api/analytics/vertical?vertical=medicine').then((r) => r.ok ? r.json() : null),
       ]);
 
-      const { revenue, customers, benchmark, insights } = predictionsRes as any;
-      setRevenueMetrics(revenue);
-      setCustomerAnalytics(Array.isArray(customers) ? customers : [customers]);
-      setTenantBenchmark(benchmark);
-      setAiInsights(insights);
+      const { revenue, customers, benchmark, insights } = predictionsRes as PredictionResponse;
+      setRevenueMetrics(revenue ?? null);
+      setCustomerAnalytics(customers ?? []);
+      setTenantBenchmark(benchmark ?? null);
+      setAiInsights(insights ?? []);
       setConversationMetrics(conversation);
       setContentPerformance(content);
 
@@ -194,7 +221,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
       // Build cross-vertical insights from real analytics data
       const insights_list = [beautyRes, hospitalityRes, medicineRes]
         .filter(Boolean)
-        .map((v: any) => ({
+        .map((v: { vertical: string; analytics?: VerticalInsight['analytics'] }) => ({
           vertical: v.vertical,
           analytics: v.analytics,
         }));
@@ -752,7 +779,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                         dataKey="count"
                         nameKey="emotion"
                       >
-                        {(conversationMetrics.emotion_distribution || []).map((entry: any, index: number) => (
+                        {(conversationMetrics.emotion_distribution || []).map((entry, index: number) => (
                           <Cell key={`cell-${index}`} fill={['#10b981', '#8b5cf6', '#f59e0b', '#ef4444'][index]} />
                         ))}
                       </Pie>
@@ -765,7 +792,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                 <div>
                   <h4 className="font-medium mb-4">Emotional Trends</h4>
                   <div className="space-y-3">
-                    {(conversationMetrics.emotion_distribution || []).map((emotion: any, index: number) => (
+                    {(conversationMetrics.emotion_distribution || []).map((emotion, index: number) => (
                       <div key={index} className="space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-sm capitalize">{emotion.emotion}</span>
@@ -885,7 +912,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                     {insight.recommendations?.length > 0 && (
                       <div className="space-y-2">
                         <h5 className="text-sm font-medium">Recommended Actions:</h5>
-                        {insight.recommendations.slice(0, 2).map((rec: any, recIndex: number) => (
+                        {insight.recommendations.slice(0, 2).map((rec, recIndex: number) => (
                           <div key={recIndex} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                             <span className="text-sm">{rec.action}</span>
                             <div className="flex items-center space-x-2">
@@ -918,7 +945,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                     </div>
                     {v.analytics?.metrics?.conversion_funnels?.length > 0 ? (
                       <div className="space-y-2">
-                        {v.analytics.metrics.conversion_funnels.map((step: any, i: number) => (
+                        {v.analytics.metrics.conversion_funnels.map((step, i: number) => (
                           <div key={i} className="flex items-center justify-between text-sm">
                             <span className="text-gray-600 capitalize">{step.step}</span>
                             <div className="flex items-center space-x-2">
