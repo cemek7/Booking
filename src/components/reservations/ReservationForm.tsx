@@ -10,7 +10,29 @@ import StaffSelect from "./StaffSelect";
 import ServicesMultiSelect from "./ServicesMultiSelect";
 import { authFetch, authPost, authPatch } from "@/lib/auth/auth-api-client";
 
-export default function ReservationForm(props: { onSuccess?: () => void; initialData?: any }) {
+type ReservationInitialData = {
+  id?: string;
+  status?: string;
+  customer_id?: string;
+  notes?: string;
+  staff_id?: string;
+  services?: Array<{ id: string; quantity: number }>;
+  start_time?: string;
+  date?: string;
+  booking_id?: string;
+  prefillPhone?: string;
+};
+
+type CustomerRow = { id: string; name?: string; phone?: string };
+type BookingRow = { id: string; title?: string };
+type CreatedCustomer = { id: string };
+type CreatedReservation = { id: string };
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export default function ReservationForm(props: { onSuccess?: () => void; initialData?: ReservationInitialData }) {
   const { tenant } = useTenant();
   const { onSuccess, initialData } = props;
   const customerSelectRef = useRef<HTMLSelectElement | null>(null);
@@ -33,7 +55,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       if (!tenant?.id) return [];
       const response = await authFetch('/api/customers');
       if (response.error) throw new Error('Failed customers fetch');
-      return (response.data as any[]) || [];
+      return (response.data as CustomerRow[]) || [];
     },
     enabled: !!tenant?.id
   });
@@ -62,7 +84,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       if (!tenant?.id) return [];
       const response = await authFetch('/api/bookings');
       if (response.error) throw new Error('Failed bookings fetch');
-      return (response.data as any[]) || [];
+      return (response.data as BookingRow[]) || [];
     },
     enabled: !!tenant?.id
   });
@@ -93,14 +115,14 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       if (response.error) throw new Error('Failed to add customer');
       return response.data;
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: CreatedCustomer | CreatedCustomer[]) => {
       qc.invalidateQueries({ queryKey: ['customers', tenant?.id] });
       setShowAddCustomer(false);
       setNewCustomerName('');
       setNewCustomerPhone('');
       setCustomerId(data.id || (data[0] && data[0].id) || '');
     },
-    onError: (err: any) => setAddCustomerError(err.message || 'Error'),
+    onError: (err: unknown) => setAddCustomerError(errorMessage(err, 'Error')),
     onSettled: () => setAddCustomerLoading(false)
   });
 
@@ -134,7 +156,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       }
       if (response.error) throw new Error(initialData ? "Failed to update reservation" : "Failed to create reservation");
       // Save reservation services (many-to-many)
-      const reservation = response.data as any;
+      const reservation = response.data as CreatedReservation | CreatedReservation[] | null;
       const reservationId = initialData?.id || reservation?.id || (reservation?.[0] && reservation[0].id);
       if (reservationId && services.length > 0) {
         await authPost(`/api/reservations/${reservationId}/services`, { services });
@@ -150,9 +172,10 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       }
   if (typeof onSuccess === "function") onSuccess();
   toast.success(initialData ? "Reservation updated!" : "Reservation created!");
-    } catch (err: any) {
-      setError(err.message || "Error");
-      toast.error(err.message || "Error");
+    } catch (err: unknown) {
+      const message = errorMessage(err, 'Error');
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -166,8 +189,8 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       const response = await authPost(`/api/reservations/${initialData.id}/send-calendar`, {});
       if (response.error) throw new Error('Failed to send calendar link');
       toast.success('Calendar link sent');
-    } catch (err: any) {
-      toast.error(err?.message || 'Error sending calendar link');
+    } catch (err: unknown) {
+      toast.error(errorMessage(err, 'Error sending calendar link'));
     } finally {
       setResendLoading(false);
     }
@@ -198,7 +221,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
             <option value="" disabled>
               {loadingCustomers ? "Loading customers..." : "Select a customer"}
             </option>
-            {customers && customers.map((c: any) => (
+            {customers && customers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name || c.phone || c.id}
               </option>
@@ -246,7 +269,7 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
         <label className="block mb-1">Booking (optional)</label>
         <select value={bookingId} onChange={e => setBookingId(e.target.value)} className="w-full border rounded px-3 py-2">
           <option value="">None</option>
-          {bookings && bookings.map((b: any) => (
+          {bookings && bookings.map((b) => (
             <option key={b.id} value={b.id}>{b.title || b.id}</option>
           ))}
         </select>
