@@ -42,7 +42,7 @@ interface CalendarSettingsProps {
   currentUserId?: string;
 }
 
-interface CalendarStaffMember { id: string; name?: string | null; }
+interface CalendarStaffMember { id: string; name?: string | null; email?: string | null; }
 const syncDirections = ['bidirectional', 'to_google', 'from_google'] as const;
 const conflictResolutions = ['block', 'override', 'notify'] as const;
 
@@ -419,7 +419,7 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <div className="flex items-center space-x-3">
                       <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
                         <span className="font-medium text-purple-600">
-                          {staff.name.charAt(0).toUpperCase()}
+                          {(staff.name?.charAt(0) ?? '?').toUpperCase()}
                         </span>
                       </div>
                       <div>

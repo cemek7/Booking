@@ -111,8 +111,9 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
 
   const addCustomerMutation = useMutation({
     mutationFn: async (payload: { name: string; phone: string }) => {
-      const response = await authPost('/api/customers', payload);
+      const response = await authPost<CreatedCustomer | CreatedCustomer[]>('/api/customers', payload);
       if (response.error) throw new Error('Failed to add customer');
+      if (!response.data) throw new Error('Customer API returned no customer');
       return response.data;
     },
     onSuccess: (data: CreatedCustomer | CreatedCustomer[]) => {
@@ -120,7 +121,8 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       setShowAddCustomer(false);
       setNewCustomerName('');
       setNewCustomerPhone('');
-      setCustomerId(data.id || (data[0] && data[0].id) || '');
+      const customer = Array.isArray(data) ? data[0] : data;
+      setCustomerId(customer?.id ?? '');
     },
     onError: (err: unknown) => setAddCustomerError(errorMessage(err, 'Error')),
     onSettled: () => setAddCustomerLoading(false)
@@ -149,15 +151,16 @@ export default function ReservationForm(props: { onSuccess?: () => void; initial
       };
       if (initialData && initialData.id) {
         // Update existing reservation
-        response = await authPatch(`/api/reservations?id=eq.${initialData.id}`, reservationPayload);
+        response = await authPatch<CreatedReservation | CreatedReservation[]>(`/api/reservations?id=eq.${initialData.id}`, reservationPayload);
       } else {
         // Create new reservation
-        response = await authPost("/api/reservations", reservationPayload);
+        response = await authPost<CreatedReservation | CreatedReservation[]>("/api/reservations", reservationPayload);
       }
       if (response.error) throw new Error(initialData ? "Failed to update reservation" : "Failed to create reservation");
       // Save reservation services (many-to-many)
-      const reservation = response.data as CreatedReservation | CreatedReservation[] | null;
-      const reservationId = initialData?.id || reservation?.id || (reservation?.[0] && reservation[0].id);
+      const reservation = response.data;
+      const createdReservation = Array.isArray(reservation) ? reservation[0] : reservation;
+      const reservationId = initialData?.id || createdReservation?.id;
       if (reservationId && services.length > 0) {
         await authPost(`/api/reservations/${reservationId}/services`, { services });
       }

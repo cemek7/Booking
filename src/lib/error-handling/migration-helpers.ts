@@ -117,7 +117,7 @@ export async function verifyOwnership(
     throw ApiErrorFactory.notFound(table);
   }
 
-  const resource = data as Record<string, unknown>;
+  const resource = data as unknown as Record<string, unknown>;
   if (resource[userIdField] !== ctx.user?.id) {
     throw ApiErrorFactory.forbidden('You do not have permission to modify this resource');
   }
@@ -194,7 +194,7 @@ export async function executeDb<T>(
     if (error) {
       // Handle specific database errors
       if (error.code === '23505') { // Unique constraint violation
-        throw ApiErrorFactory.conflict(error.message);
+        throw ApiErrorFactory.conflict(error.message ?? _errorMessage);
       }
       if (error.code === '23503') { // Foreign key constraint violation
         throw ApiErrorFactory.validationError({ message: 'Invalid reference' });

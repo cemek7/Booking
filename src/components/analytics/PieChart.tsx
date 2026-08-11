@@ -15,6 +15,7 @@ interface PieDataPoint {
   name: string;
   value: number;
   color?: string;
+  [key: string]: string | number | undefined;
 }
 
 type PieChartProps = {
@@ -49,7 +50,7 @@ function PieChart({ data, height = 280, title, className, innerRadius = 0 }: Pie
               {data.map((entry, index) => (
                 <Cell
                   key={`cell-${index}`}
-                  fill={entry.color ?? DEFAULT_COLORS[index % DEFAULT_COLORS.length]}
+                  fill={entry.color ?? DEFAULT_COLORS[index % DEFAULT_COLORS.length] ?? '#6366f1'}
                 />
               ))}
             </Pie>
