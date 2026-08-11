@@ -353,7 +353,7 @@ export function useAnalyticsNotifications(config: AnalyticsRealtimeConfig) {
       message = `Booking completed: ${lastUpdate.record.customer_name || 'Unknown'}`;
       type = 'success';
     } else if (lastUpdate.table === 'transactions' && lastUpdate.type === 'INSERT') {
-      const amount = lastUpdate.record.amount || 0;
+      const amount = typeof lastUpdate.record.amount === 'number' ? lastUpdate.record.amount : 0;
       message = `New transaction: $${amount.toFixed(2)}`;
       type = 'info';
     } else if (lastUpdate.table === 'customers' && lastUpdate.type === 'INSERT') {
