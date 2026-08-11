@@ -429,6 +429,7 @@ export function transitionState(
   newState: ConversationState,
   metadata?: Record<string, unknown>
 ): BookingFlowContext {
+  const stateHistory = Array.isArray(context.metadata.stateHistory) ? context.metadata.stateHistory : [];
   return {
     ...context,
     state: newState,
@@ -437,7 +438,7 @@ export function transitionState(
       ...context.metadata,
       ...metadata,
       stateHistory: [
-        ...(context.metadata.stateHistory || []),
+        ...stateHistory,
         {
           from: context.state,
           to: newState,

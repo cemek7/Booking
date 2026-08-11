@@ -571,8 +571,8 @@ export class PaymentService {
         depositIdempotencyHit(params.tenantId);
         return {
           success: true,
-          transactionId: securityCheck.existingTransaction.transaction_id,
-          authorizationUrl: securityCheck.existingTransaction.authorization_url,
+          transactionId: typeof securityCheck.existingTransaction.transaction_id === 'string' ? securityCheck.existingTransaction.transaction_id : undefined,
+          authorizationUrl: typeof securityCheck.existingTransaction.authorization_url === 'string' ? securityCheck.existingTransaction.authorization_url : undefined,
         };
       }
 

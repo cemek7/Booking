@@ -443,7 +443,7 @@ class SmartBookingRecommendations {
 
       // Analyze touchpoints
       const touchpoints = interactions.map(interaction => ({
-        timestamp: interaction.created_at,
+        created_at: interaction.created_at,
         channel: interaction.channel,
         action: interaction.action,
         outcome: interaction.outcome,
@@ -635,7 +635,7 @@ class SmartBookingRecommendations {
     let satisfaction = 0.7; // Base satisfaction
 
     // Staff compatibility bonus
-    if (staffSuggestion?.compatibility_score > 0.8) {
+    if ((staffSuggestion?.compatibility_score ?? 0) > 0.8) {
       satisfaction += 0.2;
     }
 
@@ -820,7 +820,7 @@ class SmartBookingRecommendations {
   }
 
   private extractFavoriteServices(bookings: BookingHistoryItem[]): string[] {
-    const serviceCounts = bookings.reduce((counts, booking) => {
+    const serviceCounts = bookings.reduce<Record<string, number>>((counts, booking) => {
       const serviceId = booking.service_id;
       counts[serviceId] = (counts[serviceId] || 0) + 1;
       return counts;

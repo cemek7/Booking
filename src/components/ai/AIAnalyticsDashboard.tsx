@@ -71,7 +71,7 @@ interface AIAnalyticsProps {
 type AIInsight = {
   insight_id: string;
   type: string;
-  prediction?: { confidence?: number; time_horizon?: string };
+  prediction?: { confidence?: number; time_horizon?: string; impact_magnitude?: string; outcome?: string };
   recommendations?: Array<{ action: string; priority: string; timeline: string }>;
 };
 
@@ -79,6 +79,7 @@ type ConversationMetrics = {
   total_conversations?: number;
   customer_satisfaction?: number | null;
   escalation_rate?: number;
+  avg_response_time?: number | null;
   emotion_distribution?: Array<{ emotion: string; count: number; percentage: number }>;
 };
 
@@ -909,10 +910,10 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                       </div>
                     </div>
 
-                    {insight.recommendations?.length > 0 && (
+                    {(insight.recommendations ?? []).length > 0 && (
                       <div className="space-y-2">
                         <h5 className="text-sm font-medium">Recommended Actions:</h5>
-                        {insight.recommendations.slice(0, 2).map((rec, recIndex: number) => (
+                        {(insight.recommendations ?? []).slice(0, 2).map((rec, recIndex: number) => (
                           <div key={recIndex} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                             <span className="text-sm">{rec.action}</span>
                             <div className="flex items-center space-x-2">
@@ -943,9 +944,9 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="font-medium capitalize">{v.vertical}</h4>
                     </div>
-                    {v.analytics?.metrics?.conversion_funnels?.length > 0 ? (
+                    {(v.analytics?.metrics?.conversion_funnels ?? []).length > 0 ? (
                       <div className="space-y-2">
-                        {v.analytics.metrics.conversion_funnels.map((step, i: number) => (
+                        {(v.analytics?.metrics?.conversion_funnels ?? []).map((step, i: number) => (
                           <div key={i} className="flex items-center justify-between text-sm">
                             <span className="text-gray-600 capitalize">{step.step}</span>
                             <div className="flex items-center space-x-2">
