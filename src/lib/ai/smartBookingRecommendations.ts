@@ -443,7 +443,7 @@ class SmartBookingRecommendations {
 
       // Analyze touchpoints
       const touchpoints = interactions.map(interaction => ({
-        created_at: interaction.created_at,
+        timestamp: interaction.created_at,
         channel: interaction.channel,
         action: interaction.action,
         outcome: interaction.outcome,
@@ -1138,7 +1138,13 @@ class SmartBookingRecommendations {
   private async generateNextBestActions(
     tenantId: string,
     customerPhone: string,
-    touchpoints: CustomerInteraction[],
+    touchpoints: Array<{
+      timestamp: string;
+      channel: string;
+      action: string;
+      outcome: string;
+      conversion_probability: number;
+    }>,
     funnel: { inquiry: number; quote: number; booking: number; completion: number; repeat: number },
   ): Promise<NextBestAction[]> {
     const actions: NextBestAction[] = [];

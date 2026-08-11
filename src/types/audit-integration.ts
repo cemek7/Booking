@@ -24,7 +24,8 @@ import {
   AuditLogger,
   initializeAuditLogger,
   getAuditLogger,
-  type AuditEvent
+  type AuditEvent,
+  type SecurityAnalytics
 } from './audit-logging';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
@@ -475,9 +476,9 @@ export async function generateTenantAuditReport(
 export async function getSecurityDashboard(tenantId: string): Promise<{
   alerts: AuditEvent[];
   metrics: {
-    last24Hours: Record<string, unknown>;
-    last7Days: Record<string, unknown>;
-    trends: Record<string, unknown>;
+    last24Hours: SecurityAnalytics['metrics'];
+    last7Days: SecurityAnalytics;
+    trends: SecurityAnalytics['trends'];
   };
   recommendations: string[];
 }> {

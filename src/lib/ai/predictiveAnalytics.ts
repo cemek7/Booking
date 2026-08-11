@@ -483,11 +483,18 @@ class PredictiveAnalyticsEngine {
         .order('created_at');
 
       // Preserve the { total_amount, created_at, status } shape downstream expects.
-      return (txns || []).map((t) => ({
-        total_amount: Number((t as { amount?: number }).amount || 0),
-        created_at: (t as { created_at?: string }).created_at,
-        status: (t as { status?: string }).status,
-      }));
+      return (txns || []).flatMap((t): RevenueRecord[] => {
+        const row = t as { amount?: number; created_at?: unknown; status?: unknown };
+        if (typeof row.created_at !== 'string') {
+          return [];
+        }
+
+        return [{
+          total_amount: Number(row.amount || 0),
+          created_at: row.created_at,
+          status: typeof row.status === 'string' ? row.status : undefined,
+        }];
+      });
     } catch (error) {
       console.error('Error fetching historical revenue data:', error);
       return [];
@@ -1145,9 +1152,9 @@ class PredictiveAnalyticsEngine {
     let totalScore = 0;
     let metricCount = 0;
     
-    for (const [key, value] of Object.entries(metrics)) {
+    for (const [key, value] of Object.entries(metrics) as Array<[keyof TenantMetrics, number]>) {
       if (benchmarks[key] && typeof value === 'number') {
-        const score = (value as number) / benchmarks[key];
+        const score = value / benchmarks[key];
         totalScore += Math.min(score, 2); // Cap at 2x benchmark
         metricCount++;
       }
@@ -1173,13 +1180,13 @@ class PredictiveAnalyticsEngine {
     const metrics = tenantMetrics.metrics;
     const benchmarks = industryBenchmarks;
     
-    for (const [key, value] of Object.entries(metrics)) {
-      if (benchmarks[key] && (value as number) < benchmarks[key]) {
+    for (const [key, value] of Object.entries(metrics) as Array<[keyof TenantMetrics, number]>) {
+      if (benchmarks[key] && value < benchmarks[key]) {
         opportunities.push({
           metric: key,
           current_value: value,
           industry_benchmark: benchmarks[key],
-          potential_improvement: benchmarks[key] - (value as number),
+          potential_improvement: benchmarks[key] - value,
           recommended_actions: [`Improve ${key.replace('_', ' ')}`]
         });
       }

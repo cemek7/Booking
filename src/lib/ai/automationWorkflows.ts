@@ -167,6 +167,21 @@ type CommunicationPatterns = {
 
 type AppointmentDetails = { scheduled_at: string };
 
+type BestPractice = {
+  practice_id: string;
+  source_vertical: string;
+  applicable_verticals: string[];
+  description: string;
+  impact_metrics: Record<string, number>;
+  implementation_guide: string[];
+};
+
+type PerformanceComparison = {
+  metric: string;
+  vertical_performance: Record<string, number>;
+  insights: string[];
+};
+
 type ReminderTiming = ReminderOptimization['optimal_timing'];
 type MessagePersonalization = ReminderOptimization['message_personalization'];
 type FollowUpStrategy = ReminderOptimization['follow_up_strategy'];
@@ -400,19 +415,8 @@ class AutomationWorkflows {
     } = {}
   ): Promise<{
     insights: CrossVerticalInsight[];
-    best_practices: Array<{
-      practice_id: string;
-      source_vertical: string;
-      applicable_verticals: string[];
-      description: string;
-      impact_metrics: Record<string, number>;
-      implementation_guide: string[];
-    }>;
-    performance_comparisons: Array<{
-      metric: string;
-      vertical_performance: Record<string, number>;
-      insights: string[];
-    }>;
+    best_practices: BestPractice[];
+    performance_comparisons: PerformanceComparison[];
   }> {
     try {
       console.log('🔄 Implementing cross-vertical learning system');
@@ -880,11 +884,11 @@ class AutomationWorkflows {
     ];
   }
 
-  private async identifyBestPractices(verticals: string[]): Promise<CrossVerticalInsight[]> {
+  private async identifyBestPractices(verticals: string[]): Promise<BestPractice[]> {
     return []; // Placeholder
   }
 
-  private async createPerformanceComparisons(verticals: string[]): Promise<CrossVerticalInsight[]> {
+  private async createPerformanceComparisons(verticals: string[]): Promise<PerformanceComparison[]> {
     return []; // Placeholder
   }
 
@@ -905,16 +909,20 @@ class AutomationWorkflows {
 
   private async getAppointmentDetails(appointmentId: string): Promise<AppointmentDetails> {
     try {
-      const { data: appointment } = await this.supabase
+      const { data: appointment, error } = await this.supabase
         .from('reservations')
-        .select('*')
+        .select('start_at')
         .eq('id', appointmentId)
         .single();
 
-      return appointment;
+      if (error || !appointment?.start_at) {
+        throw new Error(`Unable to load appointment ${appointmentId}`);
+      }
+
+      return { scheduled_at: appointment.start_at };
     } catch (error) {
       console.error('Error getting appointment details:', error);
-      return {};
+      throw error;
     }
   }
 

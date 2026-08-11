@@ -516,7 +516,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                         <div className="space-y-1">
                           <div className="flex items-center space-x-2">
                             <Badge variant="outline">{insight.type?.replace('_', ' ')}</Badge>
-                            <Badge className={getRiskLevelColor(insight.prediction?.impact_magnitude)}>
+                            <Badge className={getRiskLevelColor(insight.prediction?.impact_magnitude ?? 'unknown')}>
                               {insight.prediction?.impact_magnitude} impact
                             </Badge>
                           </div>
@@ -894,7 +894,7 @@ const AIAnalyticsDashboard: React.FC<AIAnalyticsProps> = ({ tenantId, userRole, 
                           <Badge variant="outline" className="capitalize">
                             {insight.type?.replace('_', ' ')}
                           </Badge>
-                          <Badge className={getRiskLevelColor(insight.prediction?.impact_magnitude)}>
+                          <Badge className={getRiskLevelColor(insight.prediction?.impact_magnitude ?? 'unknown')}>
                             {insight.prediction?.impact_magnitude} impact
                           </Badge>
                         </div>
