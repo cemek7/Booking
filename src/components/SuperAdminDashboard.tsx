@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { authFetch, authPost } from '@/lib/auth/auth-api-client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -347,6 +348,21 @@ export default function SuperAdminDashboard({ compact = false }: SuperAdminDashb
           </Card>
         ))}
       </div>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Platform controls">
+        {[
+          { href: '/dashboard/superadmin/tenants', label: 'Manage tenants', copy: 'Lifecycle, plans, wallet balances, and connection health.' },
+          { href: '/dashboard/superadmin/support', label: 'Support queue', copy: 'Claim tenant issues and leave internal operational notes.' },
+          { href: '/dashboard/superadmin/reservations', label: 'Reservation operations', copy: 'Find an individual reservation across the platform.' },
+          { href: '/dashboard/superadmin/reservation-logs', label: 'Audit trail', copy: 'Review tenant and reservation activity with filters.' },
+        ].map((control) => (
+          <Link key={control.href} href={control.href} className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
+            <p className="text-sm font-semibold text-slate-900">{control.label}</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">{control.copy}</p>
+            <p className="mt-3 text-xs font-semibold text-emerald-700">Open control →</p>
+          </Link>
+        ))}
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <Card>

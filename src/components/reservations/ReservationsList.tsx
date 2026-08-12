@@ -12,15 +12,20 @@ interface ReservationRow {
   customer_number?: string | null;
   customer_name?: string | null;
   staff_id?: string | null;
-  date?: string | null;
+  start_at?: string | null;
   notes?: string | null;
   created_at?: string | null;
 }
 
+type ReservationsResponse = { data?: ReservationRow[]; pagination?: { total?: number } };
+
 async function fetchReservations(url: string): Promise<ReservationRow[]> {
-  const res = await authFetch<ReservationRow[]>(url);
+  const res = await authFetch<ReservationsResponse>(url);
   if (!res.status || res.status >= 400) throw new Error('Failed reservations fetch');
-  return res.data ?? [];
+  // The envelope is canonical; accept the legacy array briefly so older cached
+  // clients and embedded consumers do not render an empty workspace mid-rollout.
+  const payload = res.data as ReservationsResponse | ReservationRow[] | undefined;
+  return Array.isArray(payload) ? payload : payload?.data ?? [];
 }
 
 interface ReservationsListProps {
@@ -35,17 +40,18 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantI
   if (tenantId) params.set('tenant_id', `eq.${tenantId}`);
   const apiUrl = `/api/reservations${params.toString() ? `?${params}` : ''}`;
   const qc = useQueryClient();
-  const { data, error, isLoading } = useQuery({ queryKey: ['reservations', customerId || 'all'], queryFn: () => fetchReservations(apiUrl) });
+  const queryKey = ['reservations', tenantId || 'platform', customerId || 'all'];
+  const { data, error, isLoading } = useQuery({ queryKey, queryFn: () => fetchReservations(apiUrl) });
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await authFetch(`/api/reservations?id=eq.${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/reservations/${id}`, { method: 'DELETE' });
       if (!res.status || res.status >= 400) throw new Error('Failed to delete reservation');
     },
     onSuccess: () => {
       toast.success('Reservation deleted');
-      qc.invalidateQueries({ queryKey: ['reservations', customerId || 'all'] });
+      qc.invalidateQueries({ queryKey });
     },
     onError: (error: unknown) => toast.error(error instanceof Error ? error.message : 'Delete failed')
   });
@@ -81,7 +87,7 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantI
                 <TD>{r.status}</TD>
                 <TD>{r.customer_number || r.customer_name || '—'}</TD>
                 <TD>{r.staff_id ? 'Assigned' : 'Unassigned'}</TD>
-                <TD>{r.date ? new Date(r.date).toLocaleString() : '-'}</TD>
+                <TD>{r.start_at ? new Date(r.start_at).toLocaleString() : '-'}</TD>
                 <TD>
                   <ReservationServicesCell reservationId={r.id} />
                 </TD>

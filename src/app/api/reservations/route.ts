@@ -4,6 +4,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { getPaginationParams } from '@/lib/error-handling/migration-helpers';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 const ReservationCreateSchema = z.object({
   customer_id: z.string().optional(),
@@ -41,24 +42,34 @@ interface ReservationPayload {
 
 export const GET = createHttpHandler(
   async (ctx) => {
+    const url = new URL(ctx.request.url);
     const { page, limit, offset } = getPaginationParams(ctx);
-    const tenantId = ctx.user!.tenantId;
+    const isSuperadmin = ctx.user!.role === 'superadmin';
+    const requestedTenantId = url.searchParams.get('tenant_id');
+    const tenantId = isSuperadmin ? requestedTenantId : ctx.user!.tenantId;
+    const client = isSuperadmin ? createSupabaseAdminClient() : ctx.supabase;
 
-    let query = ctx.supabase
+    let query = client
       .from('reservations')
       .select('*')
-      .eq('tenant_id', tenantId)
       .order('start_at', { ascending: true })
       .range(offset, offset + limit - 1);
+
+    if (tenantId) query = query.eq('tenant_id', tenantId);
+    const customerId = url.searchParams.get('customer_id')?.replace(/^eq\./, '');
+    if (customerId) query = query.eq('customer_id', customerId);
 
     const { data, error } = await query;
 
     if (error) throw ApiErrorFactory.databaseError(error);
 
-    const { count } = await ctx.supabase
+    let countQuery = client
       .from('reservations')
-      .select('*', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId);
+      .select('*', { count: 'exact', head: true });
+    if (tenantId) countQuery = countQuery.eq('tenant_id', tenantId);
+    if (customerId) countQuery = countQuery.eq('customer_id', customerId);
+    const { count, error: countError } = await countQuery;
+    if (countError) throw ApiErrorFactory.databaseError(countError);
 
     return {
       data: data || [],

@@ -328,14 +328,24 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
   ],
   superadmin: [
     {
-      title: 'System',
+      title: 'Overview',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin')!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/tenants')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/analytics')!,
+      ],
+    },
+    {
+      title: 'Tenants',
+      items: [
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/tenants')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
+      ],
+    },
+    {
+      title: 'Operations & audit',
+      items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservations')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservation-logs')!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
       ],
     },
   ],

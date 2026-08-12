@@ -247,12 +247,12 @@ export default function DashboardKpis({
   const [siasSummary, setSiasSummary] = useState<SiasSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
-  const [currency, setCurrency] = useState('USD');
+  const [currency, setCurrency] = useState('NGN');
 
   const formatValue = (value: number, type: DashboardMetric['type']) => {
     switch (type) {
       case 'currency':
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
+        return new Intl.NumberFormat('en-NG', { style: 'currency', currency }).format(value);
       case 'percentage':
         return `${value.toFixed(1)}%`;
       case 'duration':

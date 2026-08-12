@@ -20,13 +20,11 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
-import ChatsList from '@/components/chat/ChatsList';
-import CustomersList from '@/components/customers/CustomersList';
-import ServicesList from '@/components/services/ServicesList';
 import DashboardKpis from '@/components/dashboard/DashboardKpis';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
 import Link from 'next/link';
+import { getTenantCapabilities, isRouteEnabled } from '@/lib/capabilities';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 const ROLE_LABEL: Record<string, string> = {
   owner: 'Owner',
@@ -84,6 +82,13 @@ const MANAGER_QUICK_LINKS: QuickLink[] = [
   { href: '/dashboard/tasks', title: 'Tasks', description: 'Team task management and assignments.', icon: ClipboardList },
 ];
 
+const WORKSPACE_GROUPS: Array<{ title: string; description: string; items: readonly string[] }> = [
+  { title: 'Today', description: 'Handle live customer work and the next operational decision.', items: ['Bookings', 'My Schedule', 'Team Schedule', 'Orders', 'Customer Messages', 'Messages'] },
+  { title: 'Customers & growth', description: 'Build demand and keep customer context useful.', items: ['Customers', 'Leads', 'Business Analytics', 'Team Analytics', 'Reports'] },
+  { title: 'Catalogue & delivery', description: 'Keep what you sell, your team, and operations ready.', items: ['Products & Inventory', 'Services', 'Staff Management', 'Tasks', 'FAQs'] },
+  { title: 'Control room', description: 'Review exceptions, settings, billing, and intelligence.', items: ['Daily Close', 'Anomaly Review', 'Approvals Queue', 'Stock Counts', 'Capture Review', 'Settings', 'Billing & Usage', 'Usage Analytics', 'AI Metrics', 'Showcase Packs'] },
+];
+
 export default async function TenantDashboardPage() {
   const user = await requireAuth(['owner', 'manager', 'staff', 'superadmin']);
   const role = user.role?.toLowerCase() ?? '';
@@ -95,7 +100,9 @@ export default async function TenantDashboardPage() {
   const tenantId = user.tenantId;
   const roleLabel = ROLE_LABEL[role] ?? user.role ?? 'User';
   const isOwner = role === 'owner';
-  const quickLinks = isOwner ? OWNER_QUICK_LINKS : MANAGER_QUICK_LINKS;
+  const rawLinks = isOwner ? OWNER_QUICK_LINKS : MANAGER_QUICK_LINKS;
+  const capabilities = tenantId ? await getTenantCapabilities(createSupabaseAdminClient(), tenantId) : undefined;
+  const quickLinks = capabilities ? rawLinks.filter((link) => isRouteEnabled(link.href, capabilities)) : rawLinks;
 
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-8 px-4 py-8 sm:px-6 lg:px-8">
@@ -127,76 +134,27 @@ export default async function TenantDashboardPage() {
 
       <DashboardKpis tenantId={tenantId} userId={user.id} userRole={user.role} />
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <aside className="order-last space-y-4 xl:order-first xl:col-span-4">
-          <Card className="p-0">
-            <CardContent className="p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-[#10211a]">Conversations</h3>
-                  <p className="text-sm text-slate-500">Live customer and team messages.</p>
-                </div>
-                <Badge variant="outline" className="rounded-full border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">
-                  Inbox
-                </Badge>
+      <section className="space-y-6">
+        {WORKSPACE_GROUPS.map((group) => {
+          const links = quickLinks.filter((link) => group.items.includes(link.title));
+          if (!links.length) return null;
+          return (
+            <div key={group.title} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+              <div className="mb-5 max-w-2xl">
+                <h2 className="text-lg font-semibold text-slate-900">{group.title}</h2>
+                <p className="mt-1 text-sm text-slate-500">{group.description}</p>
               </div>
-              <ChatsList />
-            </CardContent>
-          </Card>
-        </aside>
-
-        <div className="space-y-6 xl:col-span-8">
-          {isOwner && (
-            <>
-              <div className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-[#10211a]">Customers</h3>
-                  <p className="text-sm text-slate-500">Search, edit, and message customers with the full table visible.</p>
-                </div>
-                <CustomersList tenantId={tenantId ?? undefined} />
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {links.map(({ href, title, description, icon: Icon }) => (
+                  <Link key={href} href={href} className="group flex min-h-32 flex-col justify-between rounded-2xl border border-slate-200 bg-slate-50/70 p-4 transition hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-md">
+                    <div className="flex items-start justify-between gap-3"><span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white text-slate-700 shadow-sm ring-1 ring-slate-100 transition group-hover:bg-[#10211a] group-hover:text-white"><Icon className="h-4 w-4" /></span><ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-emerald-700" /></div>
+                    <div className="mt-4"><h3 className="text-sm font-semibold text-slate-900">{title}</h3><p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{description}</p></div>
+                  </Link>
+                ))}
               </div>
-
-              <div className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-[#10211a]">Services</h3>
-                  <p className="text-sm text-slate-500">Manage your service catalog without the table feeling cramped.</p>
-                </div>
-                <ServicesList />
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Quick actions</h2>
-            <p className="text-sm text-slate-500">The things you&rsquo;ll reach for most, one tap away.</p>
-          </div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {quickLinks.map(({ href, title, description, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className="group flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg"
-            >
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition group-hover:bg-slate-900 group-hover:text-white">
-                    <Icon className="h-5 w-5" />
-                  </span>
-                  <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
+            </div>
+          );
+        })}
       </section>
     </div>
   );
