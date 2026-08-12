@@ -329,7 +329,7 @@ export function createApiHandler(
 
         // Lifecycle access gate — fail-open: any lookup error allows the request through.
         // Only runs when the route is authenticated AND a tenant context is present.
-        const scopedTenantId = isGlobalAdmin ? requestedTenantId : tenantUser?.tenant_id;
+        const scopedTenantId = (isGlobalAdmin ? requestedTenantId : tenantUser?.tenant_id) ?? undefined;
         if (scopedTenantId) {
           try {
             const admin = createSupabaseAdminClient();
