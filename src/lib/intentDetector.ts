@@ -1,8 +1,9 @@
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { recordLLMUsage, canMakeLLMRequest } from '@/lib/llmUsageTracker';
-import { callOpenRouter } from '@/lib/openrouter';
 import { isGoogleAIConfigured, getGoogleAIModel } from '@/lib/google-ai';
+import { getAIProvider } from '@/lib/ai/providers';
+import { getCloudflareAIModel, isCloudflareAIConfigured } from '@/lib/cloudflare-ai';
 import { estimatePromptTokens, withTenantWalletSpend } from './billing/ai-wallet';
 
 export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'payment' | 'status' | 'unknown';
@@ -44,6 +45,45 @@ type ContextAnalysis = {
   sentiment: 'positive' | 'neutral' | 'negative';
 };
 
+type IntentProvider = 'cloudflare' | 'openrouter' | 'google_ai' | 'auto';
+type TrackedIntentProvider = Exclude<IntentProvider, 'auto'>;
+
+function getIntentProviderConfig(): {
+  mode: string;
+  walletProvider: IntentProvider;
+  model: string;
+  openRouterModel: string;
+  openRouterFallbackModels: string[];
+  cloudflareModel: string;
+  disableGoogle: boolean;
+} {
+  // Intent classification must use the same provider policy as the v2 reply
+  // pipeline. The former direct OpenRouter helper could silently choose Google
+  // whenever a Google key happened to exist, even when WhatsApp was configured
+  // to use OpenRouter or Cloudflare.
+  const mode = (process.env.WHATSAPP_V2_AI_PROVIDER || 'auto').toLowerCase();
+  const disableGoogle = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
+  const openRouterModel = process.env.OPENROUTER_DEFAULT_MODEL || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+  const cloudflareModel = process.env.CLOUDFLARE_AI_DEFAULT_MODEL || getCloudflareAIModel();
+  const openRouterFallbackModels = (process.env.OPENROUTER_V2_FALLBACK_MODELS || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+
+  if (mode === 'cloudflare') return { mode, walletProvider: 'cloudflare', model: cloudflareModel, openRouterModel, openRouterFallbackModels, cloudflareModel, disableGoogle };
+  if (mode === 'openrouter') return { mode, walletProvider: 'openrouter', model: openRouterModel, openRouterModel, openRouterFallbackModels, cloudflareModel, disableGoogle };
+  if (mode === 'google') return { mode, walletProvider: 'google_ai', model: getGoogleAIModel(), openRouterModel, openRouterFallbackModels, cloudflareModel, disableGoogle };
+  return {
+    mode: 'auto',
+    walletProvider: 'auto',
+    model: isCloudflareAIConfigured() ? cloudflareModel : (isGoogleAIConfigured() ? getGoogleAIModel() : openRouterModel),
+    openRouterModel,
+    openRouterFallbackModels,
+    cloudflareModel,
+    disableGoogle,
+  };
+}
+
 /**
  * Enhanced intent detector with confidence scoring, entity extraction, and context awareness.
  * Uses OpenRouter for complex cases, falls back to improved heuristics.
@@ -68,7 +108,12 @@ export async function detectIntent(
     defaultLogger.warn('intentDetector: LLM quota exceeded or disabled, falling back to heuristics', { tenantId });
   }
 
-  const hasLLMProvider = isGoogleAIConfigured() || !!process.env.OPENROUTER_API_KEY;
+  const providerConfig = getIntentProviderConfig();
+  const hasLLMProvider =
+    (providerConfig.mode !== 'cloudflare' || isCloudflareAIConfigured()) &&
+    (providerConfig.mode !== 'openrouter' || !!process.env.OPENROUTER_API_KEY) &&
+    (providerConfig.mode !== 'google' || isGoogleAIConfigured()) &&
+    (isCloudflareAIConfigured() || !!process.env.OPENROUTER_API_KEY || (!providerConfig.disableGoogle && isGoogleAIConfigured()));
   if (hasLLMProvider && canUseLLM) {
     try {
       const supabase = createSupabaseAdminClient();
@@ -94,15 +139,13 @@ Only return valid JSON.${servicesHint}`;
       const contextPrompt = context ? `\nContext: ${context.tenantVertical || 'general'} business, conversation turn ${context.conversationTurn || 1}, ${context.timeOfDay || 'unknown'} time` : '';
       const user = `Message: "${t.replace(/\"/g, '\\"')}"${contextPrompt}`;
 
-      const activeModel = isGoogleAIConfigured() ? getGoogleAIModel() : 'free-model';
-      const activeProvider = isGoogleAIConfigured() ? 'google_ai' as const : 'openrouter' as const;
       const { json: j } = await withTenantWalletSpend(
         supabase,
         tenantId ?? null,
         {
           estimatedTokens: estimatePromptTokens(system.length + user.length),
-          provider: activeProvider,
-          model: activeModel,
+          provider: providerConfig.walletProvider,
+          model: providerConfig.model,
           requestId: `intent:${tenantId ?? 'anonymous'}:${Date.now()}`,
           description: 'Intent detection',
           metadata: {
@@ -112,18 +155,29 @@ Only return valid JSON.${servicesHint}`;
             context_provided: !!context,
           },
         },
-        () => callOpenRouter(
-          [{ role: 'system', content: system }, { role: 'user', content: user }],
-          undefined,
-          1
-        )
+        () => getAIProvider({
+          mode: providerConfig.mode,
+          openRouterModel: providerConfig.openRouterModel,
+          openRouterFallbackModels: openRouterFallbackModels(providerConfig.openRouterFallbackModels),
+          cloudflareModel: providerConfig.cloudflareModel,
+          disableGoogle: providerConfig.disableGoogle,
+        }).complete({
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          model: providerConfig.model,
+        })
       );
-      // Attempt to find assistant message
-      const assistant = j?.choices?.[0]?.message?.content || j?.choices?.[0]?.text || null;
+      // Providers return an OpenAI-compatible response body. Keep this narrow
+      // because wallet accounting deliberately treats provider payloads as
+      // opaque unknown values.
+      const responseJson = j as {
+        choices?: Array<{ message?: { content?: string }; text?: string }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      const assistant = responseJson.choices?.[0]?.message?.content || responseJson.choices?.[0]?.text || null;
 
       // Track LLM usage
       if (tenantId && userId) {
-        const usage = j?.usage;
+        const usage = responseJson.usage;
         const inputTokens = usage?.prompt_tokens || 100;
         const outputTokens = usage?.completion_tokens || 50;
         const costUsd = 0; // Free model — no cost
@@ -132,8 +186,8 @@ Only return valid JSON.${servicesHint}`;
           await recordLLMUsage(
             tenantId,
             userId,
-            activeProvider,
-            activeModel,
+            providerForUsage(providerConfig),
+            providerConfig.model,
             'intent_detection',
             inputTokens,
             outputTokens,
@@ -174,12 +228,25 @@ Only return valid JSON.${servicesHint}`;
         }
       }
     } catch (err) {
-      defaultLogger.warn('OpenRouter intent detection failed', err);
+      defaultLogger.warn('AI provider intent detection failed', err);
     }
   }
 
   // Enhanced fallback heuristics with dynamic confidence
   return enhancedHeuristics(t, entities, contextInfo, context);
+}
+
+function openRouterFallbackModels(configured: string[]): string[] {
+  return [process.env.OPENROUTER_FALLBACK_MODEL || '', ...configured]
+    .map((model) => model.trim())
+    .filter(Boolean);
+}
+
+function providerForUsage(config: ReturnType<typeof getIntentProviderConfig>): TrackedIntentProvider {
+  if (config.walletProvider !== 'auto') return config.walletProvider;
+  if (isCloudflareAIConfigured()) return 'cloudflare';
+  if (process.env.OPENROUTER_API_KEY) return 'openrouter';
+  return 'google_ai';
 }
 
 /**
