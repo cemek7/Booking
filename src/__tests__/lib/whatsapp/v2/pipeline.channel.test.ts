@@ -38,8 +38,10 @@ jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
 
 // getTenantWhatsAppConfig spy — we assert this is NOT called on IG path
 const mockGetTenantWhatsAppConfig = jest.fn();
+const mockIsTenantWhatsAppAgentEnabled = jest.fn();
 jest.mock('@/lib/whatsapp/evolutionClient', () => ({
   getTenantWhatsAppConfig: mockGetTenantWhatsAppConfig,
+  isTenantWhatsAppAgentEnabled: mockIsTenantWhatsAppAgentEnabled,
 }));
 
 // Providers spy
@@ -120,6 +122,7 @@ function makeConv(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(true);
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -195,6 +198,19 @@ describe('processMessageV2 channel=instagram', () => {
     );
 
     expect(result).toBe(true);
+    expect(mockGetTenantWhatsAppConfig).not.toHaveBeenCalled();
+    expect(mockHandleCustomerBooking).not.toHaveBeenCalled();
+  });
+
+  it('does not run customer automation when the tenant agent is paused', async () => {
+    mockClaimBatch.mockResolvedValue({ combined: 'need help', messageIds: ['msg-5'] });
+    mockGetConversation.mockResolvedValue(makeConv({ channel: 'whatsapp', phone_number: '+2348000000000', external_id: '+2348000000000' }));
+    mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(false);
+
+    const result = await processMessageV2('+2348000000000', 'tenant-1', 'need help', 'msg-5');
+
+    expect(result).toBe(true);
+    expect(mockIsTenantWhatsAppAgentEnabled).toHaveBeenCalledWith('tenant-1');
     expect(mockGetTenantWhatsAppConfig).not.toHaveBeenCalled();
     expect(mockHandleCustomerBooking).not.toHaveBeenCalled();
   });

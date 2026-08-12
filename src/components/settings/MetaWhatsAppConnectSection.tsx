@@ -10,6 +10,7 @@ declare global {
 }
 
 type Connection = {
+  agent_enabled?: boolean | null;
   meta_connection_status?: string | null;
   meta_phone_number_id?: string | null;
   meta_waba_id?: string | null;
@@ -24,6 +25,7 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [updatingAgent, setUpdatingAgent] = useState(false);
 
   useEffect(() => {
     fetch(`/api/tenants/${tenantId}/whatsapp/meta/embedded-signup`)
@@ -137,6 +139,25 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
     }
   }
 
+  async function updateAgentEnabled(agentEnabled: boolean) {
+    setUpdatingAgent(true);
+    try {
+      const response = await fetch(`/api/tenants/${tenantId}/whatsapp/meta/embedded-signup`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentEnabled }),
+      });
+      const data = await response.json().catch(() => ({})) as { agentEnabled?: boolean; error?: string; message?: string };
+      if (!response.ok) throw new Error(data.message || data.error || 'Could not update the AI reply setting');
+      setConnection((current) => current ? { ...current, agent_enabled: data.agentEnabled === true } : current);
+      toast.success(agentEnabled ? 'AI replies are enabled for customer messages.' : 'AI replies are paused. Customer messages will still be received.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update the AI reply setting');
+    } finally {
+      setUpdatingAgent(false);
+    }
+  }
+
   const isConnected = connection?.meta_connection_status === 'connected';
   return (
     <section className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
@@ -149,6 +170,24 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
           <p className="font-medium">Connected</p>
           <p>Phone ID: {connection?.meta_phone_number_id}</p>
           <p className="text-xs mt-1">Billing owner: your business (client payment method).</p>
+          <div className="mt-4 rounded-md border border-emerald-200 bg-white/80 p-3">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-medium">AI customer replies</p>
+                <p className="mt-1 text-xs text-emerald-900">When paused, Booka still receives and records customer messages but sends no automated reply, disclosure, or booking action.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={connection?.agent_enabled === true}
+                onClick={() => updateAgentEnabled(connection?.agent_enabled !== true)}
+                disabled={updatingAgent}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${connection?.agent_enabled === true ? 'bg-emerald-700 text-white' : 'border border-gray-300 bg-white text-gray-700'}`}
+              >
+                {updatingAgent ? 'Saving…' : connection?.agent_enabled === true ? 'Enabled' : 'Paused'}
+              </button>
+            </div>
+          </div>
           <button type="button" onClick={disconnect} disabled={disconnecting} className="mt-3 rounded border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-800 disabled:opacity-60">
             {disconnecting ? 'Disconnecting…' : 'Disconnect WhatsApp'}
           </button>

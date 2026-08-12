@@ -689,6 +689,29 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
 }
 
 /**
+ * Whether customer-facing AI replies are enabled for a tenant's active
+ * WhatsApp connection. This is intentionally fail-closed: if the connection
+ * cannot be read, automated replies must not be sent.
+ */
+export async function isTenantWhatsAppAgentEnabled(tenantId: string): Promise<boolean> {
+  try {
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from('whatsapp_configurations')
+      .select('agent_enabled')
+      .eq('tenant_id', tenantId)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (error || !data) return false;
+    return data.agent_enabled === true;
+  } catch (error) {
+    defaultLogger.error('Failed to resolve WhatsApp agent status:', error);
+    return false;
+  }
+}
+
+/**
  * Get tenant ID by Evolution instance name
  */
 export async function getTenantIdByInstanceName(instanceName: string): Promise<string | null> {

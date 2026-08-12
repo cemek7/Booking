@@ -20,7 +20,7 @@ import { isHumanHandling } from './humanTakeover';
 import { buildOptInProofPatch } from './optInProof';
 import { claimBatch } from './messageBatcher';
 import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
-import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getTenantWhatsAppConfig, isTenantWhatsAppAgentEnabled } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
 import type { ProviderConfig } from '@/lib/whatsapp/providers';
@@ -116,6 +116,20 @@ export async function processMessageV2(
     conv.flow_data = flow_data;
   }
   const normalized = normalizePidgin(rawMessage);
+
+  // The queue worker is the canonical inbound path. Enforce the same
+  // tenant-level automation switch here as in the legacy processor so a
+  // disabled agent never sends disclosures, AI replies, or booking actions.
+  // Owner/staff commands remain available for operational recovery.
+  if (
+    channel === 'whatsapp' &&
+    conv.role !== 'owner' &&
+    conv.role !== 'staff' &&
+    !await isTenantWhatsAppAgentEnabled(tenantId)
+  ) {
+    await markMessagesProcessed(batch.messageIds);
+    return true;
+  }
 
   // ── Opt-out keyword (customers only) ──────────────────────────────────────
   const optSignal: OptOutSignal = detectOptOutKeyword(rawMessage);

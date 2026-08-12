@@ -24,6 +24,10 @@ const DirectConnectionSchema = z.object({
   tokenExpiresAt: z.string().datetime().optional(),
 });
 
+const AgentEnabledSchema = z.object({
+  agentEnabled: z.boolean(),
+});
+
 function metaApiConfig() {
   const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
   const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
@@ -64,7 +68,7 @@ export const GET = createHttpHandler(
 
     const { data, error } = await ctx.supabase
       .from('whatsapp_configurations')
-      .select('provider, active, meta_connection_source, meta_connection_status, meta_billing_owner, meta_phone_number_id, meta_waba_id, meta_connected_at, meta_disconnected_at, meta_last_error, meta_last_validated_at')
+      .select('provider, active, agent_enabled, meta_connection_source, meta_connection_status, meta_billing_owner, meta_phone_number_id, meta_waba_id, meta_connected_at, meta_disconnected_at, meta_last_error, meta_last_validated_at')
       .eq('tenant_id', tenantId)
       .eq('provider', 'meta')
       .maybeSingle();
@@ -86,6 +90,38 @@ export const GET = createHttpHandler(
     };
   },
   'GET',
+  { auth: true, roles: ['owner', 'manager', 'superadmin'] }
+);
+
+export const PATCH = createHttpHandler(
+  async (ctx) => {
+    const tenantId = ctx.params?.tenantId as string;
+    if (!tenantId) throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    if (ctx.user!.role !== 'superadmin' && ctx.user!.tenantId !== tenantId) throw ApiErrorFactory.forbidden('Access denied');
+
+    const requestBody = await parseJsonBody<Record<string, unknown>>(ctx.request);
+    const parsed = AgentEnabledSchema.safeParse(requestBody);
+    if (!parsed.success) throw ApiErrorFactory.validationError(parsed.error.flatten().fieldErrors);
+
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin
+      .from('whatsapp_configurations')
+      .update({ agent_enabled: parsed.data.agentEnabled, updated_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId)
+      .eq('provider', 'meta')
+      .eq('active', true)
+      .select('agent_enabled, meta_phone_number_id')
+      .maybeSingle();
+    if (error) throw ApiErrorFactory.databaseError(error);
+    if (!data) throw ApiErrorFactory.notFound('No active Meta WhatsApp connection was found for this tenant');
+
+    return {
+      status: 'updated',
+      agentEnabled: data.agent_enabled === true,
+      phoneNumberId: data.meta_phone_number_id,
+    };
+  },
+  'PATCH',
   { auth: true, roles: ['owner', 'manager', 'superadmin'] }
 );
 
