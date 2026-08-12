@@ -233,7 +233,14 @@ export function createApiHandler(
           })() ||
           params?.tenantId ||
           null;
-        const shouldResolveTenantMembership = requireTenantMembership || Boolean(requestedTenantId);
+        // A global administrator is authorized by the server-side `admins` table,
+        // not by membership in each customer tenant. Requiring a tenant_users row
+        // here would lock support operations after a tenant reset (or before an
+        // admin is added to a particular tenant). This does not grant the same
+        // bypass to ordinary users: their requested tenant is still validated
+        // against tenant_users below, and roles/permissions remain enforced.
+        const shouldResolveTenantMembership = !isGlobalAdmin &&
+          (requireTenantMembership || Boolean(requestedTenantId));
 
         let tenantUser: { id: string; tenant_id: string; role: string } | null = null;
         let userPermissions: string[] = [];
@@ -322,13 +329,14 @@ export function createApiHandler(
 
         // Lifecycle access gate — fail-open: any lookup error allows the request through.
         // Only runs when the route is authenticated AND a tenant context is present.
-        if (tenantUser?.tenant_id) {
+        const scopedTenantId = isGlobalAdmin ? requestedTenantId : tenantUser?.tenant_id;
+        if (scopedTenantId) {
           try {
             const admin = createSupabaseAdminClient();
             const { data: tenantRow } = await admin
               .from('tenants')
               .select('lifecycle_state')
-              .eq('id', tenantUser.tenant_id)
+              .eq('id', scopedTenantId)
               .maybeSingle();
             const state = (tenantRow as { lifecycle_state?: string } | null)?.lifecycle_state;
             const pathname = new URL(request.url).pathname;
@@ -355,7 +363,9 @@ export function createApiHandler(
             tenantUserId: tenantUser?.id,
             email: authData.user.email || '',
             role: isGlobalAdmin ? 'superadmin' : (tenantUser?.role || ''),
-            tenantId: tenantUser?.tenant_id,
+            // Global administrators operate on the tenant explicitly selected
+            // by the route/header/query, even when they have no tenant_users row.
+            tenantId: scopedTenantId,
             permissions: isGlobalAdmin ? ['*'] : userPermissions,
           },
           supabase,

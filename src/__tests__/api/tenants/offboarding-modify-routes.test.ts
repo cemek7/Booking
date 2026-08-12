@@ -93,6 +93,7 @@ jest.mock('@/lib/billing/ai-wallet', () => ({
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { enterOffboarding } from '@/lib/offboarding/offboardService';
 import { DELETE } from '@/app/api/tenants/[tenantId]/route';
 import { PATCH } from '@/app/api/superadmin/tenants/[tenantId]/route';
@@ -124,7 +125,7 @@ function chain(final: MockQueryResult): MockQueryBuilder {
 }
 
 // ─── Admin client mock ────────────────────────────────────────────────────────
-function adminMock({ isGlobalAdmin = false }: { isGlobalAdmin?: boolean } = {}) {
+function adminMock({ isGlobalAdmin = false, hasTenantMembership = true }: { isGlobalAdmin?: boolean; hasTenantMembership?: boolean } = {}) {
   return {
     auth: {
       getUser: jest.fn().mockResolvedValue({
@@ -140,7 +141,7 @@ function adminMock({ isGlobalAdmin = false }: { isGlobalAdmin?: boolean } = {}) 
         });
       }
       if (t === 'tenant_users') {
-        return chain({ data: { tenant_id: 'ten_1', role: 'owner' }, error: null });
+        return chain({ data: hasTenantMembership ? { tenant_id: 'ten_1', role: 'owner' } : null, error: null });
       }
       if (t === 'admins') {
         // resolveIsGlobalAdmin: superadmin routes need this to return a row so the
@@ -264,5 +265,37 @@ describe('offboarding modify routes', () => {
       expect(res.status).toBe(200);
       expect(admin.from).toHaveBeenCalledWith('ai_wallets');
     });
+  });
+
+  it('allows a global superadmin to scope a tenant route without a tenant_users row', async () => {
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(
+      adminMock({ isGlobalAdmin: true, hasTenantMembership: false }),
+    );
+    const handler = createHttpHandler(
+      async (ctx) => ({
+        role: ctx.user?.role,
+        tenantId: ctx.user?.tenantId,
+        tenantUserId: ctx.user?.tenantUserId,
+      }),
+      'POST',
+      { auth: true, roles: ['superadmin'] },
+    );
+    const request = new NextRequest('http://localhost:3000/api/tenants/ten_target/whatsapp/meta/embedded-signup', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-token' },
+    });
+
+    const response = await handler(
+      request as unknown as NextRequest,
+      { params: { tenantId: 'ten_target' } } as never,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      role: 'superadmin',
+      tenantId: 'ten_target',
+    });
+    const body = await response.json();
+    expect(body.tenantUserId).toBeUndefined();
   });
 });
