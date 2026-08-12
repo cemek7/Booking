@@ -84,14 +84,17 @@ export const PATCH = createHttpHandler(
 
     // Copy allowed fields
     if (body.status) updates.status = body.status;
-    if (body.customer_name || body.phone) {
+    if (body.customer_name) {
       const metadata = existing.metadata && typeof existing.metadata === 'object' ? existing.metadata as Record<string, unknown> : {};
       updates.metadata = {
         ...metadata,
-        ...(body.customer_name ? { customer_name: body.customer_name } : {}),
-        ...(body.phone ? { customer_number: body.phone } : {}),
+        customer_name: body.customer_name,
       };
     }
+    // `customer_number` is the canonical reservation phone column.  Keep the
+    // customer name in JSON metadata, but never create a ghost phone field
+    // there: downstream booking and CRM queries read this top-level column.
+    if (body.phone) updates.customer_number = body.phone;
     const serviceId = body.service_id || (typeof body.service === 'string' ? body.service : undefined);
     if (serviceId) {
       const { data: service, error: serviceError } = await db.from('services').select('id').eq('id', serviceId).eq('tenant_id', tenantId).maybeSingle();
