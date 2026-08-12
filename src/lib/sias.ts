@@ -1,4 +1,4 @@
-export type SIASVertical = 'beauty' | 'hospitality' | 'medicine';
+export type SIASVertical = 'beauty' | 'hospitality' | 'medicine' | 'retail' | 'home_services' | 'professional' | 'general';
 
 export type SIASOutcomeSignal = {
   id: string;
@@ -175,6 +175,26 @@ export const SIAS_VERTICAL_PACKAGES: SIASVerticalPackage[] = [
       description: 'Conscious communication, scheduling, and follow-up with escalation controls.',
     },
   },
+  ...([
+    ['retail', 'Commerce Desk', 'Retailers, shops, and product-led brands', 'AI sales and customer operations for businesses that turn messages into product orders.', 'We answer product questions, guide purchases, recover carts, and keep customers returning.', ['Increase order conversion', 'Recover abandoned baskets', 'Improve repeat purchases', 'Keep stock conversations accurate'], ['product discovery', 'order intake', 'cart recovery', 'delivery follow-up', 'review request']],
+    ['home_services', 'Local Service Desk', 'Home, repair, automotive, and field-service teams', 'AI intake and dispatch support for local businesses that quote, schedule, and deliver work.', 'We qualify requests, capture job details, arrange visits, and follow up on quotes.', ['Respond faster', 'Convert more quotes', 'Fill field capacity', 'Reduce missed follow-up'], ['quote intake', 'service-area check', 'visit scheduling', 'quote follow-up', 'review request']],
+    ['professional', 'Client Intake Desk', 'Consultants, agencies, legal, and professional services', 'A conversational front desk for businesses that need to qualify enquiries before a consultation or proposal.', 'We gather context, route qualified leads, schedule consultations, and protect follow-up.', ['Qualify leads earlier', 'Increase consultation conversion', 'Shorten response time', 'Protect pipeline follow-up'], ['consultation intake', 'lead qualification', 'consultation scheduling', 'proposal follow-up', 'review request']],
+    ['general', 'Business Front Desk', 'Growing businesses with bookings, sales, or enquiries', 'One conversational front desk for customer questions, sales, bookings, and follow-up.', 'We help customers find the next best action, then keep the conversation moving.', ['Respond faster', 'Capture demand', 'Improve conversion', 'Retain customer context'], ['customer intake', 'booking or order routing', 'follow-up', 'review request']],
+  ] as const).map(([id, name, subtitle, positioning, managedPromise, outcomes, defaultFlows]) => ({
+    id: id as SIASVertical,
+    name,
+    subtitle,
+    positioning,
+    managedPromise,
+    outcomes: [...outcomes],
+    defaultFlows: [...defaultFlows],
+    metrics: [{ id: 'conversion', label: 'Conversion', description: 'Qualified conversations that become customer outcomes', benchmark: '+10%' }],
+    templates: ['customer follow-up', 'conversion nudge', 'review request'],
+    escalationRules: ['Customer complaint', 'Refund request', 'Manual approval required'],
+    memorySignals: ['Customer intent', 'Past conversations', 'Preferred channel'],
+    billingModel: 'Subscription + usage + managed operations add-on',
+    starterPlan: { label: 'AI Front Desk', price: '₦45k/mo', description: 'Customer conversations, conversion, and follow-up.' },
+  })),
 ];
 
 export const SIAS_POSITIONING = [
@@ -257,5 +277,5 @@ export const SIAS_BILLING_PLANS = [
 ] as const;
 
 export function getVerticalPackage(vertical: string | undefined | null) {
-  return SIAS_VERTICAL_PACKAGES.find((pkg) => pkg.id === vertical) ?? SIAS_VERTICAL_PACKAGES[0];
+  return SIAS_VERTICAL_PACKAGES.find((pkg) => pkg.id === vertical) ?? SIAS_VERTICAL_PACKAGES.find((pkg) => pkg.id === 'general')!;
 }

@@ -22,7 +22,7 @@ export interface WhatsAppSyncValues {
     instagram?: {
       handle?: string;
       profileUrl?: string;
-      dmGoal?: 'bookings' | 'lead_capture' | 'support';
+      dmGoal?: 'bookings' | 'sales' | 'lead_capture' | 'support';
       useDmReplies?: boolean;
     };
   };
@@ -151,9 +151,10 @@ export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSync
             <select
               className="border rounded px-2 py-1 text-sm"
               value={local.channelConfig?.instagram?.dmGoal || 'bookings'}
-              onChange={(e) => updateInstagram({ dmGoal: e.target.value as 'bookings' | 'lead_capture' | 'support' })}
+              onChange={(e) => updateInstagram({ dmGoal: e.target.value as 'bookings' | 'sales' | 'lead_capture' | 'support' })}
             >
               <option value="bookings">Drive bookings</option>
+              <option value="sales">Drive sales</option>
               <option value="lead_capture">Capture leads</option>
               <option value="support">Handle support</option>
             </select>
@@ -168,7 +169,7 @@ export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSync
           </label>
         </div>
         <p className="text-[10px] text-gray-500">
-          Instagram is best used for inbound discovery and DM lead capture. Booka can route qualified conversations into booking and follow-up flows.
+          Instagram is best used for inbound discovery and DM lead capture. Booka can route qualified conversations into booking, order, quote, and follow-up flows.
         </p>
       </FormSection>
     </div>

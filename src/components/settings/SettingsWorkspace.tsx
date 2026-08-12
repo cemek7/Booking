@@ -95,7 +95,7 @@ interface TenantSettings {
     instagram?: {
       handle?: string;
       profileUrl?: string;
-      dmGoal?: 'bookings' | 'lead_capture' | 'support';
+      dmGoal?: 'bookings' | 'sales' | 'lead_capture' | 'support';
       useDmReplies?: boolean;
     };
   };

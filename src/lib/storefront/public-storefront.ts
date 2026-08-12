@@ -3,6 +3,8 @@ import { getTenantServices, getTenantPublicInfo } from '@/lib/publicBookingServi
 import { getTenantProducts, type PublicProduct } from '@/lib/publicStorefrontService';
 import { getTenantCurrency } from '@/lib/tenant-currency';
 import { resolveStorefrontConfig, type StorefrontConfig } from './config';
+import { resolveCapabilities, type TenantCapabilities } from '@/lib/capabilities';
+import { commercialMotionFromSettings, type CommercialMotion } from '@/lib/business-model';
 
 export type StorefrontService = {
   id: string; name: string; description: string | null; duration_minutes: number; price_cents: number; image_url: string | null; category: string | null;
@@ -14,7 +16,7 @@ export type StorefrontCampaign = { id: string; title: string; copy: string | nul
 
 export type PublicStorefront = {
   tenant: { id: string; slug: string; name: string; description: string | null; logo: string | null; industry: string | null; phone: string | null; address: string | null; website: string | null; routingCode: string | null; settings: Record<string, unknown> };
-  currency: string; config: StorefrontConfig; services: StorefrontService[]; products: PublicProduct[]; reviews: StorefrontReview[]; faqs: StorefrontFaq[]; staff: StorefrontStaff[]; campaign: StorefrontCampaign | null;
+  currency: string; config: StorefrontConfig; commercialMotion: CommercialMotion; capabilities: TenantCapabilities; services: StorefrontService[]; products: PublicProduct[]; reviews: StorefrontReview[]; faqs: StorefrontFaq[]; staff: StorefrontStaff[]; campaign: StorefrontCampaign | null;
 };
 
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' ? value as Record<string, unknown> : {}; }
@@ -44,9 +46,10 @@ export async function getPublicStorefront(slug: string): Promise<PublicStorefron
   const staffServices = await admin.from('staff_services').select('staff_user_id, service_id').eq('tenant_id', tenantInfo.id);
   const staff = ((staffResult.data ?? []) as Array<{ user_id: string; name: string }>).map((member) => ({ id: String(member.user_id), name: String(member.name), services: ((staffServices.data ?? []) as Array<{ staff_user_id: string; service_id: string }>).filter((mapping) => mapping.staff_user_id === member.user_id).map((mapping) => String(mapping.service_id)) }));
   const campaign = campaignResult.error ? null : campaignResult.data ? { ...campaignResult.data, copy: campaignResult.data.copy ?? null, cta_label: campaignResult.data.cta_label ?? null, target_type: campaignResult.data.target_type ?? null, target_ids: Array.isArray(campaignResult.data.target_ids) ? campaignResult.data.target_ids as string[] : [] } : null;
+  const capabilities = resolveCapabilities(mergedSettings.capabilities);
   return {
     tenant: { id: tenantInfo.id, slug: tenantInfo.slug, name: tenantInfo.name, description: tenantInfo.description ?? null, logo: tenantInfo.logo ?? null, industry: tenantInfo.industry ?? null, phone: typeof metadata.phone === 'string' ? metadata.phone : null, address: typeof metadata.address === 'string' ? metadata.address : null, website: typeof metadata.website === 'string' ? metadata.website : null, routingCode: typeof row.routing_code === 'string' ? row.routing_code : null, settings: mergedSettings },
-    currency, config: resolveStorefrontConfig({ industry: tenantInfo.industry, settings: mergedSettings }), services, products,
+    currency, config: resolveStorefrontConfig({ industry: tenantInfo.industry, settings: mergedSettings }), commercialMotion: commercialMotionFromSettings(mergedSettings.commercialMotion, capabilities), capabilities, services, products,
     reviews: ((reviewsResult.data ?? []) as Array<Record<string, unknown>>).map((review) => ({ id: String(review.id), customer_name: String(review.customer_name ?? 'Customer'), rating: Number(review.rating ?? review.overall_rating ?? 0), comment: (review.comment ?? review.review_text ?? null) as string | null })).filter((review) => review.rating > 0),
     faqs: ((faqsResult.data ?? []) as Array<Record<string, unknown>>).map((faq) => ({ id: String(faq.id), question: String(faq.question), answer: String(faq.answer), category: typeof faq.category === 'string' ? faq.category : null })), staff, campaign,
   };

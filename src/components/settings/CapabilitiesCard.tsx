@@ -11,6 +11,7 @@ import {
   type Capability,
   type TenantCapabilities,
 } from '@/lib/capabilities';
+import { COMMERCIAL_MOTION_DETAILS, capabilitiesForCommercialMotion, commercialMotionFromSettings, resolveCommercialMotion, type CommercialMotion } from '@/lib/business-model';
 
 /**
  * Owner-only card to choose which Booka workflows this business runs. Turning a
@@ -20,6 +21,7 @@ import {
  */
 export default function CapabilitiesCard({ tenantId }: { tenantId: string }) {
   const [caps, setCaps] = useState<TenantCapabilities>(DEFAULT_CAPABILITIES);
+  const [commercialMotion, setCommercialMotion] = useState<CommercialMotion>('hybrid');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
@@ -27,9 +29,11 @@ export default function CapabilitiesCard({ tenantId }: { tenantId: string }) {
   useEffect(() => {
     let active = true;
     (async () => {
-      const res = await authGet<{ capabilities?: unknown }>(`/api/tenants/${tenantId}/settings`);
+      const res = await authGet<{ capabilities?: unknown; commercialMotion?: unknown }>(`/api/tenants/${tenantId}/settings`);
       if (!active) return;
-      setCaps(resolveCapabilities(res.data?.capabilities));
+      const nextCaps = resolveCapabilities(res.data?.capabilities);
+      setCaps(nextCaps);
+      setCommercialMotion(commercialMotionFromSettings(res.data?.commercialMotion, nextCaps));
       setLoading(false);
     })();
     return () => { active = false; };
@@ -37,18 +41,17 @@ export default function CapabilitiesCard({ tenantId }: { tenantId: string }) {
 
   function toggle(cap: Capability) {
     setStatus(null);
-    setCaps((prev) => {
-      const next = { ...prev, [cap]: !prev[cap] };
+    const next = { ...caps, [cap]: !caps[cap] };
       // Inventory depends on Sales — turning Sales off also disables Inventory.
-      if (cap === 'sales' && !next.sales) next.inventory = false;
-      return next;
-    });
+    if (cap === 'sales' && !next.sales) next.inventory = false;
+    setCaps(next);
+    setCommercialMotion(commercialMotionFromSettings(undefined, next));
   }
 
   async function save() {
     setSaving(true);
     setStatus(null);
-    const res = await authPatch(`/api/tenants/${tenantId}/settings`, { capabilities: caps });
+    const res = await authPatch(`/api/tenants/${tenantId}/settings`, { capabilities: caps, commercialMotion });
     setSaving(false);
     if (res.error) {
       setStatus({ kind: 'err', msg: 'Could not save. Please try again.' });
@@ -64,6 +67,23 @@ export default function CapabilitiesCard({ tenantId }: { tenantId: string }) {
         Choose what your business does on Booka. Turn off what you don&apos;t use and it disappears
         from your menu — you can turn it back on any time.
       </p>
+
+      <label className="mt-4 block max-w-xl">
+        <span className="block text-sm font-medium text-gray-900">Primary customer journey</span>
+        <span className="mt-1 block text-xs text-gray-500">This chooses the default public storefront action. You can still enable any workflow below.</span>
+        <select
+          value={commercialMotion}
+          disabled={loading}
+          onChange={(event) => {
+            const next = resolveCommercialMotion(event.target.value);
+            setCommercialMotion(next);
+            setCaps(capabilitiesForCommercialMotion(next));
+          }}
+          className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+        >
+          {(Object.keys(COMMERCIAL_MOTION_DETAILS) as CommercialMotion[]).map((motion) => <option key={motion} value={motion}>{COMMERCIAL_MOTION_DETAILS[motion].label}</option>)}
+        </select>
+      </label>
 
       <div className="mt-4 divide-y divide-gray-100">
         {ALL_CAPABILITIES.map((cap) => {

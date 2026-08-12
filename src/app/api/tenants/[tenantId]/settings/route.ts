@@ -95,6 +95,7 @@ const SettingsSchemaBase = z.object({
   outcomeTargets: z.array(z.string().min(1)).optional(),
   escalationRules: z.array(z.string().min(1)).optional(),
   bookingSources: z.array(z.string().min(1)).optional(),
+  commercialMotion: z.enum(['booking', 'sales', 'hybrid', 'enquiry']).optional(),
   notificationPreferences: z.object({
     newBookings: z.boolean().optional(),
     cancellations: z.boolean().optional(),
@@ -117,7 +118,7 @@ const SettingsSchemaBase = z.object({
     instagram: z.object({
       handle: z.string().optional(),
       profileUrl: z.string().optional(),
-      dmGoal: z.enum(['bookings', 'lead_capture', 'support']).optional(),
+      dmGoal: z.enum(['bookings', 'sales', 'lead_capture', 'support']).optional(),
       useDmReplies: z.boolean().optional(),
     }).optional(),
   }).optional(),

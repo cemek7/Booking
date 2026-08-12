@@ -5,9 +5,9 @@ import { getTenantCapabilities } from '@/lib/capabilities';
 
 /**
  * Owner-facing share hub: QR codes + links for the tenant's public pages so they
- * never have to type/share URLs. Shows the booking page when `bookings` is on,
- * the storefront when `sales` is on, and a WhatsApp deep-link (shared Booka
- * number + the tenant's routing_code) that starts a chat routed to them.
+ * never have to type/share URLs. The unified storefront is always the primary
+ * customer link; focused booking and shopping links remain available when the
+ * relevant workflow is enabled.
  */
 async function toQr(url: string): Promise<string | null> {
   try {
@@ -35,8 +35,9 @@ export default async function PublicLinksCard({ tenantId }: { tenantId: string }
 
   type Share = { key: string; label: string; desc: string; url: string; download: string };
   const shares: Share[] = [];
-  if (caps.bookings && slug) shares.push({ key: 'book', label: 'Booking page', desc: 'Customers book appointments.', url: `${origin}/book/${slug}`, download: `booking-${slug}.png` });
-  if (caps.sales && slug) shares.push({ key: 'store', label: 'Storefront', desc: 'Customers browse products and order.', url: `${origin}/store/${slug}`, download: `store-${slug}.png` });
+  if (slug) shares.push({ key: 'storefront', label: 'Public storefront', desc: 'Customers can explore, book, shop, or ask Booka.', url: `${origin}/${slug}`, download: `storefront-${slug}.png` });
+  if (caps.bookings && slug) shares.push({ key: 'book', label: 'Direct booking', desc: 'Send customers straight to appointment or reservation booking.', url: `${origin}/book/${slug}`, download: `booking-${slug}.png` });
+  if (caps.sales && slug) shares.push({ key: 'store', label: 'Direct shop', desc: 'Send customers straight to products and checkout.', url: `${origin}/store/${slug}`, download: `shop-${slug}.png` });
   if (routingCode && waNumber) shares.push({ key: 'wa', label: 'WhatsApp', desc: 'Starts a WhatsApp chat routed to you.', url: `https://wa.me/${waNumber}?text=${encodeURIComponent(routingCode)}`, download: `whatsapp-${routingCode}.png` });
 
   const withQr = await Promise.all(shares.map(async (s) => ({ ...s, qr: await toQr(s.url) })));
@@ -44,12 +45,10 @@ export default async function PublicLinksCard({ tenantId }: { tenantId: string }
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
       <h2 className="text-lg font-semibold text-gray-900">Share your business</h2>
-      <p className="mt-1 text-sm text-gray-600">Print or send these QR codes — customers scan to book, shop, or chat with you.</p>
+      <p className="mt-1 text-sm text-gray-600">Share your storefront first, then use direct links for a campaign, booking, or shop.</p>
 
       {!slug ? (
         <p className="mt-4 text-sm text-amber-700">Set a business URL (slug) in your profile to publish your public pages.</p>
-      ) : withQr.length === 0 ? (
-        <p className="mt-4 text-sm text-gray-500">Enable Bookings or Sales in Workflows above to publish a public page.</p>
       ) : (
         <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {withQr.map((s) => (

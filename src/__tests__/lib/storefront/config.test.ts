@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { idFromPublicItemSlug, publicItemSlug, resolveStorefrontConfig, resolveStorefrontVertical } from '@/lib/storefront/config';
+import { getVerticalPackage } from '@/lib/sias';
 
 describe('storefront configuration', () => {
   it('generates a beauty storefront without saved tenant configuration', () => {
@@ -20,5 +21,9 @@ describe('storefront configuration', () => {
   it('maps supported business vocabulary to verticals', () => {
     expect(resolveStorefrontVertical('dental clinic')).toBe('healthcare');
     expect(resolveStorefrontVertical('home cleaning')).toBe('home_services');
+  });
+  it('has a non-booking-first package fallback for uncategorised businesses', () => {
+    expect(getVerticalPackage('retail').id).toBe('retail');
+    expect(getVerticalPackage('unknown').id).toBe('general');
   });
 });
