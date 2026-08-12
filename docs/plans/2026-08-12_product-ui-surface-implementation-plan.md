@@ -1,7 +1,7 @@
 # Booka Product UI Surface Implementation Plan
 
-Date: 2026-08-12  
-Companion audit: `docs/plans/2026-08-12_product-ui-surface-audit.md`  
+Date: 2026-08-12
+Companion audit: `docs/plans/2026-08-12_product-ui-surface-audit.md`
 Release branch: `staging`
 
 ## Objective

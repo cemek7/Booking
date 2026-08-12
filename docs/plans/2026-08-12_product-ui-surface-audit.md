@@ -1,6 +1,6 @@
 # Booka Product UI Surface Audit
 
-Date: 2026-08-12  
+Date: 2026-08-12
 Scope: rendered Booka product interfaces only. This is not an infrastructure or
 database audit. Findings were grounded against `src/app/**/page.tsx`, dashboard
 navigation, Settings components, and the owner/customer-facing components they
