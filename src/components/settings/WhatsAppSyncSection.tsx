@@ -118,7 +118,7 @@ export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSync
           <label className="block max-w-xs text-xs font-medium">Monthly Meta messaging budget (optional, in your billing currency)
             <input type="number" min={0} step="0.01" className="mt-1 block w-full rounded border px-2 py-1 text-sm" value={local.channelConfig?.whatsapp?.monthlyMetaSpendCap ?? 0} onChange={(e) => updateWhatsApp({ monthlyMetaSpendCap: Number(e.target.value) || 0 })} />
           </label>
-          <p className="text-[10px] text-gray-500">This records your Booka preference. Automated enforcement will be enabled once Meta usage and pricing data are connected for your account.</p>
+          <p className="text-[10px] text-gray-500">Booka blocks automated template sends until both approvals above are on. The budget is recorded now; automatic spend-cap enforcement will be added only after Meta usage and pricing data are connected for your account.</p>
         </div>
       </FormSection>
 

@@ -4,6 +4,7 @@ import { decideSend } from './metaSendGate';
 import { loadNumberQuality } from './numberQuality';
 import { evaluateSend, recordSend } from './sendGovernor';
 import { resolveTemplate } from './templateRegistry';
+import { loadTenantMessagingPolicy } from './tenantMessagingPolicy';
 
 export interface GovernedSendParams {
   tenantId: string;
@@ -59,6 +60,16 @@ export async function sendGovernedInitiated(
 
   if (gateDecision.mode === 'hold') {
     return { sent: false, reason: gateDecision.reason };
+  }
+
+  if (gateDecision.mode === 'template') {
+    const policy = await loadTenantMessagingPolicy(admin, params.tenantId);
+    if (!policy.templateMessagingEnabled) {
+      return { sent: false, reason: 'template_messaging_not_enabled' };
+    }
+    if (!policy.paidTemplateConsent) {
+      return { sent: false, reason: 'paid_template_consent_required' };
+    }
   }
 
   const cold = !inWindow;
