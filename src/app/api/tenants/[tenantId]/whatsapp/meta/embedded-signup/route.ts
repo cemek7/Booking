@@ -68,7 +68,7 @@ export const GET = createHttpHandler(
 
     const { data, error } = await ctx.supabase
       .from('whatsapp_configurations')
-      .select('provider, active, agent_enabled, meta_connection_source, meta_connection_status, meta_billing_owner, meta_phone_number_id, meta_waba_id, meta_connected_at, meta_disconnected_at, meta_last_error, meta_last_validated_at')
+      .select('provider, active, agent_enabled, meta_connection_source, meta_connection_status, meta_billing_owner, meta_phone_number_id, meta_waba_id, meta_connected_at, meta_disconnected_at, meta_last_validated_at')
       .eq('tenant_id', tenantId)
       .eq('provider', 'meta')
       .maybeSingle();

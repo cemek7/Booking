@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/components/ui/toast';
 
 declare global {
@@ -15,8 +15,30 @@ type Connection = {
   meta_phone_number_id?: string | null;
   meta_waba_id?: string | null;
   meta_connection_source?: string | null;
-  meta_last_error?: string | null;
 };
+
+type ChannelHealth = {
+  connection: { status: string; lastValidatedAt: string | null; webhookSubscribedAt: string | null };
+  automation: {
+    agentEnabled: boolean;
+    state: 'ready' | 'paused' | 'human_handling' | 'attention';
+    humanHandlingUntil: string | null;
+    lastInboundAt: string | null;
+    lastQueueActivityAt: string | null;
+    recentFailure: string | null;
+  };
+  queue: { pending: number; processing: number; retrying: number; failed: number };
+};
+
+function relativeTime(value: string | null): string {
+  if (!value) return 'No activity yet';
+  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 60_000));
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return new Date(value).toLocaleDateString();
+}
 
 export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
   const [connection, setConnection] = useState<Connection | null>(null);
@@ -26,6 +48,8 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [updatingAgent, setUpdatingAgent] = useState(false);
+  const [health, setHealth] = useState<ChannelHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
   useEffect(() => {
     fetch(`/api/tenants/${tenantId}/whatsapp/meta/embedded-signup`)
@@ -37,6 +61,23 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
       .catch((error) => toast.error(error instanceof Error ? error.message : 'Unable to load WhatsApp connection status'))
       .finally(() => setLoading(false));
   }, [tenantId]);
+
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const response = await fetch(`/api/tenants/${tenantId}/whatsapp/meta/health`);
+      if (!response.ok) throw new Error('Unable to load channel health');
+      setHealth(await response.json() as ChannelHealth);
+    } catch {
+      setHealth(null);
+    } finally {
+      setHealthLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (connection?.meta_connection_status === 'connected') void loadHealth();
+  }, [connection?.meta_connection_status, loadHealth]);
 
   async function complete(code: string, details: { wabaId?: string; phoneNumberId?: string; businessAccountId?: string }) {
     if (!details.wabaId || !details.phoneNumberId) {
@@ -131,6 +172,7 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
       const data = await response.json().catch(() => ({})) as { warning?: string | null };
       if (!response.ok) throw new Error('Could not disconnect WhatsApp');
       setConnection((current) => current ? { ...current, meta_connection_status: 'disconnected' } : null);
+      setHealth(null);
       toast.success(data.warning ? 'WhatsApp disconnected; Meta webhook removal needs a follow-up check.' : 'WhatsApp disconnected and credentials revoked.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not disconnect WhatsApp');
@@ -150,6 +192,7 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
       const data = await response.json().catch(() => ({})) as { agentEnabled?: boolean; error?: string; message?: string };
       if (!response.ok) throw new Error(data.message || data.error || 'Could not update the AI reply setting');
       setConnection((current) => current ? { ...current, agent_enabled: data.agentEnabled === true } : current);
+      void loadHealth();
       toast.success(agentEnabled ? 'AI replies are enabled for customer messages.' : 'AI replies are paused. Customer messages will still be received.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update the AI reply setting');
@@ -188,13 +231,62 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
               </button>
             </div>
           </div>
+          <div className="mt-3 rounded-md border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium text-slate-900">Automation status</p>
+                <p className="mt-0.5 text-xs text-slate-600">Live, redacted health for this connected number.</p>
+              </div>
+              <button type="button" onClick={() => void loadHealth()} disabled={healthLoading} className="rounded border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-60">
+                {healthLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+            {health ? (
+              <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                <div className={`rounded p-2 ${health.automation.state === 'ready' ? 'bg-emerald-50 text-emerald-900' : health.automation.state === 'attention' ? 'bg-rose-50 text-rose-900' : 'bg-amber-50 text-amber-900'}`}>
+                  <p className="font-medium">
+                    {health.automation.state === 'ready'
+                      ? 'AI replies are ready'
+                      : health.automation.state === 'paused'
+                        ? 'AI replies are paused'
+                        : health.automation.state === 'human_handling'
+                          ? 'A teammate is handling the latest conversation'
+                          : 'Automation needs attention'}
+                  </p>
+                  <p className="mt-1">
+                    {health.automation.recentFailure
+                      || (health.automation.state === 'human_handling'
+                        ? `Human handling until ${relativeTime(health.automation.humanHandlingUntil)}`
+                        : health.automation.state === 'paused'
+                          ? 'Messages are received and recorded without automated replies.'
+                          : 'Customer messages can be processed automatically.')}
+                  </p>
+                </div>
+                <div className="rounded bg-slate-50 p-2 text-slate-700">
+                  <p className="font-medium text-slate-900">Recent activity</p>
+                  <p className="mt-1">Inbound: {relativeTime(health.automation.lastInboundAt)}</p>
+                  <p>Queue: {relativeTime(health.automation.lastQueueActivityAt)}</p>
+                </div>
+                <div className="rounded bg-slate-50 p-2 text-slate-700 sm:col-span-2">
+                  <p className="font-medium text-slate-900">Message queue</p>
+                  <p className="mt-1">
+                    {health.queue.pending} pending · {health.queue.processing} processing · {health.queue.retrying} retrying · {health.queue.failed} failed
+                  </p>
+                </div>
+              </div>
+            ) : !healthLoading ? <p className="mt-3 text-xs text-slate-600">Health data is temporarily unavailable. Your connection and reply setting are unchanged.</p> : null}
+          </div>
           <button type="button" onClick={disconnect} disabled={disconnecting} className="mt-3 rounded border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-800 disabled:opacity-60">
             {disconnecting ? 'Disconnecting…' : 'Disconnect WhatsApp'}
           </button>
         </div>
       ) : (
         <>
-          {connection?.meta_last_error && <p className="text-sm text-rose-700">Last connection issue: {connection.meta_last_error}</p>}
+          {connection?.meta_connection_status === 'failed' && (
+            <p className="text-sm text-rose-700">
+              Booka could not complete the last connection attempt. Check that the selected Meta business account and number are active, then try again.
+            </p>
+          )}
           <button type="button" onClick={connect} disabled={connecting || !configured || !embeddedSignup} className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">
             {connecting ? 'Connecting…' : configured ? 'Connect WhatsApp' : 'Connect WhatsApp (coming soon)'}
           </button>
