@@ -17,7 +17,14 @@ type Session = {
   updated_at: string;
 };
 
-let redisClient: any = null;
+interface RedisLike {
+  quit(): Promise<unknown>;
+  set(key: string, value: string, mode: string, ttl: number): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  del(key: string): Promise<unknown>;
+}
+
+let redisClient: RedisLike | null = null;
 let usingRedis = false;
 const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24-hour session TTL
 const inMemoryStore = new Map<string, Session & { _expiresAt: number }>();
@@ -88,7 +95,7 @@ async function readSessionFromStore(id: string): Promise<Session | null> {
   try {
     const supabase = createSupabaseAdminClient();
     const rq = await supabase.from('dialog_sessions').select('*').eq('id', id).maybeSingle();
-    const data = (rq as any)?.data ?? null;
+    const data = (rq.data as Session | null) ?? null;
     if (data) {
       return {
         id: data.id,

@@ -82,7 +82,13 @@ function buildWinstonLogger(): InternalLogger {
   const isDevelopment = process.env.NODE_ENV === 'development';
   const { combine, timestamp, errors, json, printf, colorize } = winston.format;
 
-  const devFormat = printf(({ level, message, timestamp, context, ...metadata }: any) => {
+  const devFormat = printf(({ level, message, timestamp, context, ...metadata }: {
+    level: string;
+    message: unknown;
+    timestamp?: string;
+    context?: { tenantId?: string; userId?: string; traceId?: string };
+    [key: string]: unknown;
+  }) => {
     let log = `${timestamp} [${level}]: ${message}`;
     if (context?.tenantId) log += ` | tenant=${context.tenantId}`;
     if (context?.userId)   log += ` | user=${context.userId}`;
@@ -91,7 +97,7 @@ function buildWinstonLogger(): InternalLogger {
     return log;
   });
 
-  const transports: any[] = [
+  const transports: import('winston').transport[] = [
     new winston.transports.Console({
       format: isDevelopment
         ? combine(colorize(), timestamp({ format: 'HH:mm:ss' }), devFormat)

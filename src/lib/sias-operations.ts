@@ -67,9 +67,9 @@ function normalizeDate(value?: string | Date | null): string | undefined {
 }
 
 export class SiasOperationsService {
-  private supabase: any;
+  private supabase: ReturnType<typeof createSupabaseAdminClient>;
 
-  constructor(supabase?: any) {
+  constructor(supabase?: ReturnType<typeof createSupabaseAdminClient>) {
     this.supabase = supabase ?? createSupabaseAdminClient();
   }
 

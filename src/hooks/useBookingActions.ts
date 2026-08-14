@@ -6,7 +6,7 @@ import { authFetch } from '@/lib/auth/auth-api-client';
 export function useBookingActions(id: string, locationId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { action: 'confirm'|'cancel'|'reschedule'|'mark_paid'; payload?: any }) => {
+    mutationFn: async (input: { action: 'confirm'|'cancel'|'reschedule'|'mark_paid'; payload?: Record<string, unknown> }) => {
       const parsed = bookingActionSchema.safeParse(input);
       if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || 'Invalid action');
       const res = await authFetch(`/api/bookings/${id}/actions`, { method: 'POST', body: parsed.data });

@@ -351,8 +351,8 @@ function VariantModal({
     onSubmit(submissionData as unknown as CreateVariantRequest);
   };
 
-  const handleInputChange = (key: string, value: any) => {
-    setFormData(prev => ({ ...prev, [key]: value }));
+  const handleInputChange = <K extends keyof typeof formData>(key: K, value: (typeof formData)[K]) => {
+    setFormData(prev => ({ ...prev, [key]: value }) as typeof prev);
     if (errors[key]) {
       setErrors(prev => {
         const newErrors = { ...prev };

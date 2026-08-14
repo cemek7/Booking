@@ -42,7 +42,7 @@ export const bookingConfirmationRequiredHandler: EventHandler = {
       }
 
       // Send WhatsApp confirmation
-      const serviceName = (booking.services as any)?.name || 'Service';
+      const serviceName = (booking.services as { name?: string } | null | undefined)?.name || 'Service';
       await notificationService.sendWhatsAppConfirmation({
         bookingId: booking.id,
         tenantId: booking.tenant_id,
@@ -214,7 +214,7 @@ export const bookingCancelledHandler: EventHandler = {
       }
 
       // Send cancellation notification
-      const serviceName = (booking.services as any)?.name || 'Service';
+      const serviceName = (booking.services as { name?: string } | null | undefined)?.name || 'Service';
       await notificationService.sendCancellationNotification({
         bookingId: booking.id,
         tenantId: booking.tenant_id,

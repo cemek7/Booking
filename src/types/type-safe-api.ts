@@ -164,7 +164,7 @@ export function withTypeSafeAuth<T>(
         return new Response(
           JSON.stringify(createTypeSafeErrorResponse(
             error.message,
-            { user: { role: error.userRole } as any },
+            { user: { role: error.userRole } } as Partial<TypeSafeMiddlewareContext>,
             403
           )),
           { status: 403, headers: { 'Content-Type': 'application/json' } }

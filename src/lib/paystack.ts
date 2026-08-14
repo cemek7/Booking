@@ -20,7 +20,14 @@ function secretKey(): string {
   return key;
 }
 
-async function paystackFetch(path: string, init: RequestInit = {}): Promise<any> {
+interface PaystackResponse {
+  status: boolean;
+  message?: string;
+  data?: unknown;
+  [key: string]: unknown;
+}
+
+async function paystackFetch(path: string, init: RequestInit = {}): Promise<PaystackResponse> {
   const res = await fetchWithTimeout(`https://api.paystack.co${path}`, {
     ...init,
     headers: {
@@ -65,7 +72,7 @@ export async function resolveBankAccount(
 export async function listBanks(country = 'nigeria'): Promise<{ success: boolean; banks?: Array<{ name: string; code: string; slug: string }>; error?: string }> {
   const data = await paystackFetch(`/bank?country=${country}&perPage=100`);
   if (!data.status) return { success: false, error: data.message };
-  const banks = (data.data || []).map((b: any) => ({
+  const banks = (data.data || []).map((b: Record<string, unknown>) => ({
     name: b.name,
     code: b.code,
     slug: b.slug,
@@ -217,7 +224,7 @@ export async function listTransfers(params: {
   qs.set('page', String(params.page ?? 1));
   const data = await paystackFetch(`/transfer?${qs}`);
   if (!data.status) return { success: false, error: data.message };
-  const transfers: Transfer[] = (data.data || []).map((tx: any) => ({
+  const transfers: Transfer[] = (data.data || []).map((tx: Record<string, unknown>) => ({
     transferCode: tx.transfer_code,
     status: tx.status,
     amount: tx.amount / 100,
@@ -352,7 +359,7 @@ export async function listSubaccounts(params: {
   });
   const data = await paystackFetch(`/subaccount?${qs}`);
   if (!data.status) return { success: false, error: data.message };
-  const subaccounts: Subaccount[] = (data.data || []).map((sub: any) => ({
+  const subaccounts: Subaccount[] = (data.data || []).map((sub: Record<string, unknown>) => ({
     subaccountCode: sub.subaccount_code,
     businessName: sub.business_name,
     settlementBank: sub.settlement_bank,
