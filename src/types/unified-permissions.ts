@@ -13,6 +13,7 @@
 
 import { defaultLogger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
 import { Role, normalizeRole, isValidRole } from './roles';
 import { PERMISSIONS, ROLE_PERMISSION_MAP, PermissionCheckResult } from './permissions';
 import { 
@@ -545,25 +546,10 @@ export async function ensureOwnerForTenant(
 
 export async function isGlobalAdmin(
   supabase: SupabaseClient,
-  userId?: string | null,
+  _userId?: string | null,
   email?: string | null
 ): Promise<boolean> {
-  try {
-    if (email) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const { data: byEmail } = await supabase
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-      if (byEmail) return true;
-    }
-
-    return false;
-  } catch (e) {
-    defaultLogger.warn('unified-permissions: isGlobalAdmin lookup failed', e);
-    return false;
-  }
+  return isActiveGlobalAdmin(supabase, email);
 }
 
 // ============================================================================

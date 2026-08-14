@@ -5,21 +5,11 @@ import OnboardingClientPage from './OnboardingClientPage';
 import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getRoleDashboardPath } from '@/types/unified-permissions';
 import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
+import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
 
-async function isSuperadmin(userId: string, email?: string | null): Promise<boolean> {
+async function isSuperadmin(_userId: string, email?: string | null): Promise<boolean> {
   const admin = createSupabaseAdminClient();
-  const normalizedEmail = email?.trim().toLowerCase() ?? '';
-
-  if (normalizedEmail) {
-    const { data: adminByEmail } = await admin
-      .from('admins')
-      .select('email, status')
-      .eq('email', normalizedEmail)
-      .maybeSingle();
-
-    if (adminByEmail) return true;
-  }
-  return false;
+  return isActiveGlobalAdmin(admin, email);
 }
 
 export default async function OnboardingPage() {

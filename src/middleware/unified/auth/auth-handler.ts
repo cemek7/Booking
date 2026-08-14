@@ -19,6 +19,7 @@ import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/sup
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { MiddlewareContext, MiddlewareHandler } from '../orchestrator';
 import { PROTECTED_ROUTES } from '@/middleware';
+import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
 
 /**
  * User context from authentication
@@ -66,25 +67,8 @@ export interface AuthenticatedUserRoleResult {
   tenantId: string | null;
 }
 
-async function isSuperadminUser(userId: string, email?: string | null): Promise<boolean> {
-  try {
-    const admin = createSupabaseAdminClient();
-    const normalizedEmail = email?.trim().toLowerCase() ?? '';
-
-    if (normalizedEmail) {
-      const { data: adminByEmail } = await admin
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-
-      if (adminByEmail) return true;
-    }
-    return false;
-  } catch (error) {
-    defaultLogger.error('[Auth] Superadmin lookup failed:', error);
-    return false;
-  }
+async function isSuperadminUser(_userId: string, email?: string | null): Promise<boolean> {
+  return isActiveGlobalAdmin(createSupabaseAdminClient(), email);
 }
 
 export async function getAuthenticatedUserRole(

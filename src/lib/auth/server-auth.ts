@@ -14,6 +14,7 @@ import type { Role } from '@/types/roles';
 import { getInheritedRoles, ROLE_PERMISSION_MAP, isValidRole } from '@/types/index';
 import { defaultLogger } from '@/lib/logger';
 import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { isActiveGlobalAdmin, normalizeAdminEmail } from '@/lib/auth/global-admin';
 
 import type { AuthenticatedUser } from '@/types/auth';
 
@@ -37,23 +38,16 @@ export async function requireAuth(
   const requestedTenantId = headersList.get('x-tenant-id');
 
   const adminSupabase = createSupabaseAdminClient();
-  const normalizedEmail = user.email?.trim().toLowerCase() ?? '';
-  const { data: adminByEmail, error: adminByEmailError } = normalizedEmail
-    ? await adminSupabase
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle()
-    : { data: null, error: null };
-  const isSuperadmin = !!adminByEmail;
+  const normalizedEmail = normalizeAdminEmail(user.email) ?? '';
+  const isSuperadmin = await isActiveGlobalAdmin(adminSupabase, user.email);
 
   defaultLogger.info('[requireAuth] Admin lookup result', {
     userId: user.id,
     email: normalizedEmail || null,
     requestedTenantId,
-    adminByEmail: !!adminByEmail,
+    adminByEmail: isSuperadmin,
     adminByUserId: false,
-    adminByEmailError: adminByEmailError?.message,
+    adminByEmailError: null,
     adminByUserIdError: null,
   });
 

@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { defaultLogger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveActiveGlobalAdmin } from '@/lib/auth/global-admin';
 
 type TenantMembership = {
   tenant_id: string;
@@ -61,16 +62,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!userId) return NextResponse.json({ found: null }, { status: 200 });
 
     // Check superadmin
-    const normalizedEmail = userEmail?.trim().toLowerCase() ?? '';
-    const { data: adminRowByEmail } = normalizedEmail
-      ? await admin
-          .from('admins')
-          .select('email, status')
-          .eq('email', normalizedEmail)
-          .maybeSingle()
-      : { data: null };
-
-    const adminRow = adminRowByEmail;
+    const adminRow = await resolveActiveGlobalAdmin(admin, userEmail);
 
     if (adminRow) {
       return NextResponse.json({ found: { admin: true, email: adminRow.email ?? userEmail } });

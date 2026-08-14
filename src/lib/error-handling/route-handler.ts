@@ -24,6 +24,7 @@ import { createApiLogger } from '@/lib/logger/api-logger';
 import { getAlertService } from '@/lib/monitoring/alerting';
 import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
+import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
 
 /**
  * Lifecycle access gate — pure predicate (no I/O).
@@ -73,24 +74,8 @@ export interface RouteHandlerOptions {
   requireTenantMembership?: boolean; // Require tenant_users membership (default: true for auth: true). When false, user.role will be '' and user.tenantId will be undefined.
 }
 
-async function resolveIsGlobalAdmin(userId: string, email?: string | null): Promise<boolean> {
-  try {
-    const admin = createSupabaseAdminClient();
-    const normalizedEmail = email?.trim().toLowerCase() ?? '';
-
-    if (normalizedEmail) {
-      const { data: adminByEmail } = await admin
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-
-      if (adminByEmail) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
+async function resolveIsGlobalAdmin(_userId: string, email?: string | null): Promise<boolean> {
+  return isActiveGlobalAdmin(createSupabaseAdminClient(), email);
 }
 
 /**
