@@ -103,6 +103,7 @@ type MockQueryResult = { data: unknown; error: null };
 type MockQueryBuilder = {
   select: () => MockQueryBuilder;
   eq: () => MockQueryBuilder;
+  ilike: () => MockQueryBuilder;
   in: () => MockQueryBuilder;
   update: () => MockQueryBuilder;
   upsert: () => Promise<{ error: null }>;
@@ -115,6 +116,7 @@ function chain(final: MockQueryResult): MockQueryBuilder {
   return {
     select: () => chain(final),
     eq: () => chain(final),
+    ilike: () => chain(final),
     in: () => chain(final),
     update: () => chain(final),
     upsert: async () => ({ error: null }),
