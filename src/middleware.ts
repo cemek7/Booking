@@ -7,6 +7,7 @@ import { isValidRole } from '@/types/roles';
 import { getAuthenticatedUserRole } from '@/middleware/unified/auth/auth-handler';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
+import { isBookaDashboardPath, toBookaDashboardPath, toInternalDashboardPath } from '@/lib/navigation/dashboard-path';
 
 export const runtime = 'nodejs';
 
@@ -22,6 +23,7 @@ export const PROTECTED_ROUTES: Record<string, string[]> = {
 
   // Superadmin
   '/dashboard/superadmin': ['superadmin'],
+  '/dashboard/superadmin/staff': ['superadmin'],
 
   // Owner-only
   '/dashboard/owner': ['owner'],
@@ -122,6 +124,19 @@ export async function middleware(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
   const csp = buildContentSecurityPolicy(nonce, isLocalHost(request.nextUrl.hostname));
+  const pathname = request.nextUrl.pathname;
+
+  // Keep long-lived /dashboard links working while presenting one public,
+  // Booka-branded workspace URL. The canonical URL is rewritten internally
+  // after authentication so the existing App Router pages remain reusable.
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    const target = request.nextUrl.clone();
+    target.pathname = toBookaDashboardPath(pathname);
+    const response = NextResponse.redirect(target);
+    response.headers.set('Content-Security-Policy', csp);
+    return response;
+  }
+  const shouldRewriteBookaDashboard = isBookaDashboardPath(pathname);
 
   // Redirect legacy /login route
   if (request.nextUrl.pathname === '/login') {
@@ -157,7 +172,6 @@ export async function middleware(request: NextRequest) {
   const response = await middlewareOrchestrator.execute(request);
 
   // Extract context from response if available (for role validation)
-  const pathname = request.nextUrl.pathname;
   if (pathname === '/' && response.status === 200) {
     const { role: resolvedRole, isAuthenticated, tenantId } = await getAuthenticatedUserRole(request);
     const role = resolvedRole?.toLowerCase() ?? null;
@@ -195,6 +209,15 @@ export async function middleware(request: NextRequest) {
   }
 
   finalResponse.headers.set('Content-Security-Policy', csp);
+
+  if (isPassThrough && shouldRewriteBookaDashboard) {
+    const internalUrl = request.nextUrl.clone();
+    internalUrl.pathname = toInternalDashboardPath(pathname);
+    const rewrite = NextResponse.rewrite(internalUrl, { request: { headers: requestHeaders } });
+    finalResponse.headers.forEach((value, key) => rewrite.headers.set(key, value));
+    return rewrite;
+  }
+
   return finalResponse;
 }
 

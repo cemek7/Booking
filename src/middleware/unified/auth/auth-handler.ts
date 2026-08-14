@@ -191,7 +191,9 @@ export function isPublicPath(pathname: string): boolean {
     '/reviews/',
   ];
 
-  return publicPaths.some(path => pathname.startsWith(path));
+  return publicPaths.some((path) =>
+    path === '/booka' ? pathname === path || pathname === `${path}/` : pathname.startsWith(path)
+  );
 }
 
 /**

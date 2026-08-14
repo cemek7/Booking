@@ -31,7 +31,9 @@ export async function initializeUnifiedMiddleware() {
         const publicPaths = ['/auth/', '/api/health', '/api/auth/', '/book/', '/booka', '/products', '/reviews/'];
         // Root page is public — unauthenticated landing / hash-redirect handler
         if (pathname === '/') return false;
-        return !publicPaths.some(p => pathname.startsWith(p));
+        return !publicPaths.some((path) =>
+          path === '/booka' ? pathname === path || pathname === `${path}/` : pathname.startsWith(path)
+        );
       },
     },
     createAuthMiddleware({ required: true })

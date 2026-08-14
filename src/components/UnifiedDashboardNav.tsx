@@ -8,6 +8,7 @@ import { Role } from '@/types/roles';
 import { canAccessRoute, getRoleDashboardPath } from '@/types/unified-permissions';
 import { TenantContext } from '@/lib/supabase/tenant-context';
 import { isRouteEnabled, DEFAULT_CAPABILITIES } from '@/lib/capabilities';
+import { toBookaDashboardPath } from '@/lib/navigation/dashboard-path';
 
 interface UnifiedDashboardNavProps {
   userRole: Role;
@@ -221,6 +222,7 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/superadmin/analytics', label: 'Analytics', icon: Icons.analytics, roles: ['superadmin'] },
   { href: '/dashboard/superadmin/reservations', label: 'Reservations', icon: Icons.bookings, roles: ['superadmin'] },
   { href: '/dashboard/superadmin/reservation-logs', label: 'Reservation Logs', icon: Icons.reports, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/staff', label: 'Tenant Staff', icon: Icons.staff, roles: ['superadmin'] },
 ];
 
 const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
@@ -338,6 +340,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       title: 'Tenants',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/tenants')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/staff')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
       ],
     },
@@ -398,7 +401,7 @@ export default function UnifiedDashboardNav({ userRole, onNavigate }: UnifiedDas
           item.roles.includes(userRole) &&
           canAccessRoute(userRole, item.href) &&
           isRouteEnabled(item.href, capabilities)
-      ),
+      ).map((item) => ({ ...item, href: toBookaDashboardPath(item.href) })),
     }))
     .filter((group) => group.items.length > 0);
 

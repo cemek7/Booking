@@ -12,6 +12,7 @@
  */
 
 import { defaultLogger } from '@/lib/logger';
+import { toBookaDashboardPath } from '@/lib/navigation/dashboard-path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
 import { Role, normalizeRole, isValidRole } from './roles';
@@ -641,8 +642,8 @@ const ROLE_DASHBOARD_PATHS: Record<string, string> = {
 };
 
 export function getRoleDashboardPath(role: Role | string | undefined | null): string {
-  if (!role) return '/dashboard/staff-dashboard';
-  return ROLE_DASHBOARD_PATHS[role as string] || '/dashboard/staff-dashboard';
+  if (!role) return toBookaDashboardPath('/dashboard/staff-dashboard');
+  return toBookaDashboardPath(ROLE_DASHBOARD_PATHS[role as string] || '/dashboard/staff-dashboard');
 }
 
 export function canAccessRoute(userRole: Role, route: string): boolean {
@@ -653,6 +654,7 @@ export function canAccessRoute(userRole: Role, route: string): boolean {
     '/dashboard/superadmin/analytics': ['superadmin'],
     '/dashboard/superadmin/reservations': ['superadmin'],
     '/dashboard/superadmin/reservation-logs': ['superadmin'],
+    '/dashboard/superadmin/staff': ['superadmin'],
     '/dashboard/calendar': ['owner', 'manager', 'staff'],
     '/dashboard/bookings': ['owner', 'manager', 'staff'],
     '/dashboard/schedule': ['owner', 'manager', 'staff'],
