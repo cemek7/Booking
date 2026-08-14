@@ -61,7 +61,7 @@ export function PropertyBrowser() {
               <Image src={p.image} alt={`Stock photograph of a property; not a real Haven Realty listing.`} fill sizes="(min-width: 1024px) 30vw, 100vw" className="object-cover transition group-hover:scale-[1.02]" />
             </div>
             <div className="p-5">
-              <p className="text-xs uppercase tracking-[.14em]" style={{ color: 'var(--sc-accent)' }}>{p.neighborhood} · {p.type}</p>
+              <p className="text-xs uppercase tracking-[.14em]" style={{ color: 'var(--sc-eyebrow)' }}>{p.neighborhood} · {p.type}</p>
               <h3 className="sc-display mt-2 text-xl font-semibold">{p.title}</h3>
               <p className="mt-2 text-sm font-medium" style={{ color: 'var(--sc-primary)' }}>{naira(p.priceNaira)}</p>
               <p className="mt-2 text-sm" style={{ color: 'var(--sc-muted)' }}>
