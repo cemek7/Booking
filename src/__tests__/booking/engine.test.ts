@@ -171,7 +171,7 @@ describe('Booking Engine', () => {
 
     it('should accept optional notes', () => {
       const dataWithoutNotes = { ...validBookingData };
-      delete (dataWithoutNotes as any).notes;
+      delete (dataWithoutNotes as { notes?: unknown }).notes;
       const result = CreateBookingSchema.safeParse(dataWithoutNotes);
       expect(result.success).toBe(true);
     });
@@ -209,7 +209,7 @@ describe('Booking Engine', () => {
 
     it('should reject missing booking_id', () => {
       const invalidData = { ...validModifyData };
-      delete (invalidData as any).booking_id;
+      delete (invalidData as { booking_id?: unknown }).booking_id;
       const result = ModifyBookingSchema.safeParse(invalidData);
       expect(result.success).toBe(false);
     });

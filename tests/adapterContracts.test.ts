@@ -14,8 +14,8 @@ describe('MessagingAdapter contract', () => {
 describe('PaymentsAdapter contract', () => {
   it('picks paystack as MVP default for all currencies', async () => {
     const adapter = new PaymentsAdapter({});
-    const paystackProvider = (adapter as any).pickProvider('NGN');
-    const usdProvider = (adapter as any).pickProvider('USD');
+    const paystackProvider = (adapter as unknown as { pickProvider(currency: string): { name?: string } | undefined }).pickProvider('NGN');
+    const usdProvider = (adapter as unknown as { pickProvider(currency: string): { name?: string } | undefined }).pickProvider('USD');
     // Paystack is the MVP default; it handles all currencies unless tenant overrides
     expect(paystackProvider?.name).toBe('paystack');
     expect(usdProvider?.name).toBe('paystack');

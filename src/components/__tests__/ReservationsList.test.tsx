@@ -48,7 +48,7 @@ describe('ReservationsList', () => {
   })
 
   it('calls delete API when delete button is clicked', async () => {
-    ;(global as any).confirm = () => true
+    ;(global as unknown as Record<string, unknown>).confirm = () => true
     authFetch.mockResolvedValueOnce({ status: 200, data: mockReservations })
 
     const qc = makeQueryClient()

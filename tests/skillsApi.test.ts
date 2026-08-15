@@ -3,8 +3,8 @@
 import { NextRequest } from 'next/server';
 import { GET as skillsGET, POST as skillsPOST } from '@/app/api/skills/route';
 
-const skillsList: any[] = [];
-const inserted: any[] = [];
+const skillsList: Array<Record<string, unknown>> = [];
+const inserted: Array<Record<string, unknown>> = [];
 
 jest.mock('@/lib/supabase/bearer-client', () => ({
   createSupabaseBearerClient: jest.fn().mockImplementation(() => ({
@@ -23,7 +23,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
             data: { tenant_id: 'test-tenant-id', role: 'owner' },
             error: null,
           }),
-          then: (resolve: any) =>
+          then: (resolve: (value: unknown) => void) =>
             resolve({ data: [{ tenant_id: 'test-tenant-id', role: 'owner' }], error: null }),
         };
       }
@@ -32,7 +32,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
           select() { return this; },
           eq() { return this; },
           order() { return Promise.resolve({ data: skillsList, error: null }); },
-          insert(row: any) {
+          insert(row: Record<string, unknown>) {
             const record = { id: 's1', ...row };
             inserted.push(record);
             return {
@@ -58,7 +58,7 @@ describe('skills API route', () => {
   });
 
   it('GET returns skills list for authenticated user', async () => {
-    const res = await skillsGET(new NextRequest('http://x/api/skills')) as any;
+    const res = await skillsGET(new NextRequest('http://x/api/skills')) as Response;
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json).toHaveProperty('skills');
@@ -69,7 +69,7 @@ describe('skills API route', () => {
       method: 'POST',
       body: JSON.stringify({ name: 'Haircut' })
     }));
-    const json = await (res as any).json();
+    const json = await (res as Response).json();
     expect(json.skill).toHaveProperty('name', 'Haircut');
   });
 });

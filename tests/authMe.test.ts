@@ -72,7 +72,7 @@ jest.mock('@/lib/supabase/server', () => ({
 
 describe('auth/me API route', () => {
   it('returns 401 without auth header', async () => {
-    const res: any = await authMeGET(new NextRequest('http://x/api/auth/me', { headers: { 'x-test-bypass-skip': '1' } }));
+    const res: Response = await authMeGET(new NextRequest('http://x/api/auth/me', { headers: { 'x-test-bypass-skip': '1' } }));
     expect(res.status).toBe(401);
     const json = await res.json();
     expect(json).toHaveProperty('error');
@@ -85,7 +85,7 @@ describe('auth/me API route', () => {
         'x-tenant-id': 't1',
       }
     });
-    const res: any = await authMeGET(req);
+    const res: Response = await authMeGET(req);
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toMatchObject({ userId: 'u1', role: 'owner', tenantId: 't1' });

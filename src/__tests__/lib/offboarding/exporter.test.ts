@@ -13,7 +13,7 @@ function makeAdmin() {
 describe('generateTenantExport', () => {
   it('builds a zip, uploads to tenant-exports, returns a signed url', async () => {
     const { admin, upload, createSignedUrl } = makeAdmin();
-    const res = await generateTenantExport(admin as any, 't1');
+    const res = await generateTenantExport(admin as unknown as Parameters<typeof generateTenantExport>[0], 't1');
     expect(upload).toHaveBeenCalledWith(
       expect.stringContaining('t1/'),
       expect.anything(),

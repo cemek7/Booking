@@ -47,7 +47,7 @@ describe('AnalyticsService', () => {
       order: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       single: jest.fn().mockResolvedValue({ data: null, error: null }),
-    } as any;
+    } as unknown as ConstructorParameters<typeof AnalyticsService>[0];
 
     analyticsService = new AnalyticsService(mockSupabase);
   });
@@ -521,7 +521,7 @@ describe('AnalyticsService', () => {
             })),
           })),
         })),
-      })) as any;
+      })) as unknown as typeof mockSupabase.from;
 
       try {
         await analyticsService.getDashboardMetrics(tenantId, period);
@@ -683,7 +683,7 @@ describe('AnalyticsService', () => {
             }),
           })),
         })),
-      })) as any;
+      })) as unknown as typeof mockSupabase.from;
 
       try {
         await analyticsService.getDashboardMetrics('tenant_123');

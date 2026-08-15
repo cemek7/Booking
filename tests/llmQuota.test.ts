@@ -1,7 +1,7 @@
 // Jest globals are available without import
 import { ensureTenantHasQuota } from '@/lib/llmQuota';
 
-function mockSupabase(rows: Record<string, any>) {
+function mockSupabase(rows: Record<string, unknown>) {
   return {
     from(table: string) {
       return {
@@ -12,9 +12,9 @@ function mockSupabase(rows: Record<string, any>) {
         maybeSingle() { return Promise.resolve({ data: rows[table] || null, error: null }); },
         head: true,
         async then() { return { data: [], error: null }; }
-      } as any;
+      };
     }
-  } as any;
+  } as unknown as import('@supabase/supabase-js').SupabaseClient;
 }
 
 describe('llmQuota.ensureTenantHasQuota', () => {
