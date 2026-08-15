@@ -55,6 +55,12 @@ export default function Home() {
                 Products
               </Link>
               <Link
+                href="/showcase"
+                className="rounded-full border border-[#d8d3c4] bg-white/70 px-4 py-2 text-sm text-[#46514e] shadow-sm transition hover:border-[#bfc7b9] hover:text-[#10211a]"
+              >
+                Capabilities
+              </Link>
+              <Link
                 href="#principles"
                 className="rounded-full border border-[#d8d3c4] bg-white/70 px-4 py-2 text-sm text-[#46514e] shadow-sm transition hover:border-[#bfc7b9] hover:text-[#10211a]"
               >
@@ -239,6 +245,9 @@ export default function Home() {
             <div className="flex flex-wrap gap-4">
               <Link href="/products" className="transition hover:text-[#10211a]">
                 Products
+              </Link>
+              <Link href="/showcase" className="transition hover:text-[#10211a]">
+                Capabilities
               </Link>
               <Link href="/booka" className="transition hover:text-[#10211a]">
                 Booka

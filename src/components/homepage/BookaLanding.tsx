@@ -474,6 +474,9 @@ export default function BookaLanding() {
             <Link href="/" className="transition hover:text-emerald-900">
               Techclave
             </Link>
+            <Link href="/showcase" className="transition hover:text-emerald-900">
+              Capabilities
+            </Link>
             <Link href="/booka/auth/signin" className="transition hover:text-emerald-900">
               Sign in
             </Link>
