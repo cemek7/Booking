@@ -448,7 +448,7 @@ export default OptimizedScheduler;
 // ─── Functional adapters (replaces the deleted scheduler.ts stubs) ────────────
 
 export async function findFreeSlot(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   fromIso: string,
   toIso: string,
@@ -466,8 +466,15 @@ export async function findFreeSlot(
   return { start_at: slots[0].start_at, end_at: slots[0].end_at };
 }
 
+interface FreeStaffScheduleRow {
+  user_id: string;
+  start_time: string;
+  end_time: string;
+  tenant_users?: { users?: { name?: string | null } | null } | null;
+}
+
 export async function findFreeStaff(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   startAt: string,
   endAt: string
@@ -486,22 +493,22 @@ export async function findFreeStaff(
   if (!schedules) return [];
 
   // Filter staff whose schedule covers the requested window
-  return schedules
-    .filter((s: any) => {
+  return (schedules as FreeStaffScheduleRow[])
+    .filter((s) => {
       const schedStart = s.start_time;
       const schedEnd = s.end_time;
       const reqStart = start.toTimeString().substring(0, 5);
       const reqEnd = end.toTimeString().substring(0, 5);
       return schedStart <= reqStart && schedEnd >= reqEnd;
     })
-    .map((s: any) => ({
+    .map((s) => ({
       id: s.user_id,
       name: s.tenant_users?.users?.name || s.user_id,
     }));
 }
 
 export async function nextAvailableSlot(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   fromIso: string,
   durationMinutes = 60,

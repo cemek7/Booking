@@ -4,7 +4,7 @@ import { publishEvent } from '@/lib/eventBus';
 function mockSupabaseFailInsert() {
   return {
     from() { return { insert() { return { error: new Error('fail'), data: null }; }, select() { return this; } }; }
-  } as any;
+  } as unknown as import('@supabase/supabase-js').SupabaseClient;
 }
 
 describe('eventBus.publishEvent', () => {

@@ -85,8 +85,8 @@ export const BookingComposer: React.FC<BookingComposerProps> = ({ context, onCom
         metadata: { tenantId: context.tenantId, locationId: context.locationId }
       };
       onComplete(booking);
-    } catch (e: any) {
-      setError(e.message || 'Failed to create booking');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create booking');
     } finally { setPending(false); }
   }
 

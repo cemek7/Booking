@@ -8,7 +8,7 @@ function makeAdmin() {
 describe('writeAuditLog', () => {
   it('inserts an audit row with action/tenant/metadata', async () => {
     const { admin, insert } = makeAdmin();
-    await writeAuditLog(admin as any, {
+    await writeAuditLog(admin as unknown as Parameters<typeof writeAuditLog>[0], {
       action: 'tenant.offboard.scheduled',
       tenantId: 't1', userId: 'u1', userRole: 'owner',
       result: 'success', metadata: { reason: 'voluntary' },
@@ -25,6 +25,6 @@ describe('writeAuditLog', () => {
 
   it('never throws — audit failures are swallowed and logged', async () => {
     const admin = { from: jest.fn(() => ({ insert: jest.fn().mockResolvedValue({ error: { message: 'x' } }) })) };
-    await expect(writeAuditLog(admin as any, { action: 'a', tenantId: 't' })).resolves.toBeUndefined();
+    await expect(writeAuditLog(admin as unknown as Parameters<typeof writeAuditLog>[0], { action: 'a', tenantId: 't' })).resolves.toBeUndefined();
   });
 });

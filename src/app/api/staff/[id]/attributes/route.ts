@@ -4,7 +4,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const id = (ctx as any).params?.id;
+    const id = (ctx as { params?: { id?: string } }).params?.id;
     if (!id) throw ApiErrorFactory.badRequest('Staff ID required');
     
     const body = await ctx.request.json();

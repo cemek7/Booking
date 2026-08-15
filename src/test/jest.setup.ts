@@ -11,8 +11,8 @@ import '@testing-library/jest-dom';
 
 // Polyfill setImmediate for jsdom environment (used by Winston logger)
 if (typeof setImmediate === 'undefined') {
-  (globalThis as any).setImmediate = (fn: (...args: any[]) => void, ...args: any[]) => setTimeout(fn, 0, ...args);
-  (globalThis as any).clearImmediate = clearTimeout;
+  (globalThis as unknown as { setImmediate: unknown }).setImmediate = (fn: (...args: unknown[]) => void, ...args: unknown[]) => setTimeout(fn, 0, ...args);
+  (globalThis as unknown as { clearImmediate: unknown }).clearImmediate = clearTimeout;
 }
 
 // Polyfill fetch and Web APIs for Node.js environment

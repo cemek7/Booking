@@ -92,7 +92,7 @@ function makeBearerClient(tenantId: string, role = 'owner') {
             data: { tenant_id: tenantId, role },
             error: null,
           }),
-          then: (resolve: any) =>
+          then: (resolve: (value: unknown) => void) =>
             resolve({ data: [{ tenant_id: tenantId, role }], error: null }),
         };
       }
@@ -146,7 +146,7 @@ describe('Multi-Tenant Data Isolation', () => {
         'http://localhost/api/customers?page=1&limit=10',
         { headers: { authorization: 'Bearer test-token', 'x-tenant-id': TENANT_A } }
       );
-      const res: any = await customersGET(req);
+      const res: Response = await customersGET(req);
 
       expect(res.status).toBe(200);
       // The handler must have called .eq('tenant_id', TENANT_A) on the customers query
@@ -167,7 +167,7 @@ describe('Multi-Tenant Data Isolation', () => {
         'http://localhost/api/customers',
         { headers: { authorization: 'Bearer test-token', 'x-tenant-id': TENANT_A } }
       );
-      const res: any = await customersGET(req);
+      const res: Response = await customersGET(req);
       const json = await res.json();
 
       expect(res.status).toBe(200);
@@ -195,14 +195,14 @@ describe('Multi-Tenant Data Isolation', () => {
         // Attacker attempts to inject tenant-B into the payload
         body: JSON.stringify({ name: 'Attacker', tenant_id: TENANT_B }),
       });
-      const res: any = await customersPOST(req);
+      const res: Response = await customersPOST(req);
 
       expect(res.status).toBe(200);
       // The insert must use TENANT_A (from server-verified auth context),
       // not the TENANT_B value from the request body.
       expect(bearerClient._capturedInserts).toHaveLength(1);
-      expect((bearerClient._capturedInserts[0] as any).tenant_id).toBe(TENANT_A);
-      expect((bearerClient._capturedInserts[0] as any).tenant_id).not.toBe(TENANT_B);
+      expect((bearerClient._capturedInserts[0] as { tenant_id?: string }).tenant_id).toBe(TENANT_A);
+      expect((bearerClient._capturedInserts[0] as { tenant_id?: string }).tenant_id).not.toBe(TENANT_B);
     });
   });
 });

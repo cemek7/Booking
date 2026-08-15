@@ -55,7 +55,7 @@ function makeBearerClient(role: string, tenantId = 'test-tenant-id', userId = 't
             data: { id: 'tenant-user-1', tenant_id: tenantId, role },
             error: null,
           }),
-          then: (resolve: any) =>
+          then: (resolve: (value: unknown) => void) =>
             resolve({ data: [{ id: 'tenant-user-1', tenant_id: tenantId, role }], error: null }),
         };
       }
@@ -97,7 +97,7 @@ describe('Unified Authentication System - Integration Tests', () => {
     it('should authenticate valid users (global bearer mock defaults to owner)', async () => {
       // TestRequest wrapper injects Bearer test-token + x-tenant-id: test-tenant-id
       const req = new NextRequest('http://localhost:3000/api/test');
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.userId).toBe('test-user-id');
@@ -109,7 +109,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://localhost:3000/api/test', {
         headers: { 'x-test-bypass-skip': '1' }
       });
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(401);
       const json = await res.json();
       expect(json.error).toBeDefined();
@@ -117,7 +117,7 @@ describe('Unified Authentication System - Integration Tests', () => {
 
     it('should inject auth headers automatically (TestRequest wrapper)', async () => {
       const req = new NextRequest('http://localhost:3000/api/test');
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(200);
     });
   });
@@ -126,7 +126,7 @@ describe('Unified Authentication System - Integration Tests', () => {
     it('should allow owner to access owner-only routes', async () => {
       // Global mock returns 'owner' — no override needed
       const req = new NextRequest('http://x/api/test');
-      const res: any = await ownerOnlyHandler(req);
+      const res: Response = await ownerOnlyHandler(req);
       expect(res.status).toBe(200);
     });
 
@@ -141,7 +141,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await ownerOnlyHandler(req);
+      const res: Response = await ownerOnlyHandler(req);
       expect(res.status).toBe(403);
     });
 
@@ -152,7 +152,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await managerOrOwnerHandler(req);
+      const res: Response = await managerOrOwnerHandler(req);
       expect(res.status).toBe(200);
     });
 
@@ -167,7 +167,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await managerOrOwnerHandler(req);
+      const res: Response = await managerOrOwnerHandler(req);
       expect(res.status).toBe(403);
     });
 
@@ -183,7 +183,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await approveAnomalyHandler(req);
+      const res: Response = await approveAnomalyHandler(req);
       expect(res.status).toBe(200);
     });
 
@@ -199,7 +199,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await approveAnomalyHandler(req);
+      const res: Response = await approveAnomalyHandler(req);
       expect(res.status).toBe(403);
     });
   });
@@ -215,7 +215,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'my-tenant' }
       });
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       const json = await res.json();
       expect(json.tenantId).toBe('my-tenant');
     });
@@ -226,7 +226,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'x-test-bypass-skip': '1' }
       });
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(401);
       const json = await res.json();
       expect(json).toHaveProperty('error');
@@ -243,7 +243,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await ownerOnlyHandler(req);
+      const res: Response = await ownerOnlyHandler(req);
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json).toHaveProperty('error');

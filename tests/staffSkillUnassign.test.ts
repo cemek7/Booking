@@ -22,7 +22,7 @@ jest.mock('@/lib/supabase/server', () => ({
       }
       if (table === 'tenant_user_permissions') {
         // No per-user overrides in this fixture — effective permissions = role defaults.
-        const perms = { eq: () => perms, then: (resolve: any) => resolve({ data: [], error: null }) };
+        const perms = { eq: () => perms, then: (resolve: (value: unknown) => void) => resolve({ data: [], error: null }) };
         return { select: () => perms };
       }
       if (table === 'tenants') {
@@ -68,7 +68,7 @@ describe('staff-skill DELETE API route', () => {
         'x-tenant-id': 't1'
       }
     });
-    const res: any = await staffSkillDELETE(req as any, { params: { user_id: 'u1', skill_id: 's1' } });
+    const res: Response = await staffSkillDELETE(req as unknown as Parameters<typeof staffSkillDELETE>[0], { params: { user_id: 'u1', skill_id: 's1' } });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('ok', true);

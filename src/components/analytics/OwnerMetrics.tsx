@@ -278,8 +278,8 @@ export default function OwnerMetrics({ tenantId }: OwnerMetricsProps) {
 
       {/* Revenue & Booking Trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <AreaChart data={trends as any} dataKeys={['revenue']} title="Revenue Trend" description="Revenue over time" colors={['#10b981']} formatValue={(v) => formatCurrency(v)} />
-        <TrendChart data={trends as any} dataKey="bookings" title="Booking Trend" description="Bookings over time" color="#3b82f6" showTrend />
+        <AreaChart data={trends as unknown as React.ComponentProps<typeof AreaChart>['data']} dataKeys={['revenue']} title="Revenue Trend" description="Revenue over time" colors={['#10b981']} formatValue={(v) => formatCurrency(v)} />
+        <TrendChart data={trends as unknown as React.ComponentProps<typeof TrendChart>['data']} dataKey="bookings" title="Booking Trend" description="Bookings over time" color="#3b82f6" showTrend />
       </div>
 
       {/* Status Breakdown & Cancellation Trend */}

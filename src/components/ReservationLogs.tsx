@@ -40,7 +40,7 @@ export default function ReservationLogs({ reservationId, tenantId }: { reservati
           return;
         }
 
-        const payload = res.data as any;
+        const payload = res.data as { data?: LogEntry[] };
         if (mounted) setLogs(payload.data || []);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

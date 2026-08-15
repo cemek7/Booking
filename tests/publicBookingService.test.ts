@@ -16,7 +16,7 @@ import { getAvailability } from '@/lib/publicBookingService';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 describe('publicBookingService - getAvailability fixes', () => {
-  let mockSupabase: any;
+  let mockSupabase: { from: jest.Mock } & Record<string, unknown>;
 
   beforeEach(() => {
     mockSupabase = {
@@ -96,7 +96,7 @@ describe('publicBookingService - getAvailability fixes', () => {
 
       // Verify that gte was called with 'end_at' (issue fix)
       const gteCall = mockChain.gte.mock.calls.find(
-        (call: any[]) => call[0] === 'end_at'
+        (call: unknown[]) => call[0] === 'end_at'
       );
       expect(gteCall).toBeDefined();
     });

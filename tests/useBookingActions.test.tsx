@@ -42,6 +42,6 @@ describe('useBookingActions', () => {
     fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({}) });
     const { result } = renderHook(() => useBookingActions('b2'), { wrapper: wrapperFactory() });
 
-    await expect(result.current.mutateAsync({ action: 'cancel' } as any)).rejects.toBeTruthy();
+    await expect(result.current.mutateAsync({ action: 'cancel' } as Parameters<typeof result.current.mutateAsync>[0])).rejects.toBeTruthy();
   });
 });

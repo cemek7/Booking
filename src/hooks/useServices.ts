@@ -10,7 +10,7 @@ async function fetchServices(tenantId?: string): Promise<ServiceItem[]> {
   if (!res.ok) throw new Error('Failed services fetch');
   const data = await res.json();
   const arr = Array.isArray(data) ? data : (Array.isArray(data?.services) ? data.services : []);
-  return arr.map((s: any) => ({ id: s.id, name: s.name, duration: s.duration ?? s.duration_minutes }));
+  return arr.map((s: { id: string; name: string; duration?: number; duration_minutes?: number }) => ({ id: s.id, name: s.name, duration: s.duration ?? s.duration_minutes }));
 }
 
 export function useServices(explicitTenantId?: string) {

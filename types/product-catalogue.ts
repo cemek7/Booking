@@ -15,7 +15,7 @@ export interface ProductCategory {
   parent_id?: string;
   display_order: number;
   is_active: boolean;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   
@@ -63,7 +63,7 @@ export interface Product {
   images: string[];
   
   // Metadata
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   
@@ -84,7 +84,7 @@ export interface ProductVariant {
   sku?: string;
   is_active: boolean;
   display_order: number;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   
@@ -112,7 +112,7 @@ export interface InventoryMovement {
   // Relations
   product?: Product;
   variant?: ProductVariant;
-  performed_by_user?: any; // User type from auth
+  performed_by_user?: Record<string, unknown>; // User type from auth
 }
 
 export interface ServiceProduct {
@@ -127,7 +127,7 @@ export interface ServiceProduct {
   updated_at: string;
   
   // Relations
-  service?: any; // Service type
+  service?: Record<string, unknown>; // Service type
   product?: Product;
 }
 
@@ -196,7 +196,7 @@ export interface CreateProductCategoryRequest {
   parent_id?: string;
   display_order?: number;
   is_active?: boolean;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateProductCategoryRequest extends Partial<CreateProductCategoryRequest> {
@@ -225,7 +225,7 @@ export interface CreateProductRequest {
   frequently_bought_together?: string[];
   tags?: string[];
   images?: string[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateProductRequest extends Partial<CreateProductRequest> {
@@ -241,7 +241,7 @@ export interface CreateProductVariantRequest {
   sku?: string;
   is_active?: boolean;
   display_order?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateProductVariantRequest extends Partial<CreateProductVariantRequest> {
@@ -500,7 +500,7 @@ export interface ProductError {
   code: string;
   message: string;
   field?: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 export const PRODUCT_ERROR_CODES = {
@@ -534,16 +534,19 @@ export type CategoryWithProducts = ProductCategory & {
 };
 
 // Type guards for runtime type checking
-export const isProduct = (obj: any): obj is Product => {
-  return obj && typeof obj.id === 'string' && typeof obj.name === 'string';
+export const isProduct = (obj: unknown): obj is Product => {
+  const o = obj as Record<string, unknown> | null | undefined;
+  return !!o && typeof o.id === 'string' && typeof o.name === 'string';
 };
 
-export const isProductCategory = (obj: any): obj is ProductCategory => {
-  return obj && typeof obj.id === 'string' && typeof obj.name === 'string';
+export const isProductCategory = (obj: unknown): obj is ProductCategory => {
+  const o = obj as Record<string, unknown> | null | undefined;
+  return !!o && typeof o.id === 'string' && typeof o.name === 'string';
 };
 
-export const isProductVariant = (obj: any): obj is ProductVariant => {
-  return obj && typeof obj.id === 'string' && typeof obj.variant_name === 'string';
+export const isProductVariant = (obj: unknown): obj is ProductVariant => {
+  const o = obj as Record<string, unknown> | null | undefined;
+  return !!o && typeof o.id === 'string' && typeof o.variant_name === 'string';
 };
 
 // ============================================================================

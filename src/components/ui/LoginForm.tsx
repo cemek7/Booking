@@ -15,8 +15,8 @@ export default function LoginForm() {
     setError(null);
     try {
       await signIn?.({ email, password });
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
     }
   };
 

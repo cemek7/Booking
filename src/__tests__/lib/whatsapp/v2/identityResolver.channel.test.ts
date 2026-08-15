@@ -47,7 +47,7 @@ function makeChain(): SpyChain {
   (
     ['select', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order'] as const
   ).forEach((m) => {
-    (chain as any)[m] = jest.fn().mockReturnValue(chain);
+    (chain as Record<string, unknown>)[m] = jest.fn().mockReturnValue(chain);
   });
 
   // eq() records each call so tests can assert on filter arguments

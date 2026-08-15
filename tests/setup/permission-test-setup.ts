@@ -29,7 +29,7 @@ expect.extend({
     }
   },
 
-  toBeSecurelyDenied(received: any, reason?: string) {
+  toBeSecurelyDenied(received: { reason?: string; granted?: boolean; auditRequired?: boolean } | null | undefined, reason?: string) {
     const hasSecurityReason = received?.reason && received.reason.includes('security');
     const isProperlyDenied = received?.granted === false;
     const hasAuditFlag = received?.auditRequired === true;
@@ -49,7 +49,7 @@ expect.extend({
     }
   },
 
-  toRespectTenantIsolation(received: any, expectedTenantId: string) {
+  toRespectTenantIsolation(received: { granted?: boolean; reason?: string } | null | undefined, expectedTenantId: string) {
     const isDenied = received?.granted === false;
     const hasTenantReason = received?.reason && received.reason.toLowerCase().includes('tenant');
     
@@ -102,7 +102,7 @@ export function getTestEnvironment(): TestEnvironment {
 export const mockRequest = (url: string, options: {
   method?: string;
   headers?: Record<string, string>;
-  body?: any;
+  body?: unknown;
 } = {}) => {
   const { method = 'GET', headers = {}, body } = options;
   

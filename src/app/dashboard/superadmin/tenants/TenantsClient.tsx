@@ -26,7 +26,7 @@ export default function TenantsClient({ user }: TenantsClientProps) {
   useEffect(() => {
     if (!tenantId) return setUsage(null);
     authFetch(`/api/admin/llm-usage?tenant_id=${tenantId}`).then((res) => {
-      const json = res.data as any;
+      const json = res.data as Record<string, unknown> | null;
       if (!json) return;
       setUsage({
         requests: typeof json.requests === 'number' ? json.requests : 0,

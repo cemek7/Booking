@@ -491,14 +491,14 @@ describe('API Key Management', () => {
 describe('Error Handling and Edge Cases', () => {
   describe('Invalid Input Handling', () => {
     it('should handle null user gracefully', () => {
-      const user: any = null;
+      const user: { role?: string } | null = null;
       const hasAccess = !!user && user.role === 'owner';
 
       expect(hasAccess).toBe(false);
     });
 
     it('should handle undefined role', () => {
-      const user: Partial<AuthenticatedUser> = { role: undefined as any };
+      const user: Partial<AuthenticatedUser> = { role: undefined };
       const isValid = ['staff', 'manager', 'owner', 'superadmin'].includes(user.role as Role);
 
       expect(isValid).toBe(false);
@@ -534,7 +534,7 @@ describe('Error Handling and Edge Cases', () => {
 
   describe('Recovery and Fallbacks', () => {
     it('should fallback to default permissions on cache miss', () => {
-      const cachedPermissions: any = null; // Cache miss
+      const cachedPermissions: string[] | null = null; // Cache miss
       const defaultPermissions = ['read:own'];
 
       const permissions = cachedPermissions || defaultPermissions;

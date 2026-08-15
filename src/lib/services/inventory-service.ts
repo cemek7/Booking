@@ -194,7 +194,16 @@ export class InventoryService {
         return { success: false, error: 'Failed to fetch low stock alerts' };
       }
 
-      const alerts: any[] = [];
+      interface LowStockAlert {
+        product_id: string;
+        product_name: string;
+        variant_id?: string;
+        variant_name?: string;
+        current_stock: number;
+        threshold: number;
+        urgency: 'critical' | 'warning' | 'low';
+      }
+      const alerts: LowStockAlert[] = [];
 
       (products || []).forEach(product => {
         // Check base product stock

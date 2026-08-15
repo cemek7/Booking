@@ -9,7 +9,7 @@ jest.mock('@/lib/auth/server-auth', () => ({
 }));
 
 // Dynamic import workaround for async server components
-let StaffInvitePage: any;
+let StaffInvitePage: (...args: never[]) => unknown;
 
 describe('StaffInvitePage', () => {
   beforeAll(async () => {
