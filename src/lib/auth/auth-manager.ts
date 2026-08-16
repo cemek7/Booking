@@ -11,6 +11,7 @@
  */
 
 import { defaultLogger } from '@/lib/logger';
+import { toBookaDashboardPath } from '@/lib/navigation/dashboard-path';
 import {
   getStoredAccessToken,
   getStoredUserData,
@@ -82,25 +83,34 @@ export function determineUserType(
 }
 
 /**
- * Get redirect URL based on user type and role
- * 
- * Superadmin: /dashboard/superadmin
- * Owner: /dashboard
- * Manager: /dashboard?role=manager
- * Staff: /dashboard?role=staff
+ * Get redirect URL based on user type and role.
+ *
+ * Emits the public Booka workspace URL directly (via toBookaDashboardPath) so
+ * post-sign-in navigation lands on the canonical path without the extra
+ * /dashboard -> /booka/dashboard middleware redirect hop. Mirrors
+ * getRoleDashboardPath in @/types/unified-permissions.
+ *
+ * Superadmin: /booka/dashboard/superadmin
+ * Owner: /booka/dashboard
+ * Manager: /booka/dashboard?role=manager
+ * Staff: /booka/dashboard?role=staff
  */
 export function getRedirectUrl(userType: UserType, role?: string | null): string {
-  if (userType === 'admin') return '/dashboard/superadmin';
+  if (userType === 'admin') return toBookaDashboardPath('/dashboard/superadmin');
 
   if (userType === 'unknown') return '/';
 
+  // Booka workspace base ('/booka/dashboard'); query is appended after mapping
+  // because toBookaDashboardPath expects a bare pathname.
+  const base = toBookaDashboardPath('/dashboard');
+
   // Tenant users
-  if (role === 'owner') return '/dashboard';
-  if (role === 'manager') return '/dashboard?role=manager';
-  if (role === 'staff') return '/dashboard?role=staff';
+  if (role === 'owner') return base;
+  if (role === 'manager') return `${base}?role=manager`;
+  if (role === 'staff') return `${base}?role=staff`;
 
   // Default for unknown roles
-  return '/dashboard';
+  return base;
 }
 
 /**

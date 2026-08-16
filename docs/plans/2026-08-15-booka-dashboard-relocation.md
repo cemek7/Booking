@@ -1,68 +1,62 @@
-# Plan: relocate the app from `/dashboard` to `/booka/dashboard`
+# Plan: `/booka/dashboard` URL structure
 
-**Date:** 2026-08-15
-**Status:** DRAFT — awaiting approval (no code written yet)
-**Goal:** Make the URL structure match the intended TechClave information architecture:
+**Date:** 2026-08-15 (revised 2026-08-16)
+**Status:** ✅ ALREADY IMPLEMENTED — this doc now records the shipped design, not a pending change.
 
-| URL | Serves | Today | Target |
-| --- | --- | --- | --- |
-| `techclave.cloud/` | TechClave product-house landing | ✅ `src/app/page.tsx` | unchanged |
-| `techclave.cloud/booka` | Booka product landing | ✅ `src/app/booka/page.tsx` | unchanged |
-| `techclave.cloud/showcase` | Capability showcase | ✅ `(showcase)` group | unchanged |
-| `techclave.cloud/booka/dashboard/**` | Booka app (owner/manager/staff/superadmin) | ❌ lives at `/dashboard/**` | **move here** |
+> **Correction (2026-08-16):** The original draft of this plan proposed a *physical* route
+> move (`git mv src/app/dashboard → src/app/booka/dashboard`) plus a compatibility redirect.
+> Before executing it, we discovered the `/booka/dashboard` structure was **already shipped to
+> `staging`** via a middleware **rewrite/alias** approach (commit *"feat(dashboard): add Booka
+> workspace routes and tenant staff view"*). The physical move was therefore abandoned as
+> redundant and destructive. The rejected "Option 2" in the original draft is, in fact, the
+> approach that shipped — and it works. This document is rewritten to describe that.
 
-This is the one piece of the target IA that does not yet exist. Everything else already matches.
+## Target IA (all four now satisfied)
 
-## Why this is non-trivial (blast radius)
+| URL | Serves | Status |
+| --- | --- | --- |
+| `techclave.cloud/` | TechClave product-house landing | ✅ `src/app/page.tsx` (anon); authed users redirect to their workspace |
+| `techclave.cloud/booka` | Booka product landing | ✅ `src/app/booka/page.tsx` |
+| `techclave.cloud/showcase` | Capability showcase | ✅ `(showcase)` route group |
+| `techclave.cloud/booka/dashboard/**` | Booka app (owner/manager/staff/superadmin) | ✅ via middleware rewrite (below) |
 
-Measured against the current `staging` tree:
+## How it actually works (the shipped design)
 
-- **66** route files under `src/app/dashboard/` (`page.tsx` / `route.ts` / `layout.tsx`).
-- **54** source files contain hardcoded `/dashboard` string references (links, `redirect()`, `router.push`).
-- **`src/middleware.ts`** holds a `PROTECTED_ROUTES` map keyed on `/dashboard/*` prefixes (superadmin/owner/manager/staff gating), plus a root-`/`→role-dashboard redirect (lines ~116–179).
-- **Auth default-destination** is `/dashboard` in at least: `src/lib/auth/auth-manager.ts` (`return '/dashboard'` ×2), `src/lib/auth/require-capability.ts` (`redirect('/dashboard')`), `src/lib/auth/middleware.ts`, `src/middleware.ts`.
-- **OAuth / provider callbacks** already reference `/booka/auth/callback` (nginx config), so post-login redirects that land on `/dashboard` must move too, or logins deep-link to a dead path.
+Physical App Router pages stay at `src/app/dashboard/**`. The public URL is `/booka/dashboard/**`.
+The translation lives in two places:
 
-## Decision: how to move
+- **`src/lib/navigation/dashboard-path.ts`** — single source of truth:
+  - `toBookaDashboardPath('/dashboard/x')` → `'/booka/dashboard/x'` (internal → public; used for links/redirects)
+  - `toInternalDashboardPath('/booka/dashboard/x')` → `'/dashboard/x'` (public → internal; used for the rewrite)
+  - `isBookaDashboardPath(pathname)` — guard
+- **`src/middleware.ts`**:
+  - Legacy `/dashboard/**` → **redirect** to `/booka/dashboard/**` (query preserved via `nextUrl.clone()`), so old bookmarks/emailed links/OAuth callbacks keep working.
+  - Incoming `/booka/dashboard/**` → auth-gated, then **`NextResponse.rewrite`** to the internal `/dashboard/**` page. The App Router pages are reused unchanged.
+  - Anonymous `/` → renders the TechClave landing (no redirect). Authed `/` → `getRoleDashboardPath(role)` → `/booka/dashboard/**`.
+  - `/login`, `/onboarding`, `/admin`, `/superadmin` → redirected to their `/booka/...` or `/dashboard/superadmin` equivalents.
+  - Matcher `'/((?!api|monitoring|_next/static|_next/image|favicon.ico).*)'` covers `/`, `/dashboard/**`, and `/booka/dashboard/**`.
+- **`getRoleDashboardPath`** (`src/types/unified-permissions.ts`) wraps every role destination in `toBookaDashboardPath`, so all post-login redirects emit `/booka/dashboard/**`.
+- **`/booka/auth/**`** routes physically exist (signin, onboarding, callback, select-tenant, …).
 
-Three options considered:
+Verification: `src/lib/navigation/dashboard-path.test.ts` covers the mapping (passing).
 
-1. **Physical move + redirects (RECOMMENDED).** `git mv src/app/dashboard → src/app/booka/dashboard`, update every reference, add a permanent redirect `/dashboard/** → /booka/dashboard/**` for old bookmarks/OAuth/session cookies. Canonical URLs become `/booka/dashboard/*`. Correct and clean; largest diff.
-2. **Rewrite alias only.** Keep files at `/dashboard`, add `next.config` rewrite `/booka/dashboard/:path* → /dashboard/:path*`. Small diff, but URLs are *aliased not moved* — canonical stays `/dashboard`, cookie `path` scoping and analytics get muddy, and the middleware matcher must handle both prefixes. Rejected as a permanent solution.
-3. **Next `basePath`.** Rejected — `basePath` moves the **entire** app (`/`, `/booka`, `/showcase`, `/api`) under a prefix, which is the opposite of what we want. Deploy docs explicitly say "no basePath."
+## Why the rewrite approach was kept (vs a physical move)
 
-Recommendation: **Option 1**, with the Option-2 rewrite kept only as a short-lived compatibility redirect.
+- It already ships, is coherent, and is covered by a test.
+- Users already get canonical `/booka/dashboard/**` URLs (nav emits them; legacy paths 30x-redirect), so a physical move buys **no** URL/UX improvement.
+- A physical move would churn 84 route files + ~53 reference files to replace working code and would collide with the concurrent session that authored this.
+- **Internal permission-map / route-guard keys intentionally stay `/dashboard/**`** (e.g. `canAccessRoute`, middleware `PROTECTED_ROUTES`) because they match against the post-rewrite *internal* path. Do **not** bulk-rename these — it would break authorization matching.
 
-## Step-by-step (Option 1)
+## Follow-up applied (2026-08-16)
 
-1. **Branch off `staging`** in a dedicated worktree (`feat/booka-dashboard-relocation`). This is a product change — not the showcase branch.
-2. **Move the routes:** `git mv src/app/dashboard src/app/booka/dashboard`. Confirm `src/app/booka/layout.tsx` (if any) doesn't double-wrap the dashboard layout.
-3. **Middleware (`src/middleware.ts`):**
-   - Re-key `PROTECTED_ROUTES` from `/dashboard/*` → `/booka/dashboard/*` (keep the most-specific-first ordering).
-   - Update the `config.matcher` so the middleware still runs on the new prefix.
-   - Update the root-`/`→role-dashboard redirect to target `/booka/dashboard` — **and reconcile it with the TechClave landing**: `/` must keep rendering the landing for anonymous visitors; only authed users get redirected. Verify this doesn't hijack the public landing.
-4. **Auth redirect defaults:** update `auth-manager.ts`, `require-capability.ts`, `auth/middleware.ts`, and any `getDefaultDashboard()`-style helper from `/dashboard` → `/booka/dashboard`. Centralize into one constant (`BOOKA_APP_HOME = '/booka/dashboard'`) to prevent future drift.
-5. **Bulk reference update:** sweep the 54 files. Prefer a scripted replace of `'/dashboard` → `'/booka/dashboard` (and the `"`/`` ` variants), then **manually review** each hit — exclude false positives (`/dashboard` inside `/api/...` strings that aren't app routes, doc/comment strings, `/dashboard/ops` on the landing which must also move).
-6. **Landing links:** update `src/app/page.tsx` (`/dashboard/ops` product card → `/booka/dashboard/ops`) and any footer/nav dashboard links.
-7. **Compatibility redirect:** add to `next.config` a permanent redirect `/dashboard/:path* → /booka/dashboard/:path*` so existing sessions, emailed links, and OAuth callbacks survive the cutover. Plan to retire it after one release cycle.
-8. **External callback config:** update Supabase Auth redirect allow-list, Google/Meta OAuth callback URLs, and any provider that hard-codes a post-login `/dashboard` path.
-9. **Tests:** update `src/__tests__` and any e2e/route tests asserting `/dashboard` paths; add a test that `/dashboard/x` redirects to `/booka/dashboard/x` and that middleware gates the new prefix.
+- **`src/lib/auth/auth-manager.ts` `getRedirectUrl`** now emits `/booka/dashboard**` directly
+  (via `toBookaDashboardPath`) instead of a bare `/dashboard`, removing an extra redirect hop
+  on the tenant-select sign-in path and matching `getRoleDashboardPath`. Other bare-`/dashboard`
+  links were deliberately left — they resolve correctly through the middleware redirect by design.
 
-## Verification gates
+## If a physical move is ever genuinely wanted
 
-- `npm run typecheck:ci` clean.
-- `npm test` clean (the CI deploy gate runs this; a miss fails the build before it deploys).
-- Manual: sign in as each role → land on the correct `/booka/dashboard/*`; anonymous `/` still shows the TechClave landing; old `/dashboard/*` 308-redirects; a protected `/booka/dashboard/owner` blocks a staff user.
-- `grep -rn "'/dashboard\|\"/dashboard\|\`/dashboard" src` returns only intentional compat/redirect references.
-
-## Risks / watch-items
-
-- **Auth lockout** if a redirect default is missed → user bounces to a dead `/dashboard`. Mitigated by the compat redirect (step 7) and centralized constant (step 4).
-- **Root-`/` redirect vs landing** collision (step 3) — the single highest-risk item; test both anonymous and authed.
-- **Middleware matcher** must be updated or gating silently stops applying on the new prefix (security regression).
-- **OAuth provider config is outside the repo** (step 8) — code can be perfect and logins still fail if the provider allow-list isn't updated in lockstep. Coordinate the cutover.
-- Concurrent sessions edit `src/app` heavily — rebase/land fast to avoid conflicts across 66 moved files.
-
-## Rollback
-
-Revert the commit; the compat redirect and the physical move are in one changeset. Because old `/dashboard` URLs are redirected (not deleted server-side until retirement), a revert restores the prior behavior cleanly.
+Only worth it to *delete the rewrite indirection*. It would require: `git mv` the routes, re-key
+`PROTECTED_ROUTES` + `config.matcher`, drop the rewrite branch in middleware while keeping the
+legacy `/dashboard`→`/booka/dashboard` redirect, update external OAuth allow-lists, and update
+tests. High blast radius, low reward. Not recommended.
