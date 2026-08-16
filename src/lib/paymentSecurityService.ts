@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace } from '@opentelemetry/api';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -296,10 +295,10 @@ export class PaymentSecurityService {
       
       // Calculate overall fraud score
       const fraudScore = this.calculateOverallFraudScore({
-        chargebackRate,
-        failedPaymentRate,
-        reconciliationDrift,
-        suspiciousActivityCount,
+        chargeback_rate: chargebackRate,
+        failed_payment_rate: failedPaymentRate,
+        reconciliation_drift: reconciliationDrift,
+        suspicious_activity_count: suspiciousActivityCount,
       });
 
       const metrics: SecurityMetrics = {
@@ -622,8 +621,7 @@ export class PaymentSecurityService {
           alerts,
           metrics,
         },
-        tenant_id: tenantId,
-        location_id: null,
+        tenantId,
       });
     }
   }
