@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { z } from 'zod';
 
 export const bookingCreateSchema = z.object({
@@ -10,7 +9,7 @@ export const bookingCreateSchema = z.object({
   staffId: z.string().optional(),
   start: z.string().min(1, 'Start required'),
   end: z.string().min(1, 'End required'),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const bookingActionSchema = z.object({
