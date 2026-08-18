@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { JSONSchema7 } from 'json-schema';
 
 export type FormValue = unknown;
@@ -111,7 +110,7 @@ class FormSchemaGenerator {
       styling?: FormSchema['styling'];
     } = {}
   ): FormSchema {
-    const fields = this.parseJSONSchemaProperties(jsonSchema.properties || {}, jsonSchema.required || []);
+    const fields = this.parseJSONSchemaProperties((jsonSchema.properties || {}) as Record<string, JSONSchema7>, jsonSchema.required || []);
     
     return {
       id: jsonSchema.$id || `form_${Date.now()}`,
