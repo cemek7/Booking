@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
@@ -15,7 +14,7 @@ const CreateBookingSchema = z.object({
   start_time: z.string().datetime(),
   end_time: z.string().datetime(),
   notes: z.string().max(1000).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   special_requests: z.string().max(500).optional()
 });
 
@@ -284,7 +283,7 @@ export class BookingEngine {
 
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', 'Booking creation failed', {
-        error_message: error.message
+        error_message: error instanceof Error ? error.message : String(error)
       });
       observability.finishTrace(traceContext, 'error');
 
@@ -292,7 +291,7 @@ export class BookingEngine {
         throw error;
       }
 
-      throw new BookingCreationError('Failed to create booking', error);
+      throw new BookingCreationError('Failed to create booking', error instanceof Error ? error : undefined);
     }
   }
 
@@ -383,6 +382,9 @@ export class BookingEngine {
 
         if (error) throw error;
         const updatedBooking = this.normalizeBookingRecord(updatedReservation);
+        if (!updatedBooking) {
+          throw new Error('Failed to load updated booking after modification');
+        }
 
         // Log modification history
         await this.logBookingModification(existingBooking, updatedBooking, data.reason, traceContext);
@@ -432,7 +434,7 @@ export class BookingEngine {
 
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', 'Booking modification failed', {
-        error_message: error.message
+        error_message: error instanceof Error ? error.message : String(error)
       });
       observability.finishTrace(traceContext, 'error');
       throw error;
@@ -506,6 +508,9 @@ export class BookingEngine {
 
         if (error) throw error;
         const cancelledBooking = this.normalizeBookingRecord(cancelledReservation);
+        if (!cancelledBooking) {
+          throw new Error('Failed to load cancelled booking');
+        }
 
         // Handle refund if requested
         let refundInitiated = false;
@@ -565,7 +570,7 @@ export class BookingEngine {
 
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', 'Booking cancellation failed', {
-        error_message: error.message
+        error_message: error instanceof Error ? error.message : String(error)
       });
       observability.finishTrace(traceContext, 'error');
       throw error;
@@ -760,8 +765,8 @@ export class BookingEngine {
 
     // If time is being modified, check for conflicts
       if (modified.start_time !== existing.start_time || modified.end_time !== existing.end_time) {
-        const startTime = new Date(modified.start_time);
-        const endTime = new Date(modified.end_time);
+        const startTime = new Date(modified.start_time ?? existing.start_time);
+        const endTime = new Date(modified.end_time ?? existing.end_time);
 
         // Check provider availability (excluding current reservation)
         const { data: overlappingReservations, error } = await this.supabase
@@ -780,7 +785,7 @@ export class BookingEngine {
           conflicts.push({
             type: 'time_overlap',
             message: 'New time slot is not available',
-            suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id, startTime, endTime)
+            suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id ?? existing.provider_id ?? '', startTime, endTime)
           });
         }
       }
@@ -795,11 +800,11 @@ export class BookingEngine {
   /**
    * Attempt to resolve booking conflicts by finding alternative times
    */
-  private async resolveBookingConflicts(
+  private async resolveBookingConflicts<T extends BookingInput>(
     tenantId: string,
-    data: BookingInput,
+    data: T,
     conflicts: BookingConflict[]
-  ): Promise<{ resolvedData: BookingInput; conflictsResolved: boolean }> {
+  ): Promise<{ resolvedData: T; conflictsResolved: boolean }> {
     // Only attempt auto-resolution for time conflicts
     const timeConflicts = conflicts.filter(c => c.type === 'time_overlap');
 
@@ -816,7 +821,7 @@ export class BookingEngine {
             ...data,
             start_time: suggestion.start_time,
             end_time: suggestion.end_time
-          },
+          } as T,
           conflictsResolved: true
         };
       }
@@ -893,7 +898,11 @@ export class BookingEngine {
     }
 
     observability.addTraceLog(traceContext, 'info', 'Booking created successfully', { booking_id: booking.id });
-    return this.normalizeBookingRecord(booking);
+    const record = this.normalizeBookingRecord(booking);
+    if (!record) {
+      throw new Error('Failed to normalize created booking record');
+    }
+    return record;
   }
 
   /**
@@ -1238,7 +1247,7 @@ export class BookingEngine {
       return 0;
     }
 
-    return (data || []).filter((reservation: BookingRecord) => this.getReservationMetadata(reservation).customer_email === customerEmail).length;
+    return (data || []).filter((reservation) => this.getReservationMetadata(reservation as BookingRecord).customer_email === customerEmail).length;
   }
 
   private getReservationMetadata(reservation: BookingRecord): Record<string, unknown> {
@@ -1275,7 +1284,7 @@ export class BookingEngine {
       payment_id: metadata.payment_id ?? null,
       special_requests: metadata.special_requests ?? null,
       cancellation_notes: metadata.cancellation_notes ?? null
-    };
+    } as unknown as BookingRecord;
   }
 
   /**
