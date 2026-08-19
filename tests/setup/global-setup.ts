@@ -45,7 +45,7 @@ export default async function globalSetup() {
   }
 }
 
-async function cleanupTestData(supabase: any) {
+async function cleanupTestData(supabase: import('@supabase/supabase-js').SupabaseClient) {
   try {
     // Remove any existing test data (with error handling for missing tables)
     const cleanupQueries = [

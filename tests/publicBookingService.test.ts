@@ -5,23 +5,24 @@
 
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
-// Mock the Supabase client
+// Mock the Supabase client. getAvailability runs unauthenticated on the public
+// booking path, so it uses the admin client rather than the route handler client.
 jest.mock('@/lib/supabase/server', () => ({
-  getSupabaseRouteHandlerClient: jest.fn(),
+  createSupabaseAdminClient: jest.fn(),
 }));
 
 // Import after mocking
 import { getAvailability } from '@/lib/publicBookingService';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 describe('publicBookingService - getAvailability fixes', () => {
-  let mockSupabase: any;
+  let mockSupabase: { from: jest.Mock } & Record<string, unknown>;
 
   beforeEach(() => {
     mockSupabase = {
       from: jest.fn(),
     };
-    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(mockSupabase);
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
   });
 
   afterEach(() => {
@@ -40,7 +41,7 @@ describe('publicBookingService - getAvailability fixes', () => {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         maybeSingle: jest.fn().mockResolvedValueOnce({
-          data: { duration: 60 },
+          data: { duration_minutes: 60 },
           error: null,
         }).mockResolvedValueOnce({
           data: null,
@@ -57,8 +58,12 @@ describe('publicBookingService - getAvailability fixes', () => {
       mockSupabase.from.mockReturnValue(mockChain);
 
       const result = await getAvailability('tenant-id', 'service-id', '2024-03-15');
-      // Should return empty array when no business hours
-      expect(result).toEqual([]);
+      // A valid date is accepted. With no configured business hours (and no
+      // business_hours table in the deployed schema), the service falls back to
+      // a default window and still returns bookable slots (rather than 500ing).
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0]).toMatchObject({ available: true });
     });
   });
 
@@ -68,7 +73,7 @@ describe('publicBookingService - getAvailability fixes', () => {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         maybeSingle: jest.fn().mockResolvedValueOnce({
-          data: { duration: 60 },
+          data: { duration_minutes: 60 },
           error: null,
         }).mockResolvedValueOnce({
           data: {
@@ -91,7 +96,7 @@ describe('publicBookingService - getAvailability fixes', () => {
 
       // Verify that gte was called with 'end_at' (issue fix)
       const gteCall = mockChain.gte.mock.calls.find(
-        (call: any[]) => call[0] === 'end_at'
+        (call: unknown[]) => call[0] === 'end_at'
       );
       expect(gteCall).toBeDefined();
     });

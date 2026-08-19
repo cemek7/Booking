@@ -1,5 +1,7 @@
 import { JSONSchema7 } from 'json-schema';
 
+export type FormValue = unknown;
+
 export interface FormField {
   id: string;
   type: 'text' | 'email' | 'number' | 'select' | 'multiselect' | 'checkbox' | 'radio' | 'textarea' | 'date' | 'time' | 'datetime' | 'file' | 'phone' | 'color' | 'range' | 'url';
@@ -8,8 +10,8 @@ export interface FormField {
   description?: string;
   required?: boolean;
   validation?: {
-    min?: number;
-    max?: number;
+    min?: string | number;
+    max?: string | number;
     pattern?: string;
     message?: string;
   };
@@ -18,11 +20,11 @@ export interface FormField {
     value: string | number;
     disabled?: boolean;
   }>;
-  defaultValue?: any;
+  defaultValue?: FormValue;
   conditional?: {
     field: string;
     operator: 'equals' | 'not_equals' | 'contains' | 'greater_than' | 'less_than';
-    value: any;
+    value: FormValue;
   };
   grid?: {
     col?: number;
@@ -47,7 +49,7 @@ export interface FormSection {
   conditional?: {
     field: string;
     operator: 'equals' | 'not_equals' | 'contains' | 'greater_than' | 'less_than';
-    value: any;
+    value: FormValue;
   };
 }
 
@@ -81,10 +83,10 @@ export interface FormRenderOptions {
   readonly?: boolean;
   disabled?: boolean;
   showValidation?: boolean;
-  onFieldChange?: (fieldId: string, value: any) => void;
+  onFieldChange?: (fieldId: string, value: FormValue) => void;
   onSectionToggle?: (sectionId: string, collapsed: boolean) => void;
-  onSubmit?: (data: Record<string, any>) => Promise<void>;
-  customComponents?: Record<string, React.ComponentType<any>>;
+  onSubmit?: (data: Record<string, FormValue>) => Promise<void>;
+  customComponents?: Record<string, React.ComponentType<unknown>>;
   tenant?: {
     id: string;
     branding?: {
@@ -108,7 +110,7 @@ class FormSchemaGenerator {
       styling?: FormSchema['styling'];
     } = {}
   ): FormSchema {
-    const fields = this.parseJSONSchemaProperties(jsonSchema.properties || {}, jsonSchema.required || []);
+    const fields = this.parseJSONSchemaProperties((jsonSchema.properties || {}) as Record<string, JSONSchema7>, jsonSchema.required || []);
     
     return {
       id: jsonSchema.$id || `form_${Date.now()}`,
@@ -278,7 +280,7 @@ class FormSchemaGenerator {
           required: true,
           validation: {
             min: new Date().toISOString().split('T')[0]
-          } as any
+          }
         },
         {
           id: 'preferredTime',

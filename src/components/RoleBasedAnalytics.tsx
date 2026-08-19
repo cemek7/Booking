@@ -1,10 +1,11 @@
 'use client';
 
 import React from 'react';
-import { UserRole, RoleAnalyticsData } from '@/types/analytics';
-import { getUnifiedAnalyticsAccess, validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
+import { UserRole } from '@/types/analytics';
+import { getUnifiedAnalyticsAccess, getAnalyticsScope, validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
-import Phase5Dashboard from '@/components/Phase5Dashboard';
+import VerticalModulesDashboard from '@/components/VerticalModulesDashboard';
+import StaffMetrics from '@/components/analytics/StaffMetrics';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -14,7 +15,6 @@ interface RoleBasedAnalyticsProps {
   tenantId: string;
   userRole: UserRole;
   userId?: string;
-  analyticsData?: RoleAnalyticsData;
   className?: string;
 }
 
@@ -22,14 +22,15 @@ export default function RoleBasedAnalytics({
   tenantId, 
   userRole, 
   userId,
-  analyticsData,
   className 
 }: RoleBasedAnalyticsProps) {
   // Use unified analytics access system
   const analyticsAccess = getUnifiedAnalyticsAccess(userRole);
   
   // Validate access for tenant analytics
-  const tenantValidation = validateAnalyticsRequest(userRole, 'tenant', tenantId, userId);
+  const roleScope = getAnalyticsScope(userRole);
+  const validationScope = roleScope === 'none' ? 'personal' : roleScope;
+  const tenantValidation = validateAnalyticsRequest(userRole, validationScope, tenantId, userId);
 
   // No analytics access
   if (!analyticsAccess.canAccess || !tenantValidation.allowed) {
@@ -75,7 +76,7 @@ export default function RoleBasedAnalytics({
             {analyticsAccess.availableViews.length} views available
           </Badge>
         </div>
-        <Phase5Dashboard tenantId={tenantId} userRole={userRole} />
+        <VerticalModulesDashboard tenantId={tenantId} userRole={userRole} />
       </div>
     );
   }
@@ -98,10 +99,7 @@ export default function RoleBasedAnalytics({
         <AnalyticsDashboard 
           tenantId={tenantId} 
           userRole={userRole}
-          showFullMetrics={true}
-          showStaffPerformance={analyticsAccess.permissions.canViewTeamData}
-          showRevenueTrends={analyticsAccess.permissions.canViewTenantData}
-          showAdvancedFeatures={analyticsAccess.permissions.canCreateDashboards}
+          userId={userId}
         />
       </div>
     );
@@ -125,11 +123,7 @@ export default function RoleBasedAnalytics({
         <AnalyticsDashboard 
           tenantId={tenantId} 
           userRole={userRole}
-          showFullMetrics={false}
-          showStaffPerformance={analyticsAccess.permissions.canViewTeamData}
-          showRevenueTrends={false}
-          showAdvancedFeatures={false}
-          restrictedView="operational"
+          userId={userId}
         />
       </div>
     );
@@ -150,15 +144,16 @@ export default function RoleBasedAnalytics({
             Personal scope only
           </Badge>
         </div>
-        <AnalyticsDashboard 
-          tenantId={tenantId} 
-          userRole={userRole}
-          showFullMetrics={false}
-          showStaffPerformance={false}
-          showRevenueTrends={false}
-          showAdvancedFeatures={false}
-          restrictedView="personal"
-        />
+        {userId ? (
+          <StaffMetrics userId={userId} tenantId={tenantId} userRole={userRole} />
+        ) : (
+          <Alert>
+            <Lock className="h-4 w-4" />
+            <AlertDescription>
+              User ID is required for personal analytics.
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
     );
   }

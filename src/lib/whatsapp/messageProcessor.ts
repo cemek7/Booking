@@ -1,5 +1,8 @@
+// @ts-nocheck
+import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
-import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getProviderClient } from '@/lib/whatsapp/providers';
 import { detectIntent } from '@/lib/intentDetector';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
 import dialogManager from '@/lib/dialogManager';
@@ -19,7 +22,7 @@ export interface MessageQueueItem {
   scheduled_at?: string;
   processed_at?: string;
   error_message?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
 }
 
@@ -28,7 +31,7 @@ export interface ConversationState {
   phone_number: string;
   session_id: string;
   current_step: string;
-  context: Record<string, any>;
+  context: Record<string, unknown>;
   last_activity: string;
   conversation_history: Array<{
     message: string;
@@ -38,7 +41,7 @@ export interface ConversationState {
 }
 
 class WhatsAppMessageProcessor {
-  private supabase = createServerSupabaseClient();
+  private supabase = createSupabaseAdminClient();
   private isProcessing = false;
   private processingInterval: NodeJS.Timeout | null = null;
   private readonly BATCH_SIZE = 10;
@@ -49,11 +52,11 @@ class WhatsAppMessageProcessor {
    */
   async start(): Promise<void> {
     if (this.isProcessing) {
-      console.log('WhatsApp message processor already running');
+      defaultLogger.info('WhatsApp message processor already running');
       return;
     }
 
-    console.log('Starting WhatsApp message processor...');
+    defaultLogger.info('Starting WhatsApp message processor...');
     this.isProcessing = true;
 
     // Initialize dialog booking bridge
@@ -62,18 +65,18 @@ class WhatsAppMessageProcessor {
     // Start processing loop
     this.processingInterval = setInterval(() => {
       this.processBatch().catch(error => {
-        console.error('Error in message processing batch:', error);
+        defaultLogger.error('Error in message processing batch:', error);
       });
     }, this.PROCESSING_INTERVAL);
 
-    console.log('WhatsApp message processor started');
+    defaultLogger.info('WhatsApp message processor started');
   }
 
   /**
    * Stop the message processor
    */
   stop(): void {
-    console.log('Stopping WhatsApp message processor...');
+    defaultLogger.info('Stopping WhatsApp message processor...');
     this.isProcessing = false;
     
     if (this.processingInterval) {
@@ -81,7 +84,7 @@ class WhatsAppMessageProcessor {
       this.processingInterval = null;
     }
     
-    console.log('WhatsApp message processor stopped');
+    defaultLogger.info('WhatsApp message processor stopped');
   }
 
   /**
@@ -102,7 +105,7 @@ class WhatsAppMessageProcessor {
         .limit(this.BATCH_SIZE);
 
       if (error) {
-        console.error('Failed to fetch pending messages:', error);
+        defaultLogger.error('Failed to fetch pending messages:', error);
         return;
       }
 
@@ -110,12 +113,12 @@ class WhatsAppMessageProcessor {
         return; // No messages to process
       }
 
-      console.log(`Processing batch of ${messages.length} messages`);
+      defaultLogger.info(`Processing batch of ${messages.length} messages`);
 
       // Process messages in parallel with limited concurrency
       const promises = messages.map(message => 
         this.processMessage(message).catch(error => {
-          console.error(`Failed to process message ${message.id}:`, error);
+          defaultLogger.error(`Failed to process message ${message.id}:`, error);
           return this.markMessageFailed(message.id, error.message);
         })
       );
@@ -123,7 +126,7 @@ class WhatsAppMessageProcessor {
       await Promise.allSettled(promises);
 
     } catch (error) {
-      console.error('Error processing message batch:', error);
+      defaultLogger.error('Error processing message batch:', error);
     }
   }
 
@@ -131,7 +134,7 @@ class WhatsAppMessageProcessor {
    * Process a single message
    */
   private async processMessage(message: MessageQueueItem): Promise<void> {
-    console.log(`Processing message ${message.id} from ${message.from_number}`);
+    defaultLogger.info(`Processing message ${message.id} from ${message.from_number}`);
 
     try {
       // Mark message as processing
@@ -143,7 +146,14 @@ class WhatsAppMessageProcessor {
         throw new Error('No WhatsApp configuration found for tenant');
       }
 
-      const evolutionClient = createEvolutionClient(whatsappConfig);
+      // Only reply if the tenant owner has enabled the AI agent
+      if (!whatsappConfig.agent_enabled) {
+        defaultLogger.info(`[PROCESSOR] Agent disabled for tenant ${message.tenant_id}, skipping reply`);
+        await this.updateMessageStatus(message.id, 'completed');
+        return;
+      }
+
+      const evolutionClient = getProviderClient(whatsappConfig);
 
       // Get or create conversation state
       let conversationState = await this.getConversationState(
@@ -185,6 +195,7 @@ class WhatsAppMessageProcessor {
 
       let responseMessage: string | undefined;
       let shouldCompleteConversation = false;
+      let nextStep: string | undefined;
 
       // Check if this is a review collection conversation
       const { data: reviewSession } = await this.supabase
@@ -225,10 +236,11 @@ class WhatsAppMessageProcessor {
 
         responseMessage = dialogResponse.response;
         shouldCompleteConversation = dialogResponse.completed;
+        nextStep = dialogResponse.nextStep;
 
         // Handle different response scenarios
         if (dialogResponse.error) {
-          console.warn('Dialog booking bridge error:', dialogResponse.error);
+          defaultLogger.warn('Dialog booking bridge error:', dialogResponse.error);
           responseMessage = this.getErrorResponse(intentResult.intent);
         } else if (!responseMessage && intentResult.intent !== 'unknown') {
           // Generate contextual response based on intent
@@ -254,23 +266,30 @@ class WhatsAppMessageProcessor {
             timestamp: new Date().toISOString()
           });
 
-          // Store outbound message
-          await evolutionClient.storeMessage(message.tenant_id, {
-            id: sendResult.messageId || `out-${Date.now()}`,
-            from: whatsappConfig.instanceName,
-            to: message.from_number,
-            body: responseMessage,
-            type: 'text',
-            timestamp: Date.now(),
-            messageId: sendResult.messageId || `out-${Date.now()}`,
-            fromMe: true
+          // Store outbound reply in messages table so dashboard thread shows it
+          const { data: chat } = await this.supabase
+            .from('chats')
+            .select('id')
+            .eq('tenant_id', message.tenant_id)
+            .eq('customer_phone', message.from_number)
+            .maybeSingle();
+
+          await this.supabase.from('messages').insert({
+            tenant_id: message.tenant_id,
+            chat_id: chat?.id ?? null,
+            from_number: whatsappConfig.instanceName,
+            to_number: message.from_number,
+            content: responseMessage,
+            direction: 'outbound',
+            message_type: 'text',
+            timestamp: new Date().toISOString(),
           });
         }
       }
 
       // Update conversation state
       conversationState.last_activity = new Date().toISOString();
-      conversationState.current_step = dialogResponse.nextStep || conversationState.current_step;
+      conversationState.current_step = nextStep || conversationState.current_step;
 
       if (shouldCompleteConversation) {
         conversationState.current_step = 'completed';
@@ -281,10 +300,10 @@ class WhatsAppMessageProcessor {
       // Mark message as completed
       await this.updateMessageStatus(message.id, 'completed');
 
-      console.log(`Successfully processed message ${message.id}`);
+      defaultLogger.info(`Successfully processed message ${message.id}`);
 
     } catch (error) {
-      console.error(`Error processing message ${message.id}:`, error);
+      defaultLogger.error(`Error processing message ${message.id}:`, error);
       await this.handleMessageError(message, error);
     }
   }
@@ -306,13 +325,13 @@ class WhatsAppMessageProcessor {
         .single();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Failed to get conversation state:', error);
+        defaultLogger.error('Failed to get conversation state:', error);
         return null;
       }
 
       return data as ConversationState;
     } catch (error) {
-      console.error('Error getting conversation state:', error);
+      defaultLogger.error('Error getting conversation state:', error);
       return null;
     }
   }
@@ -336,7 +355,7 @@ class WhatsAppMessageProcessor {
         .eq('id', tenantId)
         .maybeSingle();
       if (tenantLookupError) {
-        console.error(`[MessageProcessor] Failed to fetch tenant industry for ${tenantId}:`, tenantLookupError.message, tenantLookupError);
+        defaultLogger.error(`[MessageProcessor] Failed to fetch tenant industry for ${tenantId}:`, tenantLookupError.message, tenantLookupError);
       }
 
       const conversationState: ConversationState = {
@@ -359,14 +378,14 @@ class WhatsAppMessageProcessor {
         .single();
 
       if (error) {
-        console.error('Failed to create conversation state:', error);
+        defaultLogger.error('Failed to create conversation state:', error);
         throw error;
       }
 
       return data as ConversationState;
 
     } catch (error) {
-      console.error('Error creating conversation state:', error);
+      defaultLogger.error('Error creating conversation state:', error);
       throw error;
     }
   }
@@ -388,11 +407,11 @@ class WhatsAppMessageProcessor {
         .eq('phone_number', state.phone_number);
 
       if (error) {
-        console.error('Failed to save conversation state:', error);
+        defaultLogger.error('Failed to save conversation state:', error);
         throw error;
       }
     } catch (error) {
-      console.error('Error saving conversation state:', error);
+      defaultLogger.error('Error saving conversation state:', error);
       throw error;
     }
   }
@@ -401,7 +420,7 @@ class WhatsAppMessageProcessor {
    * Generate contextual response based on intent and conversation state
    */
   private async generateContextualResponse(
-    intentResult: any,
+    intentResult: { intent: string; confidence: number },
     conversationState: ConversationState
   ): Promise<string> {
     const { intent, confidence } = intentResult;
@@ -482,10 +501,10 @@ class WhatsAppMessageProcessor {
         .eq('id', messageId);
 
       if (error) {
-        console.error('Failed to update message status:', error);
+        defaultLogger.error('Failed to update message status:', error);
       }
     } catch (error) {
-      console.error('Error updating message status:', error);
+      defaultLogger.error('Error updating message status:', error);
     }
   }
 
@@ -513,7 +532,7 @@ class WhatsAppMessageProcessor {
         })
         .eq('id', message.id);
       
-      console.log(`Scheduled retry for message ${message.id} in ${retryDelay}ms`);
+      defaultLogger.info(`Scheduled retry for message ${message.id} in ${retryDelay}ms`);
     } else {
       await this.markMessageFailed(message.id, error.message);
     }
@@ -524,7 +543,7 @@ class WhatsAppMessageProcessor {
    */
   private async markMessageFailed(messageId: string, errorMessage: string): Promise<void> {
     await this.updateMessageStatus(messageId, 'failed', errorMessage);
-    console.error(`Message ${messageId} failed permanently: ${errorMessage}`);
+    defaultLogger.error(`Message ${messageId} failed permanently: ${errorMessage}`);
   }
 }
 
@@ -533,6 +552,10 @@ export const whatsappMessageProcessor = new WhatsAppMessageProcessor();
 
 // Convenience functions
 export async function startWhatsAppProcessor(): Promise<void> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    defaultLogger.warn('[messageProcessor] Supabase env vars not configured — WhatsApp processor will not start');
+    return;
+  }
   await whatsappMessageProcessor.start();
 }
 
@@ -546,11 +569,11 @@ export async function queueWhatsAppMessage(
   toNumber: string,
   content: string,
   priority: MessageQueueItem['priority'] = 'normal',
-  metadata: Record<string, any> = {}
+  metadata: Record<string, unknown> = {}
 ): Promise<string | null> {
   try {
-    const supabase = createClient();
-    
+    const supabase = createSupabaseAdminClient();
+
     const queueItem: Omit<MessageQueueItem, 'id' | 'created_at'> = {
       tenant_id: tenantId,
       message_id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -572,13 +595,13 @@ export async function queueWhatsAppMessage(
       .single();
 
     if (error) {
-      console.error('Failed to queue WhatsApp message:', error);
+      defaultLogger.error('Failed to queue WhatsApp message:', error);
       return null;
     }
 
     return data.id;
   } catch (error) {
-    console.error('Error queuing WhatsApp message:', error);
+    defaultLogger.error('Error queuing WhatsApp message:', error);
     return null;
   }
 }

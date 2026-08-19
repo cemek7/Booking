@@ -36,7 +36,7 @@ export function extractContextFromRequest(req: NextRequest): LogContext {
   context.requestId = requestId;
 
   // Extract session ID from cookies or headers
-  const sessionId = req.cookies.get('session-id')?.value || req.headers.get('x-session-id');
+  const sessionId = req.cookies?.get('session-id')?.value || req.headers.get('x-session-id');
   if (sessionId) {
     context.sessionId = sessionId;
   }
@@ -82,7 +82,7 @@ export function extractContextFromHeaders(headers: Headers): LogContext {
  * Merge multiple log contexts
  */
 export function mergeContexts(...contexts: (LogContext | undefined)[]): LogContext {
-  return contexts.reduce((merged, ctx) => {
+  return contexts.reduce<LogContext>((merged, ctx) => {
     if (!ctx) return merged;
     return { ...merged, ...ctx };
   }, {} as LogContext);

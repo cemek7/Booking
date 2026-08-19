@@ -7,6 +7,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from "@/lib/supabase/tenant-context";
 import { Product, ProductListQuery, PRODUCT_ROLE_PERMISSIONS, ProductPermissions } from '@/types/product-catalogue';
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
+import { LayoutGrid, Package, Table2 } from 'lucide-react';
+import { useTenantCurrency, CURRENCY_LOCALE } from '@/hooks/useTenantCurrency';
 import Button from "@/components/ui/button";
 import { toast } from '@/components/ui/toast';
 import ProductFilters from './ProductFilters';
@@ -46,15 +48,15 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
     <TR>
       <TD>
         <div className="flex items-center gap-3">
-          {product.images?.length > 0 ? (
+          {(product.images?.length ?? 0) > 0 ? (
             <img
-              src={product.images[0]}
+              src={product.images![0]}
               alt={product.name}
               className="h-10 w-10 rounded-lg object-cover"
             />
           ) : (
             <div className="h-10 w-10 rounded-lg bg-gray-200 flex items-center justify-center">
-              📦
+              <Package className="h-5 w-5 text-gray-500" aria-hidden="true" />
             </div>
           )}
           <div>
@@ -66,14 +68,14 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
         </div>
       </TD>
       <TD>
-        {product.category?.name || <span className="text-gray-400">Uncategorized</span>}
+        {product.category || <span className="text-gray-400">Uncategorized</span>}
       </TD>
       <TD>
         <div>
           {formatPrice(product.price_cents, product.currency)}
-          {permissions.can_view_cost_prices && product.cost_price_cents > 0 && (
+          {permissions.can_view_cost_prices && (product.cost_price_cents ?? 0) > 0 && (
             <div className="text-sm text-gray-500">
-              Cost: {formatPrice(product.cost_price_cents, product.currency)}
+              Cost: {formatPrice(product.cost_price_cents ?? 0, product.currency)}
             </div>
           )}
         </div>
@@ -135,6 +137,7 @@ const ProductTableRow = memo<ProductTableRowProps>(function ProductTableRow({
 
 export default function ProductsList() {
   const { tenant, role } = useTenant();
+  const { currency: tenantCurrency } = useTenantCurrency();
   const queryClient = useQueryClient();
   const router = useRouter();
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -225,22 +228,28 @@ export default function ProductsList() {
     setFilters(prev => ({ ...prev, page }));
   }, []);
 
-  const formatPrice = useCallback((priceInCents: number, currency: string = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency,
-    }).format(priceInCents / 100);
-  }, []);
+  const formatPrice = useCallback((priceInCents: number, currency?: string) => {
+    // Product rows may not carry a currency — fall back to the tenant's
+    // configured default (NGN for the primary market) instead of USD.
+    const code = currency && currency.length === 3 ? currency.toUpperCase() : tenantCurrency;
+    const locale = CURRENCY_LOCALE[code];
+    try {
+      return new Intl.NumberFormat(locale, { style: 'currency', currency: code }).format((priceInCents ?? 0) / 100);
+    } catch {
+      return `${code} ${((priceInCents ?? 0) / 100).toFixed(2)}`;
+    }
+  }, [tenantCurrency]);
 
   const getStockStatus = useCallback((product: Product) => {
     if (!product.track_inventory) return { text: 'Not tracked', color: 'text-gray-500' };
-    if (product.stock_quantity === 0) return { text: 'Out of stock', color: 'text-red-600' };
-    if (product.stock_quantity <= product.low_stock_threshold) return { text: 'Low stock', color: 'text-yellow-600' };
+    if ((product.stock_quantity ?? 0) === 0) return { text: 'Out of stock', color: 'text-red-600' };
+    if ((product.stock_quantity ?? 0) <= (product.low_stock_threshold ?? 0)) return { text: 'Low stock', color: 'text-yellow-600' };
     return { text: 'In stock', color: 'text-green-600' };
   }, []);
 
-  const products = productsData?.products || [];
-  const pagination = productsData?.pagination || { total: 0, page: 1, totalPages: 1 };
+  const productsResult = productsData as { products?: Product[]; pagination?: { total: number; page: number; totalPages: number } } | undefined;
+  const products: Product[] = productsResult?.products || [];
+  const pagination = productsResult?.pagination || { total: 0, page: 1, totalPages: 1 };
 
   if (isLoading) {
     return (
@@ -273,7 +282,7 @@ export default function ProductsList() {
                 viewMode === 'table' ? 'bg-white shadow-sm' : ''
               }`}
             >
-              📋 Table
+              <span className="inline-flex items-center gap-1.5"><Table2 className="h-4 w-4" aria-hidden="true" /> Table</span>
             </button>
             <button
               onClick={() => setViewMode('grid')}
@@ -281,7 +290,7 @@ export default function ProductsList() {
                 viewMode === 'grid' ? 'bg-white shadow-sm' : ''
               }`}
             >
-              ⊞ Grid
+              <span className="inline-flex items-center gap-1.5"><LayoutGrid className="h-4 w-4" aria-hidden="true" /> Grid</span>
             </button>
           </div>
           <span className="text-sm text-gray-600">
@@ -290,7 +299,7 @@ export default function ProductsList() {
         </div>
         
         <div className="flex items-center gap-2">
-          {permissions.can_create_products && (
+          {permissions.canCreate && (
             <Button
               onClick={() => setShowCreateModal(true)}
               className="bg-primary text-white"
@@ -334,7 +343,7 @@ export default function ProductsList() {
               {products.length === 0 ? (
                 <TR>
                   <TD colSpan={6} className="text-center py-8 text-gray-500">
-                    No products found. {permissions.can_create_products && (
+                    No products found. {permissions.canCreate && (
                       <button 
                         onClick={() => setShowCreateModal(true)}
                         className="text-primary underline ml-1"

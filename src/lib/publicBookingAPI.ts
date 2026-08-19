@@ -22,7 +22,7 @@ interface TenantInfo {
   description?: string;
   logo?: string;
   industry?: string;
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
 }
 
 class PublicBookingAPI {
@@ -53,7 +53,8 @@ class PublicBookingAPI {
     });
     const res = await fetch(`/api/public/${slug}/availability?${params}`);
     if (!res.ok) throw new Error('Failed to fetch availability');
-    return res.json();
+    const data = await res.json() as TimeSlot[] | { slots?: TimeSlot[] };
+    return Array.isArray(data) ? data : data.slots ?? [];
   }
 
   async createPublicBooking({
@@ -65,6 +66,7 @@ class PublicBookingAPI {
     customerEmail,
     customerPhone,
     notes,
+    marketingConsent,
   }: {
     slug: string;
     serviceId: string;
@@ -74,7 +76,8 @@ class PublicBookingAPI {
     customerEmail: string;
     customerPhone: string;
     notes?: string;
-  }): Promise<{ id: string }> {
+    marketingConsent?: boolean;
+  }): Promise<{ id: string; depositRequired: boolean; paymentUrl: string | null; depositAmountCents: number | null; currency: string | null }> {
     const res = await fetch(`/api/public/${slug}/book`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -86,6 +89,7 @@ class PublicBookingAPI {
         customer_email: customerEmail,
         customer_phone: customerPhone,
         notes,
+        marketing_consent: marketingConsent ?? false,
       }),
     });
 
@@ -94,7 +98,14 @@ class PublicBookingAPI {
       throw new Error(error.message || 'Booking failed');
     }
 
-    return res.json();
+    const data = await res.json();
+    return {
+      id: data.booking_id ?? data.id,
+      depositRequired: data.depositRequired ?? false,
+      paymentUrl: data.paymentUrl ?? null,
+      depositAmountCents: data.depositAmountCents ?? null,
+      currency: data.currency ?? null,
+    };
   }
 }
 

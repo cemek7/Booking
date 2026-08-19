@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -7,7 +8,7 @@ import { inventoryService } from '@/lib/services/inventory-service';
 const GetStockQuerySchema = z.object({
   low_stock_only: z.preprocess((val) => val === 'true', z.boolean()).optional(),
   out_of_stock_only: z.preprocess((val) => val === 'true', z.boolean()).optional(),
-  category_id: z.string().uuid().optional(),
+  category: z.string().trim().min(1).optional(),
   product_id: z.string().uuid().optional(),
 });
 
@@ -36,7 +37,7 @@ export const GET = createHttpHandler(
 
     const result = await inventoryService.getStockLevels([tenantId], {
       productId: filters.product_id,
-      categoryId: filters.category_id,
+      category: filters.category,
       lowStockOnly: filters.low_stock_only,
       outOfStockOnly: filters.out_of_stock_only,
     });

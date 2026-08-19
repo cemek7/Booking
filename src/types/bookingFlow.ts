@@ -42,7 +42,7 @@ export interface BookingFlowContext {
   retryCount: number;
   maxRetries: number;
   errorMessage?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 // Service selection
@@ -114,7 +114,7 @@ export interface ExtractedEntity {
   confidence: number;
   startIndex: number;
   endIndex: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export type EntityType = 
@@ -149,7 +149,7 @@ export interface ConversationFlowConfig {
   notificationSettings: NotificationSettings;
   
   // AI/NLP settings
-  aiProvider?: 'openrouter' | 'openai' | 'anthropic';
+  aiProvider?: 'cloudflare' | 'openrouter' | 'openai' | 'anthropic';
   aiModel?: string;
   intentThreshold: number;
   entityThreshold: number;
@@ -180,21 +180,21 @@ export interface FlowStep {
 export interface ValidationRule {
   type: 'required' | 'format' | 'range' | 'custom';
   message: string;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 // Conditions for step navigation
 export interface StepCondition {
   field: string;
   operator: 'equals' | 'contains' | 'greater' | 'less' | 'exists';
-  value: any;
+  value: unknown;
   nextStep: string;
 }
 
 // Actions to execute during steps
 export interface StepAction {
   type: 'send_message' | 'create_booking' | 'send_notification' | 'update_context' | 'call_webhook';
-  config: Record<string, any>;
+  config: Record<string, unknown>;
   condition?: StepCondition;
 }
 
@@ -229,7 +229,7 @@ export interface BookingFlowResponse {
 // Flow actions to be executed
 export interface FlowAction {
   type: 'send_message' | 'create_booking' | 'schedule_notification' | 'update_database';
-  payload: Record<string, any>;
+  payload: Record<string, unknown>;
   delay?: number; // seconds
   retryConfig?: {
     maxRetries: number;
@@ -298,7 +298,7 @@ export interface BookingNotification {
   // Content
   message: string;
   templateName?: string;
-  templateVariables?: Record<string, any>;
+  templateVariables?: Record<string, unknown>;
   
   // Scheduling
   scheduledFor: string;
@@ -311,7 +311,7 @@ export interface BookingNotification {
   
   // Metadata
   createdAt: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 // Scheduled notification
@@ -330,7 +330,7 @@ export interface ScheduledNotification {
   status: 'pending' | 'executed' | 'cancelled';
   
   // Configuration
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 // Date/time parsing utilities
@@ -427,8 +427,9 @@ export function createBookingContext(
 export function transitionState(
   context: BookingFlowContext,
   newState: ConversationState,
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 ): BookingFlowContext {
+  const stateHistory = Array.isArray(context.metadata.stateHistory) ? context.metadata.stateHistory : [];
   return {
     ...context,
     state: newState,
@@ -437,7 +438,7 @@ export function transitionState(
       ...context.metadata,
       ...metadata,
       stateHistory: [
-        ...(context.metadata.stateHistory || []),
+        ...stateHistory,
         {
           from: context.state,
           to: newState,
@@ -464,4 +465,3 @@ export function isValidTransition(
   
   return validTransitions[from]?.includes(to) || false;
 }
-

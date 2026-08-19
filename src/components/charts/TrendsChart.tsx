@@ -1,9 +1,9 @@
 "use client";
 import React from 'react';
 
-export default function TrendsChart({ data = [], range = 30 }: { data?: any[]; range?: number }) {
+export default function TrendsChart({ data = [], range = 30 }: { data?: Array<{ count?: number }>; range?: number }) {
   // lightweight placeholder chart - replace with real chart library as needed
-  const points = Array.isArray(data) ? data.map((d: any) => d.count ?? 0) : [];
+  const points = Array.isArray(data) ? data.map((d) => d.count ?? 0) : [];
   return (
     <div className="w-full h-full flex items-center justify-center text-sm text-slate-500">
       {points.length === 0 ? (

@@ -1,6 +1,8 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { UpdateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
+import { defaultLogger } from '@/lib/logger';
 
 interface RouteParams {
   params: { id: string };
@@ -28,14 +30,11 @@ export const GET = createHttpHandler(
     const tenantIds = tenantUsers.map((tu: { tenant_id: string; role: string }) => tu.tenant_id);
 
     // Fetch product first to determine its tenant
+    // get_product_stock is a function, not an embeddable resource (embedding it
+    // errors with PGRST200). Stock lives on the products row already.
     const { data: product, error } = await ctx.supabase
       .from('products')
-      .select(`
-        *,
-        category:product_categories!category_id(id, name, description),
-        variants:product_variants!product_id(*),
-        stock_info:get_product_stock(product_id)
-      `)
+      .select('*,variants:product_variants!product_id(*)')
       .eq('id', id)
       .in('tenant_id', tenantIds)
       .single();
@@ -140,21 +139,11 @@ export const PUT = createHttpHandler(
       }
     }
 
-    // Validate category if being updated
-    if (body.category_id) {
-      const { data: category } = await ctx.supabase
-        .from('product_categories')
-        .select('id')
-        .eq('id', body.category_id)
-        .eq('tenant_id', existingProduct.tenant_id)
-        .eq('is_active', true)
-        .limit(1)
-        .single();
-
-      if (!category) {
-        throw ApiErrorFactory.badRequest('Category not found or inactive');
-      }
-    }
+    const normalizedCategory = typeof body.category === 'string'
+      ? body.category.trim() || null
+      : body.category === null
+        ? null
+        : undefined;
 
     // Prepare update data (only include provided fields)
     const updateData: Record<string, unknown> = {
@@ -177,7 +166,9 @@ export const PUT = createHttpHandler(
     if (body.description !== undefined) updateData.description = body.description?.trim();
     if (body.short_description !== undefined) updateData.short_description = body.short_description?.trim();
     if (body.sku !== undefined) updateData.sku = body.sku?.trim().toUpperCase();
-    if (body.category_id !== undefined) updateData.category_id = body.category_id;
+    if (normalizedCategory !== undefined) {
+      updateData.category = normalizedCategory;
+    }
     if (body.brand !== undefined) updateData.brand = body.brand?.trim();
     if (body.weight_grams !== undefined) updateData.weight_grams = body.weight_grams;
     if (body.dimensions !== undefined) updateData.dimensions = body.dimensions;
@@ -215,7 +206,7 @@ export const PUT = createHttpHandler(
             });
 
           if (movementError) {
-            console.error('Failed to log inventory movement:', movementError);
+            defaultLogger.error('Failed to log inventory movement:', movementError);
           }
         }
         
@@ -230,7 +221,6 @@ export const PUT = createHttpHandler(
       .eq('id', id)
       .select(`
         *,
-        category:product_categories!category_id(id, name, description),
         variants:product_variants!product_id(*)
       `)
       .single();

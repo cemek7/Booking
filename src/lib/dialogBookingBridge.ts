@@ -1,16 +1,19 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { BookingEngine } from './booking/engine';
-import { detectIntent, type Intent, type ContextualHints } from './intentDetector';
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, prefer-const */
+import { defaultLogger } from '@/lib/logger';
+import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
+import { createReservation } from './reservationService';
+import { detectIntent, type Intent, type IntentType, type ContextualHints } from './intentDetector';
 import * as dialogManager from './dialogManager';
 import { observability } from './observability/observability';
-import { EvolutionClient } from './evolutionClient';
 import { z } from 'zod';
 import { BookingStep } from '../types/shared';
+import { PaymentsAdapter } from './paymentsAdapter';
+import { generateCalendarLinks, bookingToCalendarEvent } from './integrations/universalCalendar';
 
 // Dialog state for booking flow
 export interface BookingDialogState {
   step: BookingStep;
-  intent?: 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry';
+  intent?: IntentType;
   serviceId?: string;
   serviceName?: string;
   staffId?: string;
@@ -21,7 +24,9 @@ export interface BookingDialogState {
   customerPhone?: string;
   customerEmail?: string;
   notes?: string;
-  tentantId?: string;
+  tenantId?: string;
+  bookingId?: string;
+  paymentUrl?: string;
   errors?: string[];
   retryCount?: number;
   // For product inquiry context
@@ -44,19 +49,15 @@ const BookingSlotSchema = z.object({
  * Coordinates conversation flows with booking engine operations
  */
 export class DialogBookingBridge {
-  private bookingEngine: BookingEngine;
   private supabase: any;
   private isInitialized = false;
 
   constructor() {
     this.supabase = createServerSupabaseClient();
-    this.bookingEngine = new BookingEngine();
   }
 
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
-    
-    await this.bookingEngine.initialize();
     this.isInitialized = true;
   }
 
@@ -82,17 +83,34 @@ export class DialogBookingBridge {
       if (!session) {
         throw new Error('Session not found');
       }
+      // Prevent cross-tenant session access
+      if (session.tenant_id && session.tenant_id !== tenantId) {
+        defaultLogger.error('[dialog] Cross-tenant session access attempt', { sessionId, tenantId, sessionTenantId: session.tenant_id });
+        throw new Error('Session tenant mismatch');
+      }
 
       const state = this.parseDialogState(session.slots);
-      
+
+      // Business hours check — respond warmly if outside hours
+      const oohResponse = await this.checkOutsideBusinessHours(tenantId, state);
+      if (oohResponse) {
+        observability.addTraceLog(traceContext, 'info', 'Out-of-hours response triggered');
+        return oohResponse;
+      }
+
       // Detect intent if not already determined
       if (!state.step || state.step === 'intent') {
+        const [messageCount, services] = await Promise.all([
+          this.getSessionMessageCount(tenantId, sessionId),
+          this.getAvailableServices(tenantId),
+        ]);
         const context: ContextualHints = {
-          conversationTurn: 1,
+          conversationTurn: messageCount + 1,
           tenantVertical: await this.getTenantVertical(tenantId),
-          timeOfDay: this.getTimeOfDay()
+          timeOfDay: this.getTimeOfDay(),
+          services: services.map((s) => ({ name: s.name })),
         };
-        
+
         const intent = await detectIntent(message, context);
         observability.setTraceTag(traceContext, 'detected_intent', intent.intent);
         observability.setTraceTag(traceContext, 'intent_confidence', intent.confidence.toString());
@@ -106,8 +124,8 @@ export class DialogBookingBridge {
         }
         
         // Update state with intent and extracted entities
-        state.intent = intent.intent as any;
-        state.step = intent.intent === 'booking' ? 'service' : intent.intent;
+        state.intent = intent.intent;
+        state.step = this.normalizeBookingStep(intent.intent);
         
         // Extract entities from intent detection
         if (intent.entities) {
@@ -137,40 +155,62 @@ export class DialogBookingBridge {
           }
         }
         
-        await this.updateSessionState(sessionId, state);
+        await this.updateSessionState(sessionId, state, tenantId);
       }
 
       // Process based on current step
+      let flowResult: { response: string; completed: boolean; error?: string; nextStep?: string };
       switch (state.step) {
         case 'booking':
-          return await this.handleBookingFlow(tenantId, sessionId, state, message);
+          flowResult = await this.handleBookingFlow(tenantId, sessionId, state, message);
+          break;
         case 'reschedule':
-          return await this.handleRescheduleFlow(tenantId, sessionId, state, message);
+          flowResult = await this.handleRescheduleFlow(tenantId, sessionId, state, message);
+          break;
         case 'cancel':
-          return await this.handleCancelFlow(tenantId, sessionId, state, message);
+          flowResult = await this.handleCancelFlow(tenantId, sessionId, state, message);
+          break;
         case 'service':
-          return await this.handleServiceSelection(tenantId, sessionId, state, message);
+          flowResult = await this.handleServiceSelection(tenantId, sessionId, state, message);
+          break;
         case 'staff':
-          return await this.handleStaffSelection(tenantId, sessionId, state, message);
+          flowResult = await this.handleStaffSelection(tenantId, sessionId, state, message);
+          break;
         case 'time':
-          return await this.handleTimeSelection(tenantId, sessionId, state, message);
+          flowResult = await this.handleTimeSelection(tenantId, sessionId, state, message);
+          break;
         case 'contact':
-          return await this.handleContactInfo(tenantId, sessionId, state, message, userPhone);
+          flowResult = await this.handleContactInfo(tenantId, sessionId, state, message, userPhone);
+          break;
         case 'confirm':
-          return await this.handleConfirmation(tenantId, sessionId, state, message);
+          flowResult = await this.handleConfirmation(tenantId, sessionId, state, message);
+          break;
+        case 'payment_pending':
+          flowResult = await this.handlePaymentPending(tenantId, sessionId, state, message);
+          break;
         case 'business_info':
-          return await this.handleBusinessInfoInquiry(tenantId, sessionId, state, message);
+          flowResult = await this.handleBusinessInfoInquiry(tenantId, sessionId, state, message);
+          break;
         case 'product_inquiry':
-          return await this.handleProductInquiry(tenantId, sessionId, state, message);
+          flowResult = await this.handleProductInquiry(tenantId, sessionId, state, message);
+          break;
         case 'inquiry':
-          return await this.handleGeneralInquiry(tenantId, sessionId, state, message);
+          flowResult = await this.handleGeneralInquiry(tenantId, sessionId, state, message);
+          break;
         default:
-          return {
+          flowResult = {
             response: 'I\'m having trouble understanding where we are in the booking process. Let\'s start over. What would you like to do?',
             completed: false,
             nextStep: 'intent'
           };
       }
+
+      // Lead capture: when session completes without a confirmed booking, capture the lead
+      if (flowResult.completed && state.intent !== 'booking') {
+        await this.captureLeadIfEnabled(tenantId, state, userPhone);
+      }
+
+      return flowResult;
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', `Dialog processing error: ${error}`);
       return {
@@ -179,7 +219,7 @@ export class DialogBookingBridge {
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     } finally {
-      observability.endTrace(traceContext);
+      observability.finishTrace(traceContext);
     }
   }
 
@@ -232,7 +272,7 @@ export class DialogBookingBridge {
       state.serviceId = matched.id;
       state.serviceName = matched.name;
       state.step = 'staff';
-      await this.updateSessionState(sessionId, state);
+      await this.updateSessionState(sessionId, state, tenantId);
       
       return {
         response: `Great! I'll book a ${matched.name} for you. Do you have a preferred staff member, or would you like me to assign someone available?`,
@@ -264,7 +304,7 @@ export class DialogBookingBridge {
     if (/\b(any|anyone|don't care|no preference|available)\b/.test(low)) {
       // Auto-assign staff later
       state.step = 'time';
-      await this.updateSessionState(sessionId, state);
+      await this.updateSessionState(sessionId, state, tenantId);
       
       return {
         response: 'Perfect! I\'ll assign an available staff member. When would you like your appointment? Please provide a date and time.',
@@ -281,7 +321,7 @@ export class DialogBookingBridge {
       state.staffId = matched.id;
       state.staffName = matched.name;
       state.step = 'time';
-      await this.updateSessionState(sessionId, state);
+      await this.updateSessionState(sessionId, state, tenantId);
       
       return {
         response: `Great choice! I'll book you with ${matched.name}. When would you like your appointment?`,
@@ -307,14 +347,23 @@ export class DialogBookingBridge {
     state: BookingDialogState,
     message: string
   ) {
+    // Guard: service must be selected before time
+    if (!state.serviceId) {
+      return {
+        response: 'Before we pick a time, I need to know which service you\'d like. What service can I book for you?',
+        completed: false,
+        nextStep: 'service'
+      };
+    }
+
     const timeInfo = this.extractTimeFromMessage(message);
-    
+
     if (timeInfo.startTime) {
       // Validate availability
       const isAvailable = await this.checkAvailability(
         tenantId,
         timeInfo.startTime,
-        state.serviceId!,
+        state.serviceId,
         state.staffId
       );
       
@@ -322,7 +371,7 @@ export class DialogBookingBridge {
         state.startTime = timeInfo.startTime;
         state.endTime = timeInfo.endTime;
         state.step = 'contact';
-        await this.updateSessionState(sessionId, state);
+        await this.updateSessionState(sessionId, state, tenantId);
         
         return {
           response: `Perfect! ${timeInfo.formatted} is available. I'll need your contact information to complete the booking. What's your phone number?`,
@@ -338,8 +387,11 @@ export class DialogBookingBridge {
           state.staffId
         );
         
+        const altText = alternatives.length > 0
+          ? ` How about: ${alternatives.join(', ')}?`
+          : ' Please suggest a different date or time.';
         return {
-          response: `I'm sorry, ${timeInfo.formatted} isn't available. How about: ${alternatives.join(', ')}?`,
+          response: `I'm sorry, ${timeInfo.formatted} isn't available.${altText}`,
           completed: false,
           nextStep: 'time'
         };
@@ -387,7 +439,7 @@ export class DialogBookingBridge {
 
     if (state.customerPhone) {
       state.step = 'confirm';
-      await this.updateSessionState(sessionId, state);
+      await this.updateSessionState(sessionId, state, tenantId);
 
       const summary = this.createBookingSummary(state);
       return {
@@ -421,7 +473,7 @@ export class DialogBookingBridge {
 
     if (/\b(no|n|cancel|change|different)\b/.test(low)) {
       state.step = 'service';
-      await this.updateSessionState(sessionId, state);
+      await this.updateSessionState(sessionId, state, tenantId);
 
       return {
         response: 'No problem! What would you like to change? (service, time, or staff)',
@@ -438,7 +490,7 @@ export class DialogBookingBridge {
   }
 
   /**
-   * Attempt to create the booking
+   * Attempt to create the booking, then request payment via Paystack
    */
   private async attemptBooking(
     tenantId: string,
@@ -446,48 +498,145 @@ export class DialogBookingBridge {
     state: BookingDialogState
   ) {
     try {
+      // Idempotency: if a booking was already created for this session, skip creation
+      const existingBookingId = state.bookingId;
+      if (existingBookingId) {
+        const { data: existingBooking } = await this.supabase
+          .from('reservations')
+          .select('id, status')
+          .eq('id', existingBookingId)
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
+        if (existingBooking) {
+          if (state.paymentUrl) {
+            return {
+              response:
+                `✅ Your booking already exists! Ref: #${existingBooking.id.slice(-6).toUpperCase()}\n\n` +
+                `💳 *Complete your payment here:*\n${state.paymentUrl}\n\n` +
+                `_Reply DONE once payment is complete._`,
+              completed: false,
+              nextStep: 'payment_pending'
+            };
+          }
+          return await this.sendBookingConfirmedResponse(tenantId, sessionId, state, existingBooking);
+        }
+      }
+
+      const staffId = state.staffId || await this.autoAssignStaff(tenantId, state.serviceId!, state.startTime!);
       const bookingData = {
         customer_name: state.customerName || 'Walk-in Customer',
-        customer_email: state.customerEmail || `${state.customerPhone}@temp.booking`,
-        customer_phone: state.customerPhone!,
+        phone: state.customerPhone!,
         service_id: state.serviceId!,
-        provider_id: state.staffId || await this.autoAssignStaff(tenantId, state.serviceId!, state.startTime!),
+        service: state.serviceName || state.serviceId!,
+        staff_id: staffId,
         start_time: state.startTime!,
-        end_time: state.endTime || this.calculateEndTime(state.startTime!, state.serviceId!),
+        end_time: state.endTime || await this.calculateEndTime(state.startTime!, state.serviceId!),
         notes: state.notes,
         metadata: {
           source: 'whatsapp_conversation',
           session_id: sessionId
         }
       };
-      
-      const result = await this.bookingEngine.createBooking(tenantId, bookingData);
 
-      if (result.booking) {
-        state.step = 'complete';
-        await this.updateSessionState(sessionId, state);
+      const reservation = await createReservation(
+        createSupabaseAdminClient(),
+        {
+          tenant_id: tenantId,
+          customer_name: bookingData.customer_name,
+          phone: bookingData.phone,
+          service_id: bookingData.service_id,
+          service: bookingData.service,
+          start_at: bookingData.start_time,
+          end_at: bookingData.end_time,
+          status: 'confirmed',
+          metadata: bookingData.metadata,
+          staff_id: bookingData.staff_id,
+        }
+      );
 
-        // Notify owner of new booking (async, don't block response)
-        this.notifyOwnerOfNewBooking(tenantId, {
-          bookingId: result.booking.id,
-          customerName: state.customerName || 'WhatsApp Customer',
-          customerPhone: state.customerPhone!,
-          serviceName: state.serviceName,
-          startTime: state.startTime,
-          staffName: state.staffName
-        }).catch(err => console.error('Failed to notify owner:', err));
-
-        return {
-          response: `✅ Your appointment has been booked successfully!\n\nBooking ID: ${result.booking.id}\n\nYou'll receive a confirmation message shortly. Thank you!`,
-          completed: true
-        };
-      } else {
+      if (!reservation) {
         return {
           response: 'I\'m sorry, there was a problem creating your booking. Please try again or call us directly.',
           completed: false,
           error: 'Booking creation failed'
         };
       }
+
+      state.bookingId = reservation.id;
+
+      // Fetch service price for deposit
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('price, currency')
+        .eq('id', state.serviceId!)
+        .maybeSingle();
+
+      const currency = service?.currency || 'NGN';
+      const priceMinor = Math.round((service?.price || 0) * 100); // convert to kobo/cents
+
+      // Attempt to create a deposit via paymentsAdapter (defaults to Paystack)
+      let paymentUrl: string | null = null;
+      if (priceMinor > 0) {
+        try {
+          // Idempotency: check for an existing pending deposit before creating a new one
+          const { data: existingDeposit } = await this.supabase
+            .from('transactions')
+            .select('id, raw')
+            .eq('tenant_id', tenantId)
+            .eq('type', 'deposit')
+            .in('status', ['pending', 'success'])
+            .filter('raw->reservation_id', 'eq', reservation.id)
+            .maybeSingle();
+
+          if (existingDeposit) {
+            paymentUrl = existingDeposit.raw?.provider_response?.authorizationUrl || null;
+          } else {
+            const adapter = new PaymentsAdapter();
+            const depositResult = await adapter.createDeposit({
+              tenant_id: tenantId,
+              reservation_id: reservation.id,
+              amount_minor_units: priceMinor,
+              currency,
+              customer_phone: state.customerPhone,
+              customer_email: state.customerEmail,
+              metadata: { session_id: sessionId, source: 'whatsapp_conversation' }
+            });
+            if (depositResult.status === 'created' && depositResult.payment_url) {
+              paymentUrl = depositResult.payment_url;
+            }
+          }
+        } catch (payErr) {
+          defaultLogger.warn('dialogBookingBridge: deposit creation failed, continuing without payment link', payErr);
+        }
+      }
+
+      if (paymentUrl) {
+          state.step = 'payment_pending';
+          state.paymentUrl = paymentUrl;
+          await this.updateSessionState(sessionId, state, tenantId);
+
+        // Notify owner async
+          this.notifyOwnerOfNewBooking(tenantId, {
+          bookingId: reservation.id,
+          customerName: state.customerName || 'WhatsApp Customer',
+          customerPhone: state.customerPhone!,
+          serviceName: state.serviceName,
+          startTime: state.startTime,
+          staffName: state.staffName
+        }).catch(err => defaultLogger.error('Failed to notify owner:', err));
+
+        return {
+          response:
+            `✅ Booking created! Ref: #${reservation.id.slice(-6).toUpperCase()}\n\n` +
+            `💳 *To confirm your appointment, please complete payment:*\n${paymentUrl}\n\n` +
+            `_Your slot is reserved for 15 minutes. Reply DONE once payment is complete._`,
+          completed: false,
+          nextStep: 'payment_pending'
+        };
+      }
+
+      // No deposit required — confirm immediately with calendar link
+      return await this.sendBookingConfirmedResponse(tenantId, sessionId, state, reservation);
     } catch (error) {
       return {
         response: 'I\'m sorry, I couldn\'t complete your booking due to a technical issue. Please try again.',
@@ -497,11 +646,104 @@ export class DialogBookingBridge {
     }
   }
 
+  /**
+   * Handle payment_pending step — customer replies after paying
+   */
+  private async handlePaymentPending(
+    tenantId: string,
+    sessionId: string,
+    state: BookingDialogState,
+    message: string
+  ) {
+    const low = message.toLowerCase();
+
+    if (/\b(done|paid|complete|completed|payment done|i paid)\b/.test(low)) {
+      // Fetch the booking and confirm
+      if (state.bookingId) {
+        const { data: booking } = await this.supabase
+          .from('reservations')
+          .select('id, start_at, end_at, status')
+          .eq('id', state.bookingId)
+          .maybeSingle();
+
+        if (booking) {
+          return await this.sendBookingConfirmedResponse(tenantId, sessionId, state, booking);
+        }
+      }
+    }
+
+    // Re-send the payment link if they're asking again
+    const paymentUrl = state.paymentUrl;
+    return {
+      response:
+        `⏳ We're waiting for your payment to be confirmed.\n\n` +
+        (paymentUrl ? `💳 Payment link: ${paymentUrl}\n\n` : '') +
+        `Reply *DONE* once you've completed the payment.`,
+      completed: false,
+      nextStep: 'payment_pending'
+    };
+  }
+
+  /**
+   * Send a confirmed booking response with a universal calendar link
+   */
+  private async sendBookingConfirmedResponse(
+    tenantId: string,
+    sessionId: string,
+    state: BookingDialogState,
+    booking: { id: string; start_at?: string; end_at?: string }
+  ) {
+    state.step = 'complete';
+    await this.updateSessionState(sessionId, state, tenantId);
+
+    // Generate calendar link (Google Calendar as primary for WhatsApp)
+    let calendarLine = '';
+    try {
+      const tenantInfo = await this.getTenantInfo(tenantId);
+      const startTime = new Date(booking.start_at || state.startTime!);
+      const endTime = new Date(booking.end_at || state.endTime || await this.calculateEndTime(startTime.toISOString(), state.serviceId!));
+      const calendarLinks = generateCalendarLinks({
+        title: `${state.serviceName || 'Appointment'} - ${tenantInfo?.name || 'Booking'}`,
+        description: `Service: ${state.serviceName || 'Appointment'}\nBooking ref: #${booking.id.slice(-6).toUpperCase()}`,
+        location: tenantInfo?.address,
+        startTime,
+        endTime
+      });
+      const googleLink = calendarLinks.find(l => l.name === 'Google Calendar');
+      if (googleLink) {
+        calendarLine = `\n\n📅 Add to calendar: ${googleLink.url}`;
+      }
+    } catch (calErr) {
+      defaultLogger.warn('dialogBookingBridge: calendar link generation failed', calErr);
+    }
+
+    // Notify owner async
+    this.notifyOwnerOfNewBooking(tenantId, {
+      bookingId: booking.id,
+      customerName: state.customerName || 'WhatsApp Customer',
+      customerPhone: state.customerPhone!,
+      serviceName: state.serviceName,
+      startTime: state.startTime,
+      staffName: state.staffName
+    }).catch(err => defaultLogger.error('Failed to notify owner:', err));
+
+    return {
+      response:
+        `🎉 *Booking Confirmed!*\n\n` +
+        `Booking Ref: #${booking.id.slice(-6).toUpperCase()}\n` +
+        `📋 Service: ${state.serviceName || 'Appointment'}\n` +
+        `📅 Time: ${state.startTime ? new Date(state.startTime).toLocaleString() : 'TBD'}` +
+        calendarLine +
+        `\n\nThank you! We'll see you soon. 👋`,
+      completed: true
+    };
+  }
+
   // Helper methods
   private parseDialogState(slots: Record<string, unknown>): BookingDialogState {
     return {
-      step: (slots.step as string) || 'intent',
-      intent: slots.intent as any,
+      step: this.normalizeBookingStep(typeof slots.step === 'string' ? slots.step : 'intent'),
+      intent: typeof slots.intent === 'string' ? (slots.intent as IntentType) : undefined,
       serviceId: slots.serviceId as string,
       serviceName: slots.serviceName as string,
       staffId: slots.staffId as string,
@@ -512,24 +754,31 @@ export class DialogBookingBridge {
       customerPhone: slots.customerPhone as string,
       customerEmail: slots.customerEmail as string,
       notes: slots.notes as string,
+      bookingId: slots.bookingId as string,
+      paymentUrl: slots.paymentUrl as string,
       errors: (slots.errors as string[]) || [],
       retryCount: (slots.retryCount as number) || 0
     };
   }
 
-  private async updateSessionState(sessionId: string, state: BookingDialogState): Promise<void> {
-    await dialogManager.updateSlot(sessionId, 'step', state.step);
-    await dialogManager.updateSlot(sessionId, 'intent', state.intent);
-    await dialogManager.updateSlot(sessionId, 'serviceId', state.serviceId);
-    await dialogManager.updateSlot(sessionId, 'serviceName', state.serviceName);
-    await dialogManager.updateSlot(sessionId, 'staffId', state.staffId);
-    await dialogManager.updateSlot(sessionId, 'staffName', state.staffName);
-    await dialogManager.updateSlot(sessionId, 'startTime', state.startTime);
-    await dialogManager.updateSlot(sessionId, 'endTime', state.endTime);
-    await dialogManager.updateSlot(sessionId, 'customerName', state.customerName);
-    await dialogManager.updateSlot(sessionId, 'customerPhone', state.customerPhone);
-    await dialogManager.updateSlot(sessionId, 'customerEmail', state.customerEmail);
-    await dialogManager.updateSlot(sessionId, 'notes', state.notes);
+  private async updateSessionState(sessionId: string, state: BookingDialogState, tenantId?: string): Promise<void> {
+    // Merge all state fields into a single write to prevent concurrent requests seeing partial state
+    await dialogManager.updateSlots(sessionId, {
+      step: state.step,
+      intent: state.intent,
+      serviceId: state.serviceId,
+      serviceName: state.serviceName,
+      staffId: state.staffId,
+      staffName: state.staffName,
+      startTime: state.startTime,
+      endTime: state.endTime,
+      customerName: state.customerName,
+      customerPhone: state.customerPhone,
+      customerEmail: state.customerEmail,
+      notes: state.notes,
+      bookingId: state.bookingId,
+      paymentUrl: state.paymentUrl,
+    }, tenantId);
   }
 
   private async getTenantVertical(tenantId: string): Promise<'beauty' | 'hospitality' | 'medicine' | undefined> {
@@ -555,10 +804,14 @@ export class DialogBookingBridge {
   }
 
   private parseTimeEntity(timeStr: string): string {
-    // Simple time parsing - in production, use a proper date parsing library
-    const now = new Date();
-    // This is a placeholder - implement proper time parsing
-    return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(); // Tomorrow
+    // Delegate to extractTimeFromMessage which handles natural language time parsing
+    const result = this.extractTimeFromMessage(timeStr);
+    if (result.startTime) return result.startTime;
+    // Fallback: try parsing as direct ISO/date string
+    const parsed = new Date(timeStr);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString();
+    // Default: 24h from now
+    return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   }
 
   private extractTimeFromMessage(message: string): {
@@ -624,8 +877,35 @@ export class DialogBookingBridge {
   }
 
   private matchService(message: string, services: Array<{ id: string; name: string }>): { id: string; name: string } | null {
-    const low = message.toLowerCase();
-    return services.find(s => low.includes(s.name.toLowerCase())) || null;
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+    const msgNorm = norm(message);
+    const msgWords = new Set(msgNorm.split(/\s+/).filter((w) => w.length > 2));
+
+    let best: { service: { id: string; name: string }; score: number } | null = null;
+    for (const svc of services) {
+      const svcNorm = norm(svc.name);
+      // Exact substring match — return immediately
+      if (msgNorm.includes(svcNorm)) return svc;
+      // Word-overlap ratio
+      const svcWords = svcNorm.split(/\s+/).filter((w) => w.length > 2);
+      const overlap = svcWords.filter((w) => msgWords.has(w)).length;
+      const score = svcWords.length ? overlap / svcWords.length : 0;
+      if (score > 0 && (!best || score > best.score)) best = { service: svc, score };
+    }
+    return best && best.score >= 0.5 ? best.service : null;
+  }
+
+  private async getSessionMessageCount(tenantId: string, sessionId: string): Promise<number> {
+    try {
+      const { count } = await this.supabase
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .eq('session_id', sessionId);
+      return count ?? 0;
+    } catch {
+      return 0;
+    }
   }
 
   private async getAvailableStaff(tenantId: string): Promise<Array<{ id: string; name: string }>> {
@@ -634,7 +914,10 @@ export class DialogBookingBridge {
       .select('user_id, users(full_name)')
       .eq('tenant_id', tenantId)
       .eq('role', 'staff');
-    return data?.map(u => ({ id: u.user_id, name: u.users?.full_name || 'Staff Member' })) || [];
+    return (data as Array<{ user_id: string; users?: { full_name?: string | null } | null }> | undefined)?.map((u) => ({
+      id: u.user_id,
+      name: u.users?.full_name || 'Staff Member',
+    })) || [];
   }
 
   private matchStaff(message: string, staff: Array<{ id: string; name: string }>): { id: string; name: string } | null {
@@ -643,14 +926,58 @@ export class DialogBookingBridge {
   }
 
   private async checkAvailability(tenantId: string, startTime: string, serviceId: string, staffId?: string): Promise<boolean> {
-    // Use existing booking engine availability check
-    // Placeholder implementation
-    return true;
+    try {
+      const start = new Date(startTime);
+      if (isNaN(start.getTime())) return false;
+
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('duration')
+        .eq('id', serviceId)
+        .maybeSingle();
+
+      const end = new Date(start.getTime() + ((service?.duration ?? 60) * 60000));
+
+      let query = this.supabase
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .in('status', ['confirmed', 'pending'])
+        .lt('start_at', end.toISOString())
+        .gt('end_at', start.toISOString());
+
+      if (staffId) {
+        query = query.eq('staff_id', staffId);
+      }
+
+      const { count } = await query;
+      return (count ?? 0) === 0;
+    } catch {
+      return false;
+    }
   }
 
   private async suggestAlternativeTimes(tenantId: string, requestedTime: string, serviceId: string, staffId?: string): Promise<string[]> {
-    // Get alternative time suggestions from booking engine
-    return ['Tomorrow at 2pm', 'Friday at 10am', 'Monday at 3pm'];
+    const suggestions: string[] = [];
+    try {
+      const base = new Date(requestedTime);
+      if (isNaN(base.getTime())) return [];
+
+      // Try next 8 hourly slots from the requested time; return up to 3 that are available
+      for (let i = 1; i <= 8 && suggestions.length < 3; i++) {
+        const candidate = new Date(base.getTime() + i * 60 * 60 * 1000);
+        const available = await this.checkAvailability(tenantId, candidate.toISOString(), serviceId, staffId);
+        if (available) {
+          suggestions.push(candidate.toLocaleString('en-US', {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', hour12: true,
+          }));
+        }
+      }
+    } catch {
+      // ignore errors — caller will handle empty list
+    }
+    return suggestions;
   }
 
   private async autoAssignStaff(tenantId: string, serviceId: string, startTime: string): Promise<string> {
@@ -658,10 +985,22 @@ export class DialogBookingBridge {
     return staff[0]?.id || '';
   }
 
-  private calculateEndTime(startTime: string, serviceId: string): string {
-    // Default 1 hour appointment
+  private async calculateEndTime(startTime: string, serviceId: string): Promise<string> {
     const start = new Date(startTime);
-    return new Date(start.getTime() + 60 * 60 * 1000).toISOString();
+    let durationMinutes = 60; // default fallback
+    try {
+      const { data: service } = await this.supabase
+        .from('services')
+        .select('duration')
+        .eq('id', serviceId)
+        .single();
+      if (service?.duration && typeof service.duration === 'number' && service.duration > 0) {
+        durationMinutes = service.duration;
+      }
+    } catch {
+      // fall back to 60 min
+    }
+    return new Date(start.getTime() + durationMinutes * 60 * 1000).toISOString();
   }
 
   private createBookingSummary(state: BookingDialogState): string {
@@ -675,18 +1014,65 @@ export class DialogBookingBridge {
   }
 
   private async handleRescheduleFlow(tenantId: string, sessionId: string, state: BookingDialogState, message: string) {
-    // Implement reschedule logic
+    if (!state.customerPhone) {
+      return { response: 'I need your phone number to look up your booking. What number did you use?', completed: false };
+    }
+
+    const { data: booking } = await this.supabase
+      .from('reservations')
+      .select('id, service_id, staff_id, start_at, end_at, status')
+      .eq('tenant_id', tenantId)
+      .eq('customer_number', state.customerPhone)
+      .in('status', ['confirmed', 'pending'])
+      .order('start_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!booking) {
+      return { response: 'I couldn\'t find an upcoming booking for your number. Would you like to make a new booking instead?', completed: true };
+    }
+
+    // Update booking status to pending_reschedule for staff to action
+    await this.supabase
+      .from('reservations')
+      .update({ status: 'pending_reschedule', updated_at: new Date().toISOString() })
+      .eq('id', booking.id);
+
+    const formattedTime = booking.start_at ? new Date(booking.start_at).toLocaleString() : 'your appointment';
     return {
-      response: 'Reschedule functionality is coming soon. Please call us to reschedule your appointment.',
-      completed: true
+      response: `I've flagged your booking on ${formattedTime} for rescheduling. A team member will contact you shortly to confirm your new time.`,
+      completed: true,
     };
   }
 
   private async handleCancelFlow(tenantId: string, sessionId: string, state: BookingDialogState, message: string) {
-    // Implement cancellation logic
+    if (!state.customerPhone) {
+      return { response: 'I need your phone number to look up your booking. What number did you use?', completed: false };
+    }
+
+    const { data: booking } = await this.supabase
+      .from('reservations')
+      .select('id, start_at, status')
+      .eq('tenant_id', tenantId)
+      .eq('customer_number', state.customerPhone)
+      .in('status', ['confirmed', 'pending'])
+      .order('start_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!booking) {
+      return { response: 'I couldn\'t find an active booking for your number.', completed: true };
+    }
+
+    await this.supabase
+      .from('reservations')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', booking.id);
+
+    const formattedTime = booking.start_at ? new Date(booking.start_at).toLocaleString() : 'your appointment';
     return {
-      response: 'I understand you\'d like to cancel. Please call us directly to cancel your appointment.',
-      completed: true
+      response: `Your booking on ${formattedTime} has been cancelled. We hope to see you again soon!`,
+      completed: true,
     };
   }
 
@@ -726,7 +1112,7 @@ export class DialogBookingBridge {
       const ownerPhone = (ownerData?.users as { phone?: string })?.phone;
 
       if (!ownerPhone) {
-        console.log('No owner phone found for tenant:', tenantId);
+        defaultLogger.info('No owner phone found for tenant:', tenantId);
         return;
       }
 
@@ -746,13 +1132,16 @@ export class DialogBookingBridge {
         `\nRef: #${bookingRef}\n\n` +
         `_View details in your dashboard._`;
 
-      const evolutionClient = EvolutionClient.getInstance();
-      await evolutionClient.sendMessage(tenantId, ownerPhone, message);
+      const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+      const client = await getTenantWhatsAppProviderClient(tenantId);
+      if (client) {
+        await client.sendTextMessage(ownerPhone, message);
+      }
 
-      console.log('Owner notified of new booking:', bookingRef);
+      defaultLogger.info('Owner notified of new booking:', bookingRef);
     } catch (error) {
       // Don't fail the booking if notification fails
-      console.error('Failed to notify owner of booking:', error);
+      defaultLogger.error('Failed to notify owner of booking:', error);
     }
   }
 
@@ -815,7 +1204,7 @@ export class DialogBookingBridge {
         nextStep: 'intent'
       };
     } catch (error) {
-      console.error('Error handling business info inquiry:', error);
+      defaultLogger.error('Error handling business info inquiry:', error);
       return {
         response: 'I\'m sorry, I couldn\'t retrieve that information right now. How else can I help you?',
         completed: false,
@@ -907,7 +1296,7 @@ export class DialogBookingBridge {
 
       // Save product query context
       state.productQuery = message;
-      await this.updateSessionState(sessionId, state);
+      await this.updateSessionState(sessionId, state, tenantId);
 
       return {
         response: responseLines.join('\n'),
@@ -915,7 +1304,7 @@ export class DialogBookingBridge {
         nextStep: 'intent'
       };
     } catch (error) {
-      console.error('Error handling product inquiry:', error);
+      defaultLogger.error('Error handling product inquiry:', error);
       return {
         response: 'I\'m sorry, I couldn\'t retrieve product information right now. Would you like to book an appointment instead?',
         completed: false,
@@ -952,7 +1341,7 @@ export class DialogBookingBridge {
         nextStep: 'intent'
       };
     } catch (error) {
-      console.error('Error handling general inquiry:', error);
+      defaultLogger.error('Error handling general inquiry:', error);
       return {
         response: 'I\'m sorry, I couldn\'t retrieve service information. Please try again or contact us directly.',
         completed: false,
@@ -997,7 +1386,7 @@ export class DialogBookingBridge {
         industry: data.industry
       };
     } catch (error) {
-      console.error('Error fetching tenant info:', error);
+      defaultLogger.error('Error fetching tenant info:', error);
       return null;
     }
   }
@@ -1023,6 +1412,141 @@ export class DialogBookingBridge {
     }
 
     return undefined;
+  }
+
+  /**
+   * Check whether the current time is outside the tenant's configured business hours.
+   * Returns an out-of-hours response object if so, null otherwise.
+   */
+  private async checkOutsideBusinessHours(
+    tenantId: string,
+    state: BookingDialogState
+  ): Promise<{ response: string; completed: boolean } | null> {
+    try {
+      const { data: tenant } = await this.supabase
+        .from('tenants')
+        .select('metadata, timezone')
+        .eq('id', tenantId)
+        .maybeSingle();
+
+      if (!tenant) return null;
+
+      const meta = (tenant.metadata ?? {}) as Record<string, unknown>;
+      const businessHours = meta['business_hours'] as Record<string, { open: string | null; close: string | null; closed: boolean }> | undefined;
+      const captureLeads = meta['capture_leads'] as boolean | undefined;
+
+      if (!businessHours) return null;
+
+      const tz = tenant.timezone ?? 'UTC';
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+      const parts = formatter.formatToParts(now);
+      const weekday = parts.find((p) => p.type === 'weekday')?.value?.toLowerCase().slice(0, 3) ?? '';
+      const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+      const minute = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
+      const currentMinutes = hour * 60 + minute;
+
+      const DAY_MAP: Record<string, string> = { sun: 'sun', mon: 'mon', tue: 'tue', wed: 'wed', thu: 'thu', fri: 'fri', sat: 'sat' };
+      const dayKey = DAY_MAP[weekday] ?? weekday;
+      const dayConfig = businessHours[dayKey];
+
+      if (!dayConfig) return null;
+      if (dayConfig.closed) {
+        // Find next open day
+        const nextOpen = this.findNextOpenDay(businessHours, dayKey);
+        return this.buildOutOfHoursResponse(state, nextOpen, captureLeads ?? false);
+      }
+
+      if (!dayConfig.open || !dayConfig.close) return null;
+
+      const [openH, openM] = dayConfig.open.split(':').map(Number);
+      const [closeH, closeM] = dayConfig.close.split(':').map(Number);
+      const openMinutes = openH * 60 + openM;
+      const closeMinutes = closeH * 60 + closeM;
+
+      if (currentMinutes < openMinutes || currentMinutes >= closeMinutes) {
+        const nextOpen = currentMinutes >= closeMinutes
+          ? this.findNextOpenDay(businessHours, dayKey)
+          : { day: dayKey, time: dayConfig.open };
+        return this.buildOutOfHoursResponse(state, nextOpen, captureLeads ?? false);
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private findNextOpenDay(
+    businessHours: Record<string, { open: string | null; close: string | null; closed: boolean }>,
+    fromDay: string
+  ): { day: string; time: string } | null {
+    const order = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const idx = order.indexOf(fromDay);
+    for (let i = 1; i <= 7; i++) {
+      const candidate = order[(idx + i) % 7];
+      const config = businessHours[candidate];
+      if (config && !config.closed && config.open) {
+        return { day: candidate, time: config.open };
+      }
+    }
+    return null;
+  }
+
+  private buildOutOfHoursResponse(
+    state: BookingDialogState,
+    nextOpen: { day: string; time: string } | null,
+    captureLeads: boolean
+  ): { response: string; completed: boolean } {
+    const DAY_LABELS: Record<string, string> = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
+    const nextDesc = nextOpen ? `${DAY_LABELS[nextOpen.day] ?? nextOpen.day} at ${nextOpen.time}` : 'soon';
+    const name = state.customerName ? ` ${state.customerName}` : '';
+    const captureNote = captureLeads
+      ? " Want to leave your details and tell me what you're looking for? Our team will get back to you first thing."
+      : '';
+    return {
+      response: `Hi${name}! Thanks for reaching out — we're not available right now but we'll be back on ${nextDesc}.${captureNote}`,
+      completed: captureLeads ? false : true,
+    };
+  }
+
+  /**
+   * Capture a lead row when a session ends without completing a booking.
+   */
+  private async captureLeadIfEnabled(
+    tenantId: string,
+    state: BookingDialogState,
+    userPhone?: string
+  ): Promise<void> {
+    try {
+      const { data: tenant } = await this.supabase
+        .from('tenants')
+        .select('metadata')
+        .eq('id', tenantId)
+        .maybeSingle();
+
+      const meta = (tenant?.metadata ?? {}) as Record<string, unknown>;
+      if (!meta['capture_leads']) return;
+
+      const phone = userPhone ?? state.customerPhone;
+      if (!phone) return;
+
+      const followUpDelayHours = (meta['follow_up_delay_hours'] as number | undefined) ?? 24;
+      const followUpAt = new Date(Date.now() + followUpDelayHours * 60 * 60 * 1000).toISOString();
+
+      await this.supabase.from('leads').insert({
+        tenant_id: tenantId,
+        name: state.customerName ?? null,
+        phone,
+        email: state.customerEmail ?? null,
+        source: 'whatsapp',
+        intent: state.intent ?? 'inquiry',
+        status: 'new',
+        follow_up_at: followUpAt,
+      });
+    } catch (e) {
+      defaultLogger.warn('[dialog] captureLeadIfEnabled failed', e);
+    }
   }
 
   /**
@@ -1055,7 +1579,7 @@ export class DialogBookingBridge {
           stock_quantity,
           track_inventory,
           images,
-          product_categories(name)
+          category
         `)
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
@@ -1066,17 +1590,61 @@ export class DialogBookingBridge {
       const { data, error } = await query;
 
       if (error) {
-        console.error('Error fetching products:', error);
+        defaultLogger.error('Error fetching products:', error);
         return [];
       }
 
-      return (data || []).map(p => ({
+      const products = (data as Array<{
+        id: string;
+        name: string;
+        description?: string;
+        short_description?: string;
+        price_cents?: number;
+        currency?: string;
+        category?: string | null;
+        is_featured?: boolean;
+        stock_quantity?: number;
+        track_inventory?: boolean;
+        images?: unknown[];
+      }> | undefined) || [];
+
+      return products.map((p) => ({
         ...p,
-        category: p.product_categories?.name
+        category: typeof p.category === 'string' ? p.category : undefined
       }));
     } catch (error) {
-      console.error('Error in getProducts:', error);
+      defaultLogger.error('Error in getProducts:', error);
       return [];
+    }
+  }
+
+  private normalizeBookingStep(step: string): BookingStep {
+    switch (step) {
+      case 'booking':
+        return 'service';
+      case 'status':
+      case 'unknown':
+        return 'intent';
+      case 'service':
+      case 'staff':
+      case 'time':
+      case 'contact':
+      case 'confirm':
+      case 'complete':
+      case 'reschedule':
+      case 'cancel':
+      case 'inquiry':
+      case 'business_info':
+      case 'product_inquiry':
+      case 'greeting':
+      case 'service_selection':
+      case 'date_time':
+      case 'confirmation':
+      case 'completed':
+      case 'payment_pending':
+        return step;
+      default:
+        return 'intent';
     }
   }
 }

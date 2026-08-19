@@ -1,4 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import VerticalModuleManager from '../../../lib/verticalModuleManager';
 import { z } from 'zod';
 
@@ -13,16 +14,12 @@ const ModuleActionSchema = z.enum(['install', 'uninstall', 'configure']);
 const PostModulesBodySchema = z.object({
   action: ModuleActionSchema,
   moduleId: z.string(),
-  configuration: z.any().optional(),
+  configuration: z.unknown().optional(),
 });
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw new Error('Tenant ID is required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const { searchParams } = new URL(ctx.request.url);
     const queryValidation = GetModulesQuerySchema.safeParse(Object.fromEntries(searchParams));
@@ -54,11 +51,7 @@ export const GET = createHttpHandler(
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw new Error('Tenant ID is required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const body = await ctx.request.json();
     const bodyValidation = PostModulesBodySchema.safeParse(body);

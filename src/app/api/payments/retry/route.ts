@@ -1,28 +1,24 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import PaymentService from '@/lib/paymentService';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
-interface RetryRequest {
-  transactionId: string;
-}
+const RetrySchema = z.object({
+  transactionId: z.string().min(1, 'Transaction ID is required'),
+});
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const body: RetryRequest = await ctx.request.json();
-    const { transactionId } = body;
-    // Derive tenant from authenticated user; only superadmin may override via header.
-    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
-    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
-      ? headerTenantId
-      : ctx.user!.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    const raw = await ctx.request.json();
+    const parsed = RetrySchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
     }
-
-    if (!transactionId) {
-      throw ApiErrorFactory.validationError({ transactionId: 'Transaction ID is required' });
-    }
+    const { transactionId } = parsed.data;
+    const tenantId = getVerifiedTenantId(ctx);
 
     // Verify transaction belongs to tenant
     const { data: transaction } = await ctx.supabase
@@ -37,10 +33,10 @@ export const POST = createHttpHandler(
     }
 
     const paymentService = new PaymentService(ctx.supabase);
-    const result = await paymentService.retryFailedTransaction(transactionId);
+    const retryResult = await paymentService.retryFailedTransaction(transactionId);
 
-    if (!result.success) {
-      throw ApiErrorFactory.databaseError(new Error(result.error || 'Retry processing failed'));
+    if (!retryResult.success) {
+      throw ApiErrorFactory.databaseError(new Error(retryResult.error || 'Retry processing failed'));
     }
 
     return {
@@ -49,5 +45,5 @@ export const POST = createHttpHandler(
     };
   },
   'POST',
-  { auth: true, roles: ['manager', 'owner', 'superadmin'] }
+  { auth: true, roles: ['manager', 'owner', 'superadmin'], permissions: [BOOKA_PERMISSIONS.RECORD_PAYMENTS] }
 );

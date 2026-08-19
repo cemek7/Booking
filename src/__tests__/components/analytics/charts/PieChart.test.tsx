@@ -5,12 +5,26 @@ import PieChart, {
   PieDataPoint,
 } from '@/components/analytics/charts/PieChart';
 
+type PieMockDatum = { fill?: string };
+type RechartsPieMockProps = {
+  children?: React.ReactNode;
+  data?: PieMockDatum[];
+  innerRadius?: number;
+  outerRadius?: number;
+  label?: unknown;
+  dataKey?: string;
+  fill?: string;
+  content?: React.ReactNode;
+  height?: number;
+  formatter?: unknown;
+};
+
 // Mock recharts components
 jest.mock('recharts', () => ({
-  PieChart: ({ children }: any) => (
+  PieChart: ({ children }: RechartsPieMockProps) => (
     <div data-testid="pie-chart">{children}</div>
   ),
-  Pie: ({ data, innerRadius, outerRadius, label, dataKey }: any) => (
+  Pie: ({ data, innerRadius, outerRadius, label, dataKey }: RechartsPieMockProps) => (
     <div
       data-testid="pie"
       data-points={data?.length}
@@ -19,19 +33,19 @@ jest.mock('recharts', () => ({
       data-show-label={!!label}
       data-key={dataKey}
     >
-      {data?.map((item: any, index: number) => (
+      {data?.map((item, index) => (
         <div key={index} data-testid={`cell-${index}`} data-fill={item.fill} />
       ))}
     </div>
   ),
-  Cell: ({ fill }: any) => <div data-testid="cell" data-fill={fill} />,
-  Tooltip: ({ content }: any) => <div data-testid="tooltip">{content}</div>,
-  ResponsiveContainer: ({ children, height }: any) => (
+  Cell: ({ fill }: RechartsPieMockProps) => <div data-testid="cell" data-fill={fill} />,
+  Tooltip: ({ content }: RechartsPieMockProps) => <div data-testid="tooltip">{content}</div>,
+  ResponsiveContainer: ({ children, height }: RechartsPieMockProps) => (
     <div data-testid="responsive-container" data-height={height}>
       {children}
     </div>
   ),
-  Legend: ({ formatter }: any) => (
+  Legend: ({ formatter }: RechartsPieMockProps) => (
     <div data-testid="legend" data-has-formatter={!!formatter} />
   ),
 }));

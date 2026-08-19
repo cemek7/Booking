@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { toast } from '@/components/ui/toast';
+import { useAuthHeaders } from '@/hooks/useAuthHeaders';
 
 type Priority = 'low' | 'medium' | 'high';
 type Status = 'todo' | 'in_progress' | 'done';
@@ -36,68 +37,111 @@ const STATUS_LABELS: Record<Status, string> = {
   done: 'Done',
 };
 
-const SAMPLE_TASKS: Task[] = [
-  { id: '1', title: 'Follow up with client', priority: 'high', status: 'todo', created_at: new Date().toISOString() },
-  { id: '2', title: 'Update service pricing', priority: 'medium', status: 'in_progress', created_at: new Date().toISOString() },
-  { id: '3', title: 'Send booking reminders', priority: 'low', status: 'done', created_at: new Date().toISOString() },
-];
-
 export default function TasksClient({ role }: TasksClientProps) {
   const isManager = role === 'owner' || role === 'manager';
+  const headers = useAuthHeaders();
 
   const [activeStatus, setActiveStatus] = useState<Status | 'all'>('all');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', priority: 'medium' as Priority, due_date: '' });
-  const [tasks, setTasks] = useState<Task[]>(SAMPLE_TASKS);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(true);
+
+  const loadTasks = useCallback(async () => {
+    if (!headers) return;
+    setLoadingTasks(true);
+    try {
+      const res = await fetch('/api/tasks', { headers });
+      const data = await res.json();
+      setTasks(data?.tasks ?? []);
+    } catch {
+      toast.error('Failed to load tasks');
+    } finally {
+      setLoadingTasks(false);
+    }
+  }, [headers]);
+
+  useEffect(() => { loadTasks(); }, [loadTasks]);
 
   const visible = activeStatus === 'all' ? tasks : tasks.filter((t) => t.status === activeStatus);
 
-  function createTask() {
+  async function createTask() {
     if (!form.title.trim()) { toast.error('Title is required'); return; }
-    const newTask: Task = {
-      id: Date.now().toString(),
-      title: form.title.trim(),
-      description: form.description.trim() || undefined,
-      priority: form.priority,
-      status: 'todo',
-      due_date: form.due_date || undefined,
-      created_at: new Date().toISOString(),
-    };
-    setTasks((prev) => [newTask, ...prev]);
-    setForm({ title: '', description: '', priority: 'medium', due_date: '' });
-    setShowForm(false);
-    toast.success('Task created');
+    if (!headers) return;
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title: form.title.trim(),
+          description: form.description.trim() || undefined,
+          priority: form.priority,
+          due_date: form.due_date || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setTasks((prev) => [data.task, ...prev]);
+      setForm({ title: '', description: '', priority: 'medium', due_date: '' });
+      setShowForm(false);
+      toast.success('Task created');
+    } catch {
+      toast.error('Failed to create task');
+    }
   }
 
   /** Owner/Manager: cycles todo → in_progress → done → todo */
-  function cycleStatus(id: string) {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const next: Status = t.status === 'todo' ? 'in_progress' : t.status === 'in_progress' ? 'done' : 'todo';
-        return { ...t, status: next };
-      })
-    );
+  async function cycleStatus(id: string) {
+    if (!headers) return;
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const next: Status = task.status === 'todo' ? 'in_progress' : task.status === 'in_progress' ? 'done' : 'todo';
+    setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: next } : t));
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ id, status: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: task.status } : t));
+      toast.error('Failed to update task');
+    }
   }
 
-  /**
-   * Staff: marks tasks done (todo/in_progress → done) or reverts to todo (done → todo).
-   * An in_progress task clicked by staff goes directly to done, signalling completion.
-   */
-  function tickTask(id: string) {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const next: Status = t.status === 'done' ? 'todo' : 'done';
-        toast.success(next === 'done' ? 'Marked as done ✓' : 'Marked as to do');
-        return { ...t, status: next };
-      })
-    );
+  /** Staff: marks tasks done or reverts to todo */
+  async function tickTask(id: string) {
+    if (!headers) return;
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const next: Status = task.status === 'done' ? 'todo' : 'done';
+    setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: next } : t));
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ id, status: next }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(next === 'done' ? 'Marked as done ✓' : 'Marked as to do');
+    } catch {
+      setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: task.status } : t));
+      toast.error('Failed to update task');
+    }
   }
 
-  function deleteTask(id: string) {
+  async function deleteTask(id: string) {
+    if (!headers) return;
     setTasks((prev) => prev.filter((t) => t.id !== id));
-    toast.success('Task deleted');
+    try {
+      const res = await fetch(`/api/tasks?id=${id}`, { method: 'DELETE', headers });
+      if (!res.ok) throw new Error();
+      toast.success('Task deleted');
+    } catch {
+      await loadTasks();
+      toast.error('Failed to delete task');
+    }
   }
 
   const counts: Record<Status | 'all', number> = {
@@ -202,7 +246,11 @@ export default function TasksClient({ role }: TasksClientProps) {
       )}
 
       {/* Task list */}
-      {visible.length === 0 ? (
+      {loadingTasks ? (
+        <div className="text-center py-12 bg-white border rounded-xl">
+          <p className="text-gray-400 text-sm">Loading tasks…</p>
+        </div>
+      ) : visible.length === 0 ? (
         <div className="text-center py-12 bg-white border rounded-xl">
           <p className="text-gray-500 text-sm">No tasks found.</p>
         </div>

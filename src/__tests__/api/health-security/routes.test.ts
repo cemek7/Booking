@@ -10,7 +10,7 @@
  * - GET /api/security/evaluate (authenticated, owner/superadmin)
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 
 /**
  * Test Suite 1: Health Check Endpoint Tests (8 cases)

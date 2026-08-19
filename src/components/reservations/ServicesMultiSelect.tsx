@@ -10,7 +10,7 @@ export default function ServicesMultiSelect({ value, onChange }: { value: { id: 
       if (!tenant?.id) return [];
       const response = await authFetch('/api/services', { tenantId: tenant.id });
       if (response.error) throw new Error('Failed services fetch');
-      return response.data || [];
+      return (response.data as Array<{ id: string; name: string }>) || [];
     },
     enabled: !!tenant?.id
   });
@@ -28,7 +28,7 @@ export default function ServicesMultiSelect({ value, onChange }: { value: { id: 
   if (error) return <div>Error loading services</div>;
   return (
     <div className="space-y-2">
-      {data && data.map((service: any) => {
+      {data && data.map((service) => {
         const selected = value.find(s => s.id === service.id);
         return (
           <div key={service.id} className="flex items-center gap-2">

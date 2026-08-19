@@ -1,32 +1,75 @@
 // Jest globals are available without import
+// @ts-nocheck
+import { NextRequest } from 'next/server';
 import { GET as skillsGET, POST as skillsPOST } from '@/app/api/skills/route';
 
-// Minimal Supabase stub for tests
-function makeSupabase(list: any[] = [], inserted: any[] = []) {
-  return {
-    from(table: string) {
+const skillsList: Array<Record<string, unknown>> = [];
+const inserted: Array<Record<string, unknown>> = [];
+
+jest.mock('@/lib/supabase/bearer-client', () => ({
+  createSupabaseBearerClient: jest.fn().mockImplementation(() => ({
+    auth: {
+      getUser: jest.fn().mockResolvedValue({
+        data: { user: { id: 'test-user-id', email: 'test@example.com' } },
+        error: null,
+      }),
+    },
+    from: jest.fn().mockImplementation((table: string) => {
+      if (table === 'tenant_users') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { tenant_id: 'test-tenant-id', role: 'owner' },
+            error: null,
+          }),
+          then: (resolve: (value: unknown) => void) =>
+            resolve({ data: [{ tenant_id: 'test-tenant-id', role: 'owner' }], error: null }),
+        };
+      }
       if (table === 'skills') {
         return {
-          select() { return this; }, eq() { return this; }, order() { return Promise.resolve({ data: list, error: null }); },
-          insert(row: any) { inserted.push(row); return { select() { return this; }, maybeSingle() { return Promise.resolve({ data: { id: 's1', ...row }, error: null }); } } }
-        } as any;
+          select() { return this; },
+          eq() { return this; },
+          order() { return Promise.resolve({ data: skillsList, error: null }); },
+          insert(row: Record<string, unknown>) {
+            const record = { id: 's1', ...row };
+            inserted.push(record);
+            return {
+              select() { return this; },
+              maybeSingle() { return Promise.resolve({ data: record, error: null }); },
+            };
+          },
+        };
       }
-      return { select() { return this; } } as any;
-    }
-  } as any;
-}
-
-// Monkey patch createServerSupabaseClient to return stub
-jest.mock('@/lib/supabase/server', () => ({ createServerSupabaseClient: () => makeSupabase(), getBrowserSupabase: () => ({}) }));
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    }),
+  })),
+}));
 
 describe('skills API route', () => {
-  it('GET requires tenant_id', async () => {
-    const res = await skillsGET(new Request('http://x/api/skills')) as any;
-    expect(await res.json()).toHaveProperty('error');
+  beforeEach(() => {
+    skillsList.length = 0;
+    inserted.length = 0;
   });
+
+  it('GET returns skills list for authenticated user', async () => {
+    const res = await skillsGET(new NextRequest('http://x/api/skills')) as Response;
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json).toHaveProperty('skills');
+  });
+
   it('POST creates skill', async () => {
-    const res = await skillsPOST(new Request('http://x/api/skills', { method: 'POST', body: JSON.stringify({ tenant_id: 't1', name: 'Haircut' }) }));
-    const json = await (res as any).json();
+    const res = await skillsPOST(new NextRequest('http://x/api/skills', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Haircut' })
+    }));
+    const json = await (res as Response).json();
     expect(json.skill).toHaveProperty('name', 'Haircut');
   });
 });

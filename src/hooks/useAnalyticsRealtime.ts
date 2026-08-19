@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { getSupabaseBrowserClientAsync } from '@/lib/supabase/client';
 
 export interface AnalyticsRealtimeConfig {
   tenantId: string;
@@ -15,8 +16,8 @@ export interface AnalyticsRealtimeConfig {
 export interface AnalyticsUpdate {
   type: 'INSERT' | 'UPDATE' | 'DELETE';
   table: string;
-  record: any;
-  old_record?: any;
+  record: Record<string, unknown>;
+  old_record?: Record<string, unknown>;
   timestamp: string;
 }
 
@@ -28,6 +29,7 @@ export interface UseAnalyticsRealtimeReturn {
   updateCount: number;
   clearUpdates: () => void;
   refreshMetrics: () => void;
+  setRefreshCallback: (callback: (() => void) | null) => void;
 }
 
 /**
@@ -87,11 +89,15 @@ export function useAnalyticsRealtime({
     }
   }, []);
 
+  const setRefreshCallback = useCallback((callback: (() => void) | null) => {
+    metricsCallbackRef.current = callback;
+  }, []);
+
   /**
    * Handle realtime update
    */
   const handleRealtimeUpdate = useCallback(
-    (payload: any) => {
+    (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
       const update: AnalyticsUpdate = {
         type: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
         table: payload.table,
@@ -124,30 +130,35 @@ export function useAnalyticsRealtime({
   useEffect(() => {
     if (!enabled || !tenantId) return;
 
-    const supabase = getSupabaseBrowserClient();
+    let cancelled = false;
+    // The sync browser client returns a realtime-less proxy under runtime
+    // config (its .channel() yields a Promise, so .on throws). Resolve the
+    // async client, which loads runtime config and supports realtime.
+    let activeSupabase: Awaited<ReturnType<typeof getSupabaseBrowserClientAsync>> | null = null;
 
-    try {
-      // Create a unique channel for this tenant
-      const channelName = `analytics-${tenantId}`;
-      const channel = supabase.channel(channelName);
+    (async () => {
+      try {
+        const supabase = await getSupabaseBrowserClientAsync();
+        if (cancelled) return;
+        activeSupabase = supabase;
 
-      // Subscribe to each table
-      tables.forEach((table) => {
-        channel.on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table,
-            filter: `tenant_id=eq.${tenantId}`,
-          },
-          handleRealtimeUpdate
-        );
-      });
+        const channelName = `analytics-${tenantId}`;
+        const channel = supabase.channel(channelName);
 
-      // Subscribe to the channel
-      channel
-        .subscribe((status) => {
+        tables.forEach((table) => {
+          channel.on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table,
+              filter: `tenant_id=eq.${tenantId}`,
+            },
+            handleRealtimeUpdate
+          );
+        });
+
+        channel.subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             setIsConnected(true);
             setError(null);
@@ -162,23 +173,25 @@ export function useAnalyticsRealtime({
           }
         });
 
-      channelRef.current = channel;
-
-      // Cleanup function
-      return () => {
-        if (channelRef.current) {
-          supabase.removeChannel(channelRef.current);
-          channelRef.current = null;
-        }
-        if (refreshTimeoutRef.current) {
-          clearTimeout(refreshTimeoutRef.current);
-        }
+        channelRef.current = channel;
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err : new Error('Unknown error'));
         setIsConnected(false);
-      };
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error'));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (channelRef.current && activeSupabase) {
+        activeSupabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
       setIsConnected(false);
-    }
+    };
   }, [enabled, tenantId, tables, handleRealtimeUpdate]);
 
   /**
@@ -202,6 +215,7 @@ export function useAnalyticsRealtime({
     updateCount,
     clearUpdates,
     refreshMetrics,
+    setRefreshCallback,
   };
 }
 
@@ -228,11 +242,9 @@ export function useAnalyticsRealtimeWithCallback(
   const result = useAnalyticsRealtime(config);
 
   useEffect(() => {
-    const ref = result as any;
-    if (ref.metricsCallbackRef) {
-      ref.metricsCallbackRef.current = onRefresh;
-    }
-  }, [onRefresh, result]);
+    result.setRefreshCallback(onRefresh);
+    return () => result.setRefreshCallback(null);
+  }, [onRefresh, result.setRefreshCallback]);
 
   return result;
 }
@@ -341,7 +353,7 @@ export function useAnalyticsNotifications(config: AnalyticsRealtimeConfig) {
       message = `Booking completed: ${lastUpdate.record.customer_name || 'Unknown'}`;
       type = 'success';
     } else if (lastUpdate.table === 'transactions' && lastUpdate.type === 'INSERT') {
-      const amount = lastUpdate.record.amount || 0;
+      const amount = typeof lastUpdate.record.amount === 'number' ? lastUpdate.record.amount : 0;
       message = `New transaction: $${amount.toFixed(2)}`;
       type = 'info';
     } else if (lastUpdate.table === 'customers' && lastUpdate.type === 'INSERT') {

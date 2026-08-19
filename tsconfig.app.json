@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "outDir": ".tsbuild/app",
+    "rootDir": ".",
+    "allowJs": false
+  },
+  "include": [
+    "types/**/*.d.ts",
+    "next-env.d.ts",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/showcase/**/*.ts",
+    "src/showcase/**/*.tsx"
+  ],
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "./tsconfig.ui.json" }
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    ".tsbuild",
+    ".turbo",
+    "coverage",
+    "dist",
+    "tests",
+    "src/__tests__",
+    "src/test",
+    "src/components/__tests__"
+  ]
+}

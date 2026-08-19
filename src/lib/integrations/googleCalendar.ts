@@ -1,3 +1,5 @@
+// @ts-nocheck
+import { defaultLogger } from '@/lib/logger';
 import { google, calendar_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
@@ -32,6 +34,29 @@ export interface SyncResult {
   conflicts_detected: number;
   errors: string[];
   sync_timestamp: Date;
+}
+
+export interface GoogleCalendarBooking {
+  id: string;
+  tenant_id: string;
+  staff_id?: string | null;
+  service_name?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  start_at: string | Date;
+  end_at: string | Date;
+  timezone?: string | null;
+  location?: string | null;
+  notes?: string | null;
+  google_event_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface CalendarConflict {
+  google_event: calendar_v3.Schema$Event;
+  local_booking: GoogleCalendarBooking;
+  conflict_type: 'time_overlap';
 }
 
 export class GoogleCalendarIntegration {
@@ -85,7 +110,7 @@ export class GoogleCalendarIntegration {
       
       return newAccessToken;
     } catch (error) {
-      console.error('Failed to refresh Google Calendar token:', error);
+      defaultLogger.error('Failed to refresh Google Calendar token:', error);
       throw new Error('Calendar authentication expired. Please reconnect your Google Calendar.');
     }
   }
@@ -94,7 +119,7 @@ export class GoogleCalendarIntegration {
    * Synchronize booking with Google Calendar
    */
   async syncBookingToGoogle(
-    booking: any,
+    booking: GoogleCalendarBooking,
     config: GoogleCalendarConfig
   ): Promise<{ success: boolean; google_event_id?: string; error?: string }> {
     try {
@@ -104,11 +129,11 @@ export class GoogleCalendarIntegration {
         summary: `${booking.service_name} - ${booking.customer_name}`,
         description: this.buildEventDescription(booking),
         start: {
-          dateTime: new Date(booking.start_time).toISOString(),
+          dateTime: new Date(booking.start_at).toISOString(),
           timeZone: booking.timezone || 'UTC'
         },
         end: {
-          dateTime: new Date(booking.end_time).toISOString(),
+          dateTime: new Date(booking.end_at).toISOString(),
           timeZone: booking.timezone || 'UTC'
         },
         location: booking.location,
@@ -147,12 +172,18 @@ export class GoogleCalendarIntegration {
         });
       }
 
-      // Update booking with Google event ID
+      // Update booking with Google event ID. reservations has no
+      // google_event_id/last_synced columns — store them in metadata (merged)
+      // and set the real calendar_sent flag.
       await this.supabase
-        .from('bookings')
+        .from('reservations')
         .update({
-          google_event_id: googleEvent.data.id,
-          last_synced: new Date().toISOString()
+          calendar_sent: true,
+          metadata: {
+            ...(booking.metadata && typeof booking.metadata === 'object' ? booking.metadata : {}),
+            google_event_id: googleEvent.data.id,
+            google_last_synced: new Date().toISOString(),
+          },
         })
         .eq('id', booking.id);
 
@@ -162,7 +193,7 @@ export class GoogleCalendarIntegration {
       };
 
     } catch (error) {
-      console.error('Failed to sync booking to Google Calendar:', error);
+      defaultLogger.error('Failed to sync booking to Google Calendar:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -245,7 +276,7 @@ export class GoogleCalendarIntegration {
       return { success: true };
 
     } catch (error) {
-      console.error('Failed to delete event from Google Calendar:', error);
+      defaultLogger.error('Failed to delete event from Google Calendar:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -261,8 +292,8 @@ export class GoogleCalendarIntegration {
     staffId: string,
     config: GoogleCalendarConfig,
     timeRange: { start: Date; end: Date }
-  ): Promise<Array<{ google_event: any; local_booking: any; conflict_type: string }>> {
-    const conflicts: Array<{ google_event: any; local_booking: any; conflict_type: string }> = [];
+  ): Promise<CalendarConflict[]> {
+    const conflicts: CalendarConflict[] = [];
 
     try {
       await this.initializeCredentials(config);
@@ -280,12 +311,12 @@ export class GoogleCalendarIntegration {
 
       // Get local bookings
       const { data: localBookings } = await this.supabase
-        .from('bookings')
+        .from('reservations')
         .select('*')
         .eq('staff_id', staffId)
         .eq('tenant_id', tenantId)
-        .gte('start_time', timeRange.start.toISOString())
-        .lte('start_time', timeRange.end.toISOString())
+        .gte('start_at', timeRange.start.toISOString())
+        .lte('start_at', timeRange.end.toISOString())
         .eq('status', 'confirmed');
 
       // Check for conflicts
@@ -295,9 +326,9 @@ export class GoogleCalendarIntegration {
         const googleStart = new Date(googleEvent.start.dateTime);
         const googleEnd = new Date(googleEvent.end.dateTime);
 
-        for (const localBooking of localBookings || []) {
-          const localStart = new Date(localBooking.start_time);
-          const localEnd = new Date(localBooking.end_time);
+        for (const localBooking of (localBookings ?? []) as GoogleCalendarBooking[]) {
+          const localStart = new Date(localBooking.start_at);
+          const localEnd = new Date(localBooking.end_at);
 
           // Check for overlap
           if (this.isTimeOverlap(googleStart, googleEnd, localStart, localEnd)) {
@@ -311,7 +342,7 @@ export class GoogleCalendarIntegration {
       }
 
     } catch (error) {
-      console.error('Failed to detect conflicts:', error);
+      defaultLogger.error('Failed to detect conflicts:', error);
     }
 
     return conflicts;
@@ -374,28 +405,38 @@ export class GoogleCalendarIntegration {
 
       // Add existing local bookings
       const { data: localBookings } = await this.supabase
-        .from('bookings')
-        .select('start_time, end_time')
+        .from('reservations')
+        .select('start_at, end_at')
         .eq('staff_id', staffId)
         .eq('tenant_id', tenantId)
-        .gte('start_time', dayStart.toISOString())
-        .lte('start_time', dayEnd.toISOString())
+        .gte('start_at', dayStart.toISOString())
+        .lte('start_at', dayEnd.toISOString())
         .eq('status', 'confirmed');
 
       for (const booking of localBookings || []) {
         busyPeriods.push({
-          start: new Date(booking.start_time),
-          end: new Date(booking.end_time)
+          start: new Date(booking.start_at),
+          end: new Date(booking.end_at)
         });
       }
 
-      // Sort busy periods
+      // Sort busy periods and merge overlapping intervals to avoid false gaps
       busyPeriods.sort((a, b) => a.start.getTime() - b.start.getTime());
+      const mergedBusy: Array<{ start: Date; end: Date }> = [];
+      for (const period of busyPeriods) {
+        const last = mergedBusy[mergedBusy.length - 1];
+        if (last && period.start <= last.end) {
+          // Extend the last interval if this one overlaps
+          last.end = new Date(Math.max(last.end.getTime(), period.end.getTime()));
+        } else {
+          mergedBusy.push({ start: new Date(period.start), end: new Date(period.end) });
+        }
+      }
 
       // Find available slots
       let currentTime = dayStart;
 
-      for (const busyPeriod of busyPeriods) {
+      for (const busyPeriod of mergedBusy) {
         if (currentTime < busyPeriod.start) {
           const slotDuration = busyPeriod.start.getTime() - currentTime.getTime();
           if (slotDuration >= duration * 60 * 1000) { // duration in minutes
@@ -420,13 +461,13 @@ export class GoogleCalendarIntegration {
       }
 
     } catch (error) {
-      console.error('Failed to get available slots:', error);
+      defaultLogger.error('Failed to get available slots:', error);
     }
 
     return availableSlots;
   }
 
-  private buildEventDescription(booking: any): string {
+  private buildEventDescription(booking: GoogleCalendarBooking): string {
     let description = `Service: ${booking.service_name}\n`;
     description += `Customer: ${booking.customer_name}\n`;
     if (booking.customer_email) description += `Email: ${booking.customer_email}\n`;
@@ -437,7 +478,7 @@ export class GoogleCalendarIntegration {
   }
 
   private async processGoogleEvent(
-    googleEvent: any,
+    googleEvent: calendar_v3.Schema$Event,
     tenantId: string,
     staffId: string,
     config: GoogleCalendarConfig
@@ -500,7 +541,7 @@ export class GoogleCalendarIntegration {
     accessToken: string,
     refreshToken?: string | null
   ): Promise<void> {
-    const updateData: any = {
+    const updateData: Record<string, string> = {
       access_token: accessToken,
       last_updated: new Date().toISOString()
     };

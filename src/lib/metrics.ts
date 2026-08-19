@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import { register, Histogram, collectDefaultMetrics, Counter, Gauge } from 'prom-client';
 
 collectDefaultMetrics({ register });
@@ -44,19 +45,19 @@ export { register as metricsRegistry };
 export async function incr(metricName: string, value = 1) {
   try {
     if (process.env.METRICS_BACKEND === 'console' || !process.env.METRICS_BACKEND) {
-      console.log(`metric incr ${metricName} +${value}`);
+      defaultLogger.info(`metric incr ${metricName} +${value}`);
       return;
     }
     // Placeholder: integrate with Prometheus pushgateway or other system in future
   } catch (e) {
-    console.warn('metrics.incr failed', e);
+    defaultLogger.warn('metrics.incr failed', e);
   }
 }
 
 export async function gauge(metricName: string, value: number) {
   try {
-    console.log(`metric gauge ${metricName} => ${value}`);
-  } catch (e) { console.warn('metrics.gauge failed', e); }
+    defaultLogger.info(`metric gauge ${metricName} => ${value}`);
+  } catch (e) { defaultLogger.warn('metrics.gauge failed', e); }
 }
 
 const metrics = { incr, gauge };
@@ -121,5 +122,5 @@ export async function pushMetrics() {
     const pg = new Pushgateway(url);
     // pushAdd without callback in newer prom-client returns a Promise
     await pg.pushAdd({ jobName: 'boka' });
-  } catch (e) { console.warn('pushMetrics failed', e); }
+  } catch (e) { defaultLogger.warn('pushMetrics failed', e); }
 }

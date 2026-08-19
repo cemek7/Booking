@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * /api/faqs
  * FAQ knowledge-graph management for tenant agents

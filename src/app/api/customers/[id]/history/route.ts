@@ -1,9 +1,6 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getRouteParam } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-
-interface RouteParams {
-  params: { id: string };
-}
 
 /**
  * GET /api/customers/{id}/history
@@ -12,88 +9,50 @@ interface RouteParams {
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    // Extract customer ID from route params
-    const customerId = (ctx as any).params?.id;
-    
+    const customerId = getRouteParam(ctx.params, 'id');
     if (!customerId) {
       throw ApiErrorFactory.badRequest('Customer ID is required');
     }
 
-    // Fetch the customer to get their tenant_id
     const { data: customer, error: customerError } = await ctx.supabase
-      .from('customers')
-      .select('id, tenant_id, phone')
-      .eq('id', customerId)
-      .single();
+      .from('customer_profile_summary')
+      .select('tenant_id, customer_id, lifetime_value_cents')
+      .eq('customer_id', customerId)
+      .maybeSingle();
 
-    if (customerError || !customer) {
+    const fallbackCustomer = !customer
+      ? await ctx.supabase
+          .from('customers')
+          .select('id, tenant_id')
+          .eq('id', customerId)
+          .maybeSingle()
+      : null;
+
+    const tenantId = customer?.tenant_id ?? fallbackCustomer?.data?.tenant_id;
+    if (customerError || !tenantId) {
       throw ApiErrorFactory.notFound('Customer not found');
     }
 
-    // Verify tenant access
-    if (customer.tenant_id !== ctx.user!.tenantId) {
+    if (tenantId !== ctx.user!.tenantId) {
       throw ApiErrorFactory.forbidden('Access denied to this customer');
     }
 
-    // Calculate lifetime spend
-    const { data: allReservations, error: reservationsError } = await ctx.supabase
-      .from('reservations')
-      .select('id')
-      .eq('tenant_id', customer.tenant_id)
-      .eq('customer_id', customer.id);
-
-    if (reservationsError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservations'));
-
-    let lifetimeSpend = 0;
-    if (allReservations.length > 0) {
-      const reservationIds = allReservations.map((r: { id: string }) => r.id);
-      const { data: services, error: servicesError } = await ctx.supabase
-        .from('reservation_services')
-        .select('quantity, services(price)')
-        .in('reservation_id', reservationIds);
-      
-      if (servicesError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch services'));
-
-      lifetimeSpend = services.reduce((total: number, item: { quantity?: number; services?: { price?: number } | null }) => {
-        const price = item.services?.price ?? 0;
-        const quantity = item.quantity ?? 1;
-        return total + (price * quantity);
-      }, 0);
-    }
-
-    // Fetch recent reservations with their totals
     const { data: recentReservations, error: recentError } = await ctx.supabase
       .from('reservations')
-      .select('id, start_at, status')
-      .eq('tenant_id', customer.tenant_id)
-      .eq('customer_id', customer.id)
+      .select('id, start_at, status, price_cents_snapshot')
+      .eq('tenant_id', tenantId)
+      .eq('customer_id', customerId)
       .order('start_at', { ascending: false })
       .limit(5);
 
     if (recentError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch recent reservations'));
 
-    const recentWithTotals = await Promise.all(recentReservations.map(async (res: { id: string; start_at: string; status: string }) => {
-      const { data: services, error } = await ctx.supabase
-        .from('reservation_services')
-        .select('quantity, services(price)')
-        .eq('reservation_id', res.id);
-      
-      if (error) {
-        console.error(`Failed to fetch services for reservation ${res.id}:`, error);
-        return { ...res, total: 0 };
-      }
-
-      const total = services.reduce((acc: number, item: { quantity?: number; services?: { price?: number } | null }) => {
-        const price = item.services?.price ?? 0;
-        const quantity = item.quantity ?? 1;
-        return acc + (price * quantity);
-      }, 0);
-
-      return { ...res, total };
-    }));
+    const recentWithTotals = (recentReservations ?? []).map((res: { id: string; start_at: string; status: string; price_cents_snapshot?: number | null }) => {
+      return { ...res, total: Number(res.price_cents_snapshot ?? 0) / 100 };
+    });
 
     return {
-      lifetimeSpend,
+      lifetimeSpend: Number(customer?.lifetime_value_cents ?? 0) / 100,
       recent: recentWithTotals,
     };
   },

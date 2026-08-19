@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import scheduler from './scheduler';
 
@@ -35,7 +36,7 @@ export async function pickRoundRobinStaff(supabase: SupabaseClient, tenantId: st
     inMemoryRRIndex.set(key, nextIdx);
     const { error: upsertError } = await supabase.from('platform_settings_kv').upsert({ key, value: { idx: nextIdx } });
     if (upsertError) {
-      console.error(`Round-robin KV upsert failed for key=${key} nextIdx=${nextIdx}:`, upsertError);
+      defaultLogger.error(`Round-robin KV upsert failed for key=${key} nextIdx=${nextIdx}:`, upsertError);
     }
     return staff[nextIdx].user_id;
   } catch {
@@ -49,7 +50,7 @@ export async function pickPreferredStaff(supabase: SupabaseClient, tenantId: str
   const free = await scheduler.findFreeStaff(supabase, tenantId, startIso, endIso);
   if (!free.length) return null;
   // Basic heuristic: first free staff
-  return free[0].user_id;
+  return free[0].id;
 }
 
 // Skill-based: queries the staff_skills table for staff with the required skill, then intersects with free staff.
@@ -65,7 +66,7 @@ export async function pickSkillBasedStaff(
   // Fetch free staff first
   const free = await scheduler.findFreeStaff(supabase, tenantId, startIso, endIso);
   if (!free.length) return null;
-  const freeIds = new Set(free.map(f => f.user_id));
+  const freeIds = new Set(free.map(f => f.id));
   // Fetch staff skilled in requiredSkill
   const { data: skilled, error } = await supabase
     .from('staff_skills')

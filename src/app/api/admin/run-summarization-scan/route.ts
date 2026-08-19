@@ -1,14 +1,20 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { summarizeChat } from '@/lib/summarizerWorker';
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const { data: chats, error: chatsErr } = await ctx.supabase
+    const tenantParam = new URL(ctx.request.url).searchParams.get('tenant_id');
+    let chatsQuery = ctx.supabase
       .from('chats')
       .select('id, tenant_id, metadata, created_at')
       .order('created_at', { ascending: false })
       .limit(50);
+    if (tenantParam) {
+      chatsQuery = chatsQuery.eq('tenant_id', tenantParam);
+    }
+    const { data: chats, error: chatsErr } = await chatsQuery;
 
     if (chatsErr) {
       throw ApiErrorFactory.internalServerError(new Error('Failed to query chats'));
@@ -39,5 +45,5 @@ export const POST = createHttpHandler(
     return { ok: true, results };
   },
   'POST',
-  { auth: true, roles: ['global_admin'] }
+  { auth: true, roles: ['superadmin'] }
 );

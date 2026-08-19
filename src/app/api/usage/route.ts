@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -44,10 +45,17 @@ export const GET = createHttpHandler(
       .gte('day', startIso)
       .order('day', { ascending: true });
 
-    const quota = await ensureTenantHasQuota(ctx.supabase, tenantId);
-
+    // usage_daily and the quota source may be absent in the deployed schema.
+    // Fail soft (zeroed window / null quota) rather than 500ing the widget.
     if (error) {
-      throw ApiErrorFactory.databaseError(error);
+      console.warn('[usage] usage_daily unavailable:', error.message);
+    }
+
+    let quota: Awaited<ReturnType<typeof ensureTenantHasQuota>> | null = null;
+    try {
+      quota = await ensureTenantHasQuota(ctx.supabase, tenantId);
+    } catch (quotaErr) {
+      console.warn('[usage] quota unavailable:', quotaErr instanceof Error ? quotaErr.message : String(quotaErr));
     }
 
     // Normalize to ensure all days present

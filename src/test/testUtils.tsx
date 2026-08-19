@@ -12,29 +12,29 @@ import { SupabaseClient } from '@supabase/supabase-js';
 // Type-safe mock interfaces
 export interface MockSupabaseClient {
   auth: {
-    getSession: jest.MockedFunction<() => Promise<{ data: { session: any } }>>;
-    signInWithPassword: jest.MockedFunction<(credentials: any) => Promise<any>>;
-    signOut: jest.MockedFunction<() => Promise<any>>;
-    onAuthStateChange: jest.MockedFunction<(callback: any) => any>;
+    getSession: jest.MockedFunction<() => Promise<{ data: { session: unknown } }>>;
+    signInWithPassword: jest.MockedFunction<(credentials: unknown) => Promise<unknown>>;
+    signOut: jest.MockedFunction<() => Promise<unknown>>;
+    onAuthStateChange: jest.MockedFunction<(callback: unknown) => unknown>;
   };
   from: jest.MockedFunction<(table: string) => MockQueryBuilder>;
-  channel: jest.MockedFunction<(channel: string) => any>;
+  channel: jest.MockedFunction<(channel: string) => unknown>;
 }
 
 export interface MockQueryBuilder {
   select: jest.MockedFunction<(columns?: string) => MockQueryBuilder>;
-  insert: jest.MockedFunction<(data: any) => MockQueryBuilder>;
-  update: jest.MockedFunction<(data: any) => MockQueryBuilder>;
+  insert: jest.MockedFunction<(data: unknown) => MockQueryBuilder>;
+  update: jest.MockedFunction<(data: unknown) => MockQueryBuilder>;
   delete: jest.MockedFunction<() => MockQueryBuilder>;
-  eq: jest.MockedFunction<(column: string, value: any) => MockQueryBuilder>;
-  gt: jest.MockedFunction<(column: string, value: any) => MockQueryBuilder>;
-  gte: jest.MockedFunction<(column: string, value: any) => MockQueryBuilder>;
-  lt: jest.MockedFunction<(column: string, value: any) => MockQueryBuilder>;
-  lte: jest.MockedFunction<(column: string, value: any) => MockQueryBuilder>;
-  order: jest.MockedFunction<(column: string, options?: any) => MockQueryBuilder>;
+  eq: jest.MockedFunction<(column: string, value: unknown) => MockQueryBuilder>;
+  gt: jest.MockedFunction<(column: string, value: unknown) => MockQueryBuilder>;
+  gte: jest.MockedFunction<(column: string, value: unknown) => MockQueryBuilder>;
+  lt: jest.MockedFunction<(column: string, value: unknown) => MockQueryBuilder>;
+  lte: jest.MockedFunction<(column: string, value: unknown) => MockQueryBuilder>;
+  order: jest.MockedFunction<(column: string, options?: unknown) => MockQueryBuilder>;
   limit: jest.MockedFunction<(count: number) => MockQueryBuilder>;
-  maybeSingle: jest.MockedFunction<() => Promise<{ data: any; error: any }>>;
-  single: jest.MockedFunction<() => Promise<{ data: any; error: any }>>;
+  maybeSingle: jest.MockedFunction<() => Promise<{ data: unknown; error: unknown }>>;
+  single: jest.MockedFunction<() => Promise<{ data: unknown; error: unknown }>>;
 }
 
 // Test data factories with proper typing
@@ -193,13 +193,13 @@ export class MockBuilder {
     };
   }
 
-  static createFetchMock(responses: Array<{ url?: string | RegExp; response: any; status?: number }> = []) {
+  static createFetchMock(responses: Array<{ url?: string | RegExp; response: unknown; status?: number }> = []) {
     const fetchMock = jest.fn() as jest.MockedFunction<typeof fetch>;
     
     responses.forEach(({ url, response, status = 200 }) => {
       if (url) {
         fetchMock.mockImplementationOnce((input) => {
-          const requestUrl = typeof input === 'string' ? input : input.url;
+          const requestUrl = typeof input === 'string' ? input : (input as Request).url;
           if (typeof url === 'string' ? requestUrl.includes(url) : url.test(requestUrl)) {
             return Promise.resolve({
               ok: status >= 200 && status < 300,
@@ -235,7 +235,7 @@ export class TestAssertions {
     while (Date.now() - start < timeout) {
       const calls = mockFetch.mock.calls;
       const found = calls.some(call => {
-        const url = typeof call[0] === 'string' ? call[0] : call[0].url;
+        const url = typeof call[0] === 'string' ? call[0] : (call[0] as Request).url;
         return typeof expectedUrl === 'string' 
           ? url.includes(expectedUrl)
           : expectedUrl.test(url);
@@ -255,7 +255,7 @@ export class TestAssertions {
   ): void {
     const calls = mockFetch.mock.calls;
     const matchingCall = calls.find(call => {
-      const url = typeof call[0] === 'string' ? call[0] : call[0].url;
+      const url = typeof call[0] === 'string' ? call[0] : (call[0] as Request).url;
       return typeof expectedUrl === 'string' 
         ? url.includes(expectedUrl)
         : expectedUrl.test(url);
@@ -348,7 +348,7 @@ expect.extend({
   toHaveApiCall(mockFetch: jest.MockedFunction<typeof fetch>, expectedUrl: string | RegExp) {
     const calls = mockFetch.mock.calls;
     const found = calls.some(call => {
-      const url = typeof call[0] === 'string' ? call[0] : call[0].url;
+      const url = typeof call[0] === 'string' ? call[0] : (call[0] as Request).url;
       return typeof expectedUrl === 'string' 
         ? url.includes(expectedUrl)
         : expectedUrl.test(url);

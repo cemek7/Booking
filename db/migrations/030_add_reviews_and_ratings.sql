@@ -170,6 +170,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_update_reviews_updated_at ON reviews;
 CREATE TRIGGER trigger_update_reviews_updated_at
   BEFORE UPDATE ON reviews
   FOR EACH ROW

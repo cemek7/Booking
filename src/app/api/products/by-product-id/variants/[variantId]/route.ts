@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -34,13 +35,7 @@ export const GET = createHttpHandler(
       .select(`
         *,
         product:products!product_id(
-          id, name, price_cents, currency, tenant_id,
-          category:product_categories!category_id(id, name)
-        ),
-        product_inventory(
-          current_stock,
-          reserved_stock,
-          available_stock
+          id, name, price_cents, currency, tenant_id, category
         )
       `)
       .eq('id', variantId)

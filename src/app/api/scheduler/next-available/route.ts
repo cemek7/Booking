@@ -1,6 +1,7 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { nextAvailableSlot } from '@/lib/scheduler';
+import { nextAvailableSlot } from '@/lib/optimizedScheduler';
 import { NextResponse } from 'next/server';
 
 interface NextAvailableSlotPayload {
@@ -17,11 +18,7 @@ interface NextAvailableSlotPayload {
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const {
       from,

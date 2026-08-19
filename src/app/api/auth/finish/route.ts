@@ -1,5 +1,17 @@
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { defaultLogger } from '@/lib/logger';
+
+const FinishAuthSchema = z.object({
+  session: z.object({
+    user: z.object({
+      id: z.string().min(1),
+      email: z.string().email().optional(),
+    }),
+  }),
+});
 
 /**
  * Finalize authentication flow
@@ -11,37 +23,17 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 export const POST = createHttpHandler(
   async (ctx) => {
     try {
-      const body = await ctx.request.json();
-      const session = body?.session;
-
-      if (!session || !session?.user?.id) {
+      const raw = await ctx.request.json();
+      const parsed = FinishAuthSchema.safeParse(raw);
+      if (!parsed.success) {
         throw ApiErrorFactory.validationError('Missing or invalid session data');
       }
+      const { session } = parsed.data;
 
       const userId = session.user.id;
       const email = session.user.email;
 
-      // Ensure user record exists
-      try {
-        const { error: upsertError } = await ctx.supabase
-          .from('users')
-          .upsert(
-            {
-              id: userId,
-              email: email ?? null,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          );
-
-        if (upsertError) {
-          console.warn('[auth/finish] user upsert failed:', upsertError);
-          // Don't fail the whole request, just log
-        }
-      } catch (err) {
-        console.warn('[auth/finish] service role not configured or upsert error:', err);
-        // Continue anyway - service role might not be available
-      }
+      // Identity lives in auth.users + tenant_users; no public.users mirror to sync.
 
       return {
         success: true,
@@ -53,7 +45,7 @@ export const POST = createHttpHandler(
       if (error instanceof Error && error.message.includes('Missing')) {
         throw error;
       }
-      console.error('[auth/finish] unexpected error:', error);
+      defaultLogger.error('[auth/finish] unexpected error:', error);
       throw ApiErrorFactory.internalServerError(new Error('Failed to finalize authentication'));
     }
   },

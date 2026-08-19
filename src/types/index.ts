@@ -18,72 +18,19 @@
 // CORE ROLE TYPES (CANONICAL SOURCE: src/types/roles.ts)
 // ============================================================================
 
-// Import locally for use within this file, then re-export so consumers can use either
-// `import { Role } from '@/types'` or `import { Role } from '@/types/roles'`.
-import type { Role, UserRole } from './roles';
-export type { Role, UserRole };
+// Re-export from canonical source (roles.ts) — do not duplicate definitions here
+export type { Role, UserRole } from './roles';
+export {
+  ROLE_LEVELS,
+  getRoleLevel,
+  isValidRole,
+  normalizeRole,
+  canInheritRole,
+  getInheritedRoles,
+} from './roles';
 
-/**
- * Role level in hierarchy (0=highest, 3=lowest)
- */
-export const ROLE_LEVELS: Record<Role, number> = {
-  superadmin: 0,  // Platform admin - full system access
-  owner: 1,       // Tenant admin - tenant-scoped access
-  manager: 2,     // Operations lead - team-scoped access
-  staff: 3        // Base worker - personal access
-} as const;
-
-/**
- * Get hierarchy level for a role
- */
-export function getRoleLevel(role: Role): number {
-  return ROLE_LEVELS[role] ?? 999;
-}
-
-/**
- * Check if a role is valid
- */
-export function isValidRole(role: string): role is Role {
-  return ['staff', 'manager', 'owner', 'superadmin'].includes(role);
-}
-
-/**
- * Normalize legacy role names to standard roles
- */
-export function normalizeRole(role: string): Role {
-  const legacyMap: Record<string, Role> = {
-    'admin': 'superadmin',
-    'tenant_admin': 'owner',
-    'receptionist': 'staff',
-    'employee': 'staff'
-  };
-  
-  const normalized = legacyMap[role] || role;
-  if (!isValidRole(normalized)) {
-    throw new Error(`Invalid role: ${role}`);
-  }
-  return normalized as Role;
-}
-
-/**
- * Check if one role can inherit from another
- */
-export function canInheritRole(userRole: Role, targetRole: Role): boolean {
-  return getRoleLevel(userRole) <= getRoleLevel(targetRole);
-}
-
-/**
- * Get all roles that inherit from a given role
- */
-export function getInheritedRoles(role: Role): Role[] {
-  const hierarchy: Record<Role, Role[]> = {
-    superadmin: ['owner', 'manager', 'staff'],
-    owner: ['manager', 'staff'],
-    manager: ['staff'],
-    staff: []
-  };
-  return hierarchy[role] || [];
-}
+// Local alias for use within this file
+import type { Role } from './roles';
 
 /**
  * Role hierarchy for visual representation
@@ -170,7 +117,7 @@ export interface Permission {
 export interface PermissionCondition {
   type: 'time' | 'location' | 'data' | 'user' | 'tenant';
   operator: 'equals' | 'contains' | 'greater' | 'less' | 'in' | 'not_in';
-  value: any;
+  value: unknown;
   description: string;
 }
 
@@ -181,7 +128,7 @@ export interface PermissionRestriction {
   permissionId: string;
   restrictionType: 'time' | 'data' | 'feature' | 'rate';
   description: string;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
 }
 
 /**
@@ -202,7 +149,7 @@ export interface PermissionCheckResult {
   permission?: Permission;
   reason?: string;
   restrictions?: PermissionRestriction[];
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -268,7 +215,7 @@ export interface UnifiedUser {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -352,7 +299,7 @@ export interface AuthOptions {
   requiredRoles?: Role[];
   allowSuperAdmin?: boolean;
   requireTenantAccess?: boolean;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -369,7 +316,7 @@ export interface UserSession {
   is_active: boolean;
   last_activity: Date;
   expires_at: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -398,7 +345,7 @@ export interface AuthenticationEvent {
   session_id?: string;
   success: boolean;
   failure_reason?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at?: Date;
 }
 
@@ -436,7 +383,7 @@ export interface UnifiedPermissionContext {
   ipAddress?: string;
   userAgent?: string;
   requestId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -533,8 +480,8 @@ export const ROLE_VISIBILITY = {
 /**
  * Check if value is a valid Role
  */
-export function isRole(value: any): value is Role {
-  return ['staff', 'manager', 'owner', 'superadmin'].includes(value);
+export function isRole(value: unknown): value is Role {
+  return typeof value === 'string' && ['staff', 'manager', 'owner', 'superadmin'].includes(value);
 }
 
 /**

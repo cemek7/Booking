@@ -1,7 +1,9 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { isGlobalAdmin } from '@/lib/enhanced-rbac';
+import { isGlobalAdmin } from '@/types/unified-permissions';
 import { normalizeRole } from '@/types';
+import { defaultLogger } from '@/lib/logger';
 
 /**
  * Get current user profile and tenant memberships
@@ -27,7 +29,7 @@ export const GET = createHttpHandler(
         .eq('user_id', userId);
 
       if (tenantError) {
-        console.error('[auth/me] tenant roles fetch failed:', tenantError);
+        defaultLogger.error('[auth/me] tenant roles fetch failed:', tenantError);
         throw ApiErrorFactory.internalServerError(new Error('Failed to fetch tenant roles'));
       }
 
@@ -40,7 +42,7 @@ export const GET = createHttpHandler(
               role: normalizeRole(item.role),
             };
           } catch (e) {
-            console.warn(
+            defaultLogger.warn(
               `[auth/me] Invalid role ${item.role} for user ${userId} in tenant ${item.tenant_id}`
             );
             return null;
@@ -63,7 +65,7 @@ export const GET = createHttpHandler(
       if (error instanceof Error && error.message.includes('Failed')) {
         throw error;
       }
-      console.error('[auth/me] unexpected error:', error);
+      defaultLogger.error('[auth/me] unexpected error:', error);
       throw ApiErrorFactory.internalServerError(new Error('Failed to get user profile'));
     }
   },

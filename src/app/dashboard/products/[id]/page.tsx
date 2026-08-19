@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+export const dynamic = 'force-dynamic';
+
+import { useState, use } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useTenant } from '@/lib/supabase/tenant-context';
@@ -11,12 +13,14 @@ import { toast } from '@/components/ui/toast';
 import ProductVariants from '@/components/admin/products/ProductVariants';
 
 interface ProductDetailPageProps {
-  params: {
+  // Next 16: client-page params arrive as a Promise; unwrap with React.use().
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default function ProductDetailPage({ params }: ProductDetailPageProps) {
+  const { id } = use(params);
   const router = useRouter();
   const { tenant } = useTenant();
   const [isEditing, setIsEditing] = useState(false);
@@ -24,11 +28,11 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
 
   // Fetch product details
   const { data: productData, isLoading } = useQuery({
-    queryKey: ['product', params.id, tenant?.id],
+    queryKey: ['product', id, tenant?.id],
     queryFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${params.id}`, {
+      const res = await fetch(`/api/products/${id}`, {
         headers: {
           'X-Tenant-ID': tenant.id,
         },
@@ -43,7 +47,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
 
       return res.json();
     },
-    enabled: !!tenant?.id && !!params.id,
+    enabled: !!tenant?.id && !!id,
   });
 
   const product = productData?.product as ProductWithDetails;
@@ -54,14 +58,14 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     queryFn: getUserRole,
   });
 
-  const canEdit = userRole && ['superadmin', 'owner', 'manager'].includes(userRole);
+  const canEdit = typeof userRole === 'string' && ['superadmin', 'owner', 'manager'].includes(userRole);
 
   // Update product mutation
   const updateProductMutation = useMutation({
     mutationFn: async (updateData: UpdateProductRequest) => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${params.id}`, {
+      const res = await fetch(`/api/products/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +96,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     mutationFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const res = await fetch(`/api/products/${params.id}`, {
+      const res = await fetch(`/api/products/${id}`, {
         method: 'DELETE',
         headers: {
           'X-Tenant-ID': tenant.id,
@@ -121,6 +125,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
       name: product.name,
       description: product.description,
       short_description: product.short_description,
+      category: product.category,
       price_cents: product.price_cents,
       cost_price_cents: product.cost_price_cents,
       brand: product.brand,
@@ -156,7 +161,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     deleteProductMutation.mutate();
   };
 
-  const handleInputChange = (key: keyof UpdateProductRequest, value: any) => {
+  const handleInputChange = (key: keyof UpdateProductRequest, value: UpdateProductRequest[keyof UpdateProductRequest]) => {
     setEditData(prev => ({ ...prev, [key]: value }));
   };
 
@@ -204,17 +209,20 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     );
   }
 
+  const stockQty = product.stock_quantity ?? 0;
+  const lowThreshold = product.low_stock_threshold ?? 0;
+
   const stockStatus = (() => {
     if (!product.track_inventory) return 'No tracking';
-    if (product.stock_quantity <= 0) return 'Out of stock';
-    if (product.stock_quantity <= product.low_stock_threshold) return 'Low stock';
+    if (stockQty <= 0) return 'Out of stock';
+    if (stockQty <= lowThreshold) return 'Low stock';
     return 'In stock';
   })();
 
   const stockStatusColor = (() => {
     if (!product.track_inventory) return 'text-gray-500';
-    if (product.stock_quantity <= 0) return 'text-red-600';
-    if (product.stock_quantity <= product.low_stock_threshold) return 'text-yellow-600';
+    if (stockQty <= 0) return 'text-red-600';
+    if (stockQty <= lowThreshold) return 'text-yellow-600';
     return 'text-green-600';
   })();
 
@@ -251,15 +259,15 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                   <Button
                     variant="outline"
                     onClick={handleCancel}
-                    disabled={updateProductMutation.isLoading}
+                    disabled={updateProductMutation.isPending}
                   >
                     Cancel
                   </Button>
                   <Button
                     onClick={handleSave}
-                    disabled={updateProductMutation.isLoading}
+                    disabled={updateProductMutation.isPending}
                   >
-                    {updateProductMutation.isLoading ? 'Saving...' : 'Save Changes'}
+                    {updateProductMutation.isPending ? 'Saving...' : 'Save Changes'}
                   </Button>
                 </>
               ) : (
@@ -270,10 +278,10 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                   <Button
                     variant="outline"
                     onClick={handleDelete}
-                    disabled={deleteProductMutation.isLoading}
+                    disabled={deleteProductMutation.isPending}
                     className="text-red-600 border-red-300 hover:bg-red-50"
                   >
-                    {deleteProductMutation.isLoading ? 'Deleting...' : 'Delete'}
+                    {deleteProductMutation.isPending ? 'Deleting...' : 'Delete'}
                   </Button>
                 </>
               )}
@@ -288,7 +296,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
               <h3 className="text-lg font-medium mb-4">Product Images</h3>
               {product.images && product.images.length > 0 ? (
                 <div className="space-y-2">
-                  {product.images.map((image, index) => (
+                  {product.images.map((image: string, index: number) => (
                     <img
                       key={index}
                       src={image}
@@ -319,7 +327,17 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                  <p className="text-sm text-gray-900">{product.category?.name || 'Uncategorized'}</p>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editData.category ?? product.category ?? ''}
+                      onChange={(e) => handleInputChange('category', e.target.value || null)}
+                      className="w-full px-3 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder="Enter category label"
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-900">{product.category || 'Uncategorized'}</p>
+                  )}
                 </div>
 
                 <div>
@@ -399,7 +417,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                 ) : (
                   <div className="flex flex-wrap gap-1">
                     {product.tags && product.tags.length > 0 ? (
-                      product.tags.map((tag, index) => (
+                      product.tags.map((tag: string, index: number) => (
                         <span
                           key={index}
                           className="inline-flex px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded"
@@ -555,14 +573,14 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Created</label>
                   <p className="text-sm text-gray-600">
-                    {new Date(product.created_at).toLocaleDateString()} at{' '}
-                    {new Date(product.created_at).toLocaleTimeString()}
+                    {new Date(product.created_at ?? '').toLocaleDateString()} at{' '}
+                    {new Date(product.created_at ?? '').toLocaleTimeString()}
                   </p>
-                  
+
                   <label className="block text-sm font-medium text-gray-700 mb-2 mt-3">Last Updated</label>
                   <p className="text-sm text-gray-600">
-                    {new Date(product.updated_at).toLocaleDateString()} at{' '}
-                    {new Date(product.updated_at).toLocaleTimeString()}
+                    {new Date(product.updated_at ?? '').toLocaleDateString()} at{' '}
+                    {new Date(product.updated_at ?? '').toLocaleTimeString()}
                   </p>
                 </div>
               </div>

@@ -10,6 +10,8 @@
  * Single source of truth for all auth operations
  */
 
+import { defaultLogger } from '@/lib/logger';
+import { toBookaDashboardPath } from '@/lib/navigation/dashboard-path';
 import {
   getStoredAccessToken,
   getStoredUserData,
@@ -17,10 +19,6 @@ import {
   getStoredRole,
   getStoredIsAdmin,
   setStoredAccessToken,
-  setStoredUserData,
-  setStoredTenantId,
-  setStoredRole,
-  setStoredIsAdmin,
   storeAllAuthData,
   clearAllAuthData,
   StoredUserData,
@@ -58,9 +56,9 @@ export function getAuthState(): AuthState {
   return {
     isAuthenticated: !!token && !!userData,
     userType: determineUserType(isAdmin, role),
-    userData,
-    tenantId,
-    role,
+    userData: userData ?? undefined,
+    tenantId: tenantId ?? undefined,
+    role: role ?? undefined,
     isAdmin,
     accessToken: token || undefined,
   };
@@ -85,25 +83,34 @@ export function determineUserType(
 }
 
 /**
- * Get redirect URL based on user type and role
- * 
- * Admin: /admin/dashboard
- * Owner: /dashboard
- * Manager: /dashboard?role=manager
- * Staff: /dashboard?role=staff
+ * Get redirect URL based on user type and role.
+ *
+ * Emits the public Booka workspace URL directly (via toBookaDashboardPath) so
+ * post-sign-in navigation lands on the canonical path without the extra
+ * /dashboard -> /booka/dashboard middleware redirect hop. Mirrors
+ * getRoleDashboardPath in @/types/unified-permissions.
+ *
+ * Superadmin: /booka/dashboard/superadmin
+ * Owner: /booka/dashboard
+ * Manager: /booka/dashboard?role=manager
+ * Staff: /booka/dashboard?role=staff
  */
 export function getRedirectUrl(userType: UserType, role?: string | null): string {
-  if (userType === 'admin') return '/admin/dashboard';
+  if (userType === 'admin') return toBookaDashboardPath('/dashboard/superadmin');
 
   if (userType === 'unknown') return '/';
 
+  // Booka workspace base ('/booka/dashboard'); query is appended after mapping
+  // because toBookaDashboardPath expects a bare pathname.
+  const base = toBookaDashboardPath('/dashboard');
+
   // Tenant users
-  if (role === 'owner') return '/dashboard';
-  if (role === 'manager') return '/dashboard?role=manager';
-  if (role === 'staff') return '/dashboard?role=staff';
+  if (role === 'owner') return base;
+  if (role === 'manager') return `${base}?role=manager`;
+  if (role === 'staff') return `${base}?role=staff`;
 
   // Default for unknown roles
-  return '/dashboard';
+  return base;
 }
 
 /**
@@ -128,8 +135,13 @@ export function storeSignInData(params: {
   email: string;
   user_id: string;
 }): void {
-  console.log('[AuthManager] Storing sign-in data for:', params.email);
-  console.log('[AuthManager] User type:', params.admin ? 'admin' : `tenant-${params.role || 'staff'}`);
+  defaultLogger.info('[AuthManager] Storing sign-in data for:', params.email);
+  const userTypeLabel = params.admin
+    ? 'admin'
+    : params.tenant_id && params.role
+      ? `tenant-${params.role}`
+      : 'onboarding-pending';
+  defaultLogger.info('[AuthManager] User type:', userTypeLabel);
   
   const userData: StoredUserData = {
     email: params.email,
@@ -147,7 +159,7 @@ export function storeSignInData(params: {
     isAdmin: params.admin || false,
   });
 
-  console.log('[AuthManager] ✓ Sign-in data stored successfully');
+  defaultLogger.info('[AuthManager] ✓ Sign-in data stored successfully');
 }
 
 /**
@@ -196,7 +208,7 @@ export function getUserId(): string | undefined {
  * Get current tenant ID
  */
 export function getTenantId(): string | undefined {
-  return getStoredTenantId();
+  return getStoredTenantId() ?? undefined;
 }
 
 /**
@@ -228,12 +240,12 @@ export function verifyAuthDataIntegrity(): boolean {
   const userData = getStoredUserData();
 
   if (!token) {
-    console.warn('[AuthManager] Missing access token');
+    defaultLogger.warn('[AuthManager] Missing access token');
     return false;
   }
 
   if (!userData?.email || !userData?.user_id) {
-    console.warn('[AuthManager] Missing user data');
+    defaultLogger.warn('[AuthManager] Missing user data');
     return false;
   }
 

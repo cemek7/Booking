@@ -1,22 +1,12 @@
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
-import { Product } from '@/types/product-catalogue';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * AI-powered product recommendations
  * Analyzes booking history, product relationships, and upsell priorities
  */
-
-interface RecommendationRequest {
-  context: 'booking' | 'product_view' | 'cart' | 'general';
-  customer_id?: string;
-  product_ids?: string[];
-  service_ids?: string[];
-  max_recommendations?: number;
-  price_range_factor?: number; // 0.5 = 50% of current basket value
-}
 
 interface RecommendationScore {
   product_id: string;
@@ -87,7 +77,6 @@ export const POST = createHttpHandler(
       .from('products')
       .select(`
         *,
-        category:categories(name, slug),
         variants:product_variants(*)
       `)
       .eq('tenant_id', tenantId)
@@ -206,7 +195,7 @@ async function generateRecommendations(
       const maxRecommendedPrice = avgPrice * options.price_range_factor;
 
       // Filter out products that are too expensive
-      for (const [productId, score] of scores.entries()) {
+      for (const [productId] of scores.entries()) {
         const product = allProducts.find((p: { id: string; price_cents: number }) => p.id === productId);
         if (product && product.price_cents > maxRecommendedPrice) {
           scores.delete(productId);
@@ -253,7 +242,7 @@ async function addServiceBasedRecommendations(
 
   // Analyze historical booking patterns
   const { data: bookingHistory } = await supabase
-    .from('bookings')
+    .from('reservations')
     .select(`
       id,
       booking_products!inner(product_id)
@@ -295,26 +284,26 @@ async function addProductAffinityRecommendations(
   // Get category and tags of viewed products
   const { data: viewedProducts } = await supabase
     .from('products')
-    .select('category_id, tags')
+    .select('category, tags')
     .eq('tenant_id', tenantId)
     .in('id', productIds);
 
   if (!viewedProducts) return;
 
-  const categoryIds = [...new Set(viewedProducts.map((p: { category_id?: string | null; tags?: string[] }) => p.category_id).filter(Boolean))];
-  const allTags = [...new Set(viewedProducts.flatMap((p: { category_id?: string | null; tags?: string[] }) => p.tags || []))];
+  const categories = [...new Set(viewedProducts.map((p: { category?: string | null; tags?: string[] }) => p.category).filter(Boolean))];
+  const allTags = [...new Set(viewedProducts.flatMap((p: { category?: string | null; tags?: string[] }) => p.tags || []))];
 
   // Boost products in same categories
-  if (categoryIds.length > 0) {
+  if (categories.length > 0) {
     for (const [productId, score] of scores.entries()) {
       const { data: productDetail } = await supabase
         .from('products')
-        .select('category_id, tags')
+        .select('category, tags')
         .eq('id', productId)
         .single();
 
       if (productDetail) {
-        if (categoryIds.includes(productDetail.category_id)) {
+        if (productDetail.category && categories.includes(productDetail.category)) {
           score.score += 15;
           score.reasons.push('Same category as viewed product');
         }
@@ -340,7 +329,7 @@ async function addCustomerHistoryRecommendations(
 ) {
   // Get customer's purchase history
   const { data: customerBookings } = await supabase
-    .from('bookings')
+    .from('reservations')
     .select(`
       id,
       booking_products!inner(product_id, quantity)
@@ -368,7 +357,7 @@ async function addCustomerHistoryRecommendations(
 
   // Find products frequently bought by similar customers
   const { data: similarCustomers } = await supabase
-    .from('bookings')
+    .from('reservations')
     .select(`
       customer_id,
       booking_products!inner(product_id)

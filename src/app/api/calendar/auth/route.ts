@@ -1,4 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { google } from 'googleapis';
 import { z } from 'zod';
@@ -21,11 +22,7 @@ const AuthQuerySchema = z.object({
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     // Verify role has calendar management permissions
     const allowedRoles = ['owner', 'manager'];
@@ -56,7 +53,7 @@ export const GET = createHttpHandler(
         tenant_id: tenantId,
         staff_id: staff_id,
         user_id: ctx.user!.id,
-        return_url: return_url || '/admin/settings/calendar',
+        return_url: return_url || '/dashboard/settings/calendar',
       })
     ).toString('base64');
 

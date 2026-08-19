@@ -99,6 +99,13 @@ function generateYahooCalendarLink(event: BookingEvent): string {
 }
 
 /**
+ * Escape text for ICS format per RFC 5545 (backslash, comma, semicolon, colon)
+ */
+function escapeICSText(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/;/g, '\\;').replace(/:/g, '\\:').replace(/\n/g, '\\n');
+}
+
+/**
  * Generate ICS file content for download
  */
 function generateICSContent(event: BookingEvent): string {
@@ -110,9 +117,9 @@ function generateICSContent(event: BookingEvent): string {
     'BEGIN:VEVENT',
     `DTSTART:${formatCalendarDate(event.startTime)}`,
     `DTEND:${formatCalendarDate(event.endTime)}`,
-    `SUMMARY:${event.title}`,
-    `DESCRIPTION:${event.description || ''}`,
-    `LOCATION:${event.location || ''}`,
+    `SUMMARY:${escapeICSText(event.title)}`,
+    `DESCRIPTION:${escapeICSText(event.description || '')}`,
+    `LOCATION:${escapeICSText(event.location || '')}`,
     `UID:booking-${Date.now()}@booka.app`,
     `DTSTAMP:${formatCalendarDate(new Date())}`,
     'STATUS:CONFIRMED',
@@ -120,12 +127,12 @@ function generateICSContent(event: BookingEvent): string {
   ];
 
   if (event.organizer) {
-    ics.push(`ORGANIZER;CN=${event.organizer.name}:mailto:${event.organizer.email}`);
+    ics.push(`ORGANIZER;CN=${escapeICSText(event.organizer.name)}:mailto:${event.organizer.email}`);
   }
 
   if (event.attendees && event.attendees.length > 0) {
     event.attendees.forEach(attendee => {
-      ics.push(`ATTENDEE;CN=${attendee.name}:mailto:${attendee.email}`);
+      ics.push(`ATTENDEE;CN=${escapeICSText(attendee.name)}:mailto:${attendee.email}`);
     });
   }
 
@@ -138,8 +145,13 @@ function generateICSContent(event: BookingEvent): string {
  */
 function generateICSDataUrl(event: BookingEvent): string {
   const icsContent = generateICSContent(event);
-  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-  return URL.createObjectURL(blob);
+  try {
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    return URL.createObjectURL(blob);
+  } catch {
+    // Server-side fallback: encode as a data URI (works in Node.js and all browsers)
+    return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsContent)}`;
+  }
 }
 
 /**

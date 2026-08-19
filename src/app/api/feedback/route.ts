@@ -1,4 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { z } from 'zod';
 
@@ -18,8 +19,7 @@ const SubmitFeedbackSchema = z.object({
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    if (!tenantId) throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
+    const tenantId = getVerifiedTenantId(ctx);
 
     const body = await ctx.request.json();
     const parsed = SubmitFeedbackSchema.safeParse(body);
@@ -76,8 +76,7 @@ export const POST = createHttpHandler(
 export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    if (!tenantId) throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID required' });
+    const tenantId = getVerifiedTenantId(ctx);
 
     const staffUserId = url.searchParams.get('staff_user_id');
     const daysParam = parseInt(url.searchParams.get('days') || '30', 10);

@@ -510,8 +510,8 @@ describe('DateRangePicker', () => {
       // Both should render
       expect(container.querySelector('.compact-picker')).toBeInTheDocument();
       expect(container.querySelector('.default-picker')).toBeInTheDocument();
-      // Check that we have both select (compact) and buttons (default)
-      expect(container.querySelector('select')).toBeInTheDocument();
+      // Compact mode uses a button-based Select trigger, not a native <select>.
+      expect(container.querySelector('.compact-picker')).toHaveAttribute('type', 'button');
       expect(container.querySelectorAll('button').length).toBeGreaterThan(0);
     });
   });

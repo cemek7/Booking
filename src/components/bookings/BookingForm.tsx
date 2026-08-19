@@ -64,8 +64,8 @@ const BookingForm: React.FC<BookingFormProps> = ({ initialData, onSuccess }) => 
         setStatus("open");
       }
       if (typeof onSuccess === "function") onSuccess();
-    } catch (err: any) {
-      setError(err.message || "Error");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
     } finally {
       setLoading(false);
     }

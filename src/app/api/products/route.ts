@@ -1,7 +1,9 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { Product, ProductListQuery, CreateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/auth/role-utils';
+import { getTenantCurrency } from '@/lib/tenant-currency';
 
 /** Columns that may be used for ORDER BY on the products table */
 const ALLOWED_SORT_COLUMNS = new Set([
@@ -22,7 +24,7 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
     const query: ProductListQuery = {
-      category_id: url.searchParams.get('category_id') || undefined,
+      category: url.searchParams.get('category') || url.searchParams.get('category_id') || undefined,
       status: (url.searchParams.get('status') as string | undefined) || 'all',
       search: url.searchParams.get('search') || undefined,
       tags: url.searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
@@ -62,20 +64,25 @@ export const GET = createHttpHandler(
     const userRole = await getUserRole(ctx.user!.id);
     const permissions = PRODUCT_ROLE_PERMISSIONS[userRole];
 
-    // Build base query
+    // Build the select from non-empty parts. Interpolating optional embeds into
+    // a template produced empty columns (e.g. "*,,") when the flags were off,
+    // which PostgREST rejects (500). Also: get_product_stock is a FUNCTION, not
+    // an embeddable resource — embedding it errors with PGRST200. Stock already
+    // lives on the products row (stock_quantity, track_inventory), so
+    // include_stock_info needs no extra embed.
+    const selectParts = ['*'];
+    if (query.include_variants) {
+      selectParts.push('variants:product_variants!product_id(*)');
+    }
+
     let queryBuilder = ctx.supabase
       .from('products')
-      .select(`
-        *,
-        category:product_categories!category_id(id, name, description),
-        ${query.include_variants ? 'variants:product_variants!product_id(*)' : ''},
-        ${query.include_stock_info ? 'stock_info:get_product_stock(product_id)' : ''}
-      `)
+      .select(selectParts.join(','))
       .in('tenant_id', tenantIds);
 
     // Apply filters
-    if (query.category_id) {
-      queryBuilder = queryBuilder.eq('category_id', query.category_id);
+    if (query.category) {
+      queryBuilder = queryBuilder.eq('category', query.category);
     }
 
     if (query.status && query.status !== 'all') {
@@ -141,7 +148,7 @@ export const GET = createHttpHandler(
     }
 
     // Filter out cost prices if user doesn't have permission
-    const sanitizedProducts = products?.map((product: Record<string, unknown>) => {
+    const sanitizedProducts = (products as unknown as Record<string, unknown>[] | null)?.map((product: Record<string, unknown>) => {
       if (!permissions.can_view_cost_prices) {
         const { cost_price_cents, ...productWithoutCost } = product;
         return productWithoutCost;
@@ -207,32 +214,21 @@ export const POST = createHttpHandler(
       }
     }
 
-    // Validate category if provided
-    if (body.category_id) {
-      const { data: category } = await ctx.supabase
-        .from('product_categories')
-        .select('id')
-        .eq('id', body.category_id)
-        .eq('tenant_id', tenantUsers.tenant_id)
-        .eq('is_active', true)
-        .limit(1)
-        .single();
-
-      if (!category) {
-        throw ApiErrorFactory.badRequest('Category not found or inactive');
-      }
-    }
+    const normalizedCategory = typeof body.category === 'string'
+      ? body.category.trim() || null
+      : null;
 
     // Prepare product data
+    const currency = body.currency || await getTenantCurrency(ctx.supabase, tenantUsers.tenant_id, 'NGN');
     const productData = {
       tenant_id: tenantUsers.tenant_id,
       name: body.name.trim(),
       description: body.description?.trim(),
       short_description: body.short_description?.trim(),
       sku: body.sku?.trim().toUpperCase(),
-      category_id: body.category_id,
+      category: normalizedCategory,
       price_cents: body.price_cents,
-      currency: body.currency || 'USD',
+      currency,
       cost_price_cents: body.cost_price_cents || 0,
       track_inventory: body.track_inventory || false,
       stock_quantity: body.stock_quantity || 0,
@@ -253,10 +249,7 @@ export const POST = createHttpHandler(
     const { data: product, error } = await ctx.supabase
       .from('products')
       .insert(productData)
-      .select(`
-        *,
-        category:product_categories!category_id(id, name, description)
-      `)
+      .select(`*`)
       .single();
 
     if (error) {
@@ -288,5 +281,5 @@ export const POST = createHttpHandler(
     };
   },
   'POST',
-  { auth: true, roles: ['admin', 'manager', 'product_manager'] }
+  { auth: true, roles: ['superadmin', 'owner', 'manager'] }
 );

@@ -6,8 +6,8 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS customer_feedback (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id     TEXT        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  reservation_id TEXT       REFERENCES reservations(id) ON DELETE SET NULL,
+  tenant_id     UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  reservation_id UUID       REFERENCES reservations(id) ON DELETE SET NULL,
   -- Logical FK to tenant_users.user_id (TEXT PK pattern); no explicit constraint
   -- because tenant_users.user_id is not declared UNIQUE/PRIMARY KEY in the base schema.
   staff_user_id TEXT        NOT NULL,
@@ -31,30 +31,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_feedback_reservation
 ALTER TABLE customer_feedback ENABLE ROW LEVEL SECURITY;
 
 -- All tenant members can read feedback for their tenant
+DROP POLICY IF EXISTS policy_feedback_tenant_select ON customer_feedback;
 CREATE POLICY policy_feedback_tenant_select ON customer_feedback
   FOR SELECT USING (
     tenant_id IN (
       SELECT tenant_id FROM tenant_users
-      WHERE user_id = auth.uid()::text
+      WHERE user_id = auth.uid()
     )
   );
 
 -- Feedback can be inserted for the caller's tenant
+DROP POLICY IF EXISTS policy_feedback_tenant_insert ON customer_feedback;
 CREATE POLICY policy_feedback_tenant_insert ON customer_feedback
   FOR INSERT WITH CHECK (
     tenant_id IN (
       SELECT tenant_id FROM tenant_users
-      WHERE user_id = auth.uid()::text
+      WHERE user_id = auth.uid()
     )
   );
 
 -- Staff members can update/delete only their own feedback rows
+DROP POLICY IF EXISTS policy_feedback_staff_modify ON customer_feedback;
 CREATE POLICY policy_feedback_staff_modify ON customer_feedback
   FOR ALL USING (
     staff_user_id = auth.uid()::text
     AND tenant_id IN (
       SELECT tenant_id FROM tenant_users
-      WHERE user_id = auth.uid()::text
+      WHERE user_id = auth.uid()
     )
   );
 

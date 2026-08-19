@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * /api/public/[slug]/reviews
  *
@@ -9,6 +10,8 @@ import { createHttpHandler, parseJsonBody } from '@/lib/error-handling/route-han
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import publicBookingService from '@/lib/publicBookingService';
 import { z } from 'zod';
+import { isRedisConfigured, cacheGet, cacheSet } from '@/lib/redis';
+import { defaultLogger } from '@/lib/logger';
 
 const ReviewCreateSchema = z.object({
   customer_name: z.string().min(1, 'Name is required'),
@@ -33,6 +36,7 @@ export const GET = createHttpHandler(
       .select('id,customer_name,rating,comment,created_at')
       .eq('tenant_id', tenant.id)
       .eq('is_published', true)
+      .eq('hidden', false)
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -64,6 +68,27 @@ export const POST = createHttpHandler(
       if (existing) throw ApiErrorFactory.badRequest('A review has already been submitted for this reservation.');
     }
 
+    // IP-based rate limiting: max 5 review submissions per IP per hour
+    if (isRedisConfigured()) {
+      let rateLimited = false;
+      try {
+        const ip = ctx.request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown';
+        const rateKey = `rate:review:${slug}:${ip}`;
+        const current = (await cacheGet(rateKey) as number | null) ?? 0;
+        if (current >= 5) {
+          rateLimited = true;
+        } else {
+          await cacheSet(rateKey, current + 1, 3600);
+        }
+      } catch (redisErr) {
+        // Redis unavailable — degrade gracefully, don't block the request
+        defaultLogger.warn('Review rate-limit check failed (Redis error), allowing request', { error: String(redisErr) });
+      }
+      if (rateLimited) {
+        throw ApiErrorFactory.badRequest('Too many reviews submitted. Please try again later.');
+      }
+    }
+
     const { data, error } = await ctx.supabase
       .from('reviews')
       .insert({
@@ -73,7 +98,6 @@ export const POST = createHttpHandler(
         rating: body.rating,
         comment: body.comment ?? null,
         reservation_id: body.reservation_id ?? null,
-        // TODO: add IP-based rate limiting (requires infrastructure such as Redis)
         is_published: true,
       })
       .select('id,customer_name,rating,comment,created_at')

@@ -1,16 +1,20 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+
+const AssignSkillSchema = z.object({
+  user_id: z.string().min(1, 'user_id is required'),
+  skill_id: z.string().min(1, 'skill_id is required'),
+  proficiency: z.number().int().min(1).max(5).optional().default(1),
+});
 
 // GET /api/staff-skills?user_id=optional -> list assignments
 // POST /api/staff-skills { user_id, skill_id } -> assign skill
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const url = new URL(ctx.request.url);
     const userId = url.searchParams.get('user_id');
@@ -33,20 +37,15 @@ export const GET = createHttpHandler(
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
-    const body = await ctx.request.json();
-    const userId = body?.user_id;
-    const skillId = body?.skill_id;
-    const proficiency = typeof body?.proficiency === 'number' ? body.proficiency : 1;
-    
-    if (!userId || !skillId) {
-      throw ApiErrorFactory.badRequest('user_id and skill_id required');
+    const raw = await ctx.request.json();
+    const parsed = AssignSkillSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
     }
+    const { user_id: userId, skill_id: skillId, proficiency } = parsed.data;
     
     // Verify skill exists
     const { data: skill, error: skillError } = await ctx.supabase

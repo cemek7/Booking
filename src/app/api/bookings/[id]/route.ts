@@ -1,7 +1,9 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { bookingCancelled } from '@/lib/metrics';
 import { z } from 'zod';
+import { defaultLogger } from '@/lib/logger';
 
 const UpdateBookingSchema = z.object({
   start_at: z.string().datetime().optional(),
@@ -25,7 +27,7 @@ export const PATCH = createHttpHandler(
   async (ctx) => {
     const params = ctx.request.nextUrl.searchParams;
     // Extract params from route - this is passed via context in the handler
-    const bookingId = (ctx as any).params?.id;
+    const bookingId = (ctx as { params?: { id?: string } }).params?.id;
     
     if (!bookingId) {
       throw ApiErrorFactory.badRequest('Booking ID is required');
@@ -48,13 +50,18 @@ export const PATCH = createHttpHandler(
     // Fetch existing booking to verify ownership and get current state
     const { data: existing, error: fetchError } = await ctx.supabase
       .from('reservations')
-      .select('id, tenant_id, staff_id')
+      .select('id, tenant_id, staff_id, status')
       .eq('id', bookingId)
       .eq('tenant_id', ctx.user!.tenantId)
       .single();
 
     if (fetchError || !existing) {
       throw ApiErrorFactory.notFound('Booking not found or access denied');
+    }
+
+    // Reject cancelled → confirmed transition (would bypass conflict check)
+    if (updateData.status === 'confirmed' && existing.status === 'cancelled') {
+      throw ApiErrorFactory.badRequest('Cannot re-confirm a cancelled booking');
     }
 
     // Conflict check if rescheduling or changing staff
@@ -72,7 +79,7 @@ export const PATCH = createHttpHandler(
           .limit(1);
 
         if (conflictError) {
-          console.error('Error checking for booking conflicts:', conflictError);
+          defaultLogger.error('Error checking for booking conflicts:', conflictError);
           throw ApiErrorFactory.internalServerError(new Error('Failed to check for conflicts'));
         }
         if (overlaps && overlaps.length > 0) {
@@ -86,11 +93,12 @@ export const PATCH = createHttpHandler(
       .from('reservations')
       .update(updateData)
       .eq('id', bookingId)
+      .eq('tenant_id', ctx.user!.tenantId)
       .select()
       .single();
 
     if (updateError) {
-      console.error('Failed to update booking:', updateError);
+      defaultLogger.error('Failed to update booking:', updateError);
       throw ApiErrorFactory.internalServerError(new Error('Failed to update booking'));
     }
 
@@ -98,7 +106,7 @@ export const PATCH = createHttpHandler(
       try {
         bookingCancelled(existing.tenant_id);
       } catch (metricError) {
-        console.warn('Failed to record booking cancellation metric:', metricError);
+        defaultLogger.warn('Failed to record booking cancellation metric:', metricError);
       }
     }
 

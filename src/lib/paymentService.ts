@@ -1,9 +1,14 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
 import { publishEvent } from './eventBus';
 import { observeRequest, refundProcessed, transactionRetried, reconciliationDiscrepancy, depositIdempotencyHit } from './metrics';
 import PaymentSecurityService from './paymentSecurityService';
 import crypto from 'crypto';
+import { fetchWithTimeout } from './fetchWithTimeout';
+
+// All payment provider API calls use fetchWithTimeout to prevent indefinite hangs
+const PAYMENT_TIMEOUT_MS = 15_000;
 
 export interface PaymentProvider {
   id: string;
@@ -21,6 +26,8 @@ export interface InitializePaymentParams {
   reference: string;
   callbackUrl?: string;
   metadata?: Record<string, unknown>;
+  subaccountCode?: string;           // tenant's Paystack subaccount (e.g. ACCT_xxxx)
+  bearer?: 'account' | 'subaccount'; // who bears Paystack fee; default 'account'
 }
 
 export interface PaymentResponse {
@@ -78,7 +85,7 @@ class PaystackProvider implements PaymentProvider {
     const span = tracer.startSpan('paystack.initialize_payment');
     
     try {
-      const response = await fetch('https://api.paystack.co/transaction/initialize', {
+      const response = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.secretKey}`,
@@ -91,6 +98,10 @@ class PaystackProvider implements PaymentProvider {
           reference: params.reference,
           callback_url: params.callbackUrl,
           metadata: params.metadata,
+          ...(params.subaccountCode && {
+            subaccount: params.subaccountCode,
+            bearer: params.bearer ?? 'account',
+          }),
         }),
       });
 
@@ -129,7 +140,7 @@ class PaystackProvider implements PaymentProvider {
     span.setAttribute('payment.reference', reference);
 
     try {
-      const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+      const response = await fetchWithTimeout(`https://api.paystack.co/transaction/verify/${reference}`, {
         headers: {
           'Authorization': `Bearer ${this.secretKey}`,
         },
@@ -187,7 +198,7 @@ class PaystackProvider implements PaymentProvider {
         body.amount = params.amount * 100; // Convert to kobo
       }
 
-      const response = await fetch('https://api.paystack.co/refund', {
+      const response = await fetchWithTimeout('https://api.paystack.co/refund', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.secretKey}`,
@@ -238,7 +249,7 @@ class PaystackProvider implements PaymentProvider {
   }
 }
 
-// Stripe provider stub
+// Stripe provider implementation
 class StripeProvider implements PaymentProvider {
   id = 'stripe';
   name = 'Stripe';
@@ -248,41 +259,242 @@ class StripeProvider implements PaymentProvider {
     this.secretKey = secretKey;
   }
 
+  private get authHeader() {
+    return `Basic ${Buffer.from(`${this.secretKey}:`).toString('base64')}`;
+  }
+
   async initializePayment(params: InitializePaymentParams): Promise<PaymentResponse> {
-    // Stripe implementation would go here
+    const tracer = trace.getTracer('boka');
+    const span = tracer.startSpan('stripe.initialize_payment');
+
+    try {
+      // Create a PaymentIntent
+      const body = new URLSearchParams({
+        amount: String(Math.round(params.amount * 100)), // Convert to cents
+        currency: params.currency.toLowerCase(),
+        'metadata[reference]': params.reference,
+        'metadata[tenant_id]': String(params.metadata?.tenant_id || ''),
+        'metadata[reservation_id]': String(params.metadata?.reservation_id || ''),
+      });
+
+      if (params.callbackUrl) {
+        body.append('return_url', params.callbackUrl);
+      }
+
+      const response = await fetchWithTimeout('https://api.stripe.com/v1/payment_intents', {
+        method: 'POST',
+        headers: {
+          Authorization: this.authHeader,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Idempotency-Key': params.reference,
+        },
+        body,
+      });
+
+      const data = await response.json();
+      span.setAttribute('stripe.status', response.status);
+
+      if (!response.ok) {
+        return { success: false, reference: params.reference, error: data.error?.message || 'Payment initialization failed' };
+      }
+
+      return {
+        success: true,
+        reference: params.reference,
+        authorizationUrl: `${params.callbackUrl || ''}?payment_intent=${data.id}&client_secret=${data.client_secret}`,
+        accessCode: data.client_secret,
+      };
+    } catch (error) {
+      span.recordException(error as Error);
+      return { success: false, reference: params.reference, error: (error as Error).message };
+    } finally {
+      span.end();
+    }
+  }
+
+  async verifyPayment(reference: string): Promise<VerificationResponse> {
+    const tracer = trace.getTracer('boka');
+    const span = tracer.startSpan('stripe.verify_payment');
+    span.setAttribute('payment.reference', reference);
+
+    try {
+      // Search for PaymentIntent by metadata reference (reference is URL-encoded to prevent injection)
+      const response = await fetchWithTimeout(
+        `https://api.stripe.com/v1/payment_intents/search?query=metadata['reference']:'${encodeURIComponent(reference)}'`,
+        { headers: { Authorization: this.authHeader }, timeoutMs: PAYMENT_TIMEOUT_MS }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.data?.length) {
+        return { success: false, status: 'failed', amount: 0, currency: 'USD', reference, error: data.error?.message || 'Payment not found' };
+      }
+
+      const intent = data.data[0];
+      const statusMap: Record<string, string> = {
+        succeeded: 'success',
+        requires_payment_method: 'pending',
+        requires_confirmation: 'pending',
+        processing: 'pending',
+        canceled: 'failed',
+      };
+
+      return {
+        success: intent.status === 'succeeded',
+        status: statusMap[intent.status] || intent.status,
+        amount: intent.amount_received / 100,
+        currency: intent.currency.toUpperCase(),
+        paidAt: intent.created ? new Date(intent.created * 1000).toISOString() : undefined,
+        reference,
+        providerReference: intent.id,
+      };
+    } catch (error) {
+      span.recordException(error as Error);
+      return { success: false, status: 'error', amount: 0, currency: 'USD', reference, error: (error as Error).message };
+    } finally {
+      span.end();
+    }
+  }
+
+  async refundPayment(params: RefundParams): Promise<RefundResponse> {
+    const tracer = trace.getTracer('boka');
+    const span = tracer.startSpan('stripe.refund_payment');
+
+    try {
+      const body = new URLSearchParams({
+        payment_intent: params.transactionReference,
+      });
+      if (params.amount) {
+        body.append('amount', String(Math.round(params.amount * 100)));
+      }
+      if (params.reason) {
+        body.append('reason', 'requested_by_customer');
+        body.append('metadata[reason]', params.reason);
+      }
+
+      const response = await fetchWithTimeout('https://api.stripe.com/v1/refunds', {
+        method: 'POST',
+        headers: { Authorization: this.authHeader, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+
+      const data = await response.json();
+      span.setAttribute('stripe.status', response.status);
+
+      if (!response.ok) {
+        return { success: false, refundReference: '', amount: 0, error: data.error?.message || 'Refund failed' };
+      }
+
+      return {
+        success: data.status === 'succeeded' || data.status === 'pending',
+        refundReference: data.id,
+        amount: data.amount / 100,
+      };
+    } catch (error) {
+      span.recordException(error as Error);
+      return { success: false, refundReference: '', amount: 0, error: (error as Error).message };
+    } finally {
+      span.end();
+    }
+  }
+
+  async getTransactionStatus(reference: string): Promise<TransactionStatusResponse> {
+    const verification = await this.verifyPayment(reference);
     return {
-      success: false,
+      status: verification.status,
+      amount: verification.amount,
+      currency: verification.currency,
+      reference: verification.reference,
+      providerReference: verification.providerReference,
+    };
+  }
+}
+
+// Flutterwave provider implementation
+class FlutterwaveProvider implements PaymentProvider {
+  id = 'flutterwave';
+  name = 'Flutterwave';
+  private secretKey: string;
+
+  constructor(secretKey: string) {
+    this.secretKey = secretKey;
+  }
+
+  async initializePayment(params: InitializePaymentParams): Promise<PaymentResponse> {
+    const res = await fetchWithTimeout('https://api.flutterwave.com/v3/payments', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tx_ref: params.reference,
+        amount: params.amount,
+        currency: params.currency,
+        redirect_url: params.callbackUrl,
+        customer: { email: params.email },
+        meta: params.metadata,
+      }),
+    });
+    const data = await res.json();
+    return {
+      success: data.status === 'success',
       reference: params.reference,
-      error: 'Stripe integration not implemented yet',
+      authorizationUrl: data.data?.link,
+      error: data.status !== 'success' ? data.message : undefined,
     };
   }
 
   async verifyPayment(reference: string): Promise<VerificationResponse> {
+    const res = await fetchWithTimeout(
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+      { headers: { 'Authorization': `Bearer ${this.secretKey}` }, timeoutMs: PAYMENT_TIMEOUT_MS }
+    );
+    const data = await res.json();
+    const tx = data.data;
     return {
-      success: false,
-      status: 'failed',
-      amount: 0,
-      currency: 'USD',
+      success: data.status === 'success' && tx?.status === 'successful',
+      status: tx?.status ?? 'unknown',
+      amount: tx?.amount ?? 0,
+      currency: tx?.currency ?? '',
+      paidAt: tx?.created_at,
       reference,
-      error: 'Stripe integration not implemented yet',
+      providerReference: String(tx?.id ?? ''),
+      error: data.status !== 'success' ? data.message : undefined,
     };
   }
 
-  async refundPayment(): Promise<RefundResponse> {
+  async refundPayment(params: RefundParams): Promise<RefundResponse> {
+    const res = await fetchWithTimeout(`https://api.flutterwave.com/v3/transactions/${params.transactionReference}/refund`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ amount: params.amount }),
+    });
+    const data = await res.json();
     return {
-      success: false,
-      refundReference: '',
-      amount: 0,
-      error: 'Stripe integration not implemented yet',
+      success: data.status === 'success',
+      refundReference: data.data?.id ? String(data.data.id) : params.transactionReference,
+      amount: data.data?.amount ?? params.amount ?? 0,
+      error: data.status !== 'success' ? data.message : undefined,
     };
   }
 
   async getTransactionStatus(reference: string): Promise<TransactionStatusResponse> {
+    const res = await fetchWithTimeout(
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+      { headers: { 'Authorization': `Bearer ${this.secretKey}` }, timeoutMs: PAYMENT_TIMEOUT_MS }
+    );
+    const data = await res.json();
+    const tx = data.data;
     return {
-      status: 'failed',
-      amount: 0,
-      currency: 'USD',
+      status: tx?.status ?? 'unknown',
+      amount: tx?.amount ?? 0,
+      currency: tx?.currency ?? '',
       reference,
+      providerReference: String(tx?.id ?? ''),
     };
   }
 }
@@ -306,6 +518,9 @@ export class PaymentService {
     if (process.env.STRIPE_SECRET_KEY) {
       this.providers.set('stripe', new StripeProvider(process.env.STRIPE_SECRET_KEY));
     }
+    if (process.env.FLUTTERWAVE_SECRET_KEY) {
+      this.providers.set('flutterwave', new FlutterwaveProvider(process.env.FLUTTERWAVE_SECRET_KEY));
+    }
   }
 
   async initializePayment(params: {
@@ -318,10 +533,13 @@ export class PaymentService {
     metadata?: Record<string, unknown>;
     ipAddress?: string;
     userAgent?: string;
-  }): Promise<{ 
-    success: boolean; 
-    transactionId?: string; 
-    authorizationUrl?: string; 
+    subaccountCode?: string;
+    bearer?: 'account' | 'subaccount';
+    callbackUrl?: string;
+  }): Promise<{
+    success: boolean;
+    transactionId?: string;
+    authorizationUrl?: string;
     error?: string;
     requiresReview?: boolean;
     riskScore?: number;
@@ -331,7 +549,7 @@ export class PaymentService {
 
     try {
       // Enhanced idempotency and fraud detection
-      const idempotencyKey = `payment:${params.tenantId}:${params.reservationId || 'direct'}:${params.amount}:${params.email}`;
+      const idempotencyKey = `payment:${params.provider || 'paystack'}:${params.tenantId}:${params.reservationId || 'direct'}:${params.amount}`;
       
       const securityCheck = await this.securityService.checkIdempotency(
         'payment',
@@ -353,8 +571,8 @@ export class PaymentService {
         depositIdempotencyHit(params.tenantId);
         return {
           success: true,
-          transactionId: securityCheck.existingTransaction.transaction_id,
-          authorizationUrl: securityCheck.existingTransaction.authorization_url,
+          transactionId: typeof securityCheck.existingTransaction.transaction_id === 'string' ? securityCheck.existingTransaction.transaction_id : undefined,
+          authorizationUrl: typeof securityCheck.existingTransaction.authorization_url === 'string' ? securityCheck.existingTransaction.authorization_url : undefined,
         };
       }
 
@@ -387,7 +605,38 @@ export class PaymentService {
       }
 
       const reference = this.generateReference();
-      
+
+      // Insert pending record BEFORE calling provider to prevent zombie payments:
+      // if the provider call succeeds but the DB insert fails, the payment has no
+      // local record and can never be reconciled.
+      const { data: transaction, error: insertError } = await this.supabase
+        .from('transactions')
+        .insert({
+          tenant_id: params.tenantId,
+          amount: params.amount,
+          currency: params.currency,
+          type: 'deposit',
+          status: 'pending',
+          provider_reference: reference,
+          // reservations is the payment subject; the webhook confirms via subject_id.
+          subject_type: params.reservationId ? 'reservation' : null,
+          subject_id: params.reservationId ?? null,
+          // transactions has no `provider` column — provider/email live in raw.
+          raw: {
+            ref: reference,
+            email: params.email,
+            reservation_id: params.reservationId,
+            provider: provider.id,
+          },
+        })
+        .select('id')
+        .single();
+
+      if (insertError) {
+        span.recordException(new Error(insertError.message));
+        return { success: false, error: insertError.message };
+      }
+
       const response = await provider.initializePayment({
         amount: params.amount,
         currency: params.currency,
@@ -398,33 +647,25 @@ export class PaymentService {
           reservation_id: params.reservationId,
           ...params.metadata,
         },
+        subaccountCode: params.subaccountCode,
+        bearer: params.bearer,
+        callbackUrl: params.callbackUrl,
       });
 
-      // Create transaction record
-      const { data: transaction, error } = await this.supabase
+      // Update the record with provider response (non-fatal if this fails — record is reconcilable)
+      await this.supabase
         .from('transactions')
-        .insert({
-          tenant_id: params.tenantId,
-          amount: params.amount,
-          currency: params.currency,
-          type: 'deposit',
-          status: 'pending',
-          provider: provider.id,
-          provider_reference: reference,
+        .update({
+          status: response.success ? 'pending' : 'failed',
           raw: {
             ref: reference,
             email: params.email,
             reservation_id: params.reservationId,
+            provider: provider.id,
             provider_response: response,
           },
         })
-        .select('id')
-        .single();
-
-      if (error) {
-        span.recordException(new Error(error.message));
-        return { success: false, error: error.message };
-      }
+        .eq('id', transaction.id);
 
       // Create initial ledger entry
       await this.createLedgerEntry({
@@ -451,7 +692,7 @@ export class PaymentService {
             currency: params.currency,
             authorization_url: response.authorizationUrl,
           },
-          tenant_id: params.tenantId,
+          tenantId: params.tenantId,
         });
       }
 
@@ -492,13 +733,41 @@ export class PaymentService {
         return { success: false, error: 'Transaction not found' };
       }
 
-      const provider = this.getProvider(transaction.provider);
+      const providerId = (transaction.raw as { provider?: string } | null)?.provider;
+      const provider = this.getProvider(providerId);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
       }
 
       const refundAmount = params.amount || transaction.amount;
-      
+
+      // Pre-insert a pending refund record BEFORE calling the provider.
+      // This ensures we always have a local record even if the provider succeeds but the
+      // subsequent DB update fails — preventing untracked refunds.
+      const { data: pendingRefund, error: pendingRefundError } = await this.supabase
+        .from('transactions')
+        .insert({
+          tenant_id: params.tenantId,
+          original_transaction_id: params.transactionId,
+          amount: -refundAmount,
+          currency: transaction.currency,
+          type: 'refund',
+          status: 'pending',
+          subject_type: transaction.subject_type ?? null,
+          subject_id: transaction.subject_id ?? null,
+          refund_amount: refundAmount,
+          refund_reason: params.reason,
+          // transactions has no `provider` column — it lives in raw.
+          raw: { original_reference: transaction.provider_reference, provider: (transaction.raw as { provider?: string } | null)?.provider ?? null },
+        })
+        .select('id')
+        .single();
+
+      if (pendingRefundError) {
+        span.recordException(new Error(pendingRefundError.message));
+        return { success: false, error: `Failed to create pending refund record: ${pendingRefundError.message}` };
+      }
+
       const refundResponse = await provider.refundPayment({
         transactionReference: transaction.provider_reference,
         amount: refundAmount,
@@ -506,36 +775,48 @@ export class PaymentService {
       });
 
       if (!refundResponse.success) {
+        // Mark the pre-inserted record as failed
+        await this.supabase
+          .from('transactions')
+          .update({
+            status: 'failed',
+            raw: {
+              original_reference: transaction.provider_reference,
+              provider: provider.id,
+              refund_response: refundResponse,
+            },
+          })
+          .eq('id', pendingRefund.id);
         refundProcessed(params.tenantId, 'failed');
         return { success: false, error: refundResponse.error };
       }
 
       refundProcessed(params.tenantId, 'success', refundAmount);
 
-      // Create refund transaction record
+      // Update the pre-inserted record to completed with provider reference
       const { data: refundTransaction, error: refundError } = await this.supabase
         .from('transactions')
-        .insert({
-          tenant_id: params.tenantId,
-          original_transaction_id: params.transactionId,
-          amount: -refundAmount, // Negative amount for refund
-          currency: transaction.currency,
-          type: 'refund',
+        .update({
           status: 'completed',
-          provider: transaction.provider,
           provider_reference: refundResponse.refundReference,
-          refund_amount: refundAmount,
-          refund_reason: params.reason,
           raw: {
             original_reference: transaction.provider_reference,
+            provider: provider.id,
             refund_response: refundResponse,
           },
         })
+        .eq('id', pendingRefund.id)
         .select('id')
         .single();
 
       if (refundError) {
+        // Provider refund succeeded but DB update failed — log as critical for reconciliation
         span.recordException(new Error(refundError.message));
+        defaultLogger.error('[paymentService] CRITICAL: Provider refund succeeded but DB update failed — reconciliation required', {
+          pendingRefundId: pendingRefund.id,
+          providerReference: refundResponse.refundReference,
+          error: refundError.message,
+        });
         return { success: false, error: refundError.message };
       }
 
@@ -560,7 +841,7 @@ export class PaymentService {
           refund_amount: refundAmount,
           reason: params.reason,
         },
-        tenant_id: params.tenantId,
+        tenantId: params.tenantId,
       });
 
       return { success: true, refundId: refundTransaction.id };
@@ -591,7 +872,7 @@ export class PaymentService {
         return { success: false, error: 'Maximum retry attempts exceeded' };
       }
 
-      const provider = this.getProvider(transaction.provider);
+      const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
       }
@@ -673,7 +954,7 @@ export class PaymentService {
       for (const transaction of transactions || []) {
         if (!transaction.provider_reference) continue;
 
-        const provider = this.getProvider(transaction.provider);
+        const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
         if (!provider) continue;
 
         try {
@@ -752,8 +1033,8 @@ export class PaymentService {
     });
   }
 
-  private getProvider(providerId: string): PaymentProvider | undefined {
-    return this.providers.get(providerId);
+  private getProvider(providerId?: string): PaymentProvider | undefined {
+    return providerId ? this.providers.get(providerId) : undefined;
   }
 
   private generateReference(): string {

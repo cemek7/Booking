@@ -1,4 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import EnhancedJobManager from '@/lib/enhancedJobManager';
 import { z } from 'zod';
 
@@ -21,11 +22,7 @@ const GetDeadLetterQuerySchema = z.object({
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw new Error('Tenant ID is required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const body = await ctx.request.json();
     const bodyValidation = ProcessDeadLetterBodySchema.safeParse(body);
@@ -60,11 +57,7 @@ export const POST = createHttpHandler(
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw new Error('Tenant ID is required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const { searchParams } = new URL(ctx.request.url);
     const queryValidation = GetDeadLetterQuerySchema.safeParse(

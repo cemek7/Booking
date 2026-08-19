@@ -2,6 +2,11 @@
 import { useEffect } from 'react';
 import { useRealtimeClient } from '@/hooks/useRealtimeClient';
 import { useQueryClient } from '@tanstack/react-query';
+import type { RealtimeEvent } from '@/lib/realtimeClient';
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
 
 export default function RealtimeSubscriptions() {
   const { subscribe } = useRealtimeClient();
@@ -10,15 +15,25 @@ export default function RealtimeSubscriptions() {
   useEffect(() => {
     const unsubAll: Array<() => void> = [];
 
-    const onBookingEvent = (e: any) => {
-      const id = e?.id || e?.bookingId || e?.data?.id;
-      const update = e?.booking || e?.data || e;
+    const onBookingEvent = (event: RealtimeEvent) => {
+      const nestedData = asRecord(event.data);
+      const update = asRecord(event.booking) ?? nestedData ?? event;
+      const id = typeof event.id === 'string'
+        ? event.id
+        : typeof event.bookingId === 'string'
+          ? event.bookingId
+          : typeof nestedData?.id === 'string'
+            ? nestedData.id
+            : null;
       if (id) {
-        qc.setQueryData(['booking', id], (prev: any) => ({ ...(prev || {}), ...(update || {}) }));
+        qc.setQueryData<Record<string, unknown>>(['booking', id], (previous) => ({ ...(previous ?? {}), ...update }));
         // Update any cached bookings lists
         qc.setQueriesData({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'bookings' }, (old: unknown) => {
-          const list = (old as any[]) || [];
-          return list.map((ev: any) => ev?.id === id ? { ...ev, ...update } : ev);
+          const list = Array.isArray(old) ? old : [];
+          return list.map((item) => {
+            const booking = asRecord(item);
+            return booking?.id === id ? { ...booking, ...update } : item;
+          });
         });
       }
       // Invalidate broad schedule/bookings queries
@@ -29,7 +44,7 @@ export default function RealtimeSubscriptions() {
       qc.invalidateQueries({ queryKey: ['reservations'] });
     };
 
-    const onPaymentEvent = (_e: any) => {
+    const onPaymentEvent = () => {
       // If billing queries exist later, invalidate by key prefix
       qc.invalidateQueries({ predicate: (q) => {
         const key = q.queryKey[0];

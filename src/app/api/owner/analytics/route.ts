@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Owner Analytics API
  * 
@@ -23,7 +24,7 @@ export const GET = createHttpHandler(
     }
 
     const { period } = queryValidation.data;
-    const tenantId = ctx.user.tenantId;
+    const tenantId = ctx.user?.tenantId;
 
     // Calculate date range
     const endDate = new Date();

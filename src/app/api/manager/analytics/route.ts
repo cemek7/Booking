@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Manager Analytics API
  * 
@@ -30,9 +31,47 @@ const GetAnalyticsQuerySchema = z.object({
   staffId: z.string().optional(),
 });
 
+const DateRangeSchema = z.object({
+  startDate: z.coerce.date(),
+  endDate: z.coerce.date(),
+});
+
+const GenerateReportDataSchema = z.object({
+  reportType: z.enum(['staff', 'revenue', 'bookings', 'comprehensive']),
+  dateRange: DateRangeSchema,
+  filters: z.object({
+    staffIds: z.array(z.string()).optional(),
+    serviceIds: z.array(z.string()).optional(),
+    includeMetrics: z.array(z.string()).optional(),
+  }).optional(),
+});
+
+const ExportAnalyticsDataSchema = z.object({
+  dataType: z.enum(['staff', 'revenue', 'bookings']),
+  format: z.enum(['csv', 'json']),
+  dateRange: DateRangeSchema,
+});
+
+const DashboardConfigSchema = z.object({
+  layout: z.string(),
+  widgets: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    position: z.object({ x: z.number(), y: z.number() }),
+    size: z.object({ width: z.number(), height: z.number() }),
+    config: z.record(z.string(), z.unknown()),
+  })),
+  preferences: z.object({
+    defaultPeriod: z.string().optional(),
+    theme: z.string().optional(),
+    autoRefresh: z.boolean().optional(),
+    refreshInterval: z.number().optional(),
+  }),
+});
+
 const PostAnalyticsBodySchema = z.object({
   action: AnalyticsActionSchema,
-  data: z.any(),
+  data: z.unknown(),
 });
 
 export const GET = createHttpHandler(
@@ -85,13 +124,13 @@ export const POST = createHttpHandler(
     let result;
     switch (action) {
       case 'generate-report':
-        result = await generateCustomReport(ctx.supabase, ctx.user! as AppUser, data);
+        result = await generateCustomReport(ctx.supabase, ctx.user! as AppUser, GenerateReportDataSchema.parse(data));
         break;
       case 'export-data':
-        result = await exportAnalyticsData(ctx.supabase, ctx.user! as AppUser, data);
+        result = await exportAnalyticsData(ctx.supabase, ctx.user! as AppUser, ExportAnalyticsDataSchema.parse(data));
         break;
       case 'save-dashboard':
-        result = await saveDashboardConfig(ctx.supabase, ctx.user! as AppUser, data);
+        result = await saveDashboardConfig(ctx.supabase, ctx.user! as AppUser, DashboardConfigSchema.parse(data));
         break;
       default:
         throw ApiErrorFactory.badRequest('Invalid analytics action');

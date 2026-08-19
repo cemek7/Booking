@@ -52,6 +52,10 @@ const LLMSchema = z.object({
   openrouterReferer: z.string().optional().default('https://chat.openrouter.ai'),
   openrouterUrl: z.string().url().optional().default('https://api.openrouter.ai/v1'),
   openrouterModel: z.string().optional().default('gpt-4o-mini'),
+  cloudflareAccountId: z.string().optional().default(''),
+  cloudflareAiApiToken: z.string().optional().default(''),
+  cloudflareAiBaseUrl: z.string().url().optional().default('https://api.cloudflare.com/client/v4'),
+  cloudflareAiModel: z.string().optional().default('@cf/meta/llama-3.1-8b-instruct'),
   openaiApiKey: z.string().optional().default(''),
   openaiModel: z.string().optional().default('gpt-4o-mini'),
   localLlmModel: z.string().optional().default('./models/distilgpt2')
@@ -201,8 +205,11 @@ function parseEnvironment(): EnvironmentConfig {
       openrouterApiKey: process.env.OPENROUTER_API_KEY,
       openrouterBaseUrl: process.env.OPENROUTER_BASE_URL,
       openrouterReferer: process.env.OPENROUTER_REFERER,
-      openrouterUrl: process.env.OPENROUTER_URL,
       openrouterModel: process.env.OPENROUTER_MODEL,
+      cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+      cloudflareAiApiToken: process.env.CLOUDFLARE_AI_API_TOKEN,
+      cloudflareAiBaseUrl: process.env.CLOUDFLARE_AI_BASE_URL,
+      cloudflareAiModel: process.env.CLOUDFLARE_AI_DEFAULT_MODEL,
       openaiApiKey: process.env.OPENAI_API_KEY,
       openaiModel: process.env.OPENAI_MODEL,
       localLlmModel: process.env.LOCAL_LLM_MODEL
@@ -258,17 +265,40 @@ function parseEnvironment(): EnvironmentConfig {
     }
   };
 
+  let parsed: EnvironmentConfig;
   try {
-    return EnvironmentSchema.parse(env);
+    parsed = EnvironmentSchema.parse(env);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      const missingVars = error.errors
+      const missingVars = error.issues
         .map(err => `${err.path.join('.')}: ${err.message}`)
         .join('\n');
       throw new Error(`Environment validation failed:\n${missingVars}`);
     }
     throw error;
   }
+
+  // Cross-validate: warn when a feature flag is enabled but its required key is absent
+  if (
+    parsed.features.enableWhatsappIntegration &&
+    !parsed.whatsapp.apiKey &&
+    !process.env.WHATSAPP_ACCESS_TOKEN &&
+    !process.env.WAHA_API_KEY
+  ) {
+    console.warn(
+      '[env] ENABLE_WHATSAPP_INTEGRATION=true but no WhatsApp provider token is set — ' +
+      'WhatsApp features will fail at runtime'
+    );
+  }
+  const hasGoogleAI = Boolean(process.env.GOOGLE_AI_API_KEY);
+  if (!hasGoogleAI && !parsed.llm.openrouterApiKey && !(parsed.llm.cloudflareAccountId && parsed.llm.cloudflareAiApiToken)) {
+    console.warn(
+      '[env] No LLM provider configured (CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_AI_API_TOKEN, GOOGLE_AI_API_KEY, and OPENROUTER_API_KEY are all unset) — ' +
+      'AI features will fail at runtime'
+    );
+  }
+
+  return parsed;
 }
 
 // ============================================================================
@@ -331,10 +361,86 @@ export const config = {
 // HELPER FUNCTIONS
 // ============================================================================
 
+// ============================================================================
+// MVP BOOT-TIME VALIDATION
+// Hard-fails on server startup if any MVP-critical variable is missing.
+// Client-side imports are excluded via the typeof window guard.
+// ============================================================================
+
+// Always required in every environment
+const ALWAYS_REQUIRED: Array<[string, string]> = [
+  ['NEXT_PUBLIC_SUPABASE_URL',  'Supabase project URL'],
+  ['SUPABASE_SERVICE_ROLE_KEY', 'Supabase service-role key (server-only)'],
+];
+
+// Required in production; warn-only in development/staging
+const PROD_REQUIRED: Array<[string, string]> = [
+  ['PAYSTACK_SECRET_KEY', 'Paystack secret key (payments)'],
+  ['RESEND_API_KEY',      'Resend API key (email)'],
+];
+
+function hasWhatsappProviderConfig(): boolean {
+  const hasMeta = Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const hasWaha = Boolean(process.env.WAHA_API_BASE && process.env.WAHA_API_KEY);
+  const hasEvolution = Boolean(process.env.EVOLUTION_API_BASE && process.env.EVOLUTION_API_KEY);
+  return hasMeta || hasWaha || hasEvolution;
+}
+
+function validateMvpEnv(): void {
+  // Only validate on the server side
+  if (typeof window !== 'undefined') return;
+
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  // Always fail hard on Supabase — app is non-functional without it
+  const alwaysMissing = ALWAYS_REQUIRED.filter(([key]) => !process.env[key]);
+  if (alwaysMissing.length > 0) {
+    const lines = alwaysMissing.map(([key, desc]) => `  - ${key}  (${desc})`).join('\n');
+    throw new Error(`[Boka] Missing required env vars:\n${lines}`);
+  }
+
+  if (!isDev) {
+    // Production: fail hard if any MVP vars are missing
+    const missing = PROD_REQUIRED.filter(([key]) => !process.env[key]);
+    if (missing.length > 0) {
+      const lines = missing.map(([key, desc]) => `  - ${key}  (${desc})`).join('\n');
+      throw new Error(
+        `[Boka] Missing MVP-critical env vars — production cannot start:\n${lines}\n\n` +
+        `Set these in your deployment environment.`
+      );
+    }
+
+    if (process.env.ENABLE_WHATSAPP_INTEGRATION === 'true' && !hasWhatsappProviderConfig()) {
+      throw new Error(
+        '[Boka] WhatsApp integration is enabled in production but no provider is configured. ' +
+        'Set one of: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID, WAHA_API_BASE + WAHA_API_KEY, or EVOLUTION_API_BASE + EVOLUTION_API_KEY.'
+      );
+    }
+    return;
+  }
+
+  // Development: warn for missing prod vars, don't block startup
+  const devMissing = PROD_REQUIRED.filter(([key]) => !process.env[key]);
+  if (devMissing.length > 0) {
+    const lines = devMissing.map(([key, desc]) => `  ⚠  ${key}  (${desc})`).join('\n');
+    console.warn(`[Boka] Optional services not configured (features will be disabled):\n${lines}`);
+  }
+
+  if (process.env.ENABLE_WHATSAPP_INTEGRATION === 'true' && !hasWhatsappProviderConfig()) {
+    console.warn(
+      '[Boka] ENABLE_WHATSAPP_INTEGRATION=true but no WhatsApp provider is configured. ' +
+      'Set Meta, WAHA, or Evolution credentials before turning this feature on.'
+    );
+  }
+}
+
+// Run at module load time so misconfigured deploys fail immediately
+validateMvpEnv();
+
 /**
  * Check if a feature is enabled
  */
-export function isFeatureEnabled(feature: keyof FeatureFlagsSchema['shape']): boolean {
+export function isFeatureEnabled(feature: keyof z.infer<typeof FeatureFlagsSchema>): boolean {
   return config.features[feature] === true;
 }
 

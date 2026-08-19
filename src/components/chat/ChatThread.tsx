@@ -14,9 +14,10 @@ export interface ChatThreadProps {
   messages: ChatMessage[];
   activeChatId?: string | null;
   loading?: boolean;
+  channel?: 'whatsapp' | 'instagram';
 }
 
-export function ChatThread({ messages, activeChatId, loading }: ChatThreadProps) {
+export function ChatThread({ messages, activeChatId, loading, channel = 'whatsapp' }: ChatThreadProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   if (!activeChatId) {
@@ -24,6 +25,11 @@ export function ChatThread({ messages, activeChatId, loading }: ChatThreadProps)
   }
   return (
     <div className="space-y-3 p-1">
+      {channel === 'instagram' ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          This thread is on Instagram. Staff replies are limited to the 24-hour customer-service window.
+        </div>
+      ) : null}
       {messages.length === 0 && !loading && (
         <p className="text-xs text-gray-500">No messages yet. Say hello!</p>
       )}

@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { sendLLMUsageAlert } from '@/lib/llmAlertService';
 
@@ -5,7 +6,7 @@ export interface LLMUsageRecord {
   id?: string;
   tenant_id: string;
   user_id: string;
-  provider: 'openrouter' | 'openai' | 'anthropic' | 'local';
+  provider: 'cloudflare' | 'openrouter' | 'openai' | 'anthropic' | 'local' | 'google_ai';
   model: string;
   operation: 'intent_detection' | 'paraphrasing' | 'conversation' | 'booking_assistant' | 'template_generation';
   input_tokens: number;
@@ -13,7 +14,7 @@ export interface LLMUsageRecord {
   total_tokens: number;
   cost_usd: number;
   request_id?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at?: string;
 }
 
@@ -42,6 +43,22 @@ export interface LLMUsageAlert {
   created_at: string;
 }
 
+export interface LLMDailyAggregate {
+  date: string;
+  total_tokens: number;
+  total_cost: number;
+  total_requests: number;
+}
+
+export interface LLMOperationAggregate extends Omit<LLMDailyAggregate, 'date'> {
+  operation: LLMUsageRecord['operation'];
+}
+
+export interface LLMCostTrend {
+  date: string;
+  cost: number;
+}
+
 class LLMUsageTracker {
   private get supabase() { return createSupabaseAdminClient(); }
 
@@ -59,7 +76,7 @@ class LLMUsageTracker {
         });
 
       if (insertError) {
-        console.error('Failed to record LLM usage:', insertError);
+        defaultLogger.error('Failed to record LLM usage:', insertError);
         throw new Error('Failed to record LLM usage');
       }
 
@@ -70,7 +87,7 @@ class LLMUsageTracker {
       await this.checkQuotaViolations(usage.tenant_id);
 
     } catch (error) {
-      console.error('LLM usage tracking error:', error);
+      defaultLogger.error('LLM usage tracking error:', error);
       // Don't throw - we don't want LLM tracking failures to break the main flow
     }
   }
@@ -87,13 +104,13 @@ class LLMUsageTracker {
         .single();
 
       if (error && error.code !== 'PGRST116') { // Not found is OK
-        console.error('Failed to get quota status:', error);
+        defaultLogger.error('Failed to get quota status:', error);
         return null;
       }
 
       return data || null;
     } catch (error) {
-      console.error('Error getting quota status:', error);
+      defaultLogger.error('Error getting quota status:', error);
       return null;
     }
   }
@@ -128,7 +145,7 @@ class LLMUsageTracker {
 
       return true;
     } catch (error) {
-      console.error('Error checking request permission:', error);
+      defaultLogger.error('Error checking request permission:', error);
       return false; // Fail safely
     }
   }
@@ -139,8 +156,9 @@ class LLMUsageTracker {
   async initializeQuota(tenantId: string, plan: 'free' | 'premium' | 'enterprise'): Promise<LLMUsageQuota | null> {
     try {
       const quotaConfig = this.getQuotaConfig(plan);
-      const resetDate = new Date();
-      resetDate.setMonth(resetDate.getMonth() + 1, 1); // First day of next month
+      // Use Date constructor to correctly handle month overflow (e.g., Jan 31 → Mar 1 bug)
+      const now = new Date();
+      const resetDate = new Date(now.getFullYear(), now.getMonth() + 1, 1); // First day of next month
 
       const quota: Omit<LLMUsageQuota, 'current_month_tokens' | 'current_month_cost' | 'current_month_requests'> = {
         tenant_id: tenantId,
@@ -154,9 +172,12 @@ class LLMUsageTracker {
         ai_features_enabled: true
       };
 
+      // Use insert to avoid overwriting custom quota settings on plan changes.
+      // Handle 23505 (unique constraint violation) from concurrent initializations
+      // by fetching the row that the winning request inserted.
       const { data, error } = await this.supabase
         .from('llm_quotas')
-        .upsert({
+        .insert({
           ...quota,
           current_month_tokens: 0,
           current_month_cost: 0,
@@ -166,13 +187,22 @@ class LLMUsageTracker {
         .single();
 
       if (error) {
-        console.error('Failed to initialize quota:', error);
+        if (error.code === '23505') {
+          // Concurrent init: fetch the existing record instead of returning null
+          const { data: existing } = await this.supabase
+            .from('llm_quotas')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .single();
+          return existing ?? null;
+        }
+        defaultLogger.error('Failed to initialize quota:', error);
         return null;
       }
 
       return data;
     } catch (error) {
-      console.error('Error initializing quota:', error);
+      defaultLogger.error('Error initializing quota:', error);
       return null;
     }
   }
@@ -182,9 +212,9 @@ class LLMUsageTracker {
    */
   async getUsageStats(tenantId: string, days: number = 30): Promise<{
     total_usage: LLMUsageRecord[];
-    daily_aggregates: any[];
-    operation_breakdown: any[];
-    cost_trend: any[];
+    daily_aggregates: LLMDailyAggregate[];
+    operation_breakdown: LLMOperationAggregate[];
+    cost_trend: LLMCostTrend[];
   } | null> {
     try {
       const startDate = new Date();
@@ -199,7 +229,7 @@ class LLMUsageTracker {
         .order('created_at', { ascending: false });
 
       if (usageError) {
-        console.error('Failed to get usage stats:', usageError);
+        defaultLogger.error('Failed to get usage stats:', usageError);
         return null;
       }
 
@@ -219,7 +249,7 @@ class LLMUsageTracker {
         cost_trend: costTrend
       };
     } catch (error) {
-      console.error('Error getting usage statistics:', error);
+      defaultLogger.error('Error getting usage statistics:', error);
       return null;
     }
   }
@@ -237,7 +267,7 @@ class LLMUsageTracker {
       });
 
     if (error) {
-      console.error('Failed to update quota counters:', error);
+      defaultLogger.error('Failed to update quota counters:', error);
     }
   }
 
@@ -337,7 +367,7 @@ class LLMUsageTracker {
           })));
 
         if (alertError) {
-          console.error('Failed to create usage alerts:', alertError);
+          defaultLogger.error('Failed to create usage alerts:', alertError);
         }
       }
 
@@ -350,7 +380,7 @@ class LLMUsageTracker {
       }
 
     } catch (error) {
-      console.error('Error checking quota violations:', error);
+      defaultLogger.error('Error checking quota violations:', error);
     }
   }
 
@@ -382,8 +412,8 @@ class LLMUsageTracker {
   /**
    * Aggregate usage by day
    */
-  private aggregateUsageByDay(usage: LLMUsageRecord[]): any[] {
-    const dailyMap = new Map();
+  private aggregateUsageByDay(usage: LLMUsageRecord[]): LLMDailyAggregate[] {
+    const dailyMap = new Map<string, LLMDailyAggregate>();
 
     usage.forEach(record => {
       const day = record.created_at?.split('T')[0] || '';
@@ -396,7 +426,7 @@ class LLMUsageTracker {
         });
       }
 
-      const dayData = dailyMap.get(day);
+      const dayData = dailyMap.get(day)!;
       dayData.total_tokens += record.total_tokens;
       dayData.total_cost += record.cost_usd;
       dayData.total_requests += 1;
@@ -408,8 +438,8 @@ class LLMUsageTracker {
   /**
    * Aggregate usage by operation type
    */
-  private aggregateUsageByOperation(usage: LLMUsageRecord[]): any[] {
-    const operationMap = new Map();
+  private aggregateUsageByOperation(usage: LLMUsageRecord[]): LLMOperationAggregate[] {
+    const operationMap = new Map<LLMUsageRecord['operation'], LLMOperationAggregate>();
 
     usage.forEach(record => {
       if (!operationMap.has(record.operation)) {
@@ -421,7 +451,7 @@ class LLMUsageTracker {
         });
       }
 
-      const opData = operationMap.get(record.operation);
+      const opData = operationMap.get(record.operation)!;
       opData.total_tokens += record.total_tokens;
       opData.total_cost += record.cost_usd;
       opData.total_requests += 1;
@@ -433,15 +463,15 @@ class LLMUsageTracker {
   /**
    * Calculate cost trend over time
    */
-  private calculateCostTrend(usage: LLMUsageRecord[]): any[] {
-    const dailyMap = new Map();
+  private calculateCostTrend(usage: LLMUsageRecord[]): LLMCostTrend[] {
+    const dailyMap = new Map<string, number>();
 
     usage.forEach(record => {
       const day = record.created_at?.split('T')[0] || '';
       if (!dailyMap.has(day)) {
         dailyMap.set(day, 0);
       }
-      dailyMap.set(day, dailyMap.get(day) + record.cost_usd);
+      dailyMap.set(day, (dailyMap.get(day) ?? 0) + record.cost_usd);
     });
 
     return Array.from(dailyMap.entries())
@@ -459,13 +489,13 @@ export const llmUsageTracker = new LLMUsageTracker();
 export async function recordLLMUsage(
   tenantId: string,
   userId: string,
-  provider: 'openrouter' | 'openai' | 'anthropic' | 'local',
+  provider: 'cloudflare' | 'openrouter' | 'openai' | 'anthropic' | 'local' | 'google_ai',
   model: string,
   operation: LLMUsageRecord['operation'],
   inputTokens: number,
   outputTokens: number,
   costUsd: number,
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 ): Promise<void> {
   await llmUsageTracker.recordUsage({
     tenant_id: tenantId,
@@ -486,6 +516,44 @@ export async function recordLLMUsage(
  */
 export async function canMakeLLMRequest(tenantId: string, estimatedTokens?: number): Promise<boolean> {
   return await llmUsageTracker.canMakeRequest(tenantId, estimatedTokens);
+}
+
+/**
+ * Returns structured allowance result so callers can surface quota-exceeded messages to users
+ * rather than silently degrading to heuristics.
+ */
+export async function checkLLMRequestAllowance(
+  tenantId: string,
+  estimatedTokens: number = 1000
+): Promise<{ allowed: boolean; quotaExceeded: boolean; reason?: string }> {
+  try {
+    const quota = await llmUsageTracker.getQuotaStatus(tenantId);
+
+    if (!quota) {
+      const defaultQuota = await llmUsageTracker.initializeQuota(tenantId, 'free');
+      if (!defaultQuota) return { allowed: false, quotaExceeded: false, reason: 'quota_init_failed' };
+      // Recurse once after initialisation
+      return checkLLMRequestAllowance(tenantId, estimatedTokens);
+    }
+
+    if (!quota.ai_features_enabled) {
+      return { allowed: false, quotaExceeded: false, reason: 'ai_disabled' };
+    }
+
+    const tokenExceeded =
+      quota.current_month_tokens + estimatedTokens > quota.monthly_token_limit && !quota.overage_allowed;
+    const requestExceeded =
+      quota.current_month_requests >= quota.monthly_request_limit && !quota.overage_allowed;
+
+    if (tokenExceeded || requestExceeded) {
+      return { allowed: false, quotaExceeded: true, reason: tokenExceeded ? 'token_limit' : 'request_limit' };
+    }
+
+    return { allowed: true, quotaExceeded: false };
+  } catch (error) {
+    defaultLogger.error('checkLLMRequestAllowance error:', error);
+    return { allowed: false, quotaExceeded: false, reason: 'error' };
+  }
 }
 
 /**

@@ -1,6 +1,9 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { redactAndTruncate } from './pii';
 import metrics from './metrics';
+import { fetchWithTimeout } from './fetchWithTimeout';
 
 export interface OutboundMessage {
   tenant_id: string;
@@ -45,10 +48,11 @@ export class WhatsAppProvider implements MessagingProvider {
     try {
       const url = `${env('WHATSAPP_BASE_URL')}/send`;
       const payload = { to: out.to, body: redactAndTruncate(out.body, 1000), meta: out.metadata || null };
-      const resp = await fetch(url, {
+      const resp = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env('WHATSAPP_API_KEY')}` },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        timeoutMs: 10_000,
       });
       const ok = resp.ok;
       let pid: string | null = null;
@@ -66,7 +70,7 @@ export class EmailProvider implements MessagingProvider {
   async send(out: OutboundMessage): Promise<SendResult> {
     // Placeholder: integrate actual email provider later
     try {
-      console.log('[email] send', out.to, out.body.slice(0, 80));
+      defaultLogger.info('[email] send', { to: out.to, body: out.body.slice(0, 80) });
       await metrics.incr('msg_out_email');
       return { id: null, status: 'queued', provider: this.name };
     } catch (e) {
@@ -106,7 +110,7 @@ export async function logOutboundMessage(supabase: SupabaseClient, result: SendR
       raw: { provider: result.provider, status: result.status, error: result.error },
     });
   } catch (e) {
-    console.warn('logOutboundMessage failed', e);
+    defaultLogger.warn('logOutboundMessage failed', e);
   }
 }
 

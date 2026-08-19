@@ -1,4 +1,6 @@
 "use client";
+
+export const dynamic = 'force-dynamic';
 import { useMemo, useState } from 'react';
 import { Calendar } from '@/components/Calendar';
 import ConflictResolutionOverlay from '@/components/ConflictResolutionOverlay';
@@ -8,6 +10,7 @@ import { BookingComposer } from '@/components/booking/BookingComposer';
 import Modal from '@/components/ui/modal';
 import { useQueryClient } from '@tanstack/react-query';
 import { useStaff } from '@/hooks/useStaff';
+import type { StaffDto } from '@/hooks/useStaff';
 import type { BookingEvent } from '@/components/Calendar';
 
 // Type definitions for conflict resolution
@@ -153,7 +156,7 @@ export default function SchedulePage() {
                   <div className="text-xs text-gray-500">No staff available</div>
                 ) : (
                   <ul className="space-y-2">
-                    {staff.map((s: any) => (
+                    {staff.map((s: StaffDto) => (
                       <li key={s.id || s.user_id} className="flex items-center justify-between text-sm">
                         <span className="truncate">{s.name || s.email || s.id || s.user_id}</span>
                         <span className="text-[10px] text-gray-500 ml-2">{s.role || 'staff'}</span>
@@ -168,7 +171,7 @@ export default function SchedulePage() {
                   <div className="text-xs text-gray-500">Loading…</div>
                 ) : (
                   <ul className="space-y-2">
-                    {services.map((svc: any) => (
+                    {services.map((svc) => (
                       <li key={svc.id} className="flex items-center justify-between text-sm">
                         <span className="truncate">{svc.name}</span>
                         {svc.duration ? <span className="text-[10px] text-gray-500 ml-2">{svc.duration}m</span> : null}
@@ -195,7 +198,7 @@ export default function SchedulePage() {
                     // Avoid infinite loops: only update if changed
                     setRange(prev => (prev?.start === start && prev?.end === end) ? prev : { start, end });
                   }}
-                  staffOptions={staff}
+                  staffOptions={(staff as { id: string; name?: string }[]).filter(s => s.id)}
                 />
               )}
             </section>
@@ -210,7 +213,7 @@ export default function SchedulePage() {
         {openComposer && (
           <Modal open={openComposer} onClose={()=>setOpenComposer(false)}>
             <BookingComposer
-              context={{ tenantId: 't1', prefill: { start: '', end: '' } }}
+              context={{ tenantId: tenant?.id ?? '', prefill: { start: '', end: '' } }}
               onComplete={(bk) => {
                 // On complete, refresh bookings queries in scope
                 qc.invalidateQueries({ queryKey: ['bookings'] });
@@ -228,8 +231,8 @@ export default function SchedulePage() {
             onUpdate={async (patch) => {
               // Patch visible bookings lists and refetch
               qc.setQueriesData({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'bookings' }, (old: unknown) => {
-                const list = (old as any[]) || [];
-                return list.map((ev: any) => ev.id === activeBooking.id ? { ...ev, ...patch } : ev);
+                const list = Array.isArray(old) ? old as BookingEvent[] : [];
+                return list.map((event) => event.id === activeBooking.id ? { ...event, ...patch } : event);
               });
               qc.invalidateQueries({ queryKey: ['bookings'] });
             }}

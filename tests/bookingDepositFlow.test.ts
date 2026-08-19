@@ -22,7 +22,11 @@ function makeSupabaseStub(depositPct: number) {
           insert(row: TransactionRow) {
             (globalThis as unknown as { __lastTxn?: TransactionRow }).__lastTxn = row;
             return Promise.resolve({ data: [row], error: null });
-          }
+          },
+          select() { return this; },
+          eq() { return this; },
+          filter() { return this; },
+          limit() { return Promise.resolve({ data: [], error: null }); }
         };
       }
       return { select() { return this; } };

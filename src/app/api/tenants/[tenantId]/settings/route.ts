@@ -1,20 +1,28 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { auditSuperadminAction } from '@/lib/enhanced-rbac';
+import { auditSuperadminAction } from '@/types/unified-permissions';
 import { z } from 'zod';
 
 const SettingsSchemaBase = z.object({
   displayName: z.string().min(1).optional(),
   timezone: z.string().min(1).optional(),
   brandingColor: z.string().regex(/^#?[0-9a-fA-F]{3,8}$/).optional(),
+  contactEmail: z.string().email().optional(),
+  locale: z.string().min(1).optional(),
+  ownerName: z.string().min(1).optional(),
+  ownerPhone: z.string().min(3).optional(),
+  businessNickname: z.string().min(1).optional(),
   tone: z.string().min(1).optional(),
   styleGuidelines: z.string().min(1).optional(),
-  voiceParameters: z.record(z.string(), z.any()).optional(),
+  voiceParameters: z.record(z.string(), z.unknown()).optional(),
   samplePhrases: z.array(z.string().min(1)).optional(),
   brandTagline: z.string().optional(),
   greeting: z.string().optional(),
   signature: z.string().optional(),
+  preferred_language: z.string().min(1).optional(),
+  tone_config: z.record(z.string(), z.unknown()).optional(),
   requireDeposit: z.boolean().optional(),
   // Booking defaults
   bookingBufferMinutes: z.number().int().min(0).optional(),
@@ -43,6 +51,7 @@ const SettingsSchemaBase = z.object({
   depositPercent: z.number().min(0).max(100).optional(),
   cancellationPolicy: z.string().optional(),
   businessHours: z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() })).optional(),
+  business_hours: z.record(z.string(), z.object({ open: z.string().nullable().optional(), close: z.string().nullable().optional(), closed: z.boolean().optional() })).optional(),
   staffAssignmentStrategy: z.enum(['round_robin','preferred','skill_based']).optional(),
   allowOverbooking: z.boolean().optional(),
   reminderLead: z.number().int().min(0).optional(),
@@ -51,6 +60,16 @@ const SettingsSchemaBase = z.object({
   optInPolicy: z.enum(['implicit','explicit']).optional(),
   notifyFrom: z.string().email().optional(),
   customReminderMessage: z.string().optional(),
+  capture_leads: z.boolean().optional(),
+  follow_up_delay_hours: z.number().int().min(0).optional(),
+  follow_up_message_template: z.string().optional(),
+  voice_notes_enabled: z.boolean().optional(),
+  voice_calls_enabled: z.boolean().optional(),
+  voice_stt_provider: z.enum(['openai', 'local']).optional(),
+  voice_tts_provider: z.enum(['openai', 'local']).optional(),
+  voice_character: z.enum(['alloy', 'nova', 'echo', 'shimmer', 'onyx', 'fable']).optional(),
+  reply_with_audio: z.enum(['always', 'when_user_uses_voice', 'never']).optional(),
+  plan: z.string().min(1).optional(),
   mfaRequired: z.boolean().optional(),
   sessionTimeout: z.number().int().min(1).optional(),
   allowedEmailDomains: z.array(z.string()).optional(),
@@ -66,7 +85,58 @@ const SettingsSchemaBase = z.object({
   evolutionInstance: z.string().optional(),
   evolutionApiKey: z.string().optional(),
   whatsappDefaultDelaySeconds: z.number().int().min(0).optional(),
-  whatsappLinkPreview: z.boolean().optional()
+  whatsappLinkPreview: z.boolean().optional(),
+  managedOnboarding: z.boolean().optional(),
+  onboardingCompleted: z.boolean().optional(),
+  onboardingCompletedAt: z.string().min(1).optional(),
+  verticalPackage: z.string().min(1).optional(),
+  billingModel: z.string().min(1).optional(),
+  managedPromise: z.string().min(1).optional(),
+  outcomeTargets: z.array(z.string().min(1)).optional(),
+  escalationRules: z.array(z.string().min(1)).optional(),
+  bookingSources: z.array(z.string().min(1)).optional(),
+  commercialMotion: z.enum(['booking', 'sales', 'hybrid', 'enquiry']).optional(),
+  notificationPreferences: z.object({
+    newBookings: z.boolean().optional(),
+    cancellations: z.boolean().optional(),
+    dailySummary: z.boolean().optional(),
+    weeklySummary: z.boolean().optional(),
+  }).optional(),
+  channelConfig: z.object({
+    whatsapp: z.object({
+      mode: z.enum(['shared_booka_number', 'dedicated_number']).optional(),
+      status: z.string().optional(),
+      ownerCommandPhone: z.string().optional(),
+      sendBookingAlerts: z.boolean().optional(),
+      sendDailySummary: z.boolean().optional(),
+      sendWeeklySummary: z.boolean().optional(),
+      sendCancellationAlerts: z.boolean().optional(),
+      templateMessagingEnabled: z.boolean().optional(),
+      monthlyMetaSpendCap: z.number().min(0).optional(),
+      paidTemplateConsent: z.boolean().optional(),
+    }).optional(),
+    instagram: z.object({
+      handle: z.string().optional(),
+      profileUrl: z.string().optional(),
+      dmGoal: z.enum(['bookings', 'sales', 'lead_capture', 'support']).optional(),
+      useDmReplies: z.boolean().optional(),
+    }).optional(),
+  }).optional(),
+  // Controlled public-storefront composition. The renderer validates block IDs
+  // and ignores unknown values, so this is not an arbitrary page-builder blob.
+  operationalMemory: z.record(z.string(), z.unknown()).optional(),
+  campaignDefaults: z.record(z.string(), z.unknown()).optional(),
+  storefront: z.record(z.string(), z.unknown()).optional(),
+  positioning: z.string().min(1).optional(),
+  // Which Booka workflows this tenant runs (gates the dashboard nav). All-on
+  // by default; owners trim what they don't use.
+  capabilities: z.object({
+    bookings: z.boolean().optional(),
+    sales: z.boolean().optional(),
+    inventory: z.boolean().optional(),
+    crm: z.boolean().optional(),
+    support: z.boolean().optional(),
+  }).optional(),
 }).partial();
 
 const SettingsSchema = SettingsSchemaBase.superRefine((val, ctx) => {

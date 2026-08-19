@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+export const dynamic = 'force-dynamic';
+
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ProductListQuery } from '@/types/product-catalogue';
 import AdvancedSearch from '@/components/admin/products/AdvancedSearch';
 import SearchResults from '@/components/admin/products/SearchResults';
 
-export default function ProductSearchPage() {
+function ProductSearchPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -14,12 +16,12 @@ export default function ProductSearchPage() {
   // Initialize search query from URL params
   const initialQuery: Partial<ProductListQuery> = {
     search: searchParams.get('search') || undefined,
-    category_id: searchParams.get('category_id') || undefined,
-    status: (searchParams.get('status') as any) || 'all',
+    category: searchParams.get('category') || searchParams.get('category_id') || undefined,
+    status: (searchParams.get('status') as ProductListQuery['status']) || 'all',
     tags: searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
     price_min: searchParams.get('price_min') ? parseFloat(searchParams.get('price_min')!) : undefined,
     price_max: searchParams.get('price_max') ? parseFloat(searchParams.get('price_max')!) : undefined,
-    sort: (searchParams.get('sort') as any) || 'created_at',
+    sort: (searchParams.get('sort') as ProductListQuery['sort']) || 'created_at',
     order: (searchParams.get('order') as 'asc' | 'desc') || 'desc',
     page: parseInt(searchParams.get('page') || '1'),
     limit: parseInt(searchParams.get('limit') || '20'),
@@ -29,7 +31,7 @@ export default function ProductSearchPage() {
   const [hasSearched, setHasSearched] = useState(() => {
     // Check if we have any search parameters
     return Array.from(searchParams.keys()).some(key => 
-      ['search', 'category_id', 'tags', 'price_min', 'price_max'].includes(key)
+      ['search', 'category', 'category_id', 'tags', 'price_min', 'price_max'].includes(key)
     );
   });
 
@@ -55,7 +57,7 @@ export default function ProductSearchPage() {
   const handleClear = () => {
     const clearedQuery: ProductListQuery = {
       search: '',
-      category_id: undefined,
+      category: undefined,
       status: 'all',
       tags: undefined,
       price_min: undefined,
@@ -71,7 +73,7 @@ export default function ProductSearchPage() {
     router.push('/dashboard/products/search');
   };
 
-  const handleProductSelect = (product: any) => {
+  const handleProductSelect = (product: { id: string }) => {
     router.push(`/dashboard/products/${product.id}`);
   };
 
@@ -151,5 +153,13 @@ export default function ProductSearchPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ProductSearchPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}>
+      <ProductSearchPageInner />
+    </Suspense>
   );
 }

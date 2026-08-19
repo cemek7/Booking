@@ -76,6 +76,12 @@ export class DoubleBookingPrevention {
         params.resourceId
       );
 
+      // Clean up expired locks to prevent unbounded table growth
+      await this.supabase
+        .from('reservation_locks')
+        .delete()
+        .lt('expires_at', new Date().toISOString());
+
       // Check for existing locks
       const { data: existingLocks, error: lockError } = await this.supabase
         .from('reservation_locks')
@@ -135,14 +141,14 @@ export class DoubleBookingPrevention {
 
       span.setAttribute('lock.acquired', true);
       span.setAttribute('lock.duration_ms', lockDuration);
-      observeRequest('booking.lock_acquired', Date.now() - startTime, 'success');
+      observeRequest('booking.lock_acquired', 'LOCK', 200, (Date.now() - startTime) / 1000);
 
       return { success: true, lockId };
 
     } catch (error) {
       span.recordException(error as Error);
       span.setAttribute('lock.error', true);
-      observeRequest('booking.lock_acquired', Date.now() - startTime, 'error');
+      observeRequest('booking.lock_acquired', 'LOCK', 500, (Date.now() - startTime) / 1000);
 
       return { 
         success: false, 
@@ -206,7 +212,11 @@ export class DoubleBookingPrevention {
         `)
         .eq('tenant_id', params.tenantId)
         .neq('status', 'cancelled')
-        .or(`and(start_at.lte.${params.endAt},end_at.gte.${params.startAt})`);
+        // Overlap check: start_at <= endAt AND end_at >= startAt. A single top-level
+        // and() is just default filter chaining, so bind the values instead of
+        // interpolating them into an .or() expression string.
+        .lte('start_at', params.endAt)
+        .gte('end_at', params.startAt);
 
       // Exclude current reservation if updating
       if (params.excludeReservationId) {
@@ -300,8 +310,7 @@ export class DoubleBookingPrevention {
           start_at: params.startAt,
           end_at: params.endAt
         },
-        tenant_id: params.tenantId,
-        location_id: null
+        tenantId: params.tenantId
       });
 
       return {
@@ -430,8 +439,10 @@ export class DoubleBookingPrevention {
         });
       }
 
-      // Check break times
-      if (availability.break_start && availability.break_end) {
+      // Check break times — but only if we haven't already flagged this staff member
+      // as unavailable due to being outside working hours (avoids duplicate conflicts)
+      const alreadyFlagged = conflicts.some(c => c.resource_id === staffId);
+      if (!alreadyFlagged && availability.break_start && availability.break_end) {
         const breakStart = this.parseTimeToMinutes(availability.break_start);
         const breakEnd = this.parseTimeToMinutes(availability.break_end);
 

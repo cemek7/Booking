@@ -4,7 +4,7 @@ import AuthNav from '@/components/AuthNav';
 
 jest.mock('@/lib/supabase/client', () => {
   const mockAuth = { auth: { getSession: jest.fn().mockResolvedValue({ data: { session: null } }), onAuthStateChange: jest.fn().mockReturnValue({ data: { subscription: { unsubscribe: () => {} } } }) } };
-  return { getBrowserSupabase: () => mockAuth, default: mockAuth, supabase: mockAuth };
+  return { getSupabaseBrowserClient: () => mockAuth, getBrowserSupabase: () => mockAuth, default: mockAuth, supabase: mockAuth };
 })
 
 describe('AuthNav', () => {

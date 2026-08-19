@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,23 @@ interface ModuleManagerProps {
   vertical: 'beauty' | 'hospitality' | 'medicine' | 'general';
 }
 
+type ModuleConfig = Record<string, unknown>;
+type ConfigField = { title?: string; type?: string; description?: string };
+
+function configFields(schema: Record<string, unknown>): Array<[string, ConfigField]> {
+  const properties = schema.properties;
+  if (!properties || typeof properties !== 'object') return [];
+  return Object.entries(properties).flatMap(([key, value]) => {
+    if (!value || typeof value !== 'object') return [];
+    const field = value as Record<string, unknown>;
+    return [[key, {
+      title: typeof field.title === 'string' ? field.title : undefined,
+      type: typeof field.type === 'string' ? field.type : undefined,
+      description: typeof field.description === 'string' ? field.description : undefined,
+    }]];
+  });
+}
+
 export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps) {
   const [availableModules, setAvailableModules] = useState<VerticalModule[]>([]);
   const [installedModules, setInstalledModules] = useState<TenantModuleConfig[]>([]);
@@ -47,7 +65,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
   const [selectedModule, setSelectedModule] = useState<VerticalModule | null>(null);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
-  const [moduleConfig, setModuleConfig] = useState<Record<string, any>>({});
+  const [moduleConfig, setModuleConfig] = useState<ModuleConfig>({});
   const { toast } = useToast();
 
   useEffect(() => {
@@ -67,18 +85,18 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
       setAvailableModules(available);
       setInstalledModules(installed);
     } catch (error) {
-      console.error('Error loading modules:', error);
+      defaultLogger.error('Error loading modules:', error);
       toast({
         title: 'Error',
         description: 'Failed to load modules',
-        variant: 'destructive'
+        type: 'error'
       });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleInstallModule = async (module: VerticalModule, config: Record<string, any>) => {
+  const handleInstallModule = async (module: VerticalModule, config: ModuleConfig) => {
     setInstalling(module.id);
     
     try {
@@ -98,7 +116,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
           toast({
             title: 'Warnings',
             description: result.warnings.join(', '),
-            variant: 'default'
+            
           });
         }
 
@@ -107,11 +125,11 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
         throw new Error(result.error);
       }
     } catch (error) {
-      console.error('Installation error:', error);
+      defaultLogger.error('Installation error:', error);
       toast({
         title: 'Installation Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
+        type: 'error'
       });
     } finally {
       setInstalling(null);
@@ -137,16 +155,16 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
         throw new Error(result.error);
       }
     } catch (error) {
-      console.error('Uninstall error:', error);
+      defaultLogger.error('Uninstall error:', error);
       toast({
         title: 'Uninstall Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
+        type: 'error'
       });
     }
   };
 
-  const handleUpdateConfig = async (moduleName: string, newConfig: Record<string, any>) => {
+  const handleUpdateConfig = async (moduleName: string, newConfig: ModuleConfig) => {
     try {
       const result = await verticalModuleRuntime.updateModuleConfig(
         tenantId,
@@ -164,11 +182,11 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
         throw new Error(result.error);
       }
     } catch (error) {
-      console.error('Config update error:', error);
+      defaultLogger.error('Config update error:', error);
       toast({
         title: 'Update Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
+        type: 'error'
       });
     }
     setConfigDialogOpen(false);
@@ -296,7 +314,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                           </div>
                           {module.modules?.features && (
                             <div className="flex flex-wrap gap-1">
-                              {module.modules.features.slice(0, 3).map((feature, idx) => (
+                              {module.modules.features.slice(0, 3).map((feature: string, idx: number) => (
                                 <Badge key={idx} variant="outline" className="text-xs">
                                   {feature}
                                 </Badge>
@@ -429,13 +447,13 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                                   <div className="space-y-4">
                                     {selectedModule?.config_schema && (
                                       <div className="space-y-3">
-                                        {Object.entries(selectedModule.config_schema.properties || {}).map(([key, schema]: [string, any]) => (
+                                        {configFields(selectedModule.config_schema).map(([key, schema]) => (
                                           <div key={key}>
                                             <Label htmlFor={key}>{schema.title || key}</Label>
                                             {schema.type === 'string' && (
                                               <Input
                                                 id={key}
-                                                value={moduleConfig[key] || ''}
+                                                value={typeof moduleConfig[key] === 'string' ? moduleConfig[key] : ''}
                                                 onChange={(e) => setModuleConfig({
                                                   ...moduleConfig,
                                                   [key]: e.target.value
@@ -445,7 +463,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                                             )}
                                             {schema.type === 'boolean' && (
                                               <Switch
-                                                checked={moduleConfig[key] || false}
+                                                checked={typeof moduleConfig[key] === 'boolean' ? moduleConfig[key] : false}
                                                 onCheckedChange={(checked) => setModuleConfig({
                                                   ...moduleConfig,
                                                   [key]: checked
@@ -510,13 +528,13 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
           <div className="space-y-4">
             {selectedModule?.config_schema && (
               <div className="space-y-3">
-                {Object.entries(selectedModule.config_schema.properties || {}).map(([key, schema]: [string, any]) => (
+                {configFields(selectedModule.config_schema).map(([key, schema]) => (
                   <div key={key}>
                     <Label htmlFor={key}>{schema.title || key}</Label>
                     {schema.type === 'string' && (
                       <Input
                         id={key}
-                        value={moduleConfig[key] || ''}
+                        value={typeof moduleConfig[key] === 'string' ? moduleConfig[key] : ''}
                         onChange={(e) => setModuleConfig({
                           ...moduleConfig,
                           [key]: e.target.value
@@ -526,7 +544,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                     )}
                     {schema.type === 'boolean' && (
                       <Switch
-                        checked={moduleConfig[key] || false}
+                        checked={typeof moduleConfig[key] === 'boolean' ? moduleConfig[key] : false}
                         onCheckedChange={(checked) => setModuleConfig({
                           ...moduleConfig,
                           [key]: checked

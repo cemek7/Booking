@@ -1,43 +1,55 @@
+// @ts-nocheck
 import React from 'react'
-// Converted from Vitest to Jest APIs
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ReservationsList from '../reservations/ReservationsList'
-
-import { createSupabaseMock } from '@/test/supabaseMock'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { makeQueryClient } from '@/lib/queryClient'
-type Mock = jest.Mock
 
-// Mock supabase client module with a simple static mock
-jest.mock('@/lib/supabase/client', () => {
-  const mockSupabase = createSupabaseMock({
-    auth: { getSession: jest.fn().mockResolvedValue({ data: { session: { access_token: 'tok', user: { id: 'user-1' } } } }) }
-  })
-  return { getBrowserSupabase: () => mockSupabase, default: mockSupabase, supabase: mockSupabase }
-})
+// Mock authFetch to avoid actual HTTP calls and auth header issues
+jest.mock('@/lib/auth/auth-api-client', () => ({
+  authFetch: jest.fn(),
+  authGet: jest.fn(),
+  authPost: jest.fn(),
+  authDelete: jest.fn(),
+  authPatch: jest.fn(),
+}))
+
+const { authFetch } = require('@/lib/auth/auth-api-client')
+
+const mockReservations = [
+  // customer is shown by number/name (not the internal customer_id UUID)
+  { id: 'r1', tenant_id: 'tenant-1', customer_id: 'cust-uuid-1', customer_number: 'Alice', status: 'confirmed', date: new Date().toISOString(), created_at: new Date().toISOString() },
+  { id: 'r2', tenant_id: 'tenant-1', customer_id: 'cust-uuid-2', customer_number: 'Bob', status: 'pending', date: new Date().toISOString(), created_at: new Date().toISOString() }
+]
 
 describe('ReservationsList', () => {
   beforeEach(() => {
-    // reset fetch mock
-    type Mock = jest.Mock
-    ;(global as unknown as { fetch: Mock }).fetch = jest.fn() as Mock
+    // Return reservations list on first call, empty on subsequent (services, etc.)
+    authFetch.mockResolvedValue({ status: 200, data: [] })
+    authFetch.mockResolvedValueOnce({ status: 200, data: mockReservations })
   })
 
   afterEach(() => {
-    jest.resetAllMocks()
-    delete (global as unknown as { fetch?: unknown }).fetch
+    jest.clearAllMocks()
   })
 
-  it('renders reservations and supports delete flow', async () => {
-    const mockReservations = [
-      { id: 'r1', tenant_id: 'tenant-1', customer_id: 'Alice', status: 'confirmed', date: new Date().toISOString(), created_at: new Date().toISOString() },
-      { id: 'r2', tenant_id: 'tenant-1', customer_id: 'Bob', status: 'pending', date: new Date().toISOString(), created_at: new Date().toISOString() }
-    ]
+  it('renders reservations list with delete buttons', async () => {
+    const qc = makeQueryClient()
+    render(
+      <QueryClientProvider client={qc}>
+        <ReservationsList />
+      </QueryClientProvider>
+    )
 
-    // First call: GET /api/reservations
-    type FetchResponse<T=unknown> = { ok: boolean; json: () => Promise<T> }
-    ;(global as unknown as { fetch: Mock }).fetch.mockResolvedValueOnce({ ok: true, json: async () => mockReservations } as FetchResponse<typeof mockReservations>)
+    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument(), { timeout: 3000 })
+    expect(screen.getByText('Bob')).toBeInTheDocument()
+    expect(screen.getAllByText('Delete').length).toBeGreaterThan(0)
+  })
+
+  it('calls delete API when delete button is clicked', async () => {
+    ;(global as unknown as Record<string, unknown>).confirm = () => true
+    authFetch.mockResolvedValueOnce({ status: 200, data: mockReservations })
 
     const qc = makeQueryClient()
     render(
@@ -46,18 +58,16 @@ describe('ReservationsList', () => {
       </QueryClientProvider>
     )
 
-    // Verify rows render with customer_id values
-    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument())
-    expect(screen.getByText('Bob')).toBeInTheDocument()
-
-    // Next call: DELETE /api/reservations?id=eq.r1
-    ;(global as unknown as { confirm: (msg?: string) => boolean }).confirm = () => true
-    ;(global as unknown as { fetch: Mock }).fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) } as FetchResponse<Record<string, never>>)
+    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument(), { timeout: 3000 })
 
     const delBtn = screen.getAllByText('Delete')[0]
-    userEvent.click(delBtn)
+    await userEvent.click(delBtn)
 
-    // Button should show Deleting... then reset
-    await waitFor(() => expect(screen.getByText('Deleting...')).toBeInTheDocument())
+    await waitFor(() => {
+      const deleteCalls = authFetch.mock.calls.filter(
+        call => call[1]?.method === 'DELETE'
+      )
+      expect(deleteCalls.length).toBeGreaterThan(0)
+    })
   })
 })

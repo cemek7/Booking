@@ -1,0 +1,2 @@
+import type { CaseStudy } from '@/showcase/content/types';
+export function renderLinkedIn(cs: CaseStudy): string { return `${cs.name}: a ${cs.projectType.toLowerCase()} about making a complex first step clearer.\n\nThe problem: ${cs.problem}\n\nThree decisions:\n• ${cs.strategy}\n• ${cs.solution}\n• ${cs.quality}\n\nWhat was delivered: ${cs.deliveredResult}\n\n${cs.disclosure}\n${cs.demoUrl ?? ''}`; }

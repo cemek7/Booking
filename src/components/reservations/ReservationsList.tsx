@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useState } from "react";
 import { toast } from "../ui/toast";
 import { Table, THead, TBody, TR, TH, TD } from "../ui/table";
@@ -7,33 +6,54 @@ import Button from "../ui/button";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authFetch } from '@/lib/auth/auth-api-client';
 
-async function fetchReservations(url: string) {
-  const res = await authFetch(url);
+interface ReservationRow {
+  id: string;
+  status?: string | null;
+  customer_number?: string | null;
+  customer_name?: string | null;
+  staff_id?: string | null;
+  start_at?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+}
+
+type ReservationsResponse = { data?: ReservationRow[]; pagination?: { total?: number } };
+
+async function fetchReservations(url: string): Promise<ReservationRow[]> {
+  const res = await authFetch<ReservationsResponse>(url);
   if (!res.status || res.status >= 400) throw new Error('Failed reservations fetch');
-  return res.data;
+  // The envelope is canonical; accept the legacy array briefly so older cached
+  // clients and embedded consumers do not render an empty workspace mid-rollout.
+  const payload = res.data as ReservationsResponse | ReservationRow[] | undefined;
+  return Array.isArray(payload) ? payload : payload?.data ?? [];
 }
 
 interface ReservationsListProps {
   customerId?: string;
+  tenantId?: string;
 }
 
-const ReservationsList: React.FC<ReservationsListProps> = ({ customerId }) => {
-  // Build API URL based on whether customerId is provided
-  const apiUrl = customerId ? `/api/reservations?customer_id=eq.${customerId}` : '/api/reservations';
+const ReservationsList: React.FC<ReservationsListProps> = ({ customerId, tenantId }) => {
+  // Build API URL based on available filters
+  const params = new URLSearchParams();
+  if (customerId) params.set('customer_id', `eq.${customerId}`);
+  if (tenantId) params.set('tenant_id', `eq.${tenantId}`);
+  const apiUrl = `/api/reservations${params.toString() ? `?${params}` : ''}`;
   const qc = useQueryClient();
-  const { data, error, isLoading } = useQuery({ queryKey: ['reservations', customerId || 'all'], queryFn: () => fetchReservations(apiUrl) });
+  const queryKey = ['reservations', tenantId || 'platform', customerId || 'all'];
+  const { data, error, isLoading } = useQuery({ queryKey, queryFn: () => fetchReservations(apiUrl) });
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await authFetch(`/api/reservations?id=eq.${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/reservations/${id}`, { method: 'DELETE' });
       if (!res.status || res.status >= 400) throw new Error('Failed to delete reservation');
     },
     onSuccess: () => {
       toast.success('Reservation deleted');
-      qc.invalidateQueries({ queryKey: ['reservations', customerId || 'all'] });
+      qc.invalidateQueries({ queryKey });
     },
-    onError: (e: any) => toast.error(e.message || 'Delete failed')
+    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : 'Delete failed')
   });
 
   const handleDelete = (id: string) => {
@@ -50,7 +70,6 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId }) => {
       <Table>
         <THead>
           <TR>
-            <TH>ID</TH>
             <TH>Status</TH>
             <TH>Customer</TH>
             <TH>Staff</TH>
@@ -63,17 +82,12 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId }) => {
         </THead>
         <TBody>
           {data && data.length > 0 ? (
-            data.map((r: any) => (
+            data.map((r) => (
               <TR key={r.id}>
-                <TD>
-                  <Link href={`/dashboard/reservations/${r.id}`} className="text-blue-600 underline">
-                    {r.id}
-                  </Link>
-                </TD>
                 <TD>{r.status}</TD>
-                <TD>{r.customer_id}</TD>
-                <TD>{r.staff_id || '-'}</TD>
-                <TD>{r.date ? new Date(r.date).toLocaleString() : '-'}</TD>
+                <TD>{r.customer_number || r.customer_name || '—'}</TD>
+                <TD>{r.staff_id ? 'Assigned' : 'Unassigned'}</TD>
+                <TD>{r.start_at ? new Date(r.start_at).toLocaleString() : '-'}</TD>
                 <TD>
                   <ReservationServicesCell reservationId={r.id} />
                 </TD>
@@ -93,7 +107,7 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId }) => {
             ))
           ) : (
             <TR>
-              <TD colSpan={9} className="text-center text-gray-400 py-8">No reservations found.<br /><span className="text-xs">Try adjusting your filters or add a new reservation.</span></TD>
+              <TD colSpan={8} className="text-center text-gray-400 py-8">No reservations found.<br /><span className="text-xs">Try adjusting your filters or add a new reservation.</span></TD>
             </TR>
           )}
         </TBody>
@@ -102,22 +116,28 @@ const ReservationsList: React.FC<ReservationsListProps> = ({ customerId }) => {
   );
 }
 
-// Show services for a reservation
+// Show services for a reservation, by name (not internal UUID).
+interface ReservationServiceLine { service_id: string; name: string; quantity: number; price: number | null }
+
 function ReservationServicesCell({ reservationId }: { reservationId: string }) {
   const { data, error, isLoading } = useQuery({
     queryKey: ['reservation-services', reservationId],
-    queryFn: async () => {
+    queryFn: async (): Promise<ReservationServiceLine[]> => {
       if (!reservationId) return [];
-      const res = await fetch(`/api/reservations/${reservationId}/services`);
-      if (!res.ok) throw new Error('Failed reservation services fetch');
-      return res.json();
+      const res = await authFetch<ReservationServiceLine[]>(`/api/reservations/${reservationId}/services`);
+      if (res.error) throw new Error(res.error.message || 'Failed reservation services fetch');
+      return res.data ?? [];
     },
-    enabled: !!reservationId
+    enabled: !!reservationId,
   });
-  if (isLoading) return <span>Loading...</span>;
-  if (error) return <span>Error</span>;
-  if (!data || data.length === 0) return <span>-</span>;
-  return <span>{data.map((s: any) => `${s.service_id} (${s.quantity})`).join(', ')}</span>;
+  if (isLoading) return <span className="text-slate-400">…</span>;
+  if (error) return <span className="text-slate-400">—</span>;
+  if (!data || data.length === 0) return <span className="text-slate-400">—</span>;
+  return (
+    <span>
+      {data.map((s) => (s.quantity > 1 ? `${s.name} ×${s.quantity}` : s.name)).join(', ')}
+    </span>
+  );
 }
 
 export default ReservationsList;

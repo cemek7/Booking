@@ -1,36 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Boka / Techclave
 
-## Getting Started
+Multi-tenant booking and customer-operations platform built with Next.js, Supabase, Redis, and a WhatsApp/Instagram automation layer.
 
-First, run the development server:
+This repo is one application with several responsibilities:
+
+- Product surface: public booking, dashboards, onboarding, analytics, settings
+- Domain services: bookings, reservations, payments, staff routing, reminders
+- Messaging: WhatsApp/Instagram provider integrations and AI-assisted flows
+- Platform concerns: auth, tenant isolation, observability, queues, offboarding
+
+## Stack
+
+- Next.js 16 + React 19
+- TypeScript + Tailwind CSS 4
+- Supabase (Postgres, auth, RLS)
+- Redis + BullMQ
+- Stripe + Paystack
+- Sentry + OpenTelemetry + Prometheus-style metrics
+
+## Current Architecture Center
+
+The repo contains legacy paths and newer centralized wrappers. For new work, use these as the canonical entry points:
+
+- API auth and tenant enforcement: `src/lib/error-handling/route-handler.ts`
+- Server-rendered page auth: `src/lib/auth/server-auth.ts`
+- Reservation creation from HTTP/API flows: `src/lib/reservationService.ts`
+- Shared event publication: `src/lib/eventbus/eventBus.ts` via `getEventBus()`
+
+Avoid introducing new direct imports of legacy compatibility modules unless you are maintaining existing behavior.
+
+## Main Areas
+
+- App routes: `src/app`
+- API routes: `src/app/api`
+- Core libraries: `src/lib`
+- Middleware: `src/middleware`, `src/middleware/unified`
+- UI components: `src/components`
+- Database migrations: `db/migrations`
+- Deployment assets: `deployment`
+- Tests: `tests`, `src/__tests__`
+
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Important scripts:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `npm run dev`
+- `npm run build`
+- `npm run typecheck`
+- `npm run test`
+- `npm run test:integration`
+- `npm run worker`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Key Docs
 
-## Learn More
+- Repo docs index: [docs/README.md](/home/ccemeka/Techclave/Booking/Booking/docs/README.md)
+- Architecture map: [docs/architecture/subsystem-map.md](/home/ccemeka/Techclave/Booking/Booking/docs/architecture/subsystem-map.md)
+- Second-pass review: [docs/reviews/2026-06-23-second-pass.md](/home/ccemeka/Techclave/Booking/Booking/docs/reviews/2026-06-23-second-pass.md)
 
-To learn more about Next.js, take a look at the following resources:
+## Notes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- This repo currently contains a large amount of historical implementation and audit documentation.
+- Legacy reports are being moved under `docs/reports/legacy-top-level/` so the repo root stays focused on the active codebase.

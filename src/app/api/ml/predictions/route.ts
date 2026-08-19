@@ -1,4 +1,5 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import MachineLearningService from '@/lib/machineLearningService';
 import { z } from 'zod';
 
@@ -34,11 +35,7 @@ const InsightsQuerySchema = z.object({
 
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw new Error('Tenant ID is required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const { searchParams } = new URL(ctx.request.url);
     const query = Object.fromEntries(searchParams);

@@ -7,11 +7,12 @@
  * This file registers all existing middleware with the new system
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { MiddlewareContext, MiddlewareHandler, middlewareOrchestrator } from './orchestrator';
 import { NextResponse } from 'next/server';
-import { ApiErrorFactory, handleMiddlewareError } from '@/lib/error-handling/api-error';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
-import { createAuthMiddleware, createRBACMiddleware, createTenantValidationMiddleware } from './auth/auth-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { createAuthMiddleware, createTenantValidationMiddleware } from './auth/auth-handler';
+import { cacheGet, cacheSet, isRedisFeatureEnabled } from '@/lib/redis';
 
 /**
  * Initialize all middleware in the orchestrator
@@ -27,8 +28,12 @@ export async function initializeUnifiedMiddleware() {
       condition: (ctx: MiddlewareContext) => {
         const pathname = new URL(ctx.request.url).pathname;
         // Skip auth for public paths
-        const publicPaths = ['/auth/', '/api/health', '/api/auth/', '/book/', '/reviews/'];
-        return !publicPaths.some(p => pathname.startsWith(p));
+        const publicPaths = ['/auth/', '/api/health', '/api/auth/', '/book/', '/booka', '/products', '/reviews/'];
+        // Root page is public — unauthenticated landing / hash-redirect handler
+        if (pathname === '/') return false;
+        return !publicPaths.some((path) =>
+          path === '/booka' ? pathname === path || pathname === `${path}/` : pathname.startsWith(path)
+        );
       },
     },
     createAuthMiddleware({ required: true })
@@ -63,26 +68,6 @@ export async function initializeUnifiedMiddleware() {
     createTenantValidationMiddleware()
   );
 
-  // 4. HIPAA compliance middleware (PHI access logging)
-  middlewareOrchestrator.register(
-    {
-      name: 'hipaa-compliance',
-      enabled: process.env.HIPAA_ENABLED === 'true',
-      priority: 50,
-      condition: (ctx: MiddlewareContext) => {
-        const pathname = new URL(ctx.request.url).pathname;
-        // Apply to PHI endpoints (patient, medical records, etc.)
-        const phiPaths = ['/api/patients', '/api/medical-records', '/api/health-data'];
-        return phiPaths.some(p => pathname.startsWith(p));
-      },
-      errorHandler: async (error, context) => {
-        console.error('[HIPAA] Compliance check failed:', error.message);
-        return ApiErrorFactory.forbidden('HIPAA compliance check failed').toResponse();
-      },
-    },
-    createHIPAAComplianceMiddleware()
-  );
-
   // 5. Rate limiting middleware
   middlewareOrchestrator.register(
     {
@@ -103,51 +88,58 @@ export async function initializeUnifiedMiddleware() {
     createLoggingMiddleware()
   );
 
-  console.log('[Middleware] Unified middleware system initialized');
+  defaultLogger.info('[Middleware] Unified middleware system initialized');
 }
 
-/**
- * HIPAA compliance middleware implementation
- */
-function createHIPAAComplianceMiddleware(): MiddlewareHandler {
-  return async (context: MiddlewareContext): Promise<MiddlewareContext | NextResponse> => {
-    if (!context.user) {
-      return context;
-    }
-
-    // Log PHI access for HIPAA compliance
-    const timestamp = new Date().toISOString();
-    const logEntry = {
-      timestamp,
-      userId: context.user.id,
-      role: context.user.role,
-      endpoint: new URL(context.request.url).pathname,
-      method: context.request.method,
-      ipAddress: context.request.headers.get('x-forwarded-for') || 'unknown',
-    };
-
-    console.log('[HIPAA] PHI Access Log:', JSON.stringify(logEntry));
-
-    // Could integrate with external logging/monitoring here
-    // e.g., send to compliance audit log
-
-    context.state.hipaaLogged = true;
-    return context;
-  };
-}
 
 /**
  * Rate limiting middleware
  */
 function createRateLimitingMiddleware(): MiddlewareHandler {
-  // Simple in-memory rate limiter (would use Redis in production)
   const requestCounts = new Map<string, { count: number; resetTime: number }>();
   const WINDOW = 60000; // 1 minute
   const MAX_REQUESTS = 100;
 
   return async (context: MiddlewareContext): Promise<MiddlewareContext | NextResponse> => {
     const userId = context.user?.id || context.request.headers.get('x-forwarded-for') || 'anonymous';
+    const cacheKey = `middleware_rate_limit:${userId}`;
     const now = Date.now();
+
+    if (isRedisFeatureEnabled()) {
+      try {
+        const current = (await cacheGet(cacheKey)) as { count: number; resetTime: number } | null;
+        const record = current && now <= current.resetTime ? current : null;
+        const nextRecord = record
+          ? { count: record.count + 1, resetTime: record.resetTime }
+          : { count: 1, resetTime: now + WINDOW };
+
+        if (nextRecord.count > MAX_REQUESTS) {
+          return NextResponse.json(
+            { error: 'too_many_requests', message: 'Rate limit exceeded' },
+            { status: 429 }
+          );
+        }
+
+        await cacheSet(cacheKey, nextRecord, Math.max(1, Math.ceil((nextRecord.resetTime - now) / 1000)));
+        context.state.rateLimitRemaining = MAX_REQUESTS - nextRecord.count;
+        return context;
+      } catch (error) {
+        defaultLogger.error('[Middleware] Redis rate limiter failed', error);
+        if (process.env.NODE_ENV === 'production') {
+          return NextResponse.json(
+            { error: 'service_unavailable', message: 'Redis-backed rate limiting is required in production' },
+            { status: 503 }
+          );
+        }
+      }
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json(
+        { error: 'service_unavailable', message: 'Redis-backed rate limiting is required in production' },
+        { status: 503 }
+      );
+    }
 
     const record = requestCounts.get(userId);
     if (!record || now > record.resetTime) {
@@ -182,7 +174,7 @@ function createLoggingMiddleware(): MiddlewareHandler {
 
     // Log request
     if (process.env.LOG_REQUESTS === 'true') {
-      console.log(`[Request] ${context.request.method} ${url.pathname}`, {
+      defaultLogger.info(`[Request] ${context.request.method} ${url.pathname}`, {
         userId: context.user?.id,
         role: context.user?.role,
       });
@@ -197,7 +189,7 @@ function createLoggingMiddleware(): MiddlewareHandler {
  * 
  * Use this to wrap existing middleware functions into the new system
  */
-export function registerLegacyMiddleware<T extends Record<string, any>>(
+export function registerLegacyMiddleware<T extends Record<string, unknown>>(
   name: string,
   handler: (ctx: T) => Promise<void | NextResponse>,
   options = {}
@@ -217,7 +209,7 @@ export function registerLegacyMiddleware<T extends Record<string, any>>(
         }
         return context;
       } catch (error) {
-        console.error(`[Middleware] "${name}" error:`, error);
+        defaultLogger.error(`[Middleware] "${name}" error:`, error);
         return ApiErrorFactory.internalServerError(
           error instanceof Error ? error : undefined
         ).toResponse();

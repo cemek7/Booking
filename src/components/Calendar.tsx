@@ -10,7 +10,7 @@ export interface BookingEvent {
   serviceId: string;
   staffId?: string;
   customer: { id: string; name?: string; phone?: string; email?: string };
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 export interface CalendarProps {
   view: ViewMode;
@@ -99,8 +99,8 @@ export const Calendar: React.FC<CalendarProps> = ({ view, events, staffLanes, on
     onRangeChange(range.start, range.end);
   }, [range.start, range.end, onRangeChange]);
   // Group events by staff when lanes active (declare before any early return)
-  const grouped = useMemo(() => {
-    if (!staffLanes) return { all: events } as any;
+  const grouped = useMemo((): Record<string, BookingEvent[]> => {
+    if (!staffLanes) return { all: events };
     const map: Record<string, BookingEvent[]> = {};
     events.forEach(ev => { const key = ev.staffId || 'unassigned'; map[key] = map[key] || []; map[key].push(ev); });
     return map;
@@ -441,8 +441,8 @@ export const Calendar: React.FC<CalendarProps> = ({ view, events, staffLanes, on
                     const endIso = new Date(rescheduleValues.end).toISOString();
                     await onEventDrop(rescheduleTarget.id, startIso, endIso, rescheduleValues.staffId);
                     setRescheduleTarget(null);
-                  } catch (err:any) {
-                    const msg = String(err?.message || err || 'Conflict while rescheduling');
+                  } catch (err) {
+                    const msg = String((err instanceof Error && err.message) || err || 'Conflict while rescheduling');
                     if (msg.toLowerCase().includes('409') || msg.toLowerCase().includes('conflict')) {
                       setConflict({ message: 'Schedule conflict. Please choose a different time or staff.' });
                     } else {

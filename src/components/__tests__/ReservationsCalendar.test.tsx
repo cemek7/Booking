@@ -10,7 +10,7 @@ jest.mock('@/lib/supabase/client', () => {
       return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null }) }) }) }
     })
   }
-  return { getBrowserSupabase: () => mock, default: mock, supabase: mock }
+  return { getSupabaseBrowserClient: () => mock, getBrowserSupabase: () => mock, default: mock, supabase: mock }
 })
 
 describe('ReservationsCalendar', () => {

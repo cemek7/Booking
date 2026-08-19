@@ -10,6 +10,7 @@
  * - Conversation history is preserved for audit
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export interface SessionTimeoutConfig {
@@ -47,7 +48,7 @@ export class SessionTimeoutWorker {
    * Returns count of sessions cleaned up
    */
   async run(): Promise<{ expired: number; deleted: number; errors: number }> {
-    console.log('[SessionTimeout] Starting session cleanup...');
+    defaultLogger.info('[SessionTimeout] Starting session cleanup...');
     
     const stats = {
       expired: 0,
@@ -66,10 +67,10 @@ export class SessionTimeoutWorker {
         stats.deleted = deletedCount;
       }
 
-      console.log('[SessionTimeout] Cleanup complete:', stats);
+      defaultLogger.info('[SessionTimeout] Cleanup complete:', stats);
       return stats;
     } catch (error) {
-      console.error('[SessionTimeout] Error during cleanup:', error);
+      defaultLogger.error('[SessionTimeout] Error during cleanup:', error);
       stats.errors = 1;
       return stats;
     }
@@ -91,16 +92,16 @@ export class SessionTimeoutWorker {
         .lt('last_activity', timeoutDate.toISOString());
 
       if (fetchError) {
-        console.error('[SessionTimeout] Error fetching sessions:', fetchError);
+        defaultLogger.error('[SessionTimeout] Error fetching sessions:', fetchError);
         return 0;
       }
 
       if (!sessions || sessions.length === 0) {
-        console.log('[SessionTimeout] No inactive sessions found');
+        defaultLogger.info('[SessionTimeout] No inactive sessions found');
         return 0;
       }
 
-      console.log(`[SessionTimeout] Found ${sessions.length} inactive sessions`);
+      defaultLogger.info(`[SessionTimeout] Found ${sessions.length} inactive sessions`);
 
       // Update sessions to expired status and clear context
       const { error: updateError } = await this.supabase
@@ -113,14 +114,14 @@ export class SessionTimeoutWorker {
         .in('id', sessions.map(s => s.id));
 
       if (updateError) {
-        console.error('[SessionTimeout] Error expiring sessions:', updateError);
+        defaultLogger.error('[SessionTimeout] Error expiring sessions:', updateError);
         return 0;
       }
 
-      console.log(`[SessionTimeout] Expired ${sessions.length} sessions`);
+      defaultLogger.info(`[SessionTimeout] Expired ${sessions.length} sessions`);
       return sessions.length;
     } catch (error) {
-      console.error('[SessionTimeout] Exception in expireInactiveSessions:', error);
+      defaultLogger.error('[SessionTimeout] Exception in expireInactiveSessions:', error);
       return 0;
     }
   }
@@ -144,7 +145,7 @@ export class SessionTimeoutWorker {
         return 0;
       }
 
-      console.log(`[SessionTimeout] Deleting ${sessions.length} old sessions`);
+      defaultLogger.info(`[SessionTimeout] Deleting ${sessions.length} old sessions`);
 
       // Delete old sessions
       const { error: deleteError } = await this.supabase
@@ -153,13 +154,13 @@ export class SessionTimeoutWorker {
         .in('id', sessions.map(s => s.id));
 
       if (deleteError) {
-        console.error('[SessionTimeout] Error deleting sessions:', deleteError);
+        defaultLogger.error('[SessionTimeout] Error deleting sessions:', deleteError);
         return 0;
       }
 
       return sessions.length;
     } catch (error) {
-      console.error('[SessionTimeout] Exception in deleteOldSessions:', error);
+      defaultLogger.error('[SessionTimeout] Exception in deleteOldSessions:', error);
       return 0;
     }
   }
@@ -206,7 +207,7 @@ export async function runSessionTimeoutWorker(config?: SessionTimeoutConfig): Pr
   const worker = new SessionTimeoutWorker(config);
   const result = await worker.run();
   
-  console.log('[SessionTimeout] Worker completed:', {
+  defaultLogger.info('[SessionTimeout] Worker completed:', {
     expired: result.expired,
     deleted: result.deleted,
     errors: result.errors,

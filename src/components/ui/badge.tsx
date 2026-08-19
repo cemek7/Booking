@@ -1,6 +1,6 @@
 // Basic Badge component replacement
 import React from 'react';
-import cn from 'classnames';
+import { cn } from '@/lib/utils';
 
 interface BadgeProps {
   className?: string;

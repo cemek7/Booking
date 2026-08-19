@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { getOwnerUsage } from '@/lib/services/owner-usage-service';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';

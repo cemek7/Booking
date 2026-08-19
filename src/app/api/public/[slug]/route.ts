@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Public Booking Routes - No Authentication Required
  */

@@ -1,10 +1,12 @@
+export const dynamic = 'force-dynamic';
 import { requireAuth } from '@/lib/auth/server-auth';
 import { Metadata } from 'next';
 import SuperAdminMetrics from '@/components/analytics/SuperAdminMetrics';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Globe, Database, Shield, Activity } from 'lucide-react';
+import { Globe, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import SystemHealthCards from '@/components/superadmin/SystemHealthCards';
 
 export const metadata: Metadata = {
   title: 'Platform Analytics | Booka',
@@ -38,63 +40,7 @@ export default async function SuperAdminAnalyticsPage() {
       </div>
 
       {/* System Health Status */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-green-200 dark:border-green-800">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  System Status
-                </p>
-                <p className="text-2xl font-bold text-green-600">Operational</p>
-              </div>
-              <Activity className="h-8 w-8 text-green-600" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-blue-200 dark:border-blue-800">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Active Regions
-                </p>
-                <p className="text-2xl font-bold text-blue-600">3</p>
-              </div>
-              <Globe className="h-8 w-8 text-blue-600" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-purple-200 dark:border-purple-800">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  API Health
-                </p>
-                <p className="text-2xl font-bold text-purple-600">100%</p>
-              </div>
-              <Database className="h-8 w-8 text-purple-600" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-amber-200 dark:border-amber-800">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Security
-                </p>
-                <p className="text-2xl font-bold text-amber-600">Secure</p>
-              </div>
-              <Shield className="h-8 w-8 text-amber-600" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <SystemHealthCards />
 
       {/* Main Analytics */}
       <Card>
@@ -110,90 +56,15 @@ export default async function SuperAdminAnalyticsPage() {
       </Card>
 
       {/* Additional System Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Database Performance</CardTitle>
+            <CardTitle className="text-base">Operational Metrics</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Query Time (avg)
-                </span>
-                <span className="text-sm font-semibold">24ms</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Connection Pool
-                </span>
-                <span className="text-sm font-semibold">47/100</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Storage</span>
-                <span className="text-sm font-semibold">142GB / 500GB</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">API Performance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Requests/min
-                </span>
-                <span className="text-sm font-semibold">3,247</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Response Time (avg)
-                </span>
-                <span className="text-sm font-semibold">187ms</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Error Rate
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  0.02%
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Security Metrics</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Failed Logins (24h)
-                </span>
-                <span className="text-sm font-semibold">23</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  Blocked IPs
-                </span>
-                <span className="text-sm font-semibold">4</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">
-                  SSL Status
-                </span>
-                <span className="text-sm font-semibold text-green-600">
-                  Valid
-                </span>
-              </div>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Operational metrics are now sourced from the live system dashboard feed.
+            </p>
           </CardContent>
         </Card>
       </div>

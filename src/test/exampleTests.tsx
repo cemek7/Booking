@@ -1,15 +1,24 @@
 /**
  * Example Test Implementations using the Phase 6 Testing Framework
- * 
+ *
  * This file demonstrates how to use the comprehensive testing utilities
  * created in Phase 6 to write maintainable, type-safe tests.
  */
 
+import React from 'react';
 import { TestDataFactory, MockBuilder, renderWithProviders } from '@/test/testUtils';
 import { ApiTestUtils, ApiContractTests } from '@/test/apiTestUtils';
 import { FormTestUtils, CalendarTestUtils } from '@/test/componentTestUtils';
 import { IntegrationTestRunner } from '@/test/integrationTestUtils';
 import type { User, Booking, Service } from '@/types';
+
+// Stub components used in example tests (not yet implemented as real components)
+const BookingForm = (_props: { services: unknown[]; onSubmit: (data: unknown) => void }) =>
+  <div data-testid="booking-form" />;
+const CalendarView = (_props: { bookings: unknown[]; onDateSelect: (date: unknown) => void }) =>
+  <div data-testid="calendar-view" />;
+const BookingDataTable = (_props: { bookings: unknown[] }) =>
+  <div data-testid="booking-data-table" />;
 
 // ========================================
 // UNIT TEST EXAMPLES

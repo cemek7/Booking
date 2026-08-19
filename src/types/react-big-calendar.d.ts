@@ -1,0 +1,44 @@
+declare module 'react-big-calendar' {
+  import React from 'react';
+
+  export interface Event {
+    title?: string;
+    start: Date;
+    end: Date;
+    allDay?: boolean;
+    resource?: unknown;
+    [key: string]: unknown;
+  }
+
+  export interface CalendarProps {
+    events?: Event[];
+    localizer?: unknown;
+    defaultDate?: Date;
+    defaultView?: string;
+    views?: string[] | object;
+    step?: number;
+    showMultiDayTimes?: boolean;
+    onSelectEvent?: (event: Event, e: React.SyntheticEvent) => void;
+    onSelectSlot?: (slotInfo: unknown) => void;
+    selectable?: boolean;
+    style?: React.CSSProperties;
+    className?: string;
+    eventPropGetter?: (event: Event, start: Date, end: Date, isSelected: boolean) => { className?: string; style?: React.CSSProperties };
+    components?: Record<string, unknown>;
+    [key: string]: unknown;
+  }
+
+  export type View = 'month' | 'week' | 'work_week' | 'day' | 'agenda';
+  export interface ToolbarProps {
+    date: Date;
+    view: View;
+    views: View[];
+    label: string;
+    onNavigate: (action: 'PREV' | 'NEXT' | 'TODAY' | 'DATE', date?: Date) => void;
+    onView: (view: View) => void;
+  }
+
+  export const Calendar: React.FC<CalendarProps>;
+  export function momentLocalizer(moment: unknown): unknown;
+  export function dateFnsLocalizer(config: unknown): unknown;
+}

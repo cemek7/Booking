@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Manager Team Management API
  * 
@@ -37,7 +38,7 @@ const SetActiveStatusSchema = z.object({
 
 const PostTeamBodySchema = z.object({
   action: TeamActionSchema,
-  data: z.any(),
+  data: z.unknown(),
 });
 
 export const GET = createHttpHandler(

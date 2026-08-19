@@ -1,46 +1,167 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuthHeaders } from '@/hooks/useAuthHeaders';
+import { authFetch } from '@/lib/auth/auth-api-client';
 
-interface Invoice {
-  id: string;
-  date: string;
-  amount: number;
-  status: 'paid' | 'pending' | 'failed';
-  description: string;
+interface DashboardMetrics {
+  total_bookings?: number;
+  active_staff?: number;
+  monthly_revenue?: number;
 }
 
-const SAMPLE_INVOICES: Invoice[] = [
-  { id: 'INV-001', date: '2025-02-01', amount: 9900, status: 'paid', description: 'Pro Plan — February 2025' },
-  { id: 'INV-002', date: '2025-01-01', amount: 9900, status: 'paid', description: 'Pro Plan — January 2025' },
-  { id: 'INV-003', date: '2024-12-01', amount: 9900, status: 'paid', description: 'Pro Plan — December 2024' },
-];
+interface WalletLedgerEntry {
+  id: string;
+  kind: 'topup' | 'reservation' | 'usage' | 'refund' | 'adjustment';
+  amount_credits: number;
+  description?: string | null;
+  created_at?: string | null;
+}
 
-const STATUS_COLORS = {
-  paid: 'bg-green-100 text-green-700',
-  pending: 'bg-yellow-100 text-yellow-700',
-  failed: 'bg-red-100 text-red-600',
-};
-
-function formatCurrency(amount: number) {
-  return new Intl.NumberFormat('en-NG', {
-    style: 'currency', currency: 'NGN', maximumFractionDigits: 0,
-  }).format(amount / 100);
+interface WalletSummary {
+  balance_credits: number;
+  lifetime_topups_credits: number;
+  lifetime_spent_credits: number;
+  low_balance_threshold_credits: number;
+  month_topups_credits: number;
+  month_spent_credits: number;
+  month_profit_credits: number;
+  month_usage_revenue_credits: number;
+  month_actual_cost_credits: number;
+  month_realized_profit_credits: number;
+  month_withdrawable_profit_credits: number;
+  cash_collected_credits: number;
+  recognized_revenue_credits: number;
+  actual_cost_credits: number;
+  realized_profit_credits: number;
+  withdrawable_profit_credits: number;
+  profit_reserve_credits: number;
+  unsettled_liabilities_credits: number;
+  month_tokens: number;
+  token_rate: number;
+  recent_ledger: WalletLedgerEntry[];
 }
 
 export default function BillingClient() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'payment'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payment'>('overview');
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<WalletSummary | null>(null);
+  const [walletLoading, setWalletLoading] = useState(true);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [topUpAmount, setTopUpAmount] = useState('100');
+  const [topUpDescription, setTopUpDescription] = useState('Manual top-up');
+  const [topUpMessage, setTopUpMessage] = useState<string | null>(null);
+  const headers = useAuthHeaders();
+
+  useEffect(() => {
+    let active = true;
+    if (!headers) return;
+
+    authFetch('/api/analytics/dashboard?period=month', { headers })
+      .then((res) => {
+        if (!active) return;
+        if (res.error) {
+          setMetricsError(res.error.message);
+          return;
+        }
+        setMetrics((res.data as { metrics?: DashboardMetrics })?.metrics ?? null);
+        setMetricsError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setMetricsError('Failed to load usage data');
+      })
+      .finally(() => {
+        if (!active) return;
+        setMetricsLoading(false);
+      });
+
+    authFetch<WalletSummary>('/api/billing/wallet', { headers })
+      .then((res) => {
+        if (!active) return;
+        if (res.error) {
+          setWalletError(res.error.message);
+          return;
+        }
+        setWallet((res.data as WalletSummary) ?? null);
+        setWalletError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setWalletError('Failed to load wallet summary');
+      })
+      .finally(() => {
+        if (!active) return;
+        setWalletLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [headers]);
+
+  const estimatedTokensLeft = useMemo(() => {
+    if (!wallet || !wallet.token_rate) return null;
+    return Math.max(0, Math.floor(wallet.balance_credits / wallet.token_rate));
+  }, [wallet]);
+
+  const lowBalanceThreshold = wallet?.low_balance_threshold_credits ?? 0;
+
+  async function submitTopUp() {
+    setTopUpMessage(null);
+    const amount = Number(topUpAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setTopUpMessage('Enter a positive credit amount.');
+      return;
+    }
+
+    const res = await authFetch<WalletSummary>('/api/billing/wallet', {
+      method: 'POST',
+      body: {
+        amount_credits: amount,
+        description: topUpDescription.trim() || 'Manual top-up',
+      },
+    });
+
+    if (res.error) {
+      setTopUpMessage(res.error.message);
+      return;
+    }
+
+    setWallet((res.data as WalletSummary) ?? null);
+    setTopUpMessage('Top-up applied.');
+  }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Billing</h1>
-        <p className="text-sm text-gray-600 mt-1">Manage your subscription, invoices, and payment methods.</p>
+        <h1 className="text-2xl font-semibold">Billing &amp; usage</h1>
+        <p className="mt-1 text-sm text-gray-600">
+          Your balance, what you&rsquo;ve used this month, and how to top up.
+        </p>
       </div>
 
-      {/* Tabs */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Wallet balance</p>
+          <p className="mt-2 text-3xl font-semibold text-slate-900">
+            {walletLoading ? '—' : `${wallet?.balance_credits?.toFixed(2) ?? '0.00'} credits`}
+          </p>
+          <p className="mt-1 text-sm text-slate-500">Available for AI, messaging, and managed workflows</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">AI usage remaining</p>
+          <p className="mt-2 text-3xl font-semibold text-slate-900">
+            {walletLoading ? '—' : (estimatedTokensLeft != null ? `~${estimatedTokensLeft.toLocaleString()}` : '—')}
+          </p>
+          <p className="mt-1 text-sm text-slate-500">Estimated AI messages left on your balance</p>
+        </div>
+      </div>
+
       <div className="flex gap-1 border-b border-gray-200">
-        {(['overview', 'invoices', 'payment'] as const).map((tab) => (
+        {(['overview', 'ledger', 'payment'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -50,109 +171,177 @@ export default function BillingClient() {
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            {tab === 'payment' ? 'Payment Methods' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'payment' ? 'Top Up' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
 
-      {/* Overview */}
       {activeTab === 'overview' && (
-        <div className="space-y-4">
-          <div className="bg-white border rounded-xl p-5">
-            <div className="flex items-start justify-between">
+        <div className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Current Plan</p>
-                <h2 className="text-xl font-bold text-gray-900 mt-1">Pro</h2>
-                <p className="text-sm text-gray-600 mt-1">₦9,900 / month · Renews March 1, 2025</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Usage snapshot</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">This month&apos;s activity</h2>
               </div>
-              <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Active</span>
+              {wallet?.balance_credits != null && (
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                  Low balance alert: {lowBalanceThreshold.toFixed(2)}
+                </span>
+              )}
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-4 pt-4 border-t text-center">
-              <div>
-                <p className="text-lg font-bold text-gray-900">∞</p>
-                <p className="text-xs text-gray-500">Bookings</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold text-gray-900">10</p>
-                <p className="text-xs text-gray-500">Staff seats</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold text-gray-900">5</p>
-                <p className="text-xs text-gray-500">Locations</p>
-              </div>
-            </div>
-            <button className="mt-4 w-full py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-              Upgrade Plan
-            </button>
-          </div>
 
-          <div className="bg-white border rounded-xl p-5">
-            <h3 className="font-semibold text-sm mb-3">This Month&apos;s Usage</h3>
-            <div className="space-y-3">
-              {[
-                { label: 'Bookings', used: 34, limit: 'Unlimited' as const },
-                { label: 'Staff seats', used: 3, limit: 10 },
-                { label: 'SMS sent', used: 47, limit: 200 },
-              ].map((item) => (
-                <div key={item.label}>
-                  <div className="flex justify-between text-xs text-gray-600 mb-1">
-                    <span>{item.label}</span>
-                    <span>{item.used} {typeof item.limit === 'number' ? `/ ${item.limit}` : `(${item.limit})`}</span>
-                  </div>
-                  {typeof item.limit === 'number' && (
-                    <div className="w-full bg-gray-100 rounded-full h-1.5">
-                      <div
-                        className="bg-indigo-500 h-1.5 rounded-full"
-                        style={{ width: `${Math.min((item.used / item.limit) * 100, 100)}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Invoices */}
-      {activeTab === 'invoices' && (
-        <div className="space-y-3">
-          {SAMPLE_INVOICES.map((inv) => (
-            <div key={inv.id} className="bg-white border rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-900">{inv.description}</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {inv.id} · {new Date(inv.date).toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' })}
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Bookings</p>
+                {metricsLoading && <p className="mt-2 text-sm text-slate-400">Loading…</p>}
+                {metricsError && <p className="mt-2 text-sm text-red-500">{metricsError}</p>}
+                {!metricsLoading && !metricsError && (
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">{metrics?.total_bookings ?? '—'}</p>
+                )}
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Monthly revenue</p>
+                {metricsLoading && <p className="mt-2 text-sm text-slate-400">Loading…</p>}
+                {!metricsLoading && !metricsError && (
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">
+                    {metrics?.monthly_revenue != null
+                      ? new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(metrics.monthly_revenue)
+                      : '—'}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">AI usage this month</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {walletLoading ? '—' : `${wallet?.month_spent_credits?.toFixed(2) ?? '0.00'} credits`}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${STATUS_COLORS[inv.status]}`}>
-                  {inv.status}
-                </span>
-                <span className="text-sm font-semibold text-gray-900">{formatCurrency(inv.amount)}</span>
-                <button className="text-xs text-indigo-600 hover:underline">Download</button>
-              </div>
             </div>
-          ))}
+
+            {walletError && (
+              <p className="mt-4 text-sm text-red-500">{walletError}</p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">How it works</p>
+            <ul className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
+              <li>Your plan covers your workspace — bookings, sales, inventory, and everyday operations.</li>
+              <li>AI features — assistant replies, reminders, follow-ups — draw from your balance as you use them.</li>
+              <li>Top up any time. You&rsquo;re only ever charged for what you use.</li>
+              <li>If your balance runs out, AI features pause until you top up — your bookings and sales keep working.</li>
+            </ul>
+          </div>
         </div>
       )}
 
-      {/* Payment methods */}
-      {activeTab === 'payment' && (
-        <div className="space-y-4">
-          <div className="bg-white border rounded-xl p-4 flex items-center gap-3">
-            <div className="w-10 h-7 bg-gray-100 rounded flex items-center justify-center text-xs font-bold text-gray-600">
-              VISA
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-gray-900">•••• •••• •••• 4242</p>
-              <p className="text-xs text-gray-500">Expires 12/27</p>
-            </div>
-            <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">Default</span>
+      {activeTab === 'ledger' && (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h2 className="text-base font-semibold text-slate-900">Recent ledger</h2>
+            <p className="text-sm text-slate-500">Your top-ups, usage, and refunds.</p>
           </div>
-          <button className="w-full py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors">
-            + Add payment method
-          </button>
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Kind</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(wallet?.recent_ledger || []).map((entry) => (
+                  <tr key={entry.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 text-sm font-medium text-slate-900">{entry.kind}</td>
+                    <td className="px-4 py-3 text-right text-sm text-slate-700">
+                      {Number(entry.amount_credits || 0).toFixed(2)} credits
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{entry.description || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-500">{entry.created_at ? new Date(entry.created_at).toLocaleString() : '—'}</td>
+                  </tr>
+                ))}
+                {!wallet?.recent_ledger?.length && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
+                      No ledger entries yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'payment' && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">Top up credits</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              This is a manual top-up for now. We can wire Paystack/Stripe later without changing the wallet model.
+            </p>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Credits to add</label>
+                <input
+                  value={topUpAmount}
+                  onChange={(e) => setTopUpAmount(e.target.value)}
+                  className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                  placeholder="100"
+                  inputMode="decimal"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Description</label>
+                <input
+                  value={topUpDescription}
+                  onChange={(e) => setTopUpDescription(e.target.value)}
+                  className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                  placeholder="Manual top-up"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={submitTopUp}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                Add credits
+              </button>
+              {topUpMessage && <span className="text-sm text-slate-600">{topUpMessage}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-900">Profit view</h3>
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="flex justify-between text-slate-600">
+                <span>Cash collected</span>
+                <span className="font-medium text-slate-900">{wallet?.cash_collected_credits?.toFixed(2) ?? '0.00'} credits</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Recognized revenue</span>
+                <span className="font-medium text-slate-900">{wallet?.month_usage_revenue_credits?.toFixed(2) ?? '0.00'} credits</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Actual cost</span>
+                <span className="font-medium text-slate-900">{wallet?.month_actual_cost_credits?.toFixed(2) ?? '0.00'} credits</span>
+              </div>
+              <div className="flex justify-between border-t border-slate-200 pt-3 text-slate-600">
+                <span>Realized profit</span>
+                <span className="font-semibold text-slate-900">{wallet?.month_realized_profit_credits?.toFixed(2) ?? '0.00'} credits</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Withdrawable profit</span>
+                <span className="font-semibold text-slate-900">{wallet?.month_withdrawable_profit_credits?.toFixed(2) ?? '0.00'} credits</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

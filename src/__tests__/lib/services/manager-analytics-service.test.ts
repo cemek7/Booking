@@ -15,7 +15,7 @@ import { AppUser } from '@/types/auth';
 const createMockSupabase = () => {
   const defaultResolved = { data: [] as unknown[], error: null, count: null };
   // Proper thenable so Promise.all can await unrecognised-table queries
-  const thenFn = (jest.fn() as jest.Mock<any>).mockImplementation(
+  const thenFn = (jest.fn() as jest.Mock).mockImplementation(
     (onfulfilled: (v: typeof defaultResolved) => unknown) =>
       Promise.resolve(defaultResolved).then(onfulfilled)
   );
@@ -28,8 +28,8 @@ const createMockSupabase = () => {
     gte: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
-    single: (jest.fn() as jest.Mock<any>).mockResolvedValue({ data: null, error: null }),
-    maybeSingle: (jest.fn() as jest.Mock<any>).mockResolvedValue({ data: null, error: null }),
+    single: (jest.fn() as jest.Mock).mockResolvedValue({ data: null, error: null }),
+    maybeSingle: (jest.fn() as jest.Mock).mockResolvedValue({ data: null, error: null }),
     upsert: jest.fn().mockReturnThis(),
     then: thenFn,
   };
@@ -37,7 +37,7 @@ const createMockSupabase = () => {
 
 // Helper: proper thenable that calls onfulfilled (resolve) so Promise.all and await work correctly.
 // jest.fn().mockResolvedValue() returns a Promise but never calls resolve, causing hangs.
-const mockThenable = (value: unknown) => (jest.fn() as jest.Mock<any>).mockImplementation(
+const mockThenable = (value: unknown) => (jest.fn() as jest.Mock).mockImplementation(
   (onfulfilled: (v: unknown) => unknown) => Promise.resolve(value).then(onfulfilled)
 );
 
@@ -58,7 +58,7 @@ const mockOwnerUser: AppUser = {
 };
 
 describe('manager-analytics-service', () => {
-  let mockSupabase: any;
+  let mockSupabase: ReturnType<typeof createMockSupabase>;
 
   beforeEach(() => {
     mockSupabase = createMockSupabase();
@@ -627,7 +627,7 @@ describe('manager-analytics-service', () => {
     it('should throw error for unknown report type', async () => {
       await expect(
         generateCustomReport(mockSupabase, mockManagerUser, {
-          reportType: 'invalid' as any,
+          reportType: 'invalid' as never,
           dateRange,
         })
       ).rejects.toThrow('Unknown report type: invalid');
@@ -710,7 +710,7 @@ describe('manager-analytics-service', () => {
     it('should throw error for unknown data type', async () => {
       await expect(
         exportAnalyticsData(mockSupabase, mockManagerUser, {
-          dataType: 'invalid' as any,
+          dataType: 'invalid' as never,
           format: 'json',
           dateRange,
         })
@@ -784,7 +784,7 @@ describe('manager-analytics-service', () => {
     });
 
     it('should include user and tenant IDs in config', async () => {
-      mockSupabase.upsert.mockImplementation((data: any) => {
+      mockSupabase.upsert.mockImplementation((data: unknown) => {
         expect(data.user_id).toBe(mockManagerUser.id);
         expect(data.tenant_id).toBe(mockManagerUser.tenantId);
         return mockSupabase;
@@ -814,7 +814,7 @@ describe('manager-analytics-service', () => {
     });
 
     it('should save widget configuration', async () => {
-      mockSupabase.upsert.mockImplementation((data: any) => {
+      mockSupabase.upsert.mockImplementation((data: unknown) => {
         expect(data.config.widgets).toEqual(mockConfig.widgets);
         return mockSupabase;
       });
@@ -829,7 +829,7 @@ describe('manager-analytics-service', () => {
     });
 
     it('should save preferences', async () => {
-      mockSupabase.upsert.mockImplementation((data: any) => {
+      mockSupabase.upsert.mockImplementation((data: unknown) => {
         expect(data.config.preferences).toEqual(mockConfig.preferences);
         return mockSupabase;
       });

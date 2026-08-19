@@ -16,6 +16,7 @@
  */
 
 import { buildAuthHeaders } from './auth-headers';
+import { setStoredAccessToken } from './token-storage';
 
 export interface ApiError {
   message: string;
@@ -35,6 +36,7 @@ export interface ApiResponse<T> {
 export interface AuthFetchOptions extends Omit<RequestInit, 'headers' | 'body'> {
   headers?: Record<string, string>;
   body?: unknown;
+  tenantId?: string;
 }
 
 /**
@@ -115,14 +117,54 @@ async function fetchWithAuth<T = unknown>(
   options: AuthFetchOptions = {}
 ): Promise<ApiResponse<T>> {
   try {
+    function normalizeHeaderKeys(headers: Record<string, string | undefined>): Record<string, string | undefined> {
+      const normalized: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(headers)) {
+        if (value === undefined) continue;
+        const normalizedKey = key.toLowerCase() === 'x-tenant-id' ? 'x-tenant-id' : key;
+        normalized[normalizedKey] = value;
+      }
+      return normalized;
+    }
+
+    async function ensureAuthorizationHeader(): Promise<Record<string, string | undefined>> {
+      const authHeaders = buildAuthHeaders();
+      if (authHeaders.Authorization || typeof window === 'undefined') {
+        return authHeaders;
+      }
+
+      try {
+        // Use the async client. The sync getSupabaseBrowserClient() returns a
+        // no-op proxy when Supabase config comes from runtime (not build) env —
+        // its auth.getSession() yields a null session, so no token is attached
+        // and authenticated GETs 401. The async client loads runtime config.
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const supabase = await getSupabaseBrowserClientAsync();
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+
+        if (accessToken) {
+          setStoredAccessToken(accessToken);
+          return {
+            ...authHeaders,
+            Authorization: `Bearer ${accessToken}`,
+          };
+        }
+      } catch (error) {
+        console.warn('[AuthAPIClient] Failed to recover access token from Supabase session', error);
+      }
+
+      return authHeaders;
+    }
+
     // Build auth headers
-    const authHeaders = buildAuthHeaders();
+    const authHeaders = await ensureAuthorizationHeader();
     
     // DEBUG: Log what headers are being built
     if (typeof window !== 'undefined') {
       console.debug('[fetchWithAuth] Building headers for:', url);
       console.debug('[fetchWithAuth] Auth header present:', !!authHeaders.Authorization);
-      console.debug('[fetchWithAuth] Tenant header present:', !!authHeaders['X-Tenant-ID']);
+      console.debug('[fetchWithAuth] Tenant header present:', !!authHeaders['x-tenant-id']);
       if (!authHeaders.Authorization) {
         console.warn('[fetchWithAuth] ⚠️ NO AUTHORIZATION HEADER - token not in localStorage?');
         const token = localStorage.getItem('boka_auth_access_token');
@@ -134,11 +176,11 @@ async function fetchWithAuth<T = unknown>(
       }
     }
 
-    // Merge with custom headers (custom takes precedence)
-    const headers: HeadersInit = {
-      ...authHeaders,
-      ...options.headers,
-    };
+    // Merge with custom headers (custom takes precedence), filter out undefined values
+    const mergedHeaders = normalizeHeaderKeys({ ...authHeaders, ...(options.headers ?? {}) });
+    const headers: HeadersInit = Object.fromEntries(
+      Object.entries(mergedHeaders).filter(([, v]) => v !== undefined)
+    ) as Record<string, string>;
 
     // Prepare body
     let body: string | undefined;
@@ -150,19 +192,47 @@ async function fetchWithAuth<T = unknown>(
     console.debug(`[AuthAPIClient] ${method} ${url}`);
 
     // Execute fetch
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers,
       body,
     });
 
+    // Right after login the Supabase session may not be persisted yet, so the
+    // first burst of queries can go out without (or with a stale) Authorization
+    // header and 401. Recover the token from the live session and retry ONCE
+    // instead of surfacing a transient failure.
+    if (response.status === 401 && typeof window !== 'undefined') {
+      try {
+        const { getSupabaseBrowserClientAsync } = await import('@/lib/supabase/client');
+        const supabase = await getSupabaseBrowserClientAsync();
+        const { data } = await supabase.auth.getSession();
+        const freshToken = data.session?.access_token;
+        const sentAuth = (headers as Record<string, string>).Authorization;
+        if (freshToken && `Bearer ${freshToken}` !== sentAuth) {
+          setStoredAccessToken(freshToken);
+          console.debug('[AuthAPIClient] 401 with stale/missing token — retrying with fresh session token');
+          response = await fetch(url, {
+            ...options,
+            headers: { ...(headers as Record<string, string>), Authorization: `Bearer ${freshToken}` },
+            body,
+          });
+        }
+      } catch {
+        // fall through with the original 401 response
+      }
+    }
+
     // Parse response
-    const contentType = response.headers.get('content-type');
+    const contentType =
+      typeof (response as Response).headers?.get === 'function'
+        ? (response as Response).headers.get('content-type')
+        : undefined;
     let data: T | undefined;
 
-    if (contentType?.includes('application/json')) {
+    if (contentType?.includes('application/json') || typeof (response as Response).json === 'function') {
       try {
-        data = await response.json();
+        data = await (response as Response).json();
       } catch {
         // Response is not JSON
       }
@@ -172,13 +242,13 @@ async function fetchWithAuth<T = unknown>(
     if (!response.ok) {
       console.warn(`[AuthAPIClient] ${method} ${url} returned ${response.status}`);
       if (response.status === 401) {
-        console.warn('[AuthAPIClient] Received 401 - Authorization failed. Clearing session.');
+        console.warn('[AuthAPIClient] Received 401 - request not authorized (no session change made).');
       }
       return {
         error: {
-          message: `HTTP ${response.status}: ${response.statusText}`,
+          message: `HTTP ${response.status}: ${response.statusText || ''}`.trim(),
           status: response.status,
-          statusText: response.statusText,
+          statusText: response.statusText || '',
         },
         status: response.status,
       };

@@ -20,6 +20,12 @@ jest.mock('@/lib/observability/observability', () => ({
 }));
 
 jest.mock('@/lib/eventbus/eventBus', () => ({
+  // engine.ts uses the getEventBus() factory (not `new EventBusService`) and calls
+  // publishEvent()/stopProcessing() on it.
+  getEventBus: jest.fn(() => ({
+    publishEvent: jest.fn().mockResolvedValue(undefined),
+    stopProcessing: jest.fn().mockResolvedValue(undefined),
+  })),
   EventBusService: jest.fn().mockImplementation(() => ({
     publishEvent: jest.fn().mockResolvedValue(undefined),
   })),
@@ -27,7 +33,7 @@ jest.mock('@/lib/eventbus/eventBus', () => ({
 
 describe('BookingEngine', () => {
   let bookingEngine: BookingEngine;
-  let mockSupabase: any;
+  let mockSupabase: { from: jest.Mock; rpc: jest.Mock } & Record<string, unknown>;
 
   beforeEach(() => {
     // Clear all mocks
@@ -38,7 +44,7 @@ describe('BookingEngine', () => {
 
     // Get mock supabase instance
     const { createServerSupabaseClient } = require('@/lib/supabase/server');
-    mockSupabase = createServerSupabaseClient();
+    mockSupabase = createServerSupabaseClient() as unknown as typeof mockSupabase;
   });
 
   afterEach(() => {
@@ -132,7 +138,7 @@ describe('BookingEngine', () => {
       const invalidData = { ...validBookingData, customer_email: 'invalid-email' };
 
       await expect(
-        bookingEngine.createBooking('tenant-123', invalidData as any)
+        bookingEngine.createBooking('tenant-123', invalidData as unknown as Parameters<typeof bookingEngine.createBooking>[1])
       ).rejects.toThrow();
     });
 
@@ -400,7 +406,7 @@ describe('BookingEngine', () => {
     });
 
     it('should reject cancellation with invalid reason enum', async () => {
-      const invalidData = { ...validCancellationData, reason: 'invalid_reason' as any };
+      const invalidData = { ...validCancellationData, reason: 'invalid_reason' as never };
 
       await expect(
         bookingEngine.cancelBooking('tenant-123', invalidData)

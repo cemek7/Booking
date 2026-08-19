@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { redirect } from 'next/navigation';
 import { requireAuth } from '@/lib/auth/server-auth';
 
@@ -14,7 +15,7 @@ export default async function DeprecatedAnalyticsPage() {
     case 'staff':
       redirect('/dashboard/staff-dashboard');
     case 'superadmin':
-      redirect('/superadmin');
+      redirect('/dashboard/superadmin');
     default:
       redirect('/dashboard');
   }

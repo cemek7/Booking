@@ -14,9 +14,9 @@ export default function LoginForm() {
     e.preventDefault();
     setError(null);
     try {
-      await signIn({ email, password });
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+      await signIn?.({ email, password });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
     }
   };
 

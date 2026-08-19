@@ -21,6 +21,19 @@ interface SearchHistoryItem {
   resultCount: number;
 }
 
+interface CategoriesResponse { categories?: Array<{ name: string }>; }
+interface TagsResponse { tags?: string[]; }
+
+function isSearchHistoryItem(value: unknown): value is SearchHistoryItem {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === 'string'
+    && typeof item.query === 'string'
+    && typeof item.timestamp === 'string'
+    && typeof item.resultCount === 'number'
+    && Boolean(item.filters && typeof item.filters === 'object');
+}
+
 export default function AdvancedSearch({ onSearch, initialQuery, onClear }: AdvancedSearchProps) {
   const { tenant } = useTenant();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -28,7 +41,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
   
   const [searchQuery, setSearchQuery] = useState<ProductListQuery>({
     search: initialQuery?.search || '',
-    category_id: initialQuery?.category_id || undefined,
+    category: initialQuery?.category || undefined,
     status: initialQuery?.status || 'all',
     tags: initialQuery?.tags || undefined,
     price_min: initialQuery?.price_min || undefined,
@@ -47,10 +60,10 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     const savedHistory = localStorage.getItem('product-search-history');
     if (savedHistory) {
       try {
-        const history = JSON.parse(savedHistory).map((item: any) => ({
-          ...item,
-          timestamp: new Date(item.timestamp),
-        }));
+        const parsedHistory: unknown = JSON.parse(savedHistory);
+        const history = Array.isArray(parsedHistory)
+          ? parsedHistory.filter(isSearchHistoryItem).map(item => ({ ...item, timestamp: new Date(item.timestamp) }))
+          : [];
         setSearchHistory(history);
       } catch (error) {
         console.error('Failed to parse search history:', error);
@@ -64,7 +77,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     queryFn: async () => {
       if (!tenant?.id) return { categories: [] };
       
-      const response = await authFetch('/api/categories?is_active=true');
+      const response = await authFetch<CategoriesResponse>('/api/categories?is_active=true');
       
       if (response.error) throw new Error('Failed to fetch categories');
       return response.data;
@@ -78,7 +91,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     queryFn: async () => {
       if (!tenant?.id) return { tags: [] };
       
-      const response = await authFetch('/api/products/tags');
+      const response = await authFetch<TagsResponse>('/api/products/tags');
       
       if (response.error) return { tags: [] };
       return response.data;
@@ -86,8 +99,8 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
     enabled: !!tenant?.id,
   });
 
-  const categories = categoriesData?.categories || [];
-  const popularTags = tagsData?.tags || [];
+  const categories = categoriesData?.categories?.map(category => category.name) ?? [];
+  const popularTags = tagsData?.tags ?? [];
 
   const handleSearch = () => {
     // Clean up the query - remove empty values
@@ -96,7 +109,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
         acc[key as keyof ProductListQuery] = value;
       }
       return acc;
-    }, {} as any);
+    }, {} as Partial<ProductListQuery>);
 
     // Reset page to 1 for new searches
     cleanQuery.page = 1;
@@ -122,7 +135,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
   const handleClear = () => {
     setSearchQuery({
       search: '',
-      category_id: undefined,
+      category: undefined,
       status: 'all',
       tags: undefined,
       price_min: undefined,
@@ -149,9 +162,9 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
   };
 
   const handleTagToggle = (tag: string) => {
-    const currentTags = searchQuery.tags || [];
+    const currentTags = Array.isArray(searchQuery.tags) ? searchQuery.tags : searchQuery.tags ? [searchQuery.tags] : [];
     const newTags = currentTags.includes(tag)
-      ? currentTags.filter(t => t !== tag)
+      ? currentTags.filter((t: string) => t !== tag)
       : [...currentTags, tag];
     
     setSearchQuery(prev => ({
@@ -220,14 +233,14 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
                 Search: "{searchQuery.search}"
               </span>
             )}
-            {searchQuery.category_id && (
+            {searchQuery.category && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
-                Category: {categories.find(c => c.id === searchQuery.category_id)?.name}
+                Category: {searchQuery.category}
               </span>
             )}
-            {searchQuery.tags && searchQuery.tags.length > 0 && (
+            {searchQuery.tags && (Array.isArray(searchQuery.tags) ? searchQuery.tags.length > 0 : true) && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
-                Tags: {searchQuery.tags.join(', ')}
+                Tags: {Array.isArray(searchQuery.tags) ? searchQuery.tags.join(', ') : searchQuery.tags}
               </span>
             )}
             {(searchQuery.price_min || searchQuery.price_max) && (
@@ -251,21 +264,22 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
             {/* Category Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <select
-                value={searchQuery.category_id || ''}
-                onChange={(e) => setSearchQuery(prev => ({ 
-                  ...prev, 
-                  category_id: e.target.value || undefined 
+              <input
+                type="text"
+                list="advanced-search-categories"
+                value={searchQuery.category || ''}
+                onChange={(e) => setSearchQuery(prev => ({
+                  ...prev,
+                  category: e.target.value || undefined
                 }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">All Categories</option>
-                {categories.map((category: any) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
+                placeholder="All Categories"
+              />
+              <datalist id="advanced-search-categories">
+                {categories.map((category: string) => (
+                  <option key={category} value={category} />
                 ))}
-              </select>
+              </datalist>
             </div>
 
             {/* Status Filter */}
@@ -273,7 +287,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
               <select
                 value={searchQuery.status}
-                onChange={(e) => setSearchQuery(prev => ({ ...prev, status: e.target.value as any }))}
+                onChange={(e) => setSearchQuery(prev => ({ ...prev, status: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="all">All Products</option>
@@ -287,9 +301,9 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <label className="block text-sm font-medium text-gray-700 mb-1">Stock Status</label>
               <select
                 value={searchQuery.stock_status || ''}
-                onChange={(e) => setSearchQuery(prev => ({ 
-                  ...prev, 
-                  stock_status: e.target.value || undefined 
+                onChange={(e) => setSearchQuery(prev => ({
+                  ...prev,
+                  stock_status: (e.target.value || undefined) as ProductListQuery['stock_status']
                 }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
@@ -340,7 +354,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <div className="flex gap-2">
                 <select
                   value={searchQuery.sort}
-                  onChange={(e) => setSearchQuery(prev => ({ ...prev, sort: e.target.value as any }))}
+                  onChange={(e) => setSearchQuery(prev => ({ ...prev, sort: e.target.value }))}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <option value="created_at">Date Created</option>
@@ -400,7 +414,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
               <label className="block text-sm font-medium text-gray-700 mb-2">Popular Tags</label>
               <div className="flex flex-wrap gap-2">
                 {popularTags.slice(0, 15).map((tag: string) => {
-                  const isSelected = searchQuery.tags?.includes(tag);
+                  const isSelected = Array.isArray(searchQuery.tags) ? searchQuery.tags.includes(tag) : searchQuery.tags === tag;
                   return (
                     <button
                       key={tag}

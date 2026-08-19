@@ -5,6 +5,7 @@
  * that replace all fragmented auth patterns across the codebase.
  */
 
+import { defaultLogger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
@@ -35,7 +36,7 @@ export interface UnifiedAuthOptions {
   requiredRoles?: Role[];
   allowSuperAdmin?: boolean;
   requireTenantAccess?: boolean;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -57,11 +58,11 @@ export async function unifiedAuth(
   options: UnifiedAuthOptions = {}
 ): Promise<UnifiedAuthResult> {
   try {
-    // Step 1: Get authenticated user session
+    // Step 1: Get authenticated user (server-revalidated)
     const supabase = getSupabaseRouteHandlerClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user: authUser }, error: sessionError } = await supabase.auth.getUser();
 
-    if (sessionError || !session?.user) {
+    if (sessionError || !authUser) {
       return createAuthFailure('Authentication required', 401);
     }
 
@@ -78,7 +79,7 @@ export async function unifiedAuth(
 
     // Step 5: Get unified user profile using the canonical tenant (no request override).
     // Passing an empty string causes getUserProfile to fall back to the user's primary tenant.
-    const user = await permissionChecker.getUserProfile(session.user.id, '');
+    const user = await permissionChecker.getUserProfile(authUser.id, '');
 
     if (!user) {
       return createAuthFailure('User profile not found or inactive', 403);
@@ -134,7 +135,7 @@ export async function unifiedAuth(
     };
 
   } catch (error) {
-    console.error('Unified auth failed:', error);
+    defaultLogger.error('Unified auth failed:', error);
     return createAuthFailure('Authentication error', 500);
   }
 }
@@ -156,7 +157,7 @@ export async function requireAuth(request: NextRequest): Promise<UnifiedAuthResu
 export async function requirePermission(
   request: NextRequest,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return unifiedAuth(request, {
     requiredPermissions: [permission],
@@ -170,7 +171,7 @@ export async function requirePermission(
 export async function requirePermissions(
   request: NextRequest,
   permissions: string[],
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return unifiedAuth(request, {
     requiredPermissions: permissions,

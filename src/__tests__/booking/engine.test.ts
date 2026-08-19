@@ -40,9 +40,14 @@ jest.mock('@/lib/observability/observability', () => ({
 }));
 
 jest.mock('@/lib/eventbus/eventBus', () => ({
+  // engine.ts uses the getEventBus() factory and calls publishEvent()/stopProcessing().
+  getEventBus: jest.fn(() => ({
+    publishEvent: jest.fn().mockResolvedValue(undefined),
+    stopProcessing: jest.fn().mockResolvedValue(undefined),
+  })),
   EventBusService: jest.fn().mockImplementation(() => ({
-    publish: jest.fn().mockResolvedValue(undefined),
-    shutdown: jest.fn().mockResolvedValue(undefined),
+    publishEvent: jest.fn().mockResolvedValue(undefined),
+    stopProcessing: jest.fn().mockResolvedValue(undefined),
   })),
 }));
 
@@ -119,7 +124,7 @@ describe('Booking Engine', () => {
       start_time: z.string().datetime(),
       end_time: z.string().datetime(),
       notes: z.string().max(1000).optional(),
-      metadata: z.record(z.any()).optional(),
+      metadata: z.record(z.unknown()).optional(),
       special_requests: z.string().max(500).optional(),
     });
 
@@ -166,7 +171,7 @@ describe('Booking Engine', () => {
 
     it('should accept optional notes', () => {
       const dataWithoutNotes = { ...validBookingData };
-      delete (dataWithoutNotes as any).notes;
+      delete (dataWithoutNotes as { notes?: unknown }).notes;
       const result = CreateBookingSchema.safeParse(dataWithoutNotes);
       expect(result.success).toBe(true);
     });
@@ -204,7 +209,7 @@ describe('Booking Engine', () => {
 
     it('should reject missing booking_id', () => {
       const invalidData = { ...validModifyData };
-      delete (invalidData as any).booking_id;
+      delete (invalidData as { booking_id?: unknown }).booking_id;
       const result = ModifyBookingSchema.safeParse(invalidData);
       expect(result.success).toBe(false);
     });

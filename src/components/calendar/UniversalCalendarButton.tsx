@@ -23,7 +23,7 @@ import {
   type CalendarButtonProps 
 } from '@/lib/integrations/universalCalendar';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/toast';
 
 /**
  * Universal Calendar Button Component
@@ -164,11 +164,23 @@ export default function UniversalCalendarButton({
 /**
  * Quick Add Calendar Component for booking confirmations
  */
-export function QuickAddCalendar({ 
+interface QuickAddBooking {
+  service_name: string;
+  customer_name: string;
+  customer_email?: string;
+  notes?: string;
+  location?: string;
+  appointment_date: string;
+  appointment_time: string;
+  duration_minutes?: number;
+  tenant?: { business_name?: string; contact_email?: string } | null;
+}
+
+export function QuickAddCalendar({
   booking,
-  className 
-}: { 
-  booking: any;
+  className
+}: {
+  booking: QuickAddBooking;
   className?: string;
 }) {
   // Convert booking to calendar event

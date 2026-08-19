@@ -1,13 +1,31 @@
 "use client";
 import { useState } from 'react';
 import { FormSection } from './FormSection';
-import { useTenant } from '@/lib/supabase/tenant-context';
-import { toast } from '../ui/toast';
 
 export interface WhatsAppSyncValues {
   whatsappNumber?: string;
   templateNamespace?: string;
   integrationStatus?: string;
+  channelConfig?: {
+    whatsapp?: {
+      status?: string;
+      mode?: 'shared_booka_number' | 'dedicated_number';
+      ownerCommandPhone?: string;
+      sendBookingAlerts?: boolean;
+      sendDailySummary?: boolean;
+      sendWeeklySummary?: boolean;
+      sendCancellationAlerts?: boolean;
+      templateMessagingEnabled?: boolean;
+      monthlyMetaSpendCap?: number;
+      paidTemplateConsent?: boolean;
+    };
+    instagram?: {
+      handle?: string;
+      profileUrl?: string;
+      dmGoal?: 'bookings' | 'sales' | 'lead_capture' | 'support';
+      useDmReplies?: boolean;
+    };
+  };
 }
 
 export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSyncValues; onChange: (patch: Partial<WhatsAppSyncValues>) => void }) {
@@ -17,37 +35,142 @@ export function WhatsAppSyncSection({ values, onChange }: { values: WhatsAppSync
     setLocal(next);
     onChange({ [k]: v });
   }
-  const { tenant } = useTenant();
-  const tenantId = tenant?.id;
+  function updateInstagram(
+    patch: Partial<NonNullable<NonNullable<WhatsAppSyncValues['channelConfig']>['instagram']>>
+  ) {
+    const next = {
+      ...(local.channelConfig || {}),
+      instagram: {
+        handle: '',
+        profileUrl: '',
+        dmGoal: 'bookings' as const,
+        useDmReplies: true,
+        ...(local.channelConfig?.instagram || {}),
+        ...patch,
+      },
+    };
+    setLocal((prev) => ({ ...prev, channelConfig: next }));
+    onChange({ channelConfig: next });
+  }
+  function updateWhatsApp(
+    patch: Partial<NonNullable<NonNullable<WhatsAppSyncValues['channelConfig']>['whatsapp']>>
+  ) {
+    const next = {
+      ...(local.channelConfig || {}),
+      whatsapp: {
+        mode: 'shared_booka_number' as const,
+        sendBookingAlerts: true,
+        sendDailySummary: true,
+        sendWeeklySummary: false,
+        sendCancellationAlerts: true,
+        templateMessagingEnabled: false,
+        monthlyMetaSpendCap: 0,
+        paidTemplateConsent: false,
+        ...(local.channelConfig?.whatsapp || {}),
+        ...patch,
+      },
+    };
+    setLocal((prev) => ({ ...prev, channelConfig: next }));
+    onChange({ channelConfig: next });
+  }
   return (
     <div className="space-y-6">
-      <FormSection title="WhatsApp Connection" description="Link your business number and manage integration lifecycle." aside={<span className="text-[10px]">Status: {local.integrationStatus || 'unknown'}</span>}>
+      <FormSection title="Owner Command Channel" description="Register the owner WhatsApp number Booka uses for alerts, summaries, and human escalations." aside={<span className="text-[10px]">Mode: {local.channelConfig?.whatsapp?.mode || 'shared_booka_number'}</span>}>
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-xs font-medium">Business Number
-            <input className="border rounded px-2 py-1 text-sm" value={local.whatsappNumber||''} onChange={e=>update('whatsappNumber', e.target.value)} placeholder="+234..." />
+          <label className="flex flex-col gap-1 text-xs font-medium">Shared Booka Number
+            <input className="border rounded px-2 py-1 text-sm" value={local.whatsappNumber||''} onChange={e=>update('whatsappNumber', e.target.value)} placeholder="Optional display/reference number" />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium">Template Namespace
-            <input className="border rounded px-2 py-1 text-sm" value={local.templateNamespace||''} onChange={e=>update('templateNamespace', e.target.value)} placeholder="your_namespace" />
+          <label className="flex flex-col gap-1 text-xs font-medium">Owner WhatsApp
+            <input className="border rounded px-2 py-1 text-sm" value={local.channelConfig?.whatsapp?.ownerCommandPhone || ''} onChange={e=>updateWhatsApp({ ownerCommandPhone: e.target.value })} placeholder="+2348012345678" />
           </label>
         </div>
-        <div className="flex flex-wrap gap-2 text-[11px]">
-          <button
-            onClick={async ()=>{
-              if (!tenantId) { toast.error('Missing tenant'); return; }
-              try {
-                const res = await fetch(`/api/tenants/${tenantId}/whatsapp/connect`, { method: 'POST' });
-                if (!res.ok) throw new Error('Connect failed');
-                update('integrationStatus', 'pending');
-                toast.success('Connecting… we will notify when ready');
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : 'Connect failed');
-              }
-            }}
-            className="px-3 py-1 rounded border">Connect</button>
-          <button onClick={()=>update('integrationStatus','checking')} className="px-3 py-1 rounded border">Check Status</button>
-          <button onClick={()=>update('integrationStatus','disconnected')} className="px-3 py-1 rounded border">Disconnect</button>
+        <div className="grid gap-2 md:grid-cols-2 text-[11px]">
+          <label className="flex items-center gap-2 rounded border px-3 py-2">
+            <input type="checkbox" checked={local.channelConfig?.whatsapp?.sendBookingAlerts ?? true} onChange={e=>updateWhatsApp({ sendBookingAlerts: e.target.checked })} />
+            <span>Send new booking alerts</span>
+          </label>
+          <label className="flex items-center gap-2 rounded border px-3 py-2">
+            <input type="checkbox" checked={local.channelConfig?.whatsapp?.sendCancellationAlerts ?? true} onChange={e=>updateWhatsApp({ sendCancellationAlerts: e.target.checked })} />
+            <span>Send cancellation alerts</span>
+          </label>
+          <label className="flex items-center gap-2 rounded border px-3 py-2">
+            <input type="checkbox" checked={local.channelConfig?.whatsapp?.sendDailySummary ?? true} onChange={e=>updateWhatsApp({ sendDailySummary: e.target.checked })} />
+            <span>Send daily summary</span>
+          </label>
+          <label className="flex items-center gap-2 rounded border px-3 py-2">
+            <input type="checkbox" checked={local.channelConfig?.whatsapp?.sendWeeklySummary ?? false} onChange={e=>updateWhatsApp({ sendWeeklySummary: e.target.checked })} />
+            <span>Send weekly summary</span>
+          </label>
         </div>
-        <p className="text-[10px] text-gray-500">Connection provisioning occurs asynchronously; you can refresh or check status anytime.</p>
+        <p className="text-[10px] text-gray-500">This is not QR pairing. Customers chat with Booka on the shared number; Booka sends owner notifications and command prompts to this WhatsApp number.</p>
+      </FormSection>
+
+      <FormSection title="WhatsApp messaging costs" description="Meta may charge your business directly for eligible template messages, such as proactive reminders or campaigns. Booka does not add a markup or collect your payment-card details.">
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+            <input type="checkbox" className="mt-0.5" checked={local.channelConfig?.whatsapp?.templateMessagingEnabled ?? false} onChange={(e) => updateWhatsApp({ templateMessagingEnabled: e.target.checked })} />
+            <span><strong>Allow proactive template messages.</strong> Leave this off to use WhatsApp mainly for inbound customer conversations and active service windows.</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5" checked={local.channelConfig?.whatsapp?.paidTemplateConsent ?? false} onChange={(e) => updateWhatsApp({ paidTemplateConsent: e.target.checked })} />
+            <span>I understand that Meta may charge my business directly for eligible delivered template messages.</span>
+          </label>
+          <label className="block max-w-xs text-xs font-medium">Monthly Meta messaging budget (optional, in your billing currency)
+            <input type="number" min={0} step="0.01" className="mt-1 block w-full rounded border px-2 py-1 text-sm" value={local.channelConfig?.whatsapp?.monthlyMetaSpendCap ?? 0} onChange={(e) => updateWhatsApp({ monthlyMetaSpendCap: Number(e.target.value) || 0 })} />
+          </label>
+          <p className="text-[10px] text-gray-500">Booka blocks automated template sends until both approvals above are on. The budget is recorded now; automatic spend-cap enforcement will be added only after Meta usage and pricing data are connected for your account.</p>
+        </div>
+      </FormSection>
+
+      <FormSection
+        title="Instagram DM Setup"
+        description="Store the Instagram details Booka should use for inbound DMs and lead handling."
+        aside={<span className="text-[10px]">Goal: {local.channelConfig?.instagram?.dmGoal || 'bookings'}</span>}
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-xs font-medium">
+            Instagram Handle
+            <input
+              className="border rounded px-2 py-1 text-sm"
+              value={local.channelConfig?.instagram?.handle || ''}
+              onChange={(e) => updateInstagram({ handle: e.target.value })}
+              placeholder="@yourbusiness"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium">
+            Profile URL
+            <input
+              className="border rounded px-2 py-1 text-sm"
+              value={local.channelConfig?.instagram?.profileUrl || ''}
+              onChange={(e) => updateInstagram({ profileUrl: e.target.value })}
+              placeholder="https://instagram.com/yourbusiness"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium">
+            Primary DM Goal
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={local.channelConfig?.instagram?.dmGoal || 'bookings'}
+              onChange={(e) => updateInstagram({ dmGoal: e.target.value as 'bookings' | 'sales' | 'lead_capture' | 'support' })}
+            >
+              <option value="bookings">Drive bookings</option>
+              <option value="sales">Drive sales</option>
+              <option value="lead_capture">Capture leads</option>
+              <option value="support">Handle support</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium">
+            <input
+              type="checkbox"
+              checked={local.channelConfig?.instagram?.useDmReplies ?? true}
+              onChange={(e) => updateInstagram({ useDmReplies: e.target.checked })}
+            />
+            Use Booka for Instagram DM replies
+          </label>
+        </div>
+        <p className="text-[10px] text-gray-500">
+          Instagram is best used for inbound discovery and DM lead capture. Booka can route qualified conversations into booking, order, quote, and follow-up flows.
+        </p>
       </FormSection>
     </div>
   );

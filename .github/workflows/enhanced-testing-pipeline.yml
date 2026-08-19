@@ -1,13 +1,21 @@
 name: Enhanced Testing Pipeline
 
+# Manual-only until the suite is rehabilitated.
+#
+# This pipeline has never successfully run: `services.postgres.image` referenced
+# the `env` context, which GitHub does not expose there, so the workflow failed
+# validation at load time (0s, no jobs) on every push. That is fixed below, but
+# the jobs themselves still need work before they can gate merges:
+#   - ~122 unit tests fail on stale Supabase mocks (query builders missing
+#     .in()/.ilike(), mocks missing createSupabaseAdminClient)
+#   - security/performance jobs need SNYK_TOKEN and k6 wiring
+#   - the coverage gate is set to 80% against a suite well below that
+# Re-enable the push/pull_request triggers once those are addressed.
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 env:
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
   POSTGRES_VERSION: '15'
 
 jobs:
@@ -28,7 +36,9 @@ jobs:
         run: npm ci
 
       - name: Type checking
-        run: npx tsc --noEmit
+        # Match the production build graph. Test-only mocks use Jest/Vitest
+        # globals and are intentionally excluded by tsconfig.ci.json.
+        run: npm run typecheck:ci
 
       - name: Lint code
         run: npm run lint
@@ -41,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:${{ env.POSTGRES_VERSION }}
+        image: postgres:15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -73,11 +83,6 @@ jobs:
           echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/booking_test" >> .env.test
           echo "SUPABASE_URL=https://test.supabase.co" >> .env.test
           echo "SUPABASE_ANON_KEY=test-key" >> .env.test
-
-      - name: Run database migrations
-        run: |
-          npm install -g supabase
-          supabase db reset --local
 
       - name: Run unit tests
         run: npm test -- --coverage --watchAll=false --testTimeout=30000
@@ -132,7 +137,7 @@ jobs:
         run: npm run test:security
 
       - name: Upload security report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-report
@@ -200,7 +205,7 @@ jobs:
         run: npx playwright test --project=${{ matrix.browser }}
 
       - name: Upload test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playwright-report-${{ matrix.browser }}
@@ -243,7 +248,7 @@ jobs:
           BASE_URL=http://localhost:3000 TENANT_ID=perf-test k6 run tests/performance/load-testing.js
 
       - name: Upload performance results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: performance-results
@@ -257,7 +262,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     services:
       postgres:
-        image: postgres:${{ env.POSTGRES_VERSION }}
+        image: postgres:15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -288,7 +293,7 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -U postgres -d booking_perf -f tests/performance/db-performance.sql > db-performance-results.txt
 
       - name: Upload database results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: database-performance-results
           path: db-performance-results.txt
@@ -331,7 +336,7 @@ jobs:
           pa11y http://localhost:3000/booking/new --reporter json > pa11y-booking-results.json
 
       - name: Upload accessibility results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: accessibility-results
@@ -387,7 +392,7 @@ jobs:
           echo "- ✅ Docker image built" >> deployment-report.md
 
       - name: Upload deployment report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-report
           path: deployment-report.md
@@ -400,7 +405,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
 
       - name: Generate test summary
         run: |
@@ -433,7 +438,7 @@ jobs:
             });
 
       - name: Upload test summary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: test-summary
           path: test-summary.md

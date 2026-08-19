@@ -1,109 +1,91 @@
 #!/usr/bin/env node
 
 /**
- * WhatsApp Message Processor Worker
- * 
- * This worker processes queued WhatsApp messages asynchronously to maintain
- * fast webhook response times while providing comprehensive message handling.
- * 
- * Features:
- * - High-volume message processing with queue management
- * - Media handling (images, documents, audio, video)
- * - Template message support with Business API integration
- * - Conversation state management and persistence
- * - Integration with dialog-booking bridge for intelligent responses
- * - Automatic retry logic with exponential backoff
- * - Real-time monitoring and health checks
+ * WhatsApp Worker Launcher
+ *
+ * The actual queue processing lives in /api/worker/whatsapp.
+ * This launcher polls that route so local/dev and self-hosted runs
+ * can process queue work without relying on compiled TS output.
  */
 
-import { startWhatsAppProcessor, stopWhatsAppProcessor } from '../src/lib/whatsapp/messageProcessor.js';
-import { whatsappTemplateManager } from '../src/lib/whatsapp/templateManager.js';
+const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const CRON_SECRET = process.env.CRON_SECRET || 'dev-cron-secret';
+const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS || 5000);
+const MAX_IDLE_LOGS = Number(process.env.WORKER_IDLE_LOG_EVERY || 12);
 
-let isShuttingDown = false;
+let shuttingDown = false;
+let idleCount = 0;
 
-async function startWorker() {
-  console.log('🚀 Starting WhatsApp Message Processor Worker...');
-  
+async function runOnce() {
+  const url = `${APP_URL.replace(/\/$/, '')}/api/worker/whatsapp`;
+  const headers = {};
+  if (process.env.NODE_ENV === 'production') {
+    headers.Authorization = `Bearer ${CRON_SECRET}`;
+  }
+
+  const res = await fetch(url, { headers });
+  const text = await res.text();
+  let payload;
   try {
-    // Start the message processor
-    await startWhatsAppProcessor();
-    
-    console.log('✅ WhatsApp Message Processor Worker started successfully');
-    console.log('📱 Ready to process WhatsApp messages...');
-    
-    // Health check endpoint (if running as service)
-    if (process.env.WORKER_HEALTH_PORT) {
-      const port = parseInt(process.env.WORKER_HEALTH_PORT);
-      const { createServer } = require('http');
-      
-      const server = createServer((req, res) => {
-        if (req.url === '/health') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            status: 'healthy',
-            uptime: process.uptime(),
-            memory: process.memoryUsage(),
-            timestamp: new Date().toISOString()
-          }));
-        } else {
-          res.writeHead(404);
-          res.end('Not Found');
+    payload = JSON.parse(text);
+  } catch {
+    payload = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(`worker route ${res.status}: ${JSON.stringify(payload)}`);
+  }
+
+  return payload;
+}
+
+async function loop() {
+  console.log('🚀 WhatsApp worker launcher started');
+  console.log(`🔁 Polling ${APP_URL}/api/worker/whatsapp every ${POLL_INTERVAL_MS}ms`);
+
+  while (!shuttingDown) {
+    try {
+      const result = await runOnce();
+      const processed = Number(result?.processed ?? 0);
+      const errors = Number(result?.errors ?? 0);
+
+      if (processed > 0 || errors > 0) {
+        idleCount = 0;
+        console.log('✅ Worker cycle complete', result);
+      } else {
+        idleCount += 1;
+        if (idleCount % MAX_IDLE_LOGS === 0) {
+          console.log('… worker idle');
         }
-      });
-      
-      server.listen(port, () => {
-        console.log(`🏥 Health check server listening on port ${port}`);
-      });
+      }
+    } catch (error) {
+      idleCount = 0;
+      console.error('❌ Worker cycle failed:', error);
     }
-    
-  } catch (error) {
-    console.error('❌ Failed to start WhatsApp Message Processor Worker:', error);
-    process.exit(1);
+
+    if (shuttingDown) break;
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 }
 
-async function gracefulShutdown() {
-  if (isShuttingDown) {
-    console.log('⚠️ Force shutdown requested');
+function stop() {
+  if (shuttingDown) {
     process.exit(1);
   }
-  
-  isShuttingDown = true;
-  console.log('🛑 Graceful shutdown initiated...');
-  
-  try {
-    // Stop the message processor
-    stopWhatsAppProcessor();
-    
-    console.log('✅ WhatsApp Message Processor Worker stopped gracefully');
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
-  }
+  shuttingDown = true;
+  console.log('🛑 Worker shutdown requested');
 }
 
-// Handle shutdown signals
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGQUIT', gracefulShutdown);
+process.on('SIGINT', stop);
+process.on('SIGTERM', stop);
+process.on('SIGQUIT', stop);
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('💥 Uncaught exception:', error);
-  gracefulShutdown();
+process.on('unhandledRejection', (reason) => {
+  console.error('🚫 Unhandled rejection in worker launcher:', reason);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('🚫 Unhandled rejection at:', promise, 'reason:', reason);
-  gracefulShutdown();
-});
-
-// Start the worker
-startWorker().catch((error) => {
-  console.error('💥 Fatal error starting worker:', error);
+loop().catch((error) => {
+  console.error('💥 Fatal worker launcher error:', error);
   process.exit(1);
 });
 
-// Export for testing
-export { startWorker, gracefulShutdown };

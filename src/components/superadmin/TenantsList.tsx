@@ -5,7 +5,7 @@ type Tenant = {
   name: string;
   status: string;
   users?: number;
-  [key: string]: any;
+  [key: string]: unknown;
 };
 
 export default function TenantsList({ tenants = [] }: { tenants: Tenant[] }) {

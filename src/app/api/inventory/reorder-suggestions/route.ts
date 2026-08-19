@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
@@ -18,7 +19,7 @@ interface Suggestion {
   estimated_cost?: number;
   product_name?: string;
   sku?: string;
-  category?: { id: string; name: string } | null;
+  category?: string | null;
 }
 
 interface CategoryGroup {
@@ -35,7 +36,7 @@ async function enrichSuggestions(suggestions: Suggestion[], tenantId: string): P
 
   const { data: products, error } = await supabase
     .from('products')
-    .select('id, name, sku, cost_price_cents, category:product_categories(id, name)')
+    .select('id, name, sku, cost_price_cents, category')
     .in('id', productIds)
     .eq('tenant_id', tenantId);
 
@@ -52,7 +53,7 @@ async function enrichSuggestions(suggestions: Suggestion[], tenantId: string): P
       ...suggestion,
       product_name: product?.name || 'Unknown Product',
       sku: product?.sku,
-      category: (product?.category as unknown as { id: string; name: string } | null),
+      category: typeof product?.category === 'string' ? product.category : null,
       estimated_cost,
     };
   });
@@ -101,7 +102,7 @@ export const GET = createHttpHandler(
     };
 
     const suggestionsByCategory = enrichedSuggestions.reduce((acc, suggestion) => {
-      const categoryName = suggestion.category?.name || 'Uncategorized';
+      const categoryName = suggestion.category || 'Uncategorized';
       if (!acc[categoryName]) {
         acc[categoryName] = { category_name: categoryName, suggestions: [], total_cost: 0 };
       }

@@ -1,8 +1,13 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { auditSuperadminAction } from '@/lib/enhanced-rbac';
+import { auditSuperadminAction } from '@/types/unified-permissions';
 import { parseIso } from '@/lib/utils';
+import { defaultLogger } from '@/lib/logger';
+import { siasOperations } from '@/lib/sias-operations';
+import { markReservationCompleted } from '@/lib/reconciliation/reservationSnapshot';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 /**
  * GET,PATCH,DELETE /api/reservations/[id]
@@ -22,7 +27,8 @@ import { parseIso } from '@/lib/utils';
 interface ReservationUpdatePayload {
   customer_name?: string;
   phone?: string;
-  service?: any;
+  service?: unknown;
+  service_id?: string;
   status?: 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
   start_at?: string;
   duration_minutes?: number;
@@ -36,11 +42,12 @@ export const PATCH = createHttpHandler(
     }
 
     // Fetch existing reservation
-    const { data: existing, error: existErr } = await ctx.supabase
+    const db = ctx.user!.role === 'superadmin' ? createSupabaseAdminClient() : ctx.supabase;
+    const { data: existing, error: existErr } = await db
       .from('reservations')
-      .select('tenant_id, start_at, end_at, status')
+      .select('tenant_id, start_at, end_at, status, metadata')
       .eq('id', reservationId)
-      .single();
+      .maybeSingle();
 
     if (existErr) throw ApiErrorFactory.databaseError(existErr);
     if (!existing) throw ApiErrorFactory.notFound('Reservation');
@@ -55,7 +62,7 @@ export const PATCH = createHttpHandler(
     // Audit superadmin actions
     if (ctx.user!.role === 'superadmin') {
       await auditSuperadminAction(
-        ctx.supabase,
+        db,
         ctx.user!.id,
         'reservation_patch',
         tenantId,
@@ -65,7 +72,7 @@ export const PATCH = createHttpHandler(
         ctx.request.headers.get('x-forwarded-for') || '',
         ctx.request.headers.get('user-agent') || ''
       ).catch((err) => {
-        console.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
+        defaultLogger.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
       });
     }
 
@@ -73,14 +80,27 @@ export const PATCH = createHttpHandler(
 
     // Parse update payload
     const body = await parseJsonBody<ReservationUpdatePayload>(ctx.request);
-    const updates: Record<string, any> = {};
+    const updates: Record<string, unknown> = {};
 
     // Copy allowed fields
-    const allowedFields: (keyof ReservationUpdatePayload)[] = ['customer_name', 'phone', 'service', 'status'];
-    for (const field of allowedFields) {
-      if (field in body) {
-        updates[field] = body[field];
-      }
+    if (body.status) updates.status = body.status;
+    if (body.customer_name) {
+      const metadata = existing.metadata && typeof existing.metadata === 'object' ? existing.metadata as Record<string, unknown> : {};
+      updates.metadata = {
+        ...metadata,
+        customer_name: body.customer_name,
+      };
+    }
+    // `customer_number` is the canonical reservation phone column.  Keep the
+    // customer name in JSON metadata, but never create a ghost phone field
+    // there: downstream booking and CRM queries read this top-level column.
+    if (body.phone) updates.customer_number = body.phone;
+    const serviceId = body.service_id || (typeof body.service === 'string' ? body.service : undefined);
+    if (serviceId) {
+      const { data: service, error: serviceError } = await db.from('services').select('id').eq('id', serviceId).eq('tenant_id', tenantId).maybeSingle();
+      if (serviceError) throw ApiErrorFactory.databaseError(serviceError);
+      if (!service) throw ApiErrorFactory.validationError({ service_id: 'Not found in this tenant' });
+      updates.service_id = serviceId;
     }
 
     // Handle time rescheduling with conflict detection
@@ -107,12 +127,15 @@ export const PATCH = createHttpHandler(
       updates.end_at = newEndIso;
 
       // Check for conflicts
-      const { data: conflicts, error: confErr } = await ctx.supabase
+      const { data: conflicts, error: confErr } = await db
         .from('reservations')
         .select('id', { count: 'exact' })
         .eq('tenant_id', tenantId)
         .neq('id', reservationId)
-        .or(`and(start_at.lte.${newEndIso},end_at.gte.${newStartIso})`);
+        // Overlap: start_at <= newEnd AND end_at >= newStart. Bind values via
+        // chained filters instead of interpolating into an .or() string.
+        .lte('start_at', newEndIso)
+        .gte('end_at', newStartIso);
 
       if (confErr) throw ApiErrorFactory.databaseError(confErr);
 
@@ -125,15 +148,45 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.validationError({ _: 'No update fields provided' });
     }
 
-    // Apply updates
-    const { data: updated, error: upErr } = await ctx.supabase
-      .from('reservations')
-      .update(updates)
-      .eq('id', reservationId)
-      .select('*')
-      .single();
+    let updated: Record<string, unknown> | null = null;
+    const isCompletionTransition = updates.status === 'completed' && existing.status !== 'completed';
 
-    if (upErr) throw ApiErrorFactory.databaseError(upErr);
+    if (isCompletionTransition) {
+      const nonStatusUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([key]) => key !== 'status')
+      );
+
+      if (Object.keys(nonStatusUpdates).length > 0) {
+        const { error: preUpdateError } = await db
+          .from('reservations')
+          .update(nonStatusUpdates)
+          .eq('id', reservationId);
+
+        if (preUpdateError) throw ApiErrorFactory.databaseError(preUpdateError);
+      }
+
+      // price_cents_snapshot frozen here — do not read live services.price for revenue (spec 1 §4.2)
+      await markReservationCompleted(createSupabaseAdminClient(), tenantId, reservationId, ctx.user!.id);
+
+      const { data: refreshed, error: refreshedError } = await db
+        .from('reservations')
+        .select('*')
+        .eq('id', reservationId)
+        .single();
+
+      if (refreshedError) throw ApiErrorFactory.databaseError(refreshedError);
+      updated = refreshed as Record<string, unknown>;
+    } else {
+      const { data: refreshed, error: upErr } = await db
+        .from('reservations')
+        .update(updates)
+        .eq('id', reservationId)
+        .select('*')
+        .single();
+
+      if (upErr) throw ApiErrorFactory.databaseError(upErr);
+      updated = refreshed as Record<string, unknown>;
+    }
 
     // Audit log
     try {
@@ -141,20 +194,44 @@ export const PATCH = createHttpHandler(
         updates,
         previous: { start_at: existing.start_at, end_at: existing.end_at, status: existing.status },
       });
-      await ctx.supabase
+      await db
         .from('reservation_logs')
         .insert({ reservation_id: reservationId, tenant_id: tenantId, action: 'update', actor, notes })
         .then(({ error: logErr }: { error: unknown }) => {
-          if (logErr) console.warn('[api/reservations/[id]] Failed to insert update log:', logErr);
+          if (logErr) defaultLogger.warn('[api/reservations/[id]] Failed to insert update log:', logErr);
         });
     } catch (e) {
-      console.warn('[api/reservations/[id]] Error writing update log:', e);
+      defaultLogger.warn('[api/reservations/[id]] Error writing update log:', e);
+    }
+
+    if (updates.status === 'no_show') {
+      await siasOperations.recordOutcomeAttribution({
+        tenantId,
+        reservationId: reservationId,
+        sourceEvent: 'reservation.status.no_show',
+        signal: 'no_show_reduction',
+        value: 1,
+        metadata: {
+          previous_status: existing.status,
+        },
+      }).catch(() => undefined);
+
+      await siasOperations.updateOperationalMemory({
+        tenantId,
+        memoryKey: 'no_show_patterns',
+        memoryValue: {
+          reservation_id: reservationId,
+          marked_at: new Date().toISOString(),
+        },
+        source: 'reservation.status.no_show',
+        confidence: 0.7,
+      }).catch(() => undefined);
     }
 
     return updated;
   },
   'PATCH',
-  { auth: true, roles: ['staff', 'manager', 'owner'] }
+  { auth: true, roles: ['staff', 'manager', 'owner', 'superadmin'] }
 );
 
 export const DELETE = createHttpHandler(
@@ -165,11 +242,12 @@ export const DELETE = createHttpHandler(
     }
 
     // Fetch existing reservation
-    const { data: existing, error: existErr } = await ctx.supabase
+    const db = ctx.user!.role === 'superadmin' ? createSupabaseAdminClient() : ctx.supabase;
+    const { data: existing, error: existErr } = await db
       .from('reservations')
       .select('tenant_id, start_at, end_at, status')
       .eq('id', reservationId)
-      .single();
+      .maybeSingle();
 
     if (existErr) throw ApiErrorFactory.databaseError(existErr);
     if (!existing) throw ApiErrorFactory.notFound('Reservation');
@@ -184,7 +262,7 @@ export const DELETE = createHttpHandler(
     // Audit superadmin actions
     if (ctx.user!.role === 'superadmin') {
       await auditSuperadminAction(
-        ctx.supabase,
+        db,
         ctx.user!.id,
         'reservation_delete',
         tenantId,
@@ -194,14 +272,14 @@ export const DELETE = createHttpHandler(
         ctx.request.headers.get('x-forwarded-for') || '',
         ctx.request.headers.get('user-agent') || ''
       ).catch((err) => {
-        console.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
+        defaultLogger.warn('[api/reservations/[id]] Failed to audit superadmin action', err);
       });
     }
 
     const actor = { id: ctx.user!.id, role: ctx.user!.role };
 
     // Cancel reservation (soft delete)
-    const { data, error } = await ctx.supabase
+    const { data, error } = await db
       .from('reservations')
       .update({ status: 'cancelled' })
       .eq('id', reservationId)
@@ -215,27 +293,44 @@ export const DELETE = createHttpHandler(
       const { bookingCancelled } = await import('@/lib/metrics');
       bookingCancelled(tenantId);
     } catch (metricError) {
-      console.warn('[api/reservations/[id]] Failed to record bookingCancelled metric:', metricError);
+      defaultLogger.warn('[api/reservations/[id]] Failed to record bookingCancelled metric:', metricError);
     }
 
     // Audit log
     try {
       const notes = `Cancelled by ${actor.role} (${ctx.user!.id})`;
-      await ctx.supabase.from('reservation_logs').insert({
+      await db.from('reservation_logs').insert({
         reservation_id: reservationId,
         tenant_id: tenantId,
         action: 'cancel',
         actor,
         notes,
       }).then(({ error: logErr }: { error: unknown }) => {
-        if (logErr) console.warn('[api/reservations/[id]] Failed to insert cancellation log:', logErr);
+        if (logErr) defaultLogger.warn('[api/reservations/[id]] Failed to insert cancellation log:', logErr);
       });
     } catch (e) {
-      console.warn('[api/reservations/[id]] Error writing cancellation log:', e);
+      defaultLogger.warn('[api/reservations/[id]] Error writing cancellation log:', e);
     }
+
+    await siasOperations.recordCampaignRun({
+      tenantId,
+      campaignType: 'reactivation',
+      action: 'send_reactivation',
+      targetBookingId: reservationId,
+      sourceEvent: 'reservation.cancelled',
+      status: 'retry_scheduled',
+      scheduledFor: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      metadata: {
+        cancellation_reason: 'cancelled via api',
+      },
+      attribution: {
+        signal: 'revenue_recovery',
+        source_event: 'reservation.cancelled',
+      },
+    }).catch(() => undefined);
 
     return data;
   },
   'DELETE',
-  { auth: true, roles: ['staff', 'manager', 'owner'] }
+  { auth: true, roles: ['staff', 'manager', 'owner', 'superadmin'] }
 );

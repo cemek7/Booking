@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { requireAuth } from '@/lib/auth/server-auth';
 import { Metadata } from 'next';
 import ManagerMetrics from '@/components/analytics/ManagerMetrics';
@@ -28,7 +29,7 @@ export default async function ManagerAnalyticsPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>
-            <Link href="/dashboard/manager">← Back to Dashboard</Link>
+            <Link href="/dashboard">← Back to Dashboard</Link>
           </Button>
         </div>
       </div>

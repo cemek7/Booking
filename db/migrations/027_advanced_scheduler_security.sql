@@ -6,23 +6,30 @@
 -- ========================================
 
 -- Staff working hours with timezone support
+-- staff_id references auth.users — staff are tenant_users with role='staff'
 CREATE TABLE IF NOT EXISTS staff_schedules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  staff_id UUID NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  staff_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   day_of_week INTEGER NOT NULL CHECK (day_of_week >= 0 AND day_of_week <= 6),
   start_time TIME NOT NULL,
   end_time TIME NOT NULL,
-  timezone VARCHAR(255) DEFAULT 'UTC',
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(staff_id, day_of_week)
+  UNIQUE(tenant_id, staff_id, day_of_week)
 );
+
+-- Ensure columns exist if table was already created with different schema
+ALTER TABLE staff_schedules ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE staff_schedules ADD COLUMN IF NOT EXISTS staff_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+ALTER TABLE staff_schedules ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 
 -- Precomputed availability slots for O(1) scheduling
 CREATE TABLE IF NOT EXISTS availability_slots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  staff_id UUID NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  staff_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   start_time TIMESTAMP WITH TIME ZONE NOT NULL,
   end_time TIMESTAMP WITH TIME ZONE NOT NULL,
   slot_type VARCHAR(50) NOT NULL DEFAULT 'regular',
@@ -34,9 +41,13 @@ CREATE TABLE IF NOT EXISTS availability_slots (
   CONSTRAINT availability_slots_time_range_check CHECK (start_time < end_time)
 );
 
+-- Ensure columns exist if table was already created with different schema
+ALTER TABLE availability_slots ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE availability_slots ADD COLUMN IF NOT EXISTS staff_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+
 -- Index for performance
-CREATE INDEX IF NOT EXISTS idx_availability_slots_staff_time 
-ON availability_slots (staff_id, start_time, end_time) 
+CREATE INDEX IF NOT EXISTS idx_availability_slots_staff_time
+ON availability_slots (staff_id, start_time, end_time)
 WHERE is_available = true;
 
 -- ========================================
@@ -154,7 +165,8 @@ WHERE status IN ('pending', 'failed');
 
 -- Function to generate availability slots
 CREATE OR REPLACE FUNCTION generate_availability_slots(
-  p_staff_id UUID,
+  p_user_id UUID,
+  p_tenant_id UUID,
   p_start_date DATE,
   p_end_date DATE,
   p_slot_duration_minutes INTEGER DEFAULT 60
@@ -168,53 +180,56 @@ DECLARE
   day_end TIMESTAMP WITH TIME ZONE;
 BEGIN
   -- Clear existing slots for the date range
-  DELETE FROM availability_slots 
-  WHERE staff_id = p_staff_id 
+  DELETE FROM availability_slots
+  WHERE user_id = p_user_id
+    AND tenant_id = p_tenant_id
     AND start_time::date BETWEEN p_start_date AND p_end_date;
-  
+
   -- Generate slots for each day in range
   current_date := p_start_date;
   WHILE current_date <= p_end_date LOOP
     -- Get schedule for current day of week (Sunday = 0, Monday = 1, etc.)
     SELECT * INTO schedule_record
-    FROM staff_schedules 
-    WHERE staff_id = p_staff_id 
+    FROM staff_schedules
+    WHERE user_id = p_user_id
+      AND tenant_id = p_tenant_id
       AND day_of_week = EXTRACT(DOW FROM current_date)
       AND is_active = true;
-    
+
     IF FOUND THEN
       -- Create slots for this day
       slot_start := current_date + schedule_record.start_time;
       day_end := current_date + schedule_record.end_time;
-      
+
       WHILE slot_start + (p_slot_duration_minutes || ' minutes')::interval <= day_end LOOP
         slot_end := slot_start + (p_slot_duration_minutes || ' minutes')::interval;
-        
-        -- Insert availability slot
+
         INSERT INTO availability_slots (
-          staff_id,
+          user_id,
+          tenant_id,
           start_time,
           end_time,
           slot_type,
           is_available,
           confidence_score
         ) VALUES (
-          p_staff_id,
+          p_user_id,
+          p_tenant_id,
           slot_start,
           slot_end,
           'regular',
           true,
           1.0000
         );
-        
+
         slot_count := slot_count + 1;
         slot_start := slot_end;
       END LOOP;
     END IF;
-    
+
     current_date := current_date + 1;
   END LOOP;
-  
+
   RETURN slot_count;
 END;
 $$ LANGUAGE plpgsql;
@@ -256,6 +271,7 @@ ALTER TABLE security_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE security_violations ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for staff_schedules
+DROP POLICY IF EXISTS staff_schedules_tenant_isolation ON staff_schedules;
 CREATE POLICY staff_schedules_tenant_isolation ON staff_schedules
   FOR ALL USING (
     staff_id IN (
@@ -263,7 +279,8 @@ CREATE POLICY staff_schedules_tenant_isolation ON staff_schedules
     )
   );
 
--- RLS Policies for availability_slots  
+-- RLS Policies for availability_slots
+DROP POLICY IF EXISTS availability_slots_tenant_isolation ON availability_slots;
 CREATE POLICY availability_slots_tenant_isolation ON availability_slots
   FOR ALL USING (
     staff_id IN (
@@ -272,15 +289,18 @@ CREATE POLICY availability_slots_tenant_isolation ON availability_slots
   );
 
 -- RLS Policies for security tables
+DROP POLICY IF EXISTS security_audit_tenant_isolation ON security_audit_log;
 CREATE POLICY security_audit_tenant_isolation ON security_audit_log
   FOR ALL USING (
     tenant_id = current_setting('app.current_tenant_id', true)::uuid
     OR current_setting('app.current_tenant_id', true) = ''
   );
 
+DROP POLICY IF EXISTS security_rules_global_read ON security_rules;
 CREATE POLICY security_rules_global_read ON security_rules
   FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS security_violations_tenant_isolation ON security_violations;
 CREATE POLICY security_violations_tenant_isolation ON security_violations
   FOR ALL USING (
     tenant_id = current_setting('app.current_tenant_id', true)::uuid

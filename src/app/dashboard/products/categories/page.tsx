@@ -1,33 +1,41 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+export const dynamic = 'force-dynamic';
+
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
-import { ProductCategory, CreateCategoryRequest, UpdateCategoryRequest } from '@/types/product-catalogue';
+import { ProductCategory } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/supabase/auth';
 import Button from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 
+type CategoryActionMode = 'rename' | 'merge' | 'clear';
+
+type CategoryActionState = {
+  category: ProductCategory;
+  mode: CategoryActionMode;
+} | null;
+
 export default function CategoriesPage() {
   const { tenant } = useTenant();
   const queryClient = useQueryClient();
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<ProductCategory | null>(null);
+  const [actionState, setActionState] = useState<CategoryActionState>(null);
 
-  // Fetch user role for permissions
   const { data: userRole } = useQuery({
     queryKey: ['userRole'],
     queryFn: getUserRole,
   });
 
-  // Fetch categories
+  const canEdit = typeof userRole === 'string' && ['superadmin', 'owner', 'manager'].includes(userRole);
+
   const { data: categoriesData, isLoading } = useQuery({
     queryKey: ['categories', tenant?.id],
     queryFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
-      
-      const res = await fetch('/api/categories', {
+
+      const res = await fetch('/api/categories?include_product_count=true', {
         headers: {
           'X-Tenant-ID': tenant.id,
         },
@@ -39,77 +47,65 @@ export default function CategoriesPage() {
     enabled: !!tenant?.id,
   });
 
-  const categories = categoriesData?.categories || [];
-  const canEdit = userRole && ['superadmin', 'owner', 'manager'].includes(userRole);
+  const categories = useMemo(
+    () => ((categoriesData?.categories || []) as ProductCategory[]).sort((a, b) => a.name.localeCompare(b.name)),
+    [categoriesData]
+  );
 
-  // Create category mutation
-  const createCategoryMutation = useMutation({
-    mutationFn: async (categoryData: CreateCategoryRequest) => {
+  const renameOrMergeMutation = useMutation({
+    mutationFn: async ({
+      currentName,
+      payload,
+    }: {
+      currentName: string;
+      payload: { name?: string; merge_into?: string | null };
+    }) => {
       if (!tenant?.id) throw new Error('No tenant');
-      
-      const res = await fetch('/api/categories', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenant.id,
-        },
-        body: JSON.stringify(categoryData),
-      });
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to create category');
-      }
-
-      return res.json();
-    },
-    onSuccess: () => {
-      toast.success('Category created successfully');
-      setShowCreateModal(false);
-      queryClient.invalidateQueries({ queryKey: ['categories', tenant?.id] });
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Failed to create category');
-    },
-  });
-
-  // Update category mutation
-  const updateCategoryMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: UpdateCategoryRequest }) => {
-      if (!tenant?.id) throw new Error('No tenant');
-      
-      const res = await fetch(`/api/categories/${id}`, {
+      const res = await fetch(`/api/categories/${encodeURIComponent(currentName)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'X-Tenant-ID': tenant.id,
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to update category');
       }
 
       return res.json();
     },
-    onSuccess: () => {
-      toast.success('Category updated successfully');
-      setEditingCategory(null);
+    onSuccess: (result) => {
+      toast.success(result?.message || 'Category updated successfully');
+      setActionState(null);
       queryClient.invalidateQueries({ queryKey: ['categories', tenant?.id] });
+      queryClient.invalidateQueries({ queryKey: ['products', tenant?.id] });
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to update category');
     },
   });
 
-  // Delete category mutation
-  const deleteCategoryMutation = useMutation({
-    mutationFn: async (id: string) => {
+  const clearMutation = useMutation({
+    mutationFn: async ({
+      currentName,
+      moveTo,
+    }: {
+      currentName: string;
+      moveTo?: string;
+    }) => {
       if (!tenant?.id) throw new Error('No tenant');
-      
-      const res = await fetch(`/api/categories/${id}`, {
+
+      const params = new URLSearchParams();
+      if (moveTo) {
+        params.set('move_products', 'true');
+        params.set('new_category', moveTo);
+      }
+
+      const res = await fetch(`/api/categories/${encodeURIComponent(currentName)}?${params.toString()}`, {
         method: 'DELETE',
         headers: {
           'X-Tenant-ID': tenant.id,
@@ -117,28 +113,22 @@ export default function CategoriesPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to delete category');
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to clear category');
       }
 
       return res.json();
     },
-    onSuccess: () => {
-      toast.success('Category deleted successfully');
+    onSuccess: (result) => {
+      toast.success(result?.message || 'Category cleared successfully');
+      setActionState(null);
       queryClient.invalidateQueries({ queryKey: ['categories', tenant?.id] });
+      queryClient.invalidateQueries({ queryKey: ['products', tenant?.id] });
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Failed to delete category');
+      toast.error(error.message || 'Failed to clear category');
     },
   });
-
-  const handleDelete = async (category: ProductCategory) => {
-    if (!confirm(`Are you sure you want to delete "${category.name}"? This action cannot be undone.`)) {
-      return;
-    }
-
-    deleteCategoryMutation.mutate(category.id);
-  };
 
   if (isLoading) {
     return (
@@ -162,94 +152,64 @@ export default function CategoriesPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Product Categories</h1>
-            <p className="text-gray-600 mt-1">Organize your products with categories</p>
+            <p className="text-gray-600 mt-1">
+              Categories are product labels derived from `products.category`.
+            </p>
           </div>
-
-          {canEdit && (
-            <Button
-              onClick={() => setShowCreateModal(true)}
-              className="bg-primary text-white"
-            >
-              Create Category
-            </Button>
-          )}
+          <div className="text-sm text-gray-500 max-w-md text-right">
+            New categories are created when you assign a category while creating or editing a product.
+          </div>
         </div>
 
-        {/* Categories Table */}
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
           {categories.length === 0 ? (
             <div className="p-12 text-center">
-              <div className="mx-auto max-w-md">
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No categories found</h3>
-                <p className="text-gray-500 mb-6">Get started by creating your first product category.</p>
-                {canEdit && (
-                  <Button
-                    onClick={() => setShowCreateModal(true)}
-                    className="bg-primary text-white"
-                  >
-                    Create Your First Category
-                  </Button>
-                )}
-              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No categories found</h3>
+              <p className="text-gray-500">
+                Add a category label to any product to create your first category.
+              </p>
             </div>
           ) : (
             <Table>
               <THead>
                 <TR>
-                  <TH>Name</TH>
-                  <TH>Description</TH>
+                  <TH>Label</TH>
                   <TH>Products</TH>
-                  <TH>Status</TH>
-                  <TH>Created</TH>
+                  <TH>Last Updated</TH>
                   {canEdit && <TH>Actions</TH>}
                 </TR>
               </THead>
               <TBody>
-                {categories.map((category: ProductCategory) => (
+                {categories.map((category) => (
                   <TR key={category.id}>
                     <TD className="font-medium">{category.name}</TD>
-                    <TD className="text-gray-600">
-                      {category.description || 'No description'}
-                    </TD>
                     <TD>
                       <span className="inline-flex px-2 py-1 text-sm bg-blue-100 text-blue-800 rounded-full">
-                        {category._count?.products || 0} products
-                      </span>
-                    </TD>
-                    <TD>
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        category.is_active 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {category.is_active ? 'Active' : 'Inactive'}
+                        {category.product_count ?? category._count?.products ?? 0} products
                       </span>
                     </TD>
                     <TD className="text-gray-500">
-                      {new Date(category.created_at).toLocaleDateString()}
+                      {category.updated_at ? new Date(category.updated_at).toLocaleDateString() : '—'}
                     </TD>
                     {canEdit && (
                       <TD>
                         <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setEditingCategory(category)}
-                          >
-                            Edit
+                          <Button variant="outline" size="sm" onClick={() => setActionState({ category, mode: 'rename' })}>
+                            Rename
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => setActionState({ category, mode: 'merge' })}>
+                            Merge
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleDelete(category)}
-                            disabled={deleteCategoryMutation.isLoading}
                             className="text-red-600 border-red-300 hover:bg-red-50"
+                            onClick={() => setActionState({ category, mode: 'clear' })}
                           >
-                            Delete
+                            Clear
                           </Button>
                         </div>
                       </TD>
@@ -261,34 +221,30 @@ export default function CategoriesPage() {
           )}
         </div>
 
-        {/* Create Category Modal */}
-        {showCreateModal && (
-          <CategoryModal
-            isOpen={showCreateModal}
-            onClose={() => setShowCreateModal(false)}
-            onSubmit={(data) => createCategoryMutation.mutate(data)}
-            isLoading={createCategoryMutation.isLoading}
-            title="Create New Category"
-          />
-        )}
-
-        {/* Edit Category Modal */}
-        {editingCategory && (
-          <CategoryModal
-            isOpen={!!editingCategory}
-            onClose={() => setEditingCategory(null)}
-            onSubmit={(data) => updateCategoryMutation.mutate({ id: editingCategory.id, data })}
-            isLoading={updateCategoryMutation.isLoading}
-            title="Edit Category"
-            initialData={{
-              name: editingCategory.name,
-              description: editingCategory.description,
-              slug: editingCategory.slug,
-              parent_id: editingCategory.parent_id,
-              is_active: editingCategory.is_active,
-              sort_order: editingCategory.sort_order,
-              metadata: editingCategory.metadata,
-            }}
+        {actionState && (
+          <CategoryActionModal
+            categories={categories}
+            state={actionState}
+            isLoading={renameOrMergeMutation.isPending || clearMutation.isPending}
+            onClose={() => setActionState(null)}
+            onRename={(nextName) =>
+              renameOrMergeMutation.mutate({
+                currentName: actionState.category.name,
+                payload: { name: nextName },
+              })
+            }
+            onMerge={(targetName) =>
+              renameOrMergeMutation.mutate({
+                currentName: actionState.category.name,
+                payload: { merge_into: targetName },
+              })
+            }
+            onClear={(moveTo) =>
+              clearMutation.mutate({
+                currentName: actionState.category.name,
+                moveTo,
+              })
+            }
           />
         )}
       </div>
@@ -296,190 +252,136 @@ export default function CategoriesPage() {
   );
 }
 
-interface CategoryModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSubmit: (data: CreateCategoryRequest | UpdateCategoryRequest) => void;
+function CategoryActionModal({
+  categories,
+  state,
+  isLoading,
+  onClose,
+  onRename,
+  onMerge,
+  onClear,
+}: {
+  categories: ProductCategory[];
+  state: CategoryActionState;
   isLoading: boolean;
-  title: string;
-  initialData?: Partial<CreateCategoryRequest>;
-}
+  onClose: () => void;
+  onRename: (nextName: string) => void;
+  onMerge: (targetName: string) => void;
+  onClear: (moveTo?: string) => void;
+}) {
+  const [value, setValue] = useState('');
+  const [moveTo, setMoveTo] = useState('');
 
-function CategoryModal({ isOpen, onClose, onSubmit, isLoading, title, initialData }: CategoryModalProps) {
-  const [formData, setFormData] = useState({
-    name: initialData?.name || '',
-    description: initialData?.description || '',
-    slug: initialData?.slug || '',
-    is_active: initialData?.is_active ?? true,
-    sort_order: initialData?.sort_order || 0,
-  });
+  if (!state) return null;
 
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.name?.trim()) {
-      newErrors.name = 'Category name is required';
-    }
-
-    if (formData.sort_order < 0) {
-      newErrors.sort_order = 'Sort order must be non-negative';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+  const otherCategories = categories.filter((category) => category.name !== state.category.name);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validateForm()) {
+    if (state.mode === 'rename') {
+      const nextName = value.trim();
+      if (!nextName) return;
+      onRename(nextName);
       return;
     }
 
-    const submissionData = {
-      ...formData,
-      name: formData.name.trim(),
-      description: formData.description?.trim(),
-      slug: formData.slug?.trim().toLowerCase() || formData.name.trim().toLowerCase().replace(/\s+/g, '-'),
-    };
-
-    onSubmit(submissionData);
-  };
-
-  const handleInputChange = (key: string, value: any) => {
-    setFormData(prev => ({ ...prev, [key]: value }));
-    if (errors[key]) {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[key];
-        return newErrors;
-      });
+    if (state.mode === 'merge') {
+      const nextName = value.trim();
+      if (!nextName) return;
+      onMerge(nextName);
+      return;
     }
+
+    const target = moveTo.trim();
+    onClear(target || undefined);
   };
 
-  if (!isOpen) return null;
+  const title = state.mode === 'rename'
+    ? `Rename "${state.category.name}"`
+    : state.mode === 'merge'
+      ? `Merge "${state.category.name}"`
+      : `Clear "${state.category.name}"`;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg max-w-md w-full">
         <form onSubmit={handleSubmit}>
-          {/* Header */}
-          <div className="p-6 border-b border-gray-200">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">{title}</h2>
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={isLoading}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                ✕
-              </button>
-            </div>
+          <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+            <h2 className="text-xl font-semibold">{title}</h2>
+            <button type="button" onClick={onClose} disabled={isLoading} className="text-gray-400 hover:text-gray-600">
+              ✕
+            </button>
           </div>
 
-          {/* Form Content */}
           <div className="p-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category Name *
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => handleInputChange('name', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
-                  errors.name ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="Enter category name"
-                disabled={isLoading}
-              />
-              {errors.name && <p className="text-red-500 text-sm mt-1">{errors.name}</p>}
-            </div>
+            {state.mode === 'rename' && (
+              <>
+                <p className="text-sm text-gray-600">
+                  Rename this label across all products currently using it.
+                </p>
+                <input
+                  type="text"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="New category name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={isLoading}
+                />
+              </>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Slug
-              </label>
-              <input
-                type="text"
-                value={formData.slug}
-                onChange={(e) => handleInputChange('slug', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="category-slug (auto-generated if empty)"
-                disabled={isLoading}
-              />
-            </div>
+            {state.mode === 'merge' && (
+              <>
+                <p className="text-sm text-gray-600">
+                  Move all products in this category into another label.
+                </p>
+                <input
+                  type="text"
+                  list="merge-category-targets"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="Target category name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={isLoading}
+                />
+                <datalist id="merge-category-targets">
+                  {otherCategories.map((category) => (
+                    <option key={category.id} value={category.name} />
+                  ))}
+                </datalist>
+              </>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
-              <textarea
-                value={formData.description}
-                onChange={(e) => handleInputChange('description', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="Category description"
-                rows={3}
-                disabled={isLoading}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Sort Order
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={formData.sort_order}
-                onChange={(e) => handleInputChange('sort_order', parseInt(e.target.value || '0'))}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
-                  errors.sort_order ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="0"
-                disabled={isLoading}
-              />
-              {errors.sort_order && <p className="text-red-500 text-sm mt-1">{errors.sort_order}</p>}
-            </div>
-
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={formData.is_active}
-                onChange={(e) => handleInputChange('is_active', e.target.checked)}
-                className="mr-2"
-                disabled={isLoading}
-              />
-              <span className="text-sm">Active category</span>
-            </label>
+            {state.mode === 'clear' && (
+              <>
+                <p className="text-sm text-gray-600">
+                  Clear this label from all products, or optionally move them into another label first.
+                </p>
+                <input
+                  type="text"
+                  list="clear-category-targets"
+                  value={moveTo}
+                  onChange={(e) => setMoveTo(e.target.value)}
+                  placeholder="Optional target category"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={isLoading}
+                />
+                <datalist id="clear-category-targets">
+                  {otherCategories.map((category) => (
+                    <option key={category.id} value={category.name} />
+                  ))}
+                </datalist>
+              </>
+            )}
           </div>
 
-          {/* Footer */}
           <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={isLoading}
-            >
+            <Button type="button" variant="outline" onClick={onClose} disabled={isLoading}>
               Cancel
             </Button>
-            <Button
-              type="submit"
-              disabled={isLoading}
-              className="bg-primary text-white"
-            >
-              {isLoading ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                  Saving...
-                </>
-              ) : (
-                'Save Category'
-              )}
+            <Button type="submit" className="bg-primary text-white" disabled={isLoading}>
+              {isLoading ? 'Saving...' : 'Confirm'}
             </Button>
           </div>
         </form>

@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+import { defaultLogger } from '@/lib/logger';
 /**
  * MIGRATION UTILITIES FOR API ROUTES
  * 
@@ -105,7 +107,7 @@ export async function verifyOwnership(
   resourceId: string,
   userIdField = 'creator_id'
 ): Promise<boolean> {
-  const { data, error } = await ctx.supabase
+  const { data } = await ctx.supabase
     .from(table)
     .select(userIdField)
     .eq('id', resourceId)
@@ -115,7 +117,8 @@ export async function verifyOwnership(
     throw ApiErrorFactory.notFound(table);
   }
 
-  if (data[userIdField] !== ctx.user?.id) {
+  const resource = data as unknown as Record<string, unknown>;
+  if (resource[userIdField] !== ctx.user?.id) {
     throw ApiErrorFactory.forbidden('You do not have permission to modify this resource');
   }
 
@@ -130,7 +133,7 @@ export async function verifyTenantOwnership(
   table: string,
   resourceId: string
 ): Promise<boolean> {
-  const { data, error } = await ctx.supabase
+  const { data } = await ctx.supabase
     .from(table)
     .select('tenant_id')
     .eq('id', resourceId)
@@ -150,15 +153,15 @@ export async function verifyTenantOwnership(
 /**
  * Validate JSON body with schema
  */
-export async function validateRequestBody<T = any>(
+export async function validateRequestBody<T = unknown>(
   ctx: RouteContext,
-  schema?: (data: any) => Promise<T> | T
+  schema?: (data: unknown) => Promise<T> | T
 ): Promise<T> {
-  let body: any;
+  let body: unknown;
 
   try {
     body = await ctx.request.json();
-  } catch (error) {
+  } catch {
     throw ApiErrorFactory.validationError({
       message: 'Invalid JSON body',
     });
@@ -182,8 +185,8 @@ export async function validateRequestBody<T = any>(
  */
 export async function executeDb<T>(
   ctx: RouteContext,
-  operation: (supabase: any) => Promise<{ data?: T; error?: any }>,
-  errorMessage = 'Database operation failed'
+  operation: (supabase: RouteContext['supabase']) => Promise<{ data?: T; error?: { code?: string; message?: string } | null }>,
+  _errorMessage = 'Database operation failed'
 ): Promise<T> {
   try {
     const { data, error } = await operation(ctx.supabase);
@@ -191,7 +194,7 @@ export async function executeDb<T>(
     if (error) {
       // Handle specific database errors
       if (error.code === '23505') { // Unique constraint violation
-        throw ApiErrorFactory.conflict(error.message);
+        throw ApiErrorFactory.conflict(error.message ?? _errorMessage);
       }
       if (error.code === '23503') { // Foreign key constraint violation
         throw ApiErrorFactory.validationError({ message: 'Invalid reference' });
@@ -200,7 +203,7 @@ export async function executeDb<T>(
         throw ApiErrorFactory.validationError({ message: 'Missing required field' });
       }
 
-      throw ApiErrorFactory.databaseError(error);
+      throw ApiErrorFactory.databaseError(new Error(error.message ?? _errorMessage));
     }
 
     if (!data) {
@@ -223,7 +226,7 @@ export async function executeDb<T>(
  */
 export async function transaction<T>(
   ctx: RouteContext,
-  handler: (supabase: any) => Promise<T>
+  handler: (supabase: RouteContext['supabase']) => Promise<T>
 ): Promise<T> {
   try {
     // Note: Supabase doesn't support transactions in client mode
@@ -266,7 +269,7 @@ export function createPaginatedResponse<T>(
 export async function auditSuperadminAction(
   ctx: RouteContext,
   action: string,
-  details: Record<string, any>
+  details: Record<string, unknown>
 ) {
   try {
     // Log to audit table
@@ -281,7 +284,7 @@ export async function auditSuperadminAction(
         ip_address: ctx.request.headers.get('x-forwarded-for'),
       });
   } catch (error) {
-    console.error('[Audit] Failed to log action:', error);
+    defaultLogger.error('[Audit] Failed to log action:', error);
     // Don't throw - audit logging shouldn't block operation
   }
 }
@@ -318,9 +321,8 @@ export function checkRateLimit(
 /**
  * Create etag from object
  */
-export function createEtag(data: any): string {
-  const hash = require('crypto')
-    .createHash('md5')
+export function createEtag(data: unknown): string {
+  const hash = createHash('md5')
     .update(JSON.stringify(data))
     .digest('hex');
   return `"${hash}"`;

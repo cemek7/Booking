@@ -8,6 +8,10 @@ export interface TenantProfileValues {
   brandingColor?: string;
   contactEmail?: string;
   locale?: string;
+  ownerName?: string;
+  ownerPhone?: string;
+  businessNickname?: string;
+  bookingSources?: string[];
   tone?: string;
   styleGuidelines?: string;
   voiceParameters?: Record<string, unknown> | undefined;
@@ -16,6 +20,8 @@ export interface TenantProfileValues {
   greeting?: string;
   signature?: string;
 }
+
+const BOOKING_SOURCES = ['whatsapp', 'instagram', 'phone', 'walk_in', 'facebook', 'website'];
 
 export function TenantProfileSection({ values, onChange }: { values: TenantProfileValues; onChange: (patch: Partial<TenantProfileValues>) => void }) {
   const [local, setLocal] = useState<TenantProfileValues>(values);
@@ -35,6 +41,12 @@ export function TenantProfileSection({ values, onChange }: { values: TenantProfi
     const list = [...(local.samplePhrases||[])];
     list.splice(idx,1);
     update('samplePhrases', list);
+  }
+  function toggleBookingSource(source: string) {
+    const next = new Set(local.bookingSources || []);
+    if (next.has(source)) next.delete(source);
+    else next.add(source);
+    update('bookingSources', Array.from(next));
   }
   function handleVoiceParameters(raw: string) {
     if (!raw.trim()) { update('voiceParameters', undefined); return; }
@@ -75,17 +87,46 @@ export function TenantProfileSection({ values, onChange }: { values: TenantProfi
           <label className="flex flex-col gap-1 text-xs font-medium">Contact Email
             <input className="border rounded px-2 py-1 text-sm" value={local.contactEmail || ''} onChange={e=>update('contactEmail', e.target.value)} placeholder="support@example.com" />
           </label>
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs font-medium">Greeting
-              <input className="border rounded px-2 py-1 text-sm" value={local.greeting || ''} onChange={e=>update('greeting', e.target.value)} placeholder="Hi {name}, thanks for reaching out!" />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium">Signature
-              <input className="border rounded px-2 py-1 text-sm" value={local.signature || ''} onChange={e=>update('signature', e.target.value)} placeholder="– Team" />
-            </label>
+          <label className="flex flex-col gap-1 text-xs font-medium">Business Nickname
+            <input className="border rounded px-2 py-1 text-sm" value={local.businessNickname || ''} onChange={e=>update('businessNickname', e.target.value)} placeholder="What customers should see in messages" />
+          </label>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-xs font-medium">Owner Name
+            <input className="border rounded px-2 py-1 text-sm" value={local.ownerName || ''} onChange={e=>update('ownerName', e.target.value)} placeholder="Ada Obi" />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium">Owner WhatsApp
+            <input className="border rounded px-2 py-1 text-sm" value={local.ownerPhone || ''} onChange={e=>update('ownerPhone', e.target.value)} placeholder="+2348012345678" />
+          </label>
+        </div>
+        <div className="space-y-2">
+          <span className="text-xs font-medium">Primary Booking Sources</span>
+          <div className="flex flex-wrap gap-2">
+            {BOOKING_SOURCES.map((source) => {
+              const active = (local.bookingSources || []).includes(source);
+              return (
+                <button
+                  key={source}
+                  type="button"
+                  onClick={() => toggleBookingSource(source)}
+                  className={`px-3 py-1 rounded border text-[11px] ${active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white'}`}
+                >
+                  {source.replace('_', ' ')}
+                </button>
+              );
+            })}
           </div>
         </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-xs font-medium">Greeting
+            <input className="border rounded px-2 py-1 text-sm" value={local.greeting || ''} onChange={e=>update('greeting', e.target.value)} placeholder="Hi {name}, thanks for reaching out!" />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium">Signature
+            <input className="border rounded px-2 py-1 text-sm" value={local.signature || ''} onChange={e=>update('signature', e.target.value)} placeholder="– Team" />
+          </label>
+        </div>
       </FormSection>
-      <FormSection title="LLM Tone & Guidance" description="Provide examples & style rules so automated replies match your brand voice." aside={<span className="text-[10px] leading-tight">JSON parsed on blur; phrases help fine-tune prompts.</span>}>
+      <FormSection title="Assistant tone & guidance" description="Give examples and style rules so your assistant's replies sound like your brand.">
         <label className="flex flex-col gap-1 text-xs font-medium">Tone / Voice Adjectives
           <input className="border rounded px-2 py-1 text-sm" value={local.tone || ''} onChange={e=>update('tone', e.target.value)} placeholder="friendly, concise, professional" />
         </label>

@@ -1,41 +1,24 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { PG_ERROR_CODES } from '@/lib/constants';
 
-// Zod schema for GET query parameters
 const GetCategoriesQuerySchema = z.object({
-  parent_id: z.string().optional(),
   is_active: z.preprocess((val) => val === 'true', z.boolean()).optional(),
-  include_children: z.preprocess((val) => val === 'true', z.boolean()).optional(),
   include_product_count: z.preprocess((val) => val === 'true', z.boolean()).optional(),
-  sort: z.string().default('display_order'),
+  sort: z.enum(['name', 'product_count']).default('name'),
   order: z.enum(['asc', 'desc']).default('asc'),
 });
 
-// Zod schema for POST request body
-const CreateCategoryBodySchema = z.object({
-  name: z.string().trim().min(1, 'Name is required'),
-  description: z.string().trim().optional(),
-  parent_id: z.string().uuid().nullable().optional(),
-  display_order: z.number().int().default(0),
-  is_active: z.boolean().default(true),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
-
-interface Category {
-  id: string;
-  parent_id: string | null;
-  [key: string]: unknown;
-}
-
-interface CategoryWithChildren extends Category {
-  children: CategoryWithChildren[];
+function normalizeCategoryLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 /**
  * GET /api/categories
- * List product categories with hierarchical structure.
+ * List derived category labels from products.category.
  */
 export const GET = createHttpHandler(
   async (ctx) => {
@@ -50,52 +33,78 @@ export const GET = createHttpHandler(
     if (!queryValidation.success) {
       throw ApiErrorFactory.validationError({ issues: queryValidation.error.issues });
     }
+
     const query = queryValidation.data;
-
-    const selectFields = query.include_product_count
-      ? '*, product_count:products(count)'
-      : '*';
-
     let queryBuilder = ctx.supabase
-      .from('product_categories')
-      .select(selectFields)
-      .eq('tenant_id', tenantId);
-
-    // Apply filters
-    if (query.parent_id !== undefined) {
-      if (query.parent_id === 'null') {
-        queryBuilder = queryBuilder.is('parent_id', null);
-      } else {
-        queryBuilder = queryBuilder.eq('parent_id', query.parent_id);
-      }
-    }
+      .from('products')
+      .select('category, created_at, updated_at')
+      .eq('tenant_id', tenantId)
+      .not('category', 'is', null);
 
     if (query.is_active !== undefined) {
       queryBuilder = queryBuilder.eq('is_active', query.is_active);
     }
 
-    queryBuilder = queryBuilder.order(query.sort, { ascending: query.order === 'asc' });
-
-    const { data: categories, error } = await queryBuilder;
-
+    const { data: rows, error } = await queryBuilder;
     if (error) {
       throw ApiErrorFactory.databaseError(error);
     }
 
-    if (query.include_children && categories) {
-      const buildHierarchy = (parentId: string | null = null): CategoryWithChildren[] => {
-        return (categories as Category[])
-          .filter(cat => cat.parent_id === parentId)
-          .map(cat => ({
-            ...cat,
-            children: buildHierarchy(cat.id),
-          }));
-      };
-      const hierarchicalCategories = buildHierarchy(query.parent_id === 'null' ? null : (query.parent_id || null));
-      return { categories: hierarchicalCategories };
+    const buckets = new Map<string, {
+      id: string;
+      name: string;
+      product_count: number;
+      created_at: string | null;
+      updated_at: string | null;
+      _count: { products: number };
+    }>();
+
+    for (const row of rows || []) {
+      const label = normalizeCategoryLabel((row as Record<string, unknown>).category);
+      if (!label) continue;
+
+      const existing = buckets.get(label);
+      const createdAt = typeof (row as Record<string, unknown>).created_at === 'string'
+        ? (row as Record<string, unknown>).created_at as string
+        : null;
+      const updatedAt = typeof (row as Record<string, unknown>).updated_at === 'string'
+        ? (row as Record<string, unknown>).updated_at as string
+        : null;
+
+      if (existing) {
+        existing.product_count += 1;
+        existing._count.products += 1;
+        if (createdAt && (!existing.created_at || createdAt < existing.created_at)) {
+          existing.created_at = createdAt;
+        }
+        if (updatedAt && (!existing.updated_at || updatedAt > existing.updated_at)) {
+          existing.updated_at = updatedAt;
+        }
+        continue;
+      }
+
+      buckets.set(label, {
+        id: label,
+        name: label,
+        product_count: 1,
+        created_at: createdAt,
+        updated_at: updatedAt,
+        _count: { products: 1 },
+      });
     }
 
-    return { categories: categories || [] };
+    const categories = Array.from(buckets.values()).sort((a, b) => {
+      if (query.sort === 'product_count') {
+        const diff = a.product_count - b.product_count;
+        return query.order === 'asc' ? diff : -diff;
+      }
+
+      return query.order === 'asc'
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name);
+    });
+
+    return { categories };
   },
   'GET',
   { auth: true, roles: ['owner', 'manager', 'staff'] }
@@ -103,97 +112,13 @@ export const GET = createHttpHandler(
 
 /**
  * POST /api/categories
- * Create a new product category.
- * Requires 'manager' or 'owner' role.
+ * Flat model: categories are created when assigned to products.
  */
 export const POST = createHttpHandler(
-  async (ctx) => {
-    const tenantId = ctx.user?.tenantId;
-    if (!tenantId) {
-      throw ApiErrorFactory.forbidden('Tenant ID required');
-    }
-
-    const body = await ctx.request.json();
-    const bodyValidation = CreateCategoryBodySchema.safeParse(body);
-
-    if (!bodyValidation.success) {
-      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
-    }
-    const { name, ...restOfBody } = bodyValidation.data;
-
-    // Check for name uniqueness within the tenant
-    const { data: existingCategory, error: existingError } = await ctx.supabase
-      .from('product_categories')
-      .select('id')
-      .eq('tenant_id', tenantId)
-      .eq('name', name)
-      .limit(1);
-
-    if (existingError) {
-      throw ApiErrorFactory.databaseError(existingError);
-    }
-    if (existingCategory && existingCategory.length > 0) {
-      throw ApiErrorFactory.conflict('A category with this name already exists');
-    }
-
-    // Validate parent category if provided
-    if (restOfBody.parent_id) {
-      const { data: parentCategory, error: parentError } = await ctx.supabase
-        .from('product_categories')
-        .select('id, parent_id')
-        .eq('id', restOfBody.parent_id)
-        .eq('tenant_id', tenantId)
-        .single();
-
-      if (parentError || !parentCategory) {
-        throw ApiErrorFactory.validationError({
-          field: 'parent_id',
-          message: 'Parent category not found or is inactive'
-        });
-      }
-
-      // Prevent deep nesting (max 3 levels)
-      let depth = 1;
-      let currentParentId = parentCategory.parent_id;
-      while (currentParentId && depth < 3) {
-        const { data: ancestor } = await ctx.supabase
-          .from('product_categories')
-          .select('parent_id')
-          .eq('id', currentParentId)
-          .single();
-        if (ancestor) {
-          currentParentId = ancestor.parent_id;
-          depth++;
-        } else {
-          break;
-        }
-      }
-      if (depth >= 3) {
-        throw ApiErrorFactory.validationError({
-          field: 'parent_id',
-          message: 'Categories can only be nested 3 levels deep'
-        });
-      }
-    }
-
-    const { data: newCategory, error: insertError } = await ctx.supabase
-      .from('product_categories')
-      .insert({
-        tenant_id: tenantId,
-        name,
-        ...restOfBody,
-      })
-      .select('*')
-      .single();
-
-    if (insertError) {
-      if (insertError.code === PG_ERROR_CODES.UNIQUE_VIOLATION) {
-        throw ApiErrorFactory.conflict('Category name already exists');
-      }
-      throw ApiErrorFactory.databaseError(insertError);
-    }
-
-    return { message: 'Category created successfully', category: newCategory };
+  async () => {
+    throw ApiErrorFactory.badRequest(
+      'Categories are derived from products.category. Assign a category while creating or editing a product.'
+    );
   },
   'POST',
   { auth: true, roles: ['owner', 'manager'] }

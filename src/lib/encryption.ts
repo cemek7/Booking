@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 /**
  * Enhanced Encryption Module for HIPAA Compliance
  * 
@@ -93,7 +94,7 @@ export class EnterpriseEncryptionManager {
       return result;
       
     } catch (error) {
-      console.error('Encryption error:', error);
+      defaultLogger.error('Encryption error:', error);
       span?.recordException(error as Error);
       throw error;
     } finally {
@@ -144,7 +145,7 @@ export class EnterpriseEncryptionManager {
       return decryptedText;
       
     } catch (error) {
-      console.error('Decryption error:', error);
+      defaultLogger.error('Decryption error:', error);
       span?.recordException(error as Error);
       throw error;
     } finally {
@@ -191,7 +192,7 @@ export class EnterpriseEncryptionManager {
     const span = await observability.startTrace('encryption.rotate_keys');
     
     try {
-      console.log('Starting key rotation...');
+      defaultLogger.info('Starting key rotation...');
       
       // Deprecate current active key
       if (this.activeKeyId) {
@@ -214,10 +215,10 @@ export class EnterpriseEncryptionManager {
       
       observability.recordBusinessMetric('encryption_keys_rotated_total', 1);
       
-      console.log(`Key rotation completed. New active key: ${newKeyId}`);
+      defaultLogger.info(`Key rotation completed. New active key: ${newKeyId}`);
       
     } catch (error) {
-      console.error('Key rotation error:', error);
+      defaultLogger.error('Key rotation error:', error);
       span?.recordException(error as Error);
       throw error;
     } finally {
@@ -264,7 +265,7 @@ export class EnterpriseEncryptionManager {
     // Check key age
     const activeKey = this.activeKeyId ? this.keys.get(this.activeKeyId) : null;
     if (activeKey) {
-      const keyAge = Date.now() - activeKey.created_at.getTime();
+      const keyAge = Date.now() - activeKey.createdAt.getTime();
       if (keyAge > this.keyRotationIntervalMs) {
         issues.push('Active encryption key is beyond rotation interval');
         recommendations.push('Perform key rotation immediately');
@@ -307,7 +308,7 @@ export class EnterpriseEncryptionManager {
     // Schedule automatic key rotation
     setInterval(() => {
       this.rotateKeys().catch(error => {
-        console.error('Scheduled key rotation failed:', error);
+        defaultLogger.error('Scheduled key rotation failed:', error);
       });
     }, this.keyRotationIntervalMs);
   }
@@ -331,7 +332,7 @@ export class EnterpriseEncryptionManager {
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     
     for (const [keyId, key] of this.keys.entries()) {
-      if (key.status === 'deprecated' && key.created_at < ninetyDaysAgo) {
+      if (key.status === 'deprecated' && key.createdAt < ninetyDaysAgo) {
         key.status = 'revoked';
         this.keys.set(keyId, key);
         await this.logEncryptionEvent('key_revoked', keyId, key.purpose);
@@ -345,7 +346,7 @@ export class EnterpriseEncryptionManager {
     purpose: string
   ): Promise<void> {
     // Log to compliance system
-    console.log(`Encryption event: ${action} for key ${keyId} (${purpose})`);
+    defaultLogger.info(`Encryption event: ${action} for key ${keyId} (${purpose})`);
     
     // In production, this would log to your compliance monitoring system
     // await complianceLogger.log({

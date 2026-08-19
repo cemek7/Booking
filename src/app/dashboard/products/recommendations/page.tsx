@@ -1,21 +1,34 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import { Product } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/supabase/auth';
 import Button from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 
+interface RecommendationRow {
+  product_id: string;
+  product: Product;
+  score: number;
+  confidence: number;
+  reasons: string[];
+}
+
 export default function RecommendationsPage() {
   const { tenant } = useTenant();
+  const { format: formatMoney } = useTenantCurrency();
   const queryClient = useQueryClient();
-  const [selectedContext, setSelectedContext] = useState<'booking' | 'product_view' | 'general'>('general');
+  const [selectedContext, setSelectedContext] = useState<'booking' | 'product_view' | 'cart' | 'general'>('general');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [maxRecommendations, setMaxRecommendations] = useState(10);
   const [testCustomerId, setTestCustomerId] = useState('');
+  const [priorityMap, setPriorityMap] = useState<Record<string, number>>({});
 
   // Fetch user role for permissions
   const { data: userRole } = useQuery({
@@ -47,7 +60,12 @@ export default function RecommendationsPage() {
     queryFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const requestBody: any = {
+      const requestBody: {
+        context: typeof selectedContext;
+        max_recommendations: number;
+        product_ids?: string[];
+        customer_id?: string;
+      } = {
         context: selectedContext,
         max_recommendations: maxRecommendations,
       };
@@ -148,7 +166,7 @@ export default function RecommendationsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Context</label>
                   <select
                     value={selectedContext}
-                    onChange={(e) => setSelectedContext(e.target.value as any)}
+                    onChange={(e) => setSelectedContext(e.target.value as typeof selectedContext)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                   >
                     <option value="general">General Browsing</option>
@@ -255,7 +273,7 @@ export default function RecommendationsPage() {
                     </TR>
                   </THead>
                   <TBody>
-                    {recommendations.map((rec: any, index: number) => (
+                    {recommendations.map((rec: RecommendationRow, index: number) => (
                       <TR key={rec.product_id}>
                         <TD>
                           <div>
@@ -325,20 +343,19 @@ export default function RecommendationsPage() {
                     </THead>
                     <TBody>
                       {products.slice(0, 20).map((product: Product) => {
-                        const [newPriority, setNewPriority] = useState(product.upsell_priority);
-                        
+                        const newPriority = priorityMap[product.id] ?? product.upsell_priority ?? 0;
                         return (
                           <TR key={product.id}>
                             <TD>
                               <div>
                                 <div className="font-medium">{product.name}</div>
-                                <div className="text-sm text-gray-500">${(product.price_cents / 100).toFixed(2)}</div>
+                                <div className="text-sm text-gray-500">{formatMoney((product.price_cents ?? 0) / 100)}</div>
                               </div>
                             </TD>
                             <TD>
                               <span className={`font-medium ${
-                                product.upsell_priority > 50 ? 'text-green-600' : 
-                                product.upsell_priority > 0 ? 'text-yellow-600' : 'text-gray-500'
+                                (product.upsell_priority ?? 0) > 50 ? 'text-green-600' :
+                                (product.upsell_priority ?? 0) > 0 ? 'text-yellow-600' : 'text-gray-500'
                               }`}>
                                 {product.upsell_priority}
                               </span>
@@ -349,16 +366,16 @@ export default function RecommendationsPage() {
                                 min="0"
                                 max="100"
                                 value={newPriority}
-                                onChange={(e) => setNewPriority(parseInt(e.target.value) || 0)}
+                                onChange={(e) => setPriorityMap(prev => ({ ...prev, [product.id]: parseInt(e.target.value) || 0 }))}
                                 className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-primary"
                               />
                             </TD>
                             <TD>
-                              {newPriority !== product.upsell_priority && (
+                              {newPriority !== (product.upsell_priority ?? 0) && (
                                 <Button
                                   size="sm"
                                   onClick={() => handleUpdateUpsellPriority(product.id, newPriority)}
-                                  disabled={updateUpsellMutation.isLoading}
+                                  disabled={updateUpsellMutation.isPending}
                                   className="bg-primary text-white"
                                 >
                                   Update

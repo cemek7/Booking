@@ -1,6 +1,9 @@
+export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { isGlobalAdmin } from '@/types/unified-permissions';
+import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 /**
  * GET /api/admin/metrics
@@ -15,7 +18,11 @@ import { isGlobalAdmin } from '@/types/unified-permissions';
 export const GET = createHttpHandler(
   async (ctx) => {
     // Verify global admin permission
-    const ok = await isGlobalAdmin(ctx.supabase, ctx.user!.id, ctx.user!.email);
+    // Platform reporting must not depend on a tenant RLS session. The route
+    // handler has already established the superadmin role; this explicit check
+    // protects direct/legacy invocation too.
+    const admin = createSupabaseAdminClient();
+    const ok = await isGlobalAdmin(admin, ctx.user!.id, ctx.user!.email);
     if (!ok) throw ApiErrorFactory.insufficientPermissions(['admin']);
 
     const daysParam = parseInt(ctx.request.url ? new URL(ctx.request.url).searchParams.get('days') || '30' : '30', 10);
@@ -26,26 +33,26 @@ export const GET = createHttpHandler(
     const [llmResult, userResult, revenueResult, tenantResult, reservationResult] =
       await Promise.all([
         // LLM call usage (30d window)
-        ctx.supabase
+        admin
           .from('llm_calls')
           .select('tenant_id, total_tokens, created_at')
           .gte('created_at', since),
         // All tenant members with roles — used for both user_count and active_staff_count
-        ctx.supabase
+        admin
           .from('tenant_users')
           .select('tenant_id, role'),
         // Completed/paid transactions in window (for revenue estimate)
-        ctx.supabase
+        admin
           .from('transactions')
           .select('tenant_id, amount')
           .in('status', ['completed', 'paid'])
           .gte('created_at', since),
         // Tenant metadata for names
-        ctx.supabase
+        admin
           .from('tenants')
           .select('id, name'),
         // All reservations in window for booking stats
-        ctx.supabase
+        admin
           .from('reservations')
           .select('tenant_id, status')
           .gte('created_at', since),
@@ -54,10 +61,10 @@ export const GET = createHttpHandler(
     if (llmResult.error) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch LLM metrics'));
 
     // Log non-critical query errors so they are visible in server logs
-    if (userResult.error) console.warn('[admin/metrics] tenant_users query failed', userResult.error.message);
-    if (revenueResult.error) console.warn('[admin/metrics] transactions query failed', revenueResult.error.message);
-    if (tenantResult.error) console.warn('[admin/metrics] tenants query failed', tenantResult.error.message);
-    if (reservationResult.error) console.warn('[admin/metrics] reservations query failed', reservationResult.error.message);
+    if (userResult.error) defaultLogger.warn('[admin/metrics] tenant_users query failed', userResult.error.message);
+    if (revenueResult.error) defaultLogger.warn('[admin/metrics] transactions query failed', revenueResult.error.message);
+    if (tenantResult.error) defaultLogger.warn('[admin/metrics] tenants query failed', tenantResult.error.message);
+    if (reservationResult.error) defaultLogger.warn('[admin/metrics] reservations query failed', reservationResult.error.message);
 
     // --- Build lookup maps ---
 
@@ -153,5 +160,5 @@ export const GET = createHttpHandler(
     return { metrics: Object.values(byTenant) };
   },
   'GET',
-  { auth: true, roles: ['admin'] }
+  { auth: true, roles: ['superadmin'], requireTenantMembership: false }
 );

@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+import { defaultLogger } from '@/lib/logger';
+import { isRedisFeatureEnabled } from '@/lib/redis';
 /**
  * Webhook Security Framework - Production Grade
  * 
@@ -9,9 +12,10 @@
  * - Secure payload parsing
  */
 
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { z } from 'zod';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { cacheGet, cacheSet } from '@/lib/redis';
 
 // ===============================
 // WEBHOOK SECURITY CONFIGURATION
@@ -22,7 +26,7 @@ export interface WebhookProvider {
   signatureHeader: string;
   timestampHeader?: string;
   signaturePrefix?: string;
-  algorithm: 'sha256' | 'sha1';
+  algorithm: 'sha256' | 'sha1' | 'sha512';
   timestampTolerance?: number; // seconds
 }
 
@@ -67,17 +71,17 @@ const WebhookEventSchema = z.object({
   provider: z.string().min(1),
   timestamp: z.number(),
   signature: z.string().min(1),
-  payload: z.record(z.any()),
-  metadata: z.record(z.any()).optional()
+  payload: z.record(z.string(), z.unknown()),
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 const SecurityValidationResultSchema = z.object({
   isValid: z.boolean(),
-  error?: z.string(),
-  eventId?: z.string(),
-  isDuplicate?: z.boolean(),
-  isReplay?: z.boolean(),
-  rateLimitExceeded?: z.boolean()
+  error: z.string().optional(),
+  eventId: z.string().optional(),
+  isDuplicate: z.boolean().optional(),
+  isReplay: z.boolean().optional(),
+  rateLimitExceeded: z.boolean().optional()
 });
 
 export type WebhookEvent = z.infer<typeof WebhookEventSchema>;
@@ -158,7 +162,7 @@ export class WebhookSecurityService {
       }
 
       // 7. Rate limiting check
-      const rateLimitResult = this.checkRateLimit(provider);
+      const rateLimitResult = await this.checkRateLimit(provider);
       if (!rateLimitResult.isValid) {
         return { ...rateLimitResult, rateLimitExceeded: true };
       }
@@ -187,7 +191,7 @@ export class WebhookSecurityService {
       };
 
     } catch (error) {
-      console.error('Webhook validation error:', error);
+      defaultLogger.error('Webhook validation error:', error);
       return { 
         isValid: false, 
         error: error instanceof Error ? error.message : 'Unknown validation error' 
@@ -374,50 +378,78 @@ export class WebhookSecurityService {
         .limit(1);
 
       if (error) {
-        console.error('Duplicate check error:', error);
+        defaultLogger.error('Duplicate check error:', error);
         return { isDuplicate: false }; // Fail open for availability
       }
 
       return { isDuplicate: data && data.length > 0 };
     } catch (error) {
-      console.error('Duplicate check exception:', error);
+      defaultLogger.error('Duplicate check exception:', error);
       return { isDuplicate: false };
     }
   }
 
   /**
-   * Rate limiting check
+   * Rate limiting check — uses Redis sliding window when available,
+   * falls back to in-memory (single-instance only, not suitable for load-balanced deployments).
    */
-  private checkRateLimit(provider: string): SecurityValidationResult {
-    const now = Date.now();
-    const windowSize = 60 * 1000; // 1 minute
-    const maxRequests = {
+  private async checkRateLimit(provider: string): Promise<SecurityValidationResult> {
+    const windowSize = 60; // seconds
+    const maxRequests: Record<string, number> = {
       stripe: 100,
       paystack: 50,
       evolution: 200,
       whatsapp: 100
     };
 
-    const limit = maxRequests[provider.toLowerCase() as keyof typeof maxRequests] || 50;
-    const cacheKey = `rate_limit:${provider}`;
-    const current = this.rateLimitCache.get(cacheKey);
+    const limit = maxRequests[provider.toLowerCase()] || 50;
+    const cacheKey = `webhook_rate_limit:${provider}`;
 
-    if (!current || now > current.resetTime) {
-      this.rateLimitCache.set(cacheKey, {
-        count: 1,
-        resetTime: now + windowSize
-      });
-      return { isValid: true };
-    }
-
-    if (current.count >= limit) {
-      return { 
-        isValid: false, 
-        error: `Rate limit exceeded for ${provider}: ${current.count}/${limit}` 
+    if (process.env.NODE_ENV === 'production' && !isRedisFeatureEnabled()) {
+      return {
+        isValid: false,
+        error: `Redis-backed webhook rate limiting is required in production for ${provider}`,
       };
     }
 
-    current.count++;
+    // Prefer Redis sliding window for multi-instance correctness
+    if (isRedisFeatureEnabled()) {
+      try {
+        const current = (await cacheGet(cacheKey)) as { count: number } | null;
+        const count = (current?.count ?? 0) + 1;
+        if (count > limit) {
+          return { isValid: false, error: `Rate limit exceeded for ${provider}: ${count}/${limit}` };
+        }
+        // Set or refresh the window with a 60-second TTL
+        await cacheSet(cacheKey, { count }, windowSize);
+        return { isValid: true };
+      } catch (err) {
+        defaultLogger.warn('Redis rate-limit check failed, falling back to in-memory:', err);
+        if (process.env.NODE_ENV === 'production') {
+          return {
+            isValid: false,
+            error: `Redis-backed webhook rate limiting is unavailable in production for ${provider}`,
+          };
+        }
+        // fall through to in-memory
+      }
+    }
+
+    // In-memory fallback (single-instance only)
+    const now = Date.now();
+    const windowMs = windowSize * 1000;
+    const existing = this.rateLimitCache.get(cacheKey);
+
+    if (!existing || now > existing.resetTime) {
+      this.rateLimitCache.set(cacheKey, { count: 1, resetTime: now + windowMs });
+      return { isValid: true };
+    }
+
+    if (existing.count >= limit) {
+      return { isValid: false, error: `Rate limit exceeded for ${provider}: ${existing.count}/${limit}` };
+    }
+
+    existing.count++;
     return { isValid: true };
   }
 
@@ -440,11 +472,11 @@ export class WebhookSecurityService {
         });
 
       if (error) {
-        console.error('Failed to store webhook event:', error);
+        defaultLogger.error('Failed to store webhook event:', error);
         throw new Error(`Failed to store webhook event: ${error.message}`);
       }
     } catch (error) {
-      console.error('Store webhook event exception:', error);
+      defaultLogger.error('Store webhook event exception:', error);
       throw error;
     }
   }
@@ -466,9 +498,10 @@ export class WebhookSecurityService {
         throw new Error(`Cleanup failed: ${error.message}`);
       }
 
-      return Array.isArray(data) ? data.length : 0;
+      const deletedRows = (data as Array<Record<string, unknown>> | null) ?? [];
+      return deletedRows.length;
     } catch (error) {
-      console.error('Cleanup webhook events error:', error);
+      defaultLogger.error('Cleanup webhook events error:', error);
       throw error;
     }
   }
@@ -530,7 +563,7 @@ export class WebhookSecurityService {
 
       return metrics;
     } catch (error) {
-      console.error('Get security metrics error:', error);
+      defaultLogger.error('Get security metrics error:', error);
       throw error;
     }
   }
@@ -589,7 +622,7 @@ export function createWebhookSecurityMiddleware(provider: string, secretKey: str
 
       next();
     } catch (error) {
-      console.error('Webhook security middleware error:', error);
+      defaultLogger.error('Webhook security middleware error:', error);
       return res.status(500).json({
         error: 'Internal security validation error',
         code: 'SECURITY_ERROR'
@@ -656,14 +689,5 @@ export function validateWebhookSecrets(): {
  * Generate secure webhook secret
  */
 export function generateWebhookSecret(length: number = 32): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  
-  return result;
+  return randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length);
 }
-
-export { WebhookSecurityService };

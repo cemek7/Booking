@@ -1,11 +1,13 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
+import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import EnhancedJobManager from '@/lib/enhancedJobManager';
 import { z } from 'zod';
 
 // Zod schema for POST request body
 const ScheduleJobBodySchema = z.object({
   name: z.string().min(1, 'Job name is required'),
-  payload: z.record(z.string(), z.any()),
+  payload: z.record(z.string(), z.unknown()),
   priority: z.number().int().min(1).max(10).default(5).optional(),
   scheduled_at: z.string().datetime().optional(),
   retry_policy: z.object({
@@ -25,16 +27,12 @@ const ScheduleJobBodySchema = z.object({
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw new Error('Tenant ID is required');
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const body = await ctx.request.json();
     const bodyValidation = ScheduleJobBodySchema.safeParse(body);
     if (!bodyValidation.success) {
-      throw new Error(`Invalid request body: ${JSON.stringify(bodyValidation.error.issues)}`);
+      throw ApiErrorFactory.validationError({ issues: bodyValidation.error.issues });
     }
     const { name, payload, ...options } = bodyValidation.data;
 

@@ -49,8 +49,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
         CHECK (user_role IN ('staff', 'manager', 'owner', 'superadmin', 'unknown'))
 );
 
+-- Ensure all columns exist in case the table was created by an earlier migration
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS timestamp        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_type       TEXT NOT NULL DEFAULT 'permission_check';
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_id          UUID;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_role        TEXT;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id        UUID;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_id       TEXT;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address       INET;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent       TEXT;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS resource         TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS action           TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS permission       TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS context          JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS result           JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS security_level   TEXT NOT NULL DEFAULT 'medium';
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS compliance_flags TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata         JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 -- Create indexes for efficient querying
-CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp 
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
     ON audit_logs(timestamp DESC);
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id 
@@ -118,44 +137,50 @@ ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- Create RLS policies for audit logs
 -- Superadmins can see all audit logs
+DROP POLICY IF EXISTS "Superadmins can view all audit logs" ON audit_logs;
 CREATE POLICY "Superadmins can view all audit logs" ON audit_logs
-    FOR SELECT 
+    FOR SELECT
     USING (
         EXISTS (
-            SELECT 1 FROM admins 
-            WHERE user_id = auth.uid() 
-            AND is_active = true
+            SELECT 1 FROM tenant_users
+            WHERE user_id = auth.uid()
+            AND role = 'superadmin'
         )
     );
 
 -- Tenant owners can see their tenant's audit logs
+DROP POLICY IF EXISTS "Tenant owners can view tenant audit logs" ON audit_logs;
 CREATE POLICY "Tenant owners can view tenant audit logs" ON audit_logs
-    FOR SELECT 
+    FOR SELECT
     USING (
         tenant_id IN (
-            SELECT tenant_id FROM tenant_users 
-            WHERE user_id = auth.uid() 
+            SELECT tenant_id FROM tenant_users
+            WHERE user_id = auth.uid()
             AND role = 'owner'
         )
     );
 
 -- Users can see their own audit events (limited fields)
+DROP POLICY IF EXISTS "Users can view own audit events" ON audit_logs;
 CREATE POLICY "Users can view own audit events" ON audit_logs
-    FOR SELECT 
+    FOR SELECT
     USING (user_id = auth.uid());
 
 -- Only system can insert audit logs
+DROP POLICY IF EXISTS "System can insert audit logs" ON audit_logs;
 CREATE POLICY "System can insert audit logs" ON audit_logs
-    FOR INSERT 
+    FOR INSERT
     WITH CHECK (true);
 
 -- No updates or deletes allowed (audit log immutability)
+DROP POLICY IF EXISTS "No updates allowed" ON audit_logs;
 CREATE POLICY "No updates allowed" ON audit_logs
-    FOR UPDATE 
+    FOR UPDATE
     USING (false);
 
+DROP POLICY IF EXISTS "No deletes allowed" ON audit_logs;
 CREATE POLICY "No deletes allowed" ON audit_logs
-    FOR DELETE 
+    FOR DELETE
     USING (false);
 
 -- Create view for security dashboard
@@ -257,13 +282,14 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create trigger for critical event notifications
+DROP TRIGGER IF EXISTS trigger_notify_critical_security_event ON audit_logs;
 CREATE TRIGGER trigger_notify_critical_security_event
     AFTER INSERT ON audit_logs
     FOR EACH ROW
     EXECUTE FUNCTION notify_critical_security_event();
 
 -- Create materialized view for performance analytics
-CREATE MATERIALIZED VIEW audit_analytics AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS audit_analytics AS
 SELECT 
     tenant_id,
     DATE_TRUNC('hour', timestamp) as hour,
@@ -280,7 +306,7 @@ WHERE timestamp >= CURRENT_DATE - INTERVAL '7 days'
 GROUP BY tenant_id, DATE_TRUNC('hour', timestamp), event_type, security_level;
 
 -- Create unique index on materialized view
-CREATE UNIQUE INDEX idx_audit_analytics_unique 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_analytics_unique
     ON audit_analytics(tenant_id, hour, event_type, security_level);
 
 -- Grant access to materialized view

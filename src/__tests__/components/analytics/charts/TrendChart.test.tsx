@@ -5,14 +5,25 @@ import TrendChart, {
   TrendDataPoint,
 } from '@/components/analytics/charts/TrendChart';
 
+type RechartsMockProps = {
+  children?: React.ReactNode;
+  data?: unknown[];
+  dataKey?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  tickFormatter?: unknown;
+  content?: React.ReactNode;
+  height?: number;
+};
+
 // Mock recharts to avoid rendering issues in test environment
 jest.mock('recharts', () => ({
-  LineChart: ({ children, data }: any) => (
+  LineChart: ({ children, data }: RechartsMockProps) => (
     <div data-testid="line-chart" data-points={data?.length}>
       {children}
     </div>
   ),
-  Line: ({ dataKey, stroke, strokeWidth }: any) => (
+  Line: ({ dataKey, stroke, strokeWidth }: RechartsMockProps) => (
     <div
       data-testid="line"
       data-key={dataKey}
@@ -20,13 +31,13 @@ jest.mock('recharts', () => ({
       data-width={strokeWidth}
     />
   ),
-  XAxis: ({ dataKey }: any) => <div data-testid="x-axis" data-key={dataKey} />,
-  YAxis: ({ tickFormatter }: any) => (
+  XAxis: ({ dataKey }: RechartsMockProps) => <div data-testid="x-axis" data-key={dataKey} />,
+  YAxis: ({ tickFormatter }: RechartsMockProps) => (
     <div data-testid="y-axis" data-formatter={!!tickFormatter} />
   ),
   CartesianGrid: () => <div data-testid="grid" />,
-  Tooltip: ({ content }: any) => <div data-testid="tooltip">{content}</div>,
-  ResponsiveContainer: ({ children, height }: any) => (
+  Tooltip: ({ content }: RechartsMockProps) => <div data-testid="tooltip">{content}</div>,
+  ResponsiveContainer: ({ children, height }: RechartsMockProps) => (
     <div data-testid="responsive-container" data-height={height}>
       {children}
     </div>
@@ -175,13 +186,13 @@ describe('TrendChart', () => {
 
     it('should use custom xAxisKey when provided', () => {
       const customData = [
-        { month: 'Jan', revenue: 100 },
-        { month: 'Feb', revenue: 150 },
+        { date: '2024-01', month: 'Jan', value: 100, revenue: 100 },
+        { date: '2024-02', month: 'Feb', value: 150, revenue: 150 },
       ];
 
       render(
         <TrendChart
-          data={customData as any}
+          data={customData}
           dataKey="revenue"
           xAxisKey="month"
         />
@@ -563,19 +574,19 @@ describe('TrendChart', () => {
 
     it('should update when dataKey changes', () => {
       const multiKeyData = [
-        { date: 'Jan', revenue: 100, bookings: 50 },
-        { date: 'Feb', revenue: 150, bookings: 75 },
+        { date: 'Jan', value: 100, revenue: 100, bookings: 50 },
+        { date: 'Feb', value: 150, revenue: 150, bookings: 75 },
       ];
 
       const { rerender } = render(
-        <TrendChart data={multiKeyData as any} dataKey="revenue" />
+        <TrendChart data={multiKeyData} dataKey="revenue" />
       );
 
       let line = screen.getByTestId('line');
       expect(line).toHaveAttribute('data-key', 'revenue');
 
       rerender(
-        <TrendChart data={multiKeyData as any} dataKey="bookings" />
+        <TrendChart data={multiKeyData} dataKey="bookings" />
       );
 
       line = screen.getByTestId('line');

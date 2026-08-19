@@ -12,7 +12,7 @@ import {
   Phone,
   CheckCircle
 } from 'lucide-react';
-import { UniversalCalendarButton, QuickAddCalendar } from '@/components/calendar/UniversalCalendarButton';
+import UniversalCalendarButton, { QuickAddCalendar } from '@/components/calendar/UniversalCalendarButton';
 import { formatDate, formatTime } from '@/lib/utils';
 
 export interface BookingConfirmationProps {

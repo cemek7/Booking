@@ -5,7 +5,18 @@
  * better hierarchy management, context-aware permissions, and audit capabilities
  */
 
-import { Role, ROLE_PERMISSION_MAP, PermissionCheckResult } from './index';
+import type { Role } from './roles';
+import { ROLE_PERMISSION_MAP, type Permission, type PermissionCheckResult } from './permissions';
+
+function permissionDescriptor(permissionId: string): Permission {
+  return {
+    id: permissionId,
+    category: 'system',
+    action: 'view',
+    scope: 'none',
+    description: permissionId,
+  };
+}
 
 // Enhanced role hierarchy with explicit levels and inheritance rules
 export interface EnhancedRoleHierarchy {
@@ -94,6 +105,8 @@ export interface EnhancedPermissionContext {
   targetTenantId?: string;
   resourceOwnerId?: string;
   teamId?: string;
+  // Context is intentionally extensible for resource-specific authorization data.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 
@@ -109,6 +122,7 @@ export function hasEnhancedPermission(
   if (roleHierarchy.excludes?.includes(permissionId)) {
     return {
       granted: false,
+      permission: permissionDescriptor(permissionId),
       reason: `Permission ${permissionId} is explicitly denied for role ${userRole}`
     };
   }
@@ -119,6 +133,7 @@ export function hasEnhancedPermission(
   if (!allPermissions.includes(permissionId)) {
     return {
       granted: false,
+      permission: permissionDescriptor(permissionId),
       reason: 'Permission not available for this role'
     };
   }
@@ -130,6 +145,7 @@ export function hasEnhancedPermission(
     if (!contextCheck.allowed) {
       return {
         granted: false,
+        permission: permissionDescriptor(permissionId),
         reason: contextCheck.reason
       };
     }
@@ -137,6 +153,7 @@ export function hasEnhancedPermission(
 
   return {
     granted: true,
+    permission: permissionDescriptor(permissionId),
     context
   };
 }
@@ -185,6 +202,7 @@ export function canAccessResourceWithContext(
     if (userRole === 'staff' && !isOwnResource && !permissionId.includes(':all')) {
       return {
         granted: false,
+        permission: permissionDescriptor(permissionId),
         reason: 'Staff can only access their own resources'
       };
     }
@@ -198,6 +216,7 @@ export function canAccessResourceWithContext(
     if (!isSameTenant && userRole !== 'superadmin') {
       return {
         granted: false,
+        permission: permissionDescriptor(permissionId),
         reason: 'Cannot access resources from different tenants'
       };
     }
@@ -205,6 +224,7 @@ export function canAccessResourceWithContext(
 
   return {
     granted: true,
+    permission: permissionDescriptor(permissionId),
     context
   };
 }

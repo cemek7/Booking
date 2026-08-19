@@ -1,53 +1,46 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { z } from 'zod';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import PaymentService from '@/lib/paymentService';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
-interface RefundRequest {
-  transactionId: string;
-  amount?: number;
-  reason?: string;
-}
+const RefundSchema = z.object({
+  transactionId: z.string().min(1, 'Transaction ID is required'),
+  amount: z.number().positive().optional(),
+  reason: z.string().optional(),
+});
 
 export const POST = createHttpHandler(
   async (ctx) => {
-    const body: RefundRequest = await ctx.request.json();
-    const { transactionId, amount, reason } = body;
-    // Derive tenant from authenticated user; only superadmin may override via header.
-    const headerTenantId = ctx.request.headers.get('X-Tenant-ID');
-    const tenantId = (ctx.user!.role === 'superadmin' && headerTenantId)
-      ? headerTenantId
-      : ctx.user!.tenantId;
-
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    const raw = await ctx.request.json();
+    const parsed = RefundSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = Object.fromEntries(parsed.error.issues.map(i => [i.path.join('.'), i.message]));
+      throw ApiErrorFactory.validationError(fields);
     }
-
-    const normalizedTransactionId =
-      typeof transactionId === 'string' ? transactionId.trim() : '';
-
-    if (!normalizedTransactionId) {
-      throw ApiErrorFactory.validationError({ transactionId: 'Transaction ID is required' });
-    }
+    const { transactionId, amount, reason } = parsed.data;
+    const tenantId = getVerifiedTenantId(ctx);
 
     // User auto-validated with roles check
     const paymentService = new PaymentService(ctx.supabase);
-    const result = await paymentService.processRefund({
+    const refundResult = await paymentService.processRefund({
       tenantId: tenantId,
-      transactionId: normalizedTransactionId,
+      transactionId,
       amount,
       reason,
     });
 
-    if (!result.success) {
-      throw ApiErrorFactory.databaseError(new Error(result.error || 'Refund processing failed'));
+    if (!refundResult.success) {
+      throw ApiErrorFactory.databaseError(new Error(refundResult.error || 'Refund processing failed'));
     }
 
     return {
       success: true,
-      refundId: result.refundId,
+      refundId: refundResult.refundId,
       message: 'Refund processed successfully',
     };
   },
   'POST',
-  { auth: true, roles: ['manager', 'owner', 'superadmin'] }
+  { auth: true, roles: ['manager', 'owner', 'superadmin'], permissions: [BOOKA_PERMISSIONS.ISSUE_REFUNDS] }
 );

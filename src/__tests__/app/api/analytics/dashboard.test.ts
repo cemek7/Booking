@@ -4,7 +4,6 @@ import { GET } from '@/app/api/analytics/dashboard/route';
 
 // Mock dependencies
 jest.mock('@/lib/analyticsService');
-jest.mock('@/lib/error-handling/api-error');
 
 const mockAnalyticsService = {
   getDashboardMetrics: jest.fn(),
@@ -33,6 +32,9 @@ const createMockContext = (overrides = {}) => ({
   ...overrides,
 });
 
+const asRouteContext = (context: ReturnType<typeof createMockContext>) =>
+  context as unknown as Parameters<typeof GET>[0];
+
 describe('GET /api/analytics/dashboard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -54,7 +56,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
         'tenant-123',
@@ -71,7 +73,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
         'tenant-123',
@@ -88,7 +90,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
         'tenant-123',
@@ -105,7 +107,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
         'tenant-123',
@@ -122,7 +124,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
         'tenant-123',
@@ -139,7 +141,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
         'tenant-123',
@@ -147,7 +149,11 @@ describe('GET /api/analytics/dashboard', () => {
       );
     });
 
-    it('should use X-Tenant-ID header if present', async () => {
+    it('ignores a client-supplied X-Tenant-ID and uses the authenticated tenant', async () => {
+      // Regression guard. This previously asserted the header won, which would
+      // let any caller read another tenant's analytics by setting one header.
+      // The route resolves tenancy via getVerifiedTenantId(ctx) — the session —
+      // so a spoofed header must have no effect.
       const request = new NextRequest('http://localhost:3000/api/analytics/dashboard');
       request.headers.set('X-Tenant-ID', 'header-tenant-456');
 
@@ -157,11 +163,15 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      await GET(ctx as any);
+      await GET(asRouteContext(ctx));
 
       expect(mockAnalyticsService.getDashboardMetrics).toHaveBeenCalledWith(
-        'header-tenant-456',
+        'tenant-123',
         'month'
+      );
+      expect(mockAnalyticsService.getDashboardMetrics).not.toHaveBeenCalledWith(
+        'header-tenant-456',
+        expect.anything()
       );
     });
 
@@ -171,7 +181,7 @@ describe('GET /api/analytics/dashboard', () => {
         request: new NextRequest('http://localhost:3000/api/analytics/dashboard'),
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asRouteContext(ctx))).rejects.toThrow();
     });
   });
 
@@ -195,9 +205,12 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: mockMetrics,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
-      expect(response).toEqual({
+      // toMatchObject, not toEqual: the payload has since gained `currency`,
+      // `scope` and the `sias` summary. Pinning the exact object made this test
+      // fail on additive, backward-compatible response changes.
+      expect(response).toMatchObject({
         success: true,
         metrics: mockMetrics,
         generated_at: expect.any(String),
@@ -211,7 +224,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response).toHaveProperty('generated_at');
       expect(new Date(response.generated_at as string)).toBeInstanceOf(Date);
@@ -224,7 +237,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.metrics).toEqual([]);
     });
@@ -238,7 +251,7 @@ describe('GET /api/analytics/dashboard', () => {
         error: 'Database connection failed',
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asRouteContext(ctx))).rejects.toThrow();
     });
 
     it('should throw error when service throws', async () => {
@@ -247,7 +260,7 @@ describe('GET /api/analytics/dashboard', () => {
         new Error('Service unavailable')
       );
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asRouteContext(ctx))).rejects.toThrow();
     });
 
     it('should handle missing error message gracefully', async () => {
@@ -256,7 +269,7 @@ describe('GET /api/analytics/dashboard', () => {
         success: false,
       });
 
-      await expect(GET(ctx as any)).rejects.toThrow();
+      await expect(GET(asRouteContext(ctx))).rejects.toThrow();
     });
   });
 
@@ -280,7 +293,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: mockMetrics,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.metrics).toEqual(mockMetrics);
     });
@@ -313,7 +326,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: mockMetrics,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.metrics).toHaveLength(2);
       expect(response.metrics[0].id).toBe('metric-1');
@@ -334,10 +347,10 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: mockMetrics,
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.metrics).toHaveLength(4);
-      expect(response.metrics.map((m: any) => m.type)).toEqual([
+      expect(response.metrics.map((m: { type: string }) => m.type)).toEqual([
         'count',
         'percentage',
         'currency',
@@ -365,7 +378,7 @@ describe('GET /api/analytics/dashboard', () => {
       });
 
       const startTime = Date.now();
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
       const duration = Date.now() - startTime;
 
       expect(response.metrics).toHaveLength(100);
@@ -383,7 +396,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.success).toBe(true);
     });
@@ -397,12 +410,15 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.success).toBe(true);
     });
 
-    it('should allow staff role', async () => {
+    it('rejects staff role and points it at the personal-metrics endpoint', async () => {
+      // Staff resolve to `personal` scope, which this endpoint no longer serves;
+      // the route now fails closed with an explicit pointer to
+      // /api/staff/metrics rather than returning tenant-wide numbers.
       const ctx = createMockContext({
         user: { ...createMockContext().user, role: 'staff' },
       });
@@ -411,9 +427,8 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      const response = await GET(ctx as any);
-
-      expect(response.success).toBe(true);
+      await expect(GET(asRouteContext(ctx))).rejects.toThrow('/api/staff/metrics');
+      expect(mockAnalyticsService.getDashboardMetrics).not.toHaveBeenCalled();
     });
 
     it('should allow superadmin role', async () => {
@@ -425,7 +440,7 @@ describe('GET /api/analytics/dashboard', () => {
         metrics: [],
       });
 
-      const response = await GET(ctx as any);
+      const response = await GET(asRouteContext(ctx));
 
       expect(response.success).toBe(true);
     });

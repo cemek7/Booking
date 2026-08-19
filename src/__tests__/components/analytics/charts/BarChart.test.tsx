@@ -3,9 +3,22 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from '@jest/globals';
 import BarChart, { BarDataPoint } from '@/components/analytics/charts/BarChart';
 
+type RechartsBarMockProps = {
+  children?: React.ReactNode;
+  data?: unknown[];
+  layout?: string;
+  dataKey?: string;
+  fill?: string;
+  stackId?: string;
+  type?: string;
+  tickFormatter?: unknown;
+  content?: React.ReactNode;
+  height?: number;
+};
+
 // Mock recharts components
 jest.mock('recharts', () => ({
-  BarChart: ({ children, data, layout }: any) => (
+  BarChart: ({ children, data, layout }: RechartsBarMockProps) => (
     <div
       data-testid="bar-chart"
       data-points={data?.length}
@@ -14,7 +27,7 @@ jest.mock('recharts', () => ({
       {children}
     </div>
   ),
-  Bar: ({ dataKey, fill, stackId }: any) => (
+  Bar: ({ dataKey, fill, stackId }: RechartsBarMockProps) => (
     <div
       data-testid={`bar-${dataKey}`}
       data-key={dataKey}
@@ -22,7 +35,7 @@ jest.mock('recharts', () => ({
       data-stacked={!!stackId}
     />
   ),
-  XAxis: ({ dataKey, type, tickFormatter }: any) => (
+  XAxis: ({ dataKey, type, tickFormatter }: RechartsBarMockProps) => (
     <div
       data-testid="x-axis"
       data-key={dataKey}
@@ -30,7 +43,7 @@ jest.mock('recharts', () => ({
       data-formatter={!!tickFormatter}
     />
   ),
-  YAxis: ({ dataKey, type, tickFormatter }: any) => (
+  YAxis: ({ dataKey, type, tickFormatter }: RechartsBarMockProps) => (
     <div
       data-testid="y-axis"
       data-key={dataKey}
@@ -39,8 +52,8 @@ jest.mock('recharts', () => ({
     />
   ),
   CartesianGrid: () => <div data-testid="grid" />,
-  Tooltip: ({ content }: any) => <div data-testid="tooltip">{content}</div>,
-  ResponsiveContainer: ({ children, height }: any) => (
+  Tooltip: ({ content }: RechartsBarMockProps) => <div data-testid="tooltip">{content}</div>,
+  ResponsiveContainer: ({ children, height }: RechartsBarMockProps) => (
     <div data-testid="responsive-container" data-height={height}>
       {children}
     </div>

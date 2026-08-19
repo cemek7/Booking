@@ -1,8 +1,13 @@
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { chatMessagesSent } from '@/lib/metrics';
 import { trace } from '@opentelemetry/api';
+import { defaultLogger } from '@/lib/logger';
+import { getTenantChannelProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
+import { computeOutboundReadiness } from '@/lib/chats/outboundReadiness';
 
 const PostMessageBodySchema = z.object({
   text: z.string().trim().min(1, 'Message text cannot be empty'),
@@ -34,7 +39,7 @@ export const POST = createHttpHandler(
       // Fetch the chat to verify it exists and get its tenant_id
       const { data: chat, error: chatError } = await ctx.supabase
         .from('chats')
-        .select('id, tenant_id, customer_phone')
+        .select('id, tenant_id, customer_phone, metadata')
         .eq('id', chatId)
         .single();
 
@@ -43,12 +48,28 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.notFound('Chat');
       }
       span.setAttribute('tenant.id', chat.tenant_id);
+      const channel = chat.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp';
+      span.setAttribute('chat.channel', channel);
 
       // Verify user has access to this tenant's chat
       if (ctx.user?.tenantId && ctx.user.tenantId !== chat.tenant_id) {
         throw ApiErrorFactory.forbidden('Access denied to this chat');
       }
       span.setAttribute('auth.authorized', true);
+
+      if (!chat.customer_phone) {
+        throw ApiErrorFactory.validationError({ customer_phone: 'Chat recipient is missing' });
+      }
+
+      const readiness = await computeOutboundReadiness(ctx.supabase as never, {
+        tenantId: chat.tenant_id,
+        externalId: chat.customer_phone,
+        channel,
+      });
+
+      if (!readiness.allowed) {
+        throw ApiErrorFactory.accountLocked(readiness.reason);
+      }
 
       // Insert the outbound message
       const { data: newMessage, error: insertError } = await ctx.supabase
@@ -72,33 +93,30 @@ export const POST = createHttpHandler(
       try { chatMessagesSent.inc({ tenant: chat.tenant_id }); } catch { /* ignore metrics errors */ }
       span.addEvent('Message inserted into DB');
 
+      if (chat.customer_phone) {
+        await setHumanHandling({
+          externalId: chat.customer_phone,
+          tenantId: chat.tenant_id,
+          channel,
+          minutes: 30,
+        }).catch((e) => defaultLogger.warn('setHumanHandling failed', { error: String(e) }));
+      }
+
       // Fire-and-forget handoff to external messaging provider
       (async () => {
         try {
-          const { data: tenant } = await ctx.supabase
-            .from('tenants')
-            .select('whatsapp_api_provider, waba_api_key, whatsapp_number_id, whatsapp_number')
-            .eq('id', chat.tenant_id)
-            .single();
+          const client = await getTenantChannelProviderClient(chat.tenant_id, channel);
+          const number = chat.customer_phone;
 
-          const baseUrl = process.env.EVOLUTION_BASE_URL || 'https://api.evolution-api.com';
-          const apiKey = tenant?.waba_api_key || process.env.EVOLUTION_API_KEY;
-          const instance = tenant?.whatsapp_number_id;
-          const number = chat?.customer_phone;
-
-          if (apiKey && instance && number) {
-            await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instance)}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'apikey': apiKey },
-              body: JSON.stringify({ number, textMessage: { text } }),
-            });
-            span.addEvent('Handoff to Evolution API successful');
+          if (client && number) {
+            await client.sendTextMessage(number, text);
+            span.addEvent('Handoff to channel provider successful');
           } else {
-            span.addEvent('Handoff to Evolution API skipped: missing config');
+            span.addEvent('Handoff to channel provider skipped: missing config');
           }
         } catch (e) {
           span.recordException(e as Error);
-          console.error('Evolution API handoff failed:', e);
+          defaultLogger.error('Channel provider handoff failed:', e);
         }
       })();
 

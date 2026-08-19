@@ -12,6 +12,8 @@ interface ProductFiltersProps {
   onFilterChange: (filters: Partial<ProductListQuery>) => void;
 }
 
+interface CategoriesResponse { categories?: Array<{ name: string }>; }
+
 export default function ProductFilters({ filters, onFilterChange }: ProductFiltersProps) {
   const { tenant } = useTenant();
   const [localFilters, setLocalFilters] = useState(filters);
@@ -23,7 +25,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
     queryFn: async () => {
       if (!tenant?.id) return { categories: [] };
       
-      const response = await authFetch('/api/categories');
+      const response = await authFetch<CategoriesResponse>('/api/categories');
       
       if (response.error) throw new Error('Failed to fetch categories');
       return response.data;
@@ -31,13 +33,13 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
     enabled: !!tenant?.id,
   });
 
-  const categories = categoriesData?.categories || [];
+  const categories = categoriesData?.categories?.map(category => category.name) ?? [];
 
   useEffect(() => {
     setLocalFilters(filters);
   }, [filters]);
 
-  const handleInputChange = (key: keyof ProductListQuery, value: any) => {
+  const handleInputChange = <Key extends keyof ProductListQuery>(key: Key, value: ProductListQuery[Key]) => {
     const newFilters = { ...localFilters, [key]: value };
     setLocalFilters(newFilters);
   };
@@ -63,7 +65,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
   const hasActiveFilters = () => {
     return (
       localFilters.search ||
-      localFilters.category_id ||
+      localFilters.category ||
       localFilters.status !== 'all' ||
       localFilters.price_min ||
       localFilters.price_max ||
@@ -94,18 +96,19 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Category
           </label>
-          <select
-            value={localFilters.category_id || ''}
-            onChange={(e) => handleInputChange('category_id', e.target.value || undefined)}
+          <input
+            type="text"
+            list="product-filter-categories"
+            value={localFilters.category || ''}
+            onChange={(e) => handleInputChange('category', e.target.value || undefined)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            <option value="">All Categories</option>
-            {categories.map((category: any) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
+            placeholder="All Categories"
+          />
+          <datalist id="product-filter-categories">
+            {categories.map((category: string) => (
+              <option key={category} value={category} />
             ))}
-          </select>
+          </datalist>
         </div>
 
         {/* Status Filter */}
@@ -137,7 +140,9 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
             onChange={(e) => {
               const [sort, order] = e.target.value.split('-');
               handleInputChange('sort', sort);
-              handleInputChange('order', order);
+              if (order === 'asc' || order === 'desc') {
+                handleInputChange('order', order);
+              }
             }}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
           >
@@ -204,7 +209,7 @@ export default function ProductFilters({ filters, onFilterChange }: ProductFilte
               <input
                 type="text"
                 placeholder="hair, color, treatment"
-                value={localFilters.tags?.join(', ') || ''}
+                value={(Array.isArray(localFilters.tags) ? localFilters.tags.join(', ') : localFilters.tags) || ''}
                 onChange={(e) => {
                   const tags = e.target.value
                     .split(',')

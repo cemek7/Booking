@@ -5,6 +5,7 @@
  * Includes pre-built templates for common use cases
  */
 
+import { defaultLogger } from '@/lib/logger';
 import twilio from 'twilio';
 
 interface SMSOptions {
@@ -12,34 +13,47 @@ interface SMSOptions {
   body: string;
 }
 
+export type SMSResult = { success: true; sid: string } | { success: false; error: string };
+
+/** Mask phone number for safe logging */
+function maskPhone(phone: string): string {
+  return phone.length > 4 ? `***${phone.slice(-4)}` : '****';
+}
+
 /**
- * Initialize Twilio client
+ * Create a Twilio client scoped to the provided credentials.
+ * Always created per-request to prevent cross-tenant credential leakage.
  */
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+function getTwilioClient(accountSid?: string, authToken?: string) {
+  const sid = accountSid || process.env.TWILIO_ACCOUNT_SID;
+  const token = authToken || process.env.TWILIO_AUTH_TOKEN;
+  if (!sid || !token) {
+    throw new Error('Twilio credentials not configured');
+  }
+  return twilio(sid, token);
+}
 
 /**
  * Send SMS message
  */
-export async function sendSMS(options: SMSOptions): Promise<any> {
+export async function sendSMS(options: SMSOptions): Promise<SMSResult> {
   try {
     if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
-      console.warn('⚠️ Twilio credentials not configured');
+      defaultLogger.warn('Twilio credentials not configured');
       return { success: false, error: 'Twilio not configured' };
     }
 
-    const message = await twilioClient.messages.create({
+    const client = getTwilioClient();
+    const message = await client.messages.create({
       body: options.body,
       from: process.env.TWILIO_PHONE_NUMBER,
       to: options.to,
     });
 
-    console.log(`✅ SMS sent to ${options.to}: ${message.sid}`);
+    defaultLogger.info(`SMS sent to ${maskPhone(options.to)}: ${message.sid}`);
     return { success: true, sid: message.sid };
   } catch (error) {
-    console.error('❌ Error sending SMS:', error);
+    defaultLogger.error('❌ Error sending SMS:', error);
     throw error;
   }
 }
@@ -237,10 +251,12 @@ export async function sendPromoSMS(
  */
 export async function getTwilioBalance(): Promise<number | null> {
   try {
-    const balance = await twilioClient.api.accounts(process.env.TWILIO_ACCOUNT_SID || '').fetch();
-    return (balance as any).balance ? parseFloat((balance as any).balance) : null;
+    const client = getTwilioClient();
+    const balance = await client.api.accounts(process.env.TWILIO_ACCOUNT_SID || '').fetch();
+    const value = (balance as unknown as { balance?: string | number | null }).balance;
+    return typeof value === 'string' || typeof value === 'number' ? parseFloat(String(value)) : null;
   } catch (error) {
-    console.error('❌ Error getting Twilio balance:', error);
+    defaultLogger.error('❌ Error getting Twilio balance:', error);
     return null;
   }
 }

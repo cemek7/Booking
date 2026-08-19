@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "outDir": ".tsbuild/shared",
+    "rootDir": "."
+  },
+  "include": [
+    "src/lib/**/*.ts",
+    "src/lib/**/*.tsx",
+    "src/types/**/*.ts",
+    "src/middleware.ts",
+    "src/middleware/**/*.ts",
+    "src/scripts/**/*.ts",
+    "src/worker/**/*.ts",
+    "types/**/*.d.ts",
+    "types.ts",
+    "proxy.ts",
+    "API_ROUTE_TEMPLATE.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    ".tsbuild",
+    ".turbo",
+    "coverage",
+    "dist",
+    "tests",
+    "src/__tests__",
+    "src/test",
+    "src/components/__tests__"
+  ]
+}

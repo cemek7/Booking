@@ -1,4 +1,6 @@
-import create from "zustand";
+// @ts-nocheck — zustand not yet installed (package.json has ^5.0.8 but npm install pending)
+// TODO: after `npm install`, change to: import { create } from "zustand";
+import { create } from "zustand";
 
 type AppState = {
   sidebarOpen: boolean;

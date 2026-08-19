@@ -1,3 +1,5 @@
+import { defaultLogger } from '@/lib/logger';
+import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace, metrics } from '@opentelemetry/api';
 import { dialogBookingBridge } from './dialogBookingBridge';
@@ -113,8 +115,7 @@ export class EnhancedJobManager {
       const retryPolicy = { ...defaultRetryPolicy, ...options.retry_policy };
       
       const job = {
-        name,
-        handler: name,
+        type: name,
         payload,
         tenant_id: options.tenant_id,
         priority: options.priority || 5,
@@ -173,12 +174,20 @@ export class EnhancedJobManager {
       let errors = 0;
       let deadLetter = 0;
 
+      // A.2: Reset stale processing jobs so they re-enter the queue
+      const staleThreshold = new Date(Date.now() - (JOB_CONFIG.timeoutMs + 30_000)).toISOString();
+      await this.supabase
+        .from('jobs')
+        .update({ status: 'pending', updated_at: new Date().toISOString() })
+        .eq('status', 'processing')
+        .lt('updated_at', staleThreshold);
+
       while (Date.now() - startTime < maxRuntime) {
         // Get next batch of jobs ordered by priority and scheduled_at
         const { data: jobs, error } = await this.supabase
           .from('jobs')
           .select('*')
-          .in('status', ['pending', 'failed'])
+          .in('status', ['pending'])
           .lte('scheduled_at', new Date().toISOString())
           .order('priority', { ascending: false })
           .order('scheduled_at', { ascending: true })
@@ -240,13 +249,26 @@ export class EnhancedJobManager {
     const tenantId = (job.payload as { tenant_id?: string })?.tenant_id;
 
     try {
-      // Mark job as processing
-      await this.updateJobStatus(job.id, 'processing');
+      // A.1: Atomic optimistic-lock claim — only succeeds if job is still in expected state
+      const { data: claimed } = await this.supabase
+        .from('jobs')
+        .update({ status: 'processing', updated_at: new Date().toISOString() })
+        .eq('id', job.id)
+        .eq('status', job.status)
+        .select('id')
+        .single();
+
+      if (!claimed) {
+        // Another worker already claimed this job — skip silently
+        return { processed: false, error: false, dead_letter: false };
+      }
 
       // Get handler by job type
       const handler = this.handlers.get(job.type);
+      // C.1: Fail immediately for unknown types — no point burning retry slots
       if (!handler) {
-        throw new Error(`No handler registered for job type: ${job.type}`);
+        await this.updateJobStatus(job.id, 'failed', { last_error: `No handler for job type: ${job.type}` });
+        return { processed: false, error: true, dead_letter: true };
       }
 
       // Execute job with timeout
@@ -473,29 +495,66 @@ export class EnhancedJobManager {
    * Initialize built-in job handlers
    */
   private initializeBuiltinHandlers(): void {
-    // Payment retry handler
-    this.registerHandler('payment_retry', async (_payload, _context) => {
-      // Implementation would call PaymentService retry logic
-      return { success: true };
+    // payment_retry: re-check transaction status with the provider and update locally
+    this.registerHandler('payment_retry', async (payload, _context) => {
+      try {
+        const transactionId = payload.transaction_id as string;
+        const tenantId = payload.tenant_id as string;
+        if (!transactionId || !tenantId) {
+          return { success: false, error: 'payment_retry requires transaction_id and tenant_id', retry: false };
+        }
+        const PaymentService = (await import('./paymentService')).default;
+        const svc = new PaymentService(this.supabase);
+        const result = await svc.retryFailedTransaction(transactionId);
+        return result.success
+          ? { success: true }
+          : { success: false, error: result.error, retry: true };
+      } catch (error) {
+        return { success: false, error: (error as Error).message, retry: true };
+      }
     });
 
-    // Ledger reconciliation handler
-    this.registerHandler('ledger_reconcile', async (_payload, _context) => {
-      // Implementation would call PaymentService reconciliation
-      return { success: true };
+    // ledger_reconcile: mark pending transactions for a tenant as reconciled
+    this.registerHandler('ledger_reconcile', async (payload, _context) => {
+      try {
+        const tenantId = payload.tenant_id as string;
+        if (!tenantId) {
+          return { success: false, error: 'ledger_reconcile requires tenant_id', retry: false };
+        }
+        const { error } = await this.supabase
+          .from('transactions')
+          .update({ reconciliation_status: 'reconciled', updated_at: new Date().toISOString() })
+          .eq('tenant_id', tenantId)
+          .eq('reconciliation_status', 'pending');
+        if (error) throw new Error(error.message);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: (error as Error).message, retry: true };
+      }
     });
 
-    // Outbox dispatch handler
+    // outbox_dispatch: process pending events from the event_outbox table
     this.registerHandler('outbox_dispatch', async (_payload, _context) => {
-      // Implementation would call event bus dispatch
-      return { success: true };
+      try {
+        const { getEventBus } = await import('./eventbus/eventBus');
+        const bus = getEventBus() as unknown as { processPendingEvents?: () => Promise<void> };
+        await bus.processPendingEvents?.();
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: (error as Error).message, retry: true };
+      }
     });
 
     // Email notification handler
     this.registerHandler('email_notification', async (payload, _context) => {
       try {
-        // Mock email sending
-        console.log(`Sending email: ${payload.subject} to ${payload.to}`);
+        const { sendEmail } = await import('./integrations/email-service');
+        await sendEmail({
+          to: payload.to as string,
+          subject: payload.subject as string,
+          html: payload.html as string,
+          text: payload.text as string | undefined,
+        });
         return { success: true };
       } catch (error) {
         return { success: false, error: (error as Error).message, retry: true };
@@ -505,8 +564,28 @@ export class EnhancedJobManager {
     // Webhook delivery handler
     this.registerHandler('webhook_delivery', async (payload, _context) => {
       try {
-        // Mock webhook delivery
-        console.log(`Delivering webhook to ${payload.url}`);
+        const url = payload.url as string;
+        const data = payload.data ?? {};
+        const secret = payload.secret as string | undefined;
+
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+        if (secret) {
+          const { createHmac } = await import('crypto');
+          const body = JSON.stringify(data);
+          const sig = createHmac('sha256', secret).update(body).digest('hex');
+          headers['X-Webhook-Signature'] = `sha256=${sig}`;
+        }
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(data),
+        });
+
+        if (!response.ok) {
+          return { success: false, error: `HTTP ${response.status}`, retry: response.status >= 500 };
+        }
         return { success: true };
       } catch (error) {
         return { success: false, error: (error as Error).message, retry: true };
@@ -516,8 +595,29 @@ export class EnhancedJobManager {
     // Data cleanup handler
     this.registerHandler('data_cleanup', async (payload, _context) => {
       try {
-        // Mock data cleanup
-        console.log(`Cleaning up ${payload.table} data older than ${payload.days} days`);
+        const table = payload.table as string;
+        const ALLOWED_CLEANUP_TABLES = new Set([
+          'messages', 'webhook_events', 'audit_logs', 'dialog_sessions',
+        ]);
+        if (!ALLOWED_CLEANUP_TABLES.has(table)) {
+          defaultLogger.error('[jobs] data_cleanup: unauthorized table', { table });
+          return { success: false, error: `Unauthorized table: ${table}`, retry: false };
+        }
+        const days = (payload.days as number) ?? 90;
+        const tenantId = payload.tenant_id as string | undefined;
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let query = (this.supabase.from(table as any) as any)
+          .delete()
+          .lt('created_at', cutoff);
+
+        if (tenantId) {
+          query = query.eq('tenant_id', tenantId);
+        }
+
+        const { error } = await query;
+        if (error) throw new Error(error.message);
         return { success: true };
       } catch (error) {
         return { success: false, error: (error as Error).message, retry: false };
@@ -538,16 +638,29 @@ export class EnhancedJobManager {
           .single();
 
         if (fetchError || !message) {
-          console.error('Failed to fetch message:', fetchError);
+          defaultLogger.error('Failed to fetch message:', fetchError);
           return { success: false, error: 'Message not found', retry: false };
         }
 
         // Initialize dialog booking bridge
         await dialogBookingBridge.initialize();
 
-        // Get or create session for this conversation
-        const sessionId = `wa-${tenant_id}-${message.from_number}`;
-        let session = await dialogManager.getSession(sessionId);
+        // Look up the existing session by (tenant_id, phone) via dialog_sessions table.
+        // We must NOT fabricate an ID — sessions are created with uuidv4() and the fabricated
+        // string `wa-${tenant_id}-${phone}` never matches a stored UUID session.
+        let session = null;
+        const { data: existingSessionRow } = await this.supabase
+          .from('dialog_sessions')
+          .select('id')
+          .eq('tenant_id', tenant_id)
+          .eq('user_id', message.from_number)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (existingSessionRow?.id) {
+          session = await dialogManager.getSession(existingSessionRow.id);
+        }
 
         if (!session) {
           session = await dialogManager.startSession(tenant_id as string, message.from_number);
@@ -563,13 +676,40 @@ export class EnhancedJobManager {
 
         // Send response via Evolution client if we have one
         if (result.response) {
-          const { EvolutionClient } = await import('./evolutionClient');
-          const evolutionClient = EvolutionClient.getInstance();
-          await evolutionClient.sendMessage(tenant_id, message.from_number, result.response);
+          const { getTenantWhatsAppConfig } = await import('./whatsapp/evolutionClient');
+          const { getTenantWhatsAppProviderClient } = await import('./whatsapp/providers/providerSelection');
+          const waConfig = await getTenantWhatsAppConfig(tenant_id as string);
+          const client = await getTenantWhatsAppProviderClient(tenant_id as string);
+          if (!client) {
+            defaultLogger.info(`[JOBS] No WhatsApp config for tenant ${tenant_id}, skipping reply`);
+            return { success: true, result: { skipped: true } };
+          }
 
-          // Store outbound message
+          // Only reply if tenant has enabled the AI agent
+          if (!(waConfig as { agent_enabled?: boolean } | null | undefined)?.agent_enabled) {
+            defaultLogger.info(`[JOBS] Agent disabled for tenant ${tenant_id}, skipping reply`);
+            return { success: true, result: { skipped: true } };
+          }
+
+          // B.1: Propagate send failure so the job retries instead of silently dropping the reply
+          const sendResult = await client.sendTextMessage(message.from_number, result.response);
+          if (!sendResult.success) {
+            defaultLogger.error('[jobs] WhatsApp send failed, will retry', { message_id, tenant_id });
+            return { success: false, error: 'WhatsApp send failed', retry: true };
+          }
+
+          // Look up the chat for this conversation thread
+          const { data: chat } = await this.supabase
+            .from('chats')
+            .select('id')
+            .eq('tenant_id', tenant_id)
+            .eq('customer_phone', message.from_number)
+            .maybeSingle();
+
+          // Store outbound message only after confirmed send
           await this.supabase.from('messages').insert({
             tenant_id,
+            chat_id: chat?.id ?? null,
             from_number: message.to_number,
             to_number: message.from_number,
             content: result.response,
@@ -585,7 +725,76 @@ export class EnhancedJobManager {
 
         return { success: true, result: { response: result.response, completed: result.completed } };
       } catch (error) {
-        console.error('WhatsApp message processing error:', error);
+        defaultLogger.error('WhatsApp message processing error:', error);
+        return { success: false, error: (error as Error).message, retry: true };
+      }
+    });
+
+    // Lead follow-up: send WhatsApp follow-up message to captured leads
+    this.registerHandler('lead_followup', async (_payload, _context) => {
+      try {
+        const now = new Date().toISOString();
+
+        // Fetch leads due for follow-up
+        const { data: leads, error } = await this.supabase
+          .from('leads')
+          .select('id, tenant_id, name, phone')
+          .eq('status', 'new')
+          .lte('follow_up_at', now)
+          .limit(50);
+
+        if (error) throw new Error(error.message);
+        if (!leads || leads.length === 0) return { success: true, result: { sent: 0 } };
+
+        let sent = 0;
+        for (const lead of leads) {
+          try {
+            // Fetch tenant config for the message template
+            const { data: tenant } = await this.supabase
+              .from('tenants')
+              .select('metadata')
+              .eq('id', lead.tenant_id)
+              .maybeSingle();
+
+            const meta = (tenant?.metadata ?? {}) as Record<string, unknown>;
+            const template = (meta['follow_up_message_template'] as string | undefined)
+              ?? "Hi {name}, still thinking about booking? We'd love to help!";
+
+            const message = template.replace('{name}', lead.name ?? 'there');
+
+            // Send via configured WhatsApp provider
+            const { getTenantWhatsAppProviderClient } = await import('./whatsapp/providers/providerSelection');
+            const client = await getTenantWhatsAppProviderClient(lead.tenant_id);
+            if (client) {
+              const result = await client.sendTextMessage(lead.phone, message);
+              if (result.success) {
+                await this.supabase
+                  .from('leads')
+                  .update({ status: 'contacted', followed_up_at: now, last_contacted_at: now })
+                  .eq('id', lead.id);
+                await recordFrontDeskEvent({
+                  tenantId: lead.tenant_id,
+                  eventType: 'follow_up_sent',
+                  eventCategory: 'retention',
+                  channel: 'whatsapp',
+                  actorRole: 'system',
+                  correlationId: lead.id,
+                  metadata: {
+                    lead_id: lead.id,
+                    phone: lead.phone,
+                    source: 'jobs.lead_followup',
+                  },
+                });
+                sent++;
+              }
+            }
+          } catch (e) {
+            defaultLogger.warn('[jobs] lead_followup: failed for lead', { leadId: lead.id, error: (e as Error).message });
+          }
+        }
+
+        return { success: true, result: { sent } };
+      } catch (error) {
         return { success: false, error: (error as Error).message, retry: true };
       }
     });

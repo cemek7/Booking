@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 /**
  * Reviews API
  * 
@@ -25,7 +26,7 @@ export const POST = createHttpHandler(
     const validation = ReviewSubmissionSchema.safeParse(body);
 
     if (!validation.success) {
-      throw ApiErrorFactory.badRequest('Invalid review data', validation.error.errors);
+      throw ApiErrorFactory.validationError({ issues: validation.error.issues });
     }
 
     const reviewData = validation.data;
@@ -42,7 +43,7 @@ export const POST = createHttpHandler(
     }
 
     // Verify the reservation belongs to the authenticated user's tenant
-    if (reservation.tenant_id !== ctx.user.tenantId) {
+    if (reservation.tenant_id !== ctx.user?.tenantId) {
       throw ApiErrorFactory.forbidden('Cannot review bookings from other tenants');
     }
 
@@ -84,7 +85,7 @@ export const POST = createHttpHandler(
       .single();
 
     if (reviewError) {
-      throw ApiErrorFactory.internal('Failed to save review');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to save review'));
     }
 
     // Log analytics event
@@ -140,7 +141,7 @@ export const GET = createHttpHandler(
         users!reviews_staff_id_fkey(full_name),
         services(name)
       `)
-      .eq('tenant_id', ctx.user.tenantId)
+      .eq('tenant_id', ctx.user?.tenantId)
       .eq('status', 'published')
       .order('created_at', { ascending: false })
       .limit(limit);
@@ -156,7 +157,7 @@ export const GET = createHttpHandler(
     const { data: reviews, error } = await query;
 
     if (error) {
-      throw ApiErrorFactory.internal('Failed to fetch reviews');
+      throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reviews'));
     }
 
     return {

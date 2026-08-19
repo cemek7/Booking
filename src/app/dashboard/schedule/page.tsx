@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useRouter } from 'next/navigation';
 import { useTenant } from '@/lib/supabase/tenant-context';
 import { useEffect } from 'react';
@@ -16,21 +18,16 @@ export default function ScheduleRouter() {
 
   useEffect(() => {
     if (!role) {
-      console.log('[ScheduleRouter] No role found, redirecting to dashboard');
       router.push('/dashboard');
       return;
     }
 
     // Route based on role
     if (role === 'owner' || role === 'manager') {
-      const path = `/dashboard/${role}/schedule`;
-      console.log('[ScheduleRouter] Redirecting to:', path);
-      router.push(path);
+      router.push(`/dashboard/${role}/schedule`);
     } else if (role === 'staff') {
-      console.log('[ScheduleRouter] Redirecting staff to /schedule');
       router.push('/schedule');
     } else {
-      console.log('[ScheduleRouter] Unknown role:', role);
       router.push('/dashboard');
     }
   }, [role, router]);

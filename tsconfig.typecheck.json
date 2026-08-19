@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "include": [
+    "src/showcase/**/*.ts",
+    "src/showcase/**/*.tsx"
+  ],
+  "references": [
+    { "path": "./tsconfig.shared.json" },
+    { "path": "./tsconfig.ui.json" },
+    { "path": "./tsconfig.app.json" }
+  ]
+}

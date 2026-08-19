@@ -5,6 +5,7 @@
  * checker to provide comprehensive audit trails for all permission checks.
  */
 
+import { defaultLogger } from '@/lib/logger';
 import {
   UnifiedPermissionChecker,
   type UnifiedUser,
@@ -23,12 +24,13 @@ import {
   AuditLogger,
   initializeAuditLogger,
   getAuditLogger,
-  type AuditEvent
+  type AuditEvent,
+  type SecurityAnalytics
 } from './audit-logging';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
 import { Role } from './roles';
-import { assertRole } from './type-safe-rbac';
+import { assertRole } from './unified-permissions';
 
 // ============================================================================
 // AUDITED PERMISSION CHECKER
@@ -283,7 +285,7 @@ export async function auditedRequireAuth(request: NextRequest): Promise<UnifiedA
 export async function auditedRequirePermission(
   request: NextRequest,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return auditedUnifiedAuth(request, {
     requiredPermissions: [permission],
@@ -400,7 +402,7 @@ export async function generateTenantAuditReport(
     format?: 'json' | 'csv' | 'pdf';
   } = {}
 ): Promise<{
-  summary: any;
+  summary: Record<string, unknown>;
   details: AuditEvent[];
   exportUrl?: string;
 }> {
@@ -474,9 +476,9 @@ export async function generateTenantAuditReport(
 export async function getSecurityDashboard(tenantId: string): Promise<{
   alerts: AuditEvent[];
   metrics: {
-    last24Hours: any;
-    last7Days: any;
-    trends: any;
+    last24Hours: SecurityAnalytics['metrics'];
+    last7Days: SecurityAnalytics;
+    trends: SecurityAnalytics['trends'];
   };
   recommendations: string[];
 }> {
@@ -576,10 +578,9 @@ async function setupRealTimeAlerts(supabase: SupabaseClient): Promise<void> {
         filter: "security_level=eq.critical"
       },
       (payload) => {
-        console.warn('🚨 CRITICAL SECURITY EVENT:', payload.new);
+        defaultLogger.warn('🚨 CRITICAL SECURITY EVENT:', payload.new);
         // Additional alert logic here (email, Slack, etc.)
       }
     )
     .subscribe();
 }
-

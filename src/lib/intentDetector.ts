@@ -1,4 +1,10 @@
+import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { recordLLMUsage, canMakeLLMRequest } from '@/lib/llmUsageTracker';
+import { isGoogleAIConfigured, getGoogleAIModel } from '@/lib/google-ai';
+import { getAIProvider } from '@/lib/ai/providers';
+import { getCloudflareAIModel, isCloudflareAIConfigured } from '@/lib/cloudflare-ai';
+import { estimatePromptTokens, withTenantWalletSpend } from './billing/ai-wallet';
 
 export type IntentType = 'booking' | 'reschedule' | 'cancel' | 'inquiry' | 'business_info' | 'product_inquiry' | 'payment' | 'status' | 'unknown';
 
@@ -28,7 +34,55 @@ export type ContextualHints = {
   conversationTurn: number;
   tenantVertical?: 'beauty' | 'hospitality' | 'medicine';
   timeOfDay: 'morning' | 'afternoon' | 'evening' | 'night';
+  services?: Array<{ name: string }>;
 };
+
+type ContextAnalysis = {
+  hasTimeReference: boolean;
+  hasServiceMention: boolean;
+  hasStaffPreference: boolean;
+  isUrgent: boolean;
+  sentiment: 'positive' | 'neutral' | 'negative';
+};
+
+type IntentProvider = 'cloudflare' | 'openrouter' | 'google_ai' | 'auto';
+type TrackedIntentProvider = Exclude<IntentProvider, 'auto'>;
+
+function getIntentProviderConfig(): {
+  mode: string;
+  walletProvider: IntentProvider;
+  model: string;
+  openRouterModel: string;
+  openRouterFallbackModels: string[];
+  cloudflareModel: string;
+  disableGoogle: boolean;
+} {
+  // Intent classification must use the same provider policy as the v2 reply
+  // pipeline. The former direct OpenRouter helper could silently choose Google
+  // whenever a Google key happened to exist, even when WhatsApp was configured
+  // to use OpenRouter or Cloudflare.
+  const mode = (process.env.WHATSAPP_V2_AI_PROVIDER || 'auto').toLowerCase();
+  const disableGoogle = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
+  const openRouterModel = process.env.OPENROUTER_DEFAULT_MODEL || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+  const cloudflareModel = process.env.CLOUDFLARE_AI_DEFAULT_MODEL || getCloudflareAIModel();
+  const openRouterFallbackModels = (process.env.OPENROUTER_V2_FALLBACK_MODELS || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+
+  if (mode === 'cloudflare') return { mode, walletProvider: 'cloudflare', model: cloudflareModel, openRouterModel, openRouterFallbackModels, cloudflareModel, disableGoogle };
+  if (mode === 'openrouter') return { mode, walletProvider: 'openrouter', model: openRouterModel, openRouterModel, openRouterFallbackModels, cloudflareModel, disableGoogle };
+  if (mode === 'google') return { mode, walletProvider: 'google_ai', model: getGoogleAIModel(), openRouterModel, openRouterFallbackModels, cloudflareModel, disableGoogle };
+  return {
+    mode: 'auto',
+    walletProvider: 'auto',
+    model: isCloudflareAIConfigured() ? cloudflareModel : (isGoogleAIConfigured() ? getGoogleAIModel() : openRouterModel),
+    openRouterModel,
+    openRouterFallbackModels,
+    cloudflareModel,
+    disableGoogle,
+  };
+}
 
 /**
  * Enhanced intent detector with confidence scoring, entity extraction, and context awareness.
@@ -44,18 +98,29 @@ export async function detectIntent(
   const t = (text || '').trim();
   
   // Extract entities first for context
-  const entities = extractEntities(t);
+  const entities = extractEntities(t, context);
   const contextInfo = analyzeContext(t, entities, context);
-
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const base = process.env.OPENROUTER_BASE_URL || 'https://api.openrouter.ai';
 
   // Check LLM quota before making request
   const canUseLLM = tenantId ? await canMakeLLMRequest(tenantId, 150) : true;
 
-  if (openrouterKey && canUseLLM) {
+  if (tenantId && !canUseLLM) {
+    defaultLogger.warn('intentDetector: LLM quota exceeded or disabled, falling back to heuristics', { tenantId });
+  }
+
+  const providerConfig = getIntentProviderConfig();
+  const hasLLMProvider =
+    (providerConfig.mode !== 'cloudflare' || isCloudflareAIConfigured()) &&
+    (providerConfig.mode !== 'openrouter' || !!process.env.OPENROUTER_API_KEY) &&
+    (providerConfig.mode !== 'google' || isGoogleAIConfigured()) &&
+    (isCloudflareAIConfigured() || !!process.env.OPENROUTER_API_KEY || (!providerConfig.disableGoogle && isGoogleAIConfigured()));
+  if (hasLLMProvider && canUseLLM) {
     try {
+      const supabase = createSupabaseAdminClient();
       // Enhanced system prompt for better classification
+      const servicesHint = context?.services?.length
+        ? `\nKnown services for this business: ${context.services.map((s) => s.name).join(', ')}.`
+        : '';
       const system = `You are an advanced booking intent classifier. Analyze the message and return JSON with:
 - intent: booking|reschedule|cancel|inquiry|business_info|product_inquiry|payment|status|unknown
   - booking: user wants to make an appointment
@@ -69,91 +134,101 @@ export async function detectIntent(
 - confidence: 0-1 number (be conservative, use context)
 - entities: array of {type, value, confidence} objects for time, date, service, staff, phone, email, name
 - context: {hasTimeReference, hasServiceMention, hasStaffPreference, isUrgent, sentiment}
-Only return valid JSON.`;
+Only return valid JSON.${servicesHint}`;
       
       const contextPrompt = context ? `\nContext: ${context.tenantVertical || 'general'} business, conversation turn ${context.conversationTurn || 1}, ${context.timeOfDay || 'unknown'} time` : '';
       const user = `Message: "${t.replace(/\"/g, '\\"')}"${contextPrompt}`;
 
-      const resp = await fetch(`${base}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${openrouterKey}`
+      const { json: j } = await withTenantWalletSpend(
+        supabase,
+        tenantId ?? null,
+        {
+          estimatedTokens: estimatePromptTokens(system.length + user.length),
+          provider: providerConfig.walletProvider,
+          model: providerConfig.model,
+          requestId: `intent:${tenantId ?? 'anonymous'}:${Date.now()}`,
+          description: 'Intent detection',
+          metadata: {
+            operation: 'intent_detection',
+            text_length: t.length,
+            entities_found: entities.length,
+            context_provided: !!context,
+          },
         },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user }
-          ],
-          max_tokens: 200,
-          temperature: 0.0
+        () => getAIProvider({
+          mode: providerConfig.mode,
+          openRouterModel: providerConfig.openRouterModel,
+          openRouterFallbackModels: openRouterFallbackModels(providerConfig.openRouterFallbackModels),
+          cloudflareModel: providerConfig.cloudflareModel,
+          disableGoogle: providerConfig.disableGoogle,
+        }).complete({
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          model: providerConfig.model,
         })
-      });
+      );
+      // Providers return an OpenAI-compatible response body. Keep this narrow
+      // because wallet accounting deliberately treats provider payloads as
+      // opaque unknown values.
+      const responseJson = j as {
+        choices?: Array<{ message?: { content?: string }; text?: string }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      const assistant = responseJson.choices?.[0]?.message?.content || responseJson.choices?.[0]?.text || null;
 
-      if (resp.ok) {
-        const j = await resp.json();
-        // Attempt to find assistant message
-        const assistant = j?.choices?.[0]?.message?.content || j?.choices?.[0]?.text || null;
-        
-        // Track LLM usage
-        if (tenantId && userId) {
-          const usage = j?.usage;
-          const inputTokens = usage?.prompt_tokens || 100; // Estimate if not provided
-          const outputTokens = usage?.completion_tokens || 50;
-          const totalTokens = usage?.total_tokens || inputTokens + outputTokens;
-          const costUsd = (totalTokens * 0.0001); // Rough estimate for gpt-4o-mini
-          
-          try {
-            await recordLLMUsage(
-              tenantId,
-              userId,
-              'openrouter',
-              'gpt-4o-mini',
-              'intent_detection',
-              inputTokens,
-              outputTokens,
-              costUsd,
-              {
-                text_length: t.length,
-                entities_found: entities.length,
-                context_provided: !!context
-              }
-            );
-          } catch (trackingError) {
-            console.warn('Failed to track LLM usage:', trackingError);
-          }
-        }
-        
-        if (assistant) {
-          // Extract JSON from the response (robustly)
-          const m = assistant.match(/\{[\s\S]*\}/);
-          if (m) {
-            try {
-              const parsed = JSON.parse(m[0]);
-              const intent = parsed.intent || 'unknown';
-              const confidence = Math.min(Number(parsed.confidence) || 0.5, 0.95); // Cap LLM confidence
-              const entities = Array.isArray(parsed.entities) ? parsed.entities : extractEntities(t);
-              const contextData = parsed.context || contextInfo;
-              
-              return { 
-                intent, 
-                confidence, 
-                entities,
-                context: contextData,
-                fallbackUsed: false 
-              } as Intent;
-            } catch (e) {
-              console.warn('OpenRouter JSON parse failed', e);
-              // fall through to heuristics
+      // Track LLM usage
+      if (tenantId && userId) {
+        const usage = responseJson.usage;
+        const inputTokens = usage?.prompt_tokens || 100;
+        const outputTokens = usage?.completion_tokens || 50;
+        const costUsd = 0; // Free model — no cost
+
+        try {
+          await recordLLMUsage(
+            tenantId,
+            userId,
+            providerForUsage(providerConfig),
+            providerConfig.model,
+            'intent_detection',
+            inputTokens,
+            outputTokens,
+            costUsd,
+            {
+              text_length: t.length,
+              entities_found: entities.length,
+              context_provided: !!context
             }
+          );
+        } catch (trackingError) {
+          defaultLogger.warn('Failed to track LLM usage:', trackingError);
+        }
+      }
+
+      if (assistant) {
+        // Extract JSON from the response (robustly)
+        const m = assistant.match(/\{[\s\S]*\}/);
+        if (m) {
+          try {
+            const parsed = JSON.parse(m[0]);
+            const intent = parsed.intent || 'unknown';
+            const confidence = Math.min(Number(parsed.confidence) || 0.5, 0.95); // Cap LLM confidence
+            const entities = Array.isArray(parsed.entities) ? parsed.entities : extractEntities(t, context);
+            const contextData = parsed.context || contextInfo;
+
+            return {
+              intent,
+              confidence,
+              entities,
+              context: contextData,
+              fallbackUsed: false
+            } as Intent;
+          } catch (e) {
+            defaultLogger.warn('LLM JSON parse failed', e);
+            // fall through to heuristics
           }
         }
-      } else {
-        console.warn('OpenRouter responded with status', resp.status);
       }
     } catch (err) {
-      console.warn('OpenRouter intent detection failed', err);
+      defaultLogger.warn('AI provider intent detection failed', err);
     }
   }
 
@@ -161,10 +236,23 @@ Only return valid JSON.`;
   return enhancedHeuristics(t, entities, contextInfo, context);
 }
 
+function openRouterFallbackModels(configured: string[]): string[] {
+  return [process.env.OPENROUTER_FALLBACK_MODEL || '', ...configured]
+    .map((model) => model.trim())
+    .filter(Boolean);
+}
+
+function providerForUsage(config: ReturnType<typeof getIntentProviderConfig>): TrackedIntentProvider {
+  if (config.walletProvider !== 'auto') return config.walletProvider;
+  if (isCloudflareAIConfigured()) return 'cloudflare';
+  if (process.env.OPENROUTER_API_KEY) return 'openrouter';
+  return 'google_ai';
+}
+
 /**
  * Extract entities from text using pattern matching
  */
-function extractEntities(text: string): ExtractedEntity[] {
+function extractEntities(text: string, hints?: ContextualHints): ExtractedEntity[] {
   const entities: ExtractedEntity[] = [];
   const low = text.toLowerCase();
   
@@ -218,15 +306,32 @@ function extractEntities(text: string): ExtractedEntity[] {
     });
   }
   
-  // Service patterns (basic)
-  const serviceKeywords = /\b(haircut|massage|facial|manicure|pedicure|consultation|check[-\s]?up|appointment|booking|reservation)\b/gi;
-  const serviceMatches = text.match(serviceKeywords);
+  // Service patterns — dynamic from hints + fallback generic terms
+  const dynamicServiceNames = hints?.services?.map((s) =>
+    s.name.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
+  ).filter(Boolean) ?? [];
+
+  const allServiceTerms = [
+    ...dynamicServiceNames,
+    'haircut', 'massage', 'facial', 'manicure', 'pedicure',
+    'consultation', 'check-up', 'check up',
+  ];
+
+  // Escape regex metacharacters in service names before building the pattern
+  function escapeRegex(s: string) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  const servicePattern = new RegExp(
+    `\\b(${allServiceTerms.map((t) => escapeRegex(t).replace(/\s+/g, '\\s+')).join('|')})\\b`, 'gi'
+  );
+  const serviceMatches = text.match(servicePattern);
   if (serviceMatches) {
     serviceMatches.forEach(match => {
       entities.push({
         type: 'service',
         value: match.trim(),
-        confidence: 0.6
+        confidence: dynamicServiceNames.some((n) => n === match.toLowerCase().trim()) ? 0.85 : 0.6
       });
     });
   }
@@ -237,7 +342,7 @@ function extractEntities(text: string): ExtractedEntity[] {
 /**
  * Analyze context from text and entities
  */
-function analyzeContext(text: string, entities: ExtractedEntity[], hints?: ContextualHints): any {
+function analyzeContext(text: string, entities: ExtractedEntity[], hints?: ContextualHints): ContextAnalysis {
   const low = text.toLowerCase();
   
   return {
@@ -267,7 +372,7 @@ function detectSentiment(text: string): 'positive' | 'neutral' | 'negative' {
 function enhancedHeuristics(
   text: string, 
   entities: ExtractedEntity[], 
-  contextInfo: any, 
+  contextInfo: ContextAnalysis, 
   hints?: ContextualHints
 ): Intent {
   const low = text.toLowerCase();

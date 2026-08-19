@@ -10,7 +10,7 @@ export default function StaffSelect({ value, onChange }: { value: string; onChan
       if (!tenant?.id) return [];
       const response = await authFetch(`/api/tenants/${tenant.id}/staff`, { tenantId: tenant.id });
       if (response.error) throw new Error('Failed to load staff');
-      return response.data || [];
+      return (response.data as Array<{ user_id?: string; id?: string; name?: string; email?: string }>) || [];
     },
     enabled: !!tenant?.id
   });
@@ -20,7 +20,7 @@ export default function StaffSelect({ value, onChange }: { value: string; onChan
   return (
     <select value={value} onChange={e => onChange(e.target.value)} className="w-full border rounded px-3 py-2">
       <option value="">Unassigned</option>
-      {staffList.map((s: any) => (
+      {staffList.map((s) => (
         <option key={s.user_id || s.id} value={s.user_id || s.id}>{s.name || s.email || s.user_id || s.id}</option>
       ))}
     </select>

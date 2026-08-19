@@ -1,7 +1,23 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { generateCalendarLinks, bookingToCalendarEvent } from '@/lib/integrations/universalCalendar';
 import { z } from 'zod';
+
+// Supabase infers relational joins (tenant/staff/service) as arrays, but with
+// `.single()` on a to-one relation they are singular objects. This describes the
+// actual runtime shape used to build the calendar event.
+interface CalendarBookingRow {
+  id: string;
+  start_at: string;
+  end_at: string;
+  notes?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  tenant?: { business_name?: string | null; contact_email?: string | null } | null;
+  staff?: { name?: string | null; email?: string | null } | null;
+  service?: { name?: string | null; duration_minutes?: number | null } | null;
+}
 
 const CustomEventSchema = z.object({
   title: z.string(),
@@ -28,11 +44,7 @@ const RequestBodySchema = z.object({
  */
 export const POST = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const body = await ctx.request.json();
     const validation = RequestBodySchema.safeParse(body);
@@ -75,23 +87,24 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.notFound('Booking not found or access denied');
       }
 
+      const b = booking as unknown as CalendarBookingRow;
       calendarEvent = bookingToCalendarEvent({
-        id: booking.id,
-        service_name: booking.service?.name || 'Appointment',
-        appointment_date: booking.start_at.split('T')[0],
-        appointment_time: booking.start_at.split('T')[1]?.substring(0, 5) || '00:00',
-        duration_minutes: booking.service?.duration_minutes ||
-          Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000),
-        customer_name: booking.customer_name,
-        customer_email: booking.customer_email,
-        staff_name: booking.staff?.name,
-        staff_email: booking.staff?.email,
-        notes: booking.notes,
+        id: b.id,
+        service_name: b.service?.name || 'Appointment',
+        appointment_date: b.start_at.split('T')[0],
+        appointment_time: b.start_at.split('T')[1]?.substring(0, 5) || '00:00',
+        duration_minutes: b.service?.duration_minutes ||
+          Math.round((new Date(b.end_at).getTime() - new Date(b.start_at).getTime()) / 60000),
+        customer_name: b.customer_name,
+        customer_email: b.customer_email,
+        staff_name: b.staff?.name,
+        staff_email: b.staff?.email,
+        notes: b.notes,
         tenant: {
-          business_name: booking.tenant.business_name,
-          contact_email: booking.tenant.contact_email,
+          business_name: b.tenant?.business_name,
+          contact_email: b.tenant?.contact_email,
         },
-      });
+      } as Parameters<typeof bookingToCalendarEvent>[0]);
     } else if (customEvent) {
       calendarEvent = {
         title: customEvent.title,
@@ -125,11 +138,7 @@ export const POST = createHttpHandler(
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
-    
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
-    }
+    const tenantId = getVerifiedTenantId(ctx);
 
     const bookingId = ctx.request.nextUrl.searchParams.get('bookingId');
 
@@ -167,23 +176,24 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.notFound('Booking not found or access denied');
     }
 
+    const b = booking as unknown as CalendarBookingRow;
     const calendarEvent = bookingToCalendarEvent({
-      id: booking.id,
-      service_name: booking.service?.name || 'Appointment',
-      appointment_date: booking.start_at.split('T')[0],
-      appointment_time: booking.start_at.split('T')[1]?.substring(0, 5) || '00:00',
-      duration_minutes: booking.service?.duration_minutes ||
-        Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000),
-      customer_name: booking.customer_name,
-      customer_email: booking.customer_email,
-      staff_name: booking.staff?.name,
-      staff_email: booking.staff?.email,
-      notes: booking.notes,
+      id: b.id,
+      service_name: b.service?.name || 'Appointment',
+      appointment_date: b.start_at.split('T')[0],
+      appointment_time: b.start_at.split('T')[1]?.substring(0, 5) || '00:00',
+      duration_minutes: b.service?.duration_minutes ||
+        Math.round((new Date(b.end_at).getTime() - new Date(b.start_at).getTime()) / 60000),
+      customer_name: b.customer_name,
+      customer_email: b.customer_email,
+      staff_name: b.staff?.name,
+      staff_email: b.staff?.email,
+      notes: b.notes,
       tenant: {
-        business_name: booking.tenant.business_name,
-        contact_email: booking.tenant.contact_email,
+        business_name: b.tenant?.business_name,
+        contact_email: b.tenant?.contact_email,
       },
-    });
+    } as Parameters<typeof bookingToCalendarEvent>[0]);
 
     const calendarLinks = generateCalendarLinks(calendarEvent);
 

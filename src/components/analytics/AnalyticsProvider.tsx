@@ -1,0 +1,103 @@
+// src/components/analytics/AnalyticsProvider.tsx
+'use client';
+
+import React, { Suspense, useEffect, useState } from 'react';
+import posthog from 'posthog-js';
+import { PostHogProvider } from 'posthog-js/react';
+import { hasAnalyticsConsent, onConsentChange } from '@/lib/consent/consentStore';
+import { AnalyticsReadyProvider } from './AnalyticsReadyContext';
+import PostHogPageview from './PostHogPageview';
+
+type AnalyticsProviderProps = {
+  children: React.ReactNode;
+  posthogKey?: string;
+  posthogHost?: string;
+};
+
+export default function AnalyticsProvider({
+  children,
+  posthogKey,
+  posthogHost,
+}: AnalyticsProviderProps) {
+  const [resolvedConfig, setResolvedConfig] = useState<{
+    posthogKey?: string;
+    posthogHost?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetch('/api/client-config', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{
+          posthogKey?: string | null;
+          posthogHost?: string | null;
+        }>;
+      })
+      .then((config) => {
+        if (cancelled) return;
+        if (!config?.posthogKey) {
+          setResolvedConfig({
+            posthogKey,
+            posthogHost,
+          });
+          return;
+        }
+        setResolvedConfig({
+          posthogKey: config.posthogKey,
+          posthogHost: config.posthogHost || 'https://us.i.posthog.com',
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Fall back to the layout-provided values when runtime config fetch fails.
+        setResolvedConfig({
+          posthogKey,
+          posthogHost,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [posthogHost, posthogKey]);
+
+  useEffect(() => {
+    if (!resolvedConfig?.posthogKey) return; // analytics disabled when unconfigured (dev/test)
+
+    posthog.init(resolvedConfig.posthogKey, {
+      api_host: resolvedConfig.posthogHost || 'https://us.i.posthog.com',
+      defaults: '2026-05-30',
+      opt_out_capturing_by_default: true,
+      capture_pageview: false,
+      persistence: 'localStorage+cookie',
+      // Session replay must never leak PII: mask all text + inputs in the
+      // browser before anything is sent. Replay still only runs after consent
+      // (opt_out_capturing_by_default), so this is defence-in-depth.
+      session_recording: {
+        maskAllInputs: true,
+        maskTextSelector: '*',
+      },
+    });
+
+    const sync = () => {
+      if (hasAnalyticsConsent()) posthog.opt_in_capturing();
+      else posthog.opt_out_capturing();
+    };
+    sync();
+    return onConsentChange(sync);
+  }, [resolvedConfig]);
+
+  return (
+    <PostHogProvider client={posthog}>
+      <AnalyticsReadyProvider ready={Boolean(resolvedConfig?.posthogKey)}>
+        {/* useSearchParams requires a Suspense boundary in the App Router. */}
+        <Suspense fallback={null}>
+          {resolvedConfig?.posthogKey ? <PostHogPageview /> : null}
+        </Suspense>
+        {children}
+      </AnalyticsReadyProvider>
+    </PostHogProvider>
+  );
+}

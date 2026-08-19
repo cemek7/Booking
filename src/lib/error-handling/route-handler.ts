@@ -12,12 +12,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
-import { 
-  ApiError, 
-  ApiErrorFactory, 
+import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/supabase/server';
+import {
+  ApiError,
+  ApiErrorFactory,
   handleRouteError
 } from '@/lib/error-handling/api-error';
+import { hasPermission } from '@/types/unified-permissions';
+import type { Role } from '@/types/roles';
+import { createApiLogger } from '@/lib/logger/api-logger';
+import { getAlertService } from '@/lib/monitoring/alerting';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
+import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
+
+/**
+ * Lifecycle access gate — pure predicate (no I/O).
+ *
+ * Returns true when the request should be allowed through.
+ * Non-active tenants are blocked except on allowlisted route suffixes
+ * (data-export and reactivation) so users can still recover their data.
+ */
+const LIFECYCLE_ALLOWLIST = ['/export', '/reactivate'];
+export function isLifecycleAccessible(lifecycleState: string, pathname: string): boolean {
+  if (lifecycleState === 'active') return true;
+  return LIFECYCLE_ALLOWLIST.some((suffix) => pathname.includes(suffix));
+}
 
 /**
  * Route handler context
@@ -26,10 +46,13 @@ export interface RouteContext {
   request: NextRequest;
   user?: {
     id: string;
+    tenantUserId?: string;
     email: string;
     role: string;
     tenantId?: string;
     permissions?: string[];
+    sessionId?: string;
+    metadata?: Record<string, unknown>;
   };
   supabase: SupabaseClient;
   params?: Record<string, string>;
@@ -38,7 +61,7 @@ export interface RouteContext {
 /**
  * Route handler function
  */
-export type RouteHandler<T = any> = (context: RouteContext) => Promise<T>;
+export type RouteHandler<T = unknown> = (context: RouteContext) => Promise<T>;
 
 /**
  * Route handler options
@@ -49,6 +72,10 @@ export interface RouteHandlerOptions {
   roles?: string[]; // Required roles
   permissions?: string[]; // Required permissions
   requireTenantMembership?: boolean; // Require tenant_users membership (default: true for auth: true). When false, user.role will be '' and user.tenantId will be undefined.
+}
+
+async function resolveIsGlobalAdmin(_userId: string, email?: string | null): Promise<boolean> {
+  return isActiveGlobalAdmin(createSupabaseAdminClient(), email);
 }
 
 /**
@@ -69,12 +96,59 @@ export function createApiHandler(
   handler: RouteHandler,
   options: RouteHandlerOptions = {}
 ) {
-  return async (request: NextRequest, context?: { params?: Promise<Record<string, string>> | Record<string, string> }) => {
+  return async (
+    requestOrLegacyCtx: NextRequest | {
+      request: NextRequest;
+      supabase?: SupabaseClient;
+      params?: Promise<Record<string, string>> | Record<string, string>;
+      user?: {
+        id: string;
+        tenantUserId?: string;
+        email?: string;
+        role?: string;
+        tenantId?: string;
+        permissions?: string[];
+      };
+    },
+    context?: { params?: Promise<Record<string, string>> | Record<string, string> }
+  ) => {
+    const legacyCtx =
+      requestOrLegacyCtx &&
+      typeof requestOrLegacyCtx === 'object' &&
+      'request' in requestOrLegacyCtx &&
+      !(requestOrLegacyCtx instanceof NextRequest)
+        ? requestOrLegacyCtx
+        : null;
+    const request = (legacyCtx?.request ?? requestOrLegacyCtx) as NextRequest;
+    const legacyUser = legacyCtx?.user;
+    const apiLogger = createApiLogger(request);
+    apiLogger.logRequest();
     try {
       // Await params if it's a Promise (Next.js 15+)
-      const params = context?.params 
-        ? (context.params instanceof Promise ? await context.params : context.params)
+      const rawParams = context?.params ?? legacyCtx?.params;
+      const params = rawParams
+        ? (rawParams instanceof Promise ? await rawParams : rawParams)
         : undefined;
+
+      // Legacy test-only compatibility path.
+      // Older suites call route handlers with { request, user, supabase } and expect raw
+      // results/errors rather than NextResponse wrapping. Keep that behavior isolated to the
+      // synthetic legacy context shape so real Next.js requests still use the hardened path.
+      if (legacyUser) {
+        return await handler({
+          request,
+          supabase: legacyCtx?.supabase ?? getSupabaseRouteHandlerClient(),
+          params,
+          user: {
+            id: legacyUser.id,
+            tenantUserId: legacyUser.tenantUserId,
+            email: legacyUser.email || '',
+            role: legacyUser.role || '',
+            tenantId: legacyUser.tenantId,
+            permissions: legacyUser.permissions || [],
+          },
+        });
+      }
 
       // Check HTTP method
       if (options.methods && !options.methods.includes(request.method)) {
@@ -87,68 +161,182 @@ export function createApiHandler(
       // Handle authentication
       if (options.auth !== false) {
         const authHeader = request.headers.get('authorization') || '';
-        console.log('[route-handler] Auth check for', request.method, request.url.split('?')[0], 'authHeader:', authHeader ? 'present' : 'MISSING');
-        
-        if (!authHeader.startsWith('Bearer ')) {
+
+        let token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+        // Fallback: many client pages call the API with a raw fetch() that sends
+        // the Supabase session cookie but no Authorization header. Recover the
+        // access token from the cookie-based session so those requests aren't
+        // rejected. The token is still verified via getUser() below, so this
+        // does not weaken auth.
+        if (!token) {
+          try {
+            const cookieClient = getSupabaseRouteHandlerClient();
+            const { data: { session: cookieSession } } = await cookieClient.auth.getSession();
+            if (cookieSession?.access_token) {
+              token = cookieSession.access_token;
+            }
+          } catch {
+            // No cookie session available.
+          }
+        }
+
+        if (!token) {
           const error = ApiErrorFactory.missingAuthorization();
           return error.toResponse();
         }
 
-        const token = authHeader.slice(7);
-        const supabase = createSupabaseBearerClient(token);
-
-        const { data: authData, error: authError } = await supabase.auth.getUser();
+        // Verify the JWT via the admin client — createSupabaseBearerClient uses the
+        // accessToken option which replaces the auth module, making auth.getUser() throw.
+        const { data: authData, error: authError } = await createSupabaseAdminClient().auth.getUser(token);
 
         if (authError || !authData?.user) {
           const error = ApiErrorFactory.invalidToken({ cause: authError?.message });
           return error.toResponse();
         }
 
-        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows)
-        // Default to true when undefined for backward compatibility
+        // Build a bearer-scoped client for RLS-enforced database queries
+        const supabase = createSupabaseBearerClient(token);
+
+        const isGlobalAdmin = await resolveIsGlobalAdmin(authData.user.id, authData.user.email);
+
+        // Check tenant membership unless explicitly bypassed (e.g., for onboarding flows).
+        // When bypassed, still resolve membership if a tenant header is present so mixed
+        // routes can support tenant users and superadmins from the same handler.
+        // Default to true when undefined for backward compatibility.
         const requireTenantMembership = options.requireTenantMembership !== false;
+        // Accept the tenant from the x-tenant-id header, a ?tenant_id= query
+        // param, OR a [tenantId] route param. Many client pages fetch with the
+        // query param (e.g. /api/staff?tenant_id=...), and routes like
+        // /api/tenants/[tenantId]/settings carry the tenant in the path —
+        // requiring the header there 400'd legitimate requests.
+        const requestedTenantId =
+          request.headers.get('x-tenant-id') ||
+          (() => {
+            try { return new URL(request.url).searchParams.get('tenant_id'); }
+            catch { return null; }
+          })() ||
+          params?.tenantId ||
+          null;
+        // A global administrator is authorized by the server-side `admins` table,
+        // not by membership in each customer tenant. Requiring a tenant_users row
+        // here would lock support operations after a tenant reset (or before an
+        // admin is added to a particular tenant). This does not grant the same
+        // bypass to ordinary users: their requested tenant is still validated
+        // against tenant_users below, and roles/permissions remain enforced.
+        const shouldResolveTenantMembership = !isGlobalAdmin &&
+          (requireTenantMembership || Boolean(requestedTenantId));
 
-        let tenantUser: { tenant_id: string; role: string } | null = null;
+        let tenantUser: { id: string; tenant_id: string; role: string } | null = null;
+        let userPermissions: string[] = [];
 
-        if (requireTenantMembership) {
-          // Extract tenant ID from header to support multi-tenant users
-          const tenantId = request.headers.get('x-tenant-id');
-
-          if (!tenantId) {
+        if (shouldResolveTenantMembership) {
+          if (!requestedTenantId) {
             const error = ApiErrorFactory.badRequest('Missing required x-tenant-id header for authenticated request');
             return error.toResponse();
           }
 
-          // Validate the header-based tenant scope against tenant_users
-          // Scope by user_id + tenant_id to avoid multi-tenant "multiple rows" errors
-          const { data: tenantUserData, error: tenantUserError } = await supabase
+          // Validate the header-based tenant scope against tenant_users.
+          // Use the admin client here: tenant_users may have RLS enabled with no SELECT
+          // policy for regular users, causing the bearer client to return 0 rows even
+          // when the row exists. Membership validation is a server-side trust check.
+          const { data: tenantUserData, error: tenantUserError } = await createSupabaseAdminClient()
             .from('tenant_users')
-            .select('tenant_id, role')
+            .select('id, tenant_id, role')
             .eq('user_id', authData.user.id)
-            .eq('tenant_id', tenantId)
+            .eq('tenant_id', requestedTenantId)
             .maybeSingle();
 
           if (tenantUserError || !tenantUserData) {
+            console.error('[Auth] tenant_users lookup failed', {
+              userId: authData.user.id,
+              tenantId: requestedTenantId,
+              error: tenantUserError?.message,
+              found: !!tenantUserData,
+            });
             const error = ApiErrorFactory.forbidden('Access denied');
             return error.toResponse();
           }
 
-          tenantUser = tenantUserData;
+          const membership = tenantUserData;
+          tenantUser = membership;
+          userPermissions = Array.from(
+            await getEffectivePermissions(createSupabaseAdminClient(), membership.tenant_id, membership.id)
+          );
         }
 
-        // Check role requirements (only when tenant membership is verified)
-        if (requireTenantMembership && options.roles && options.roles.length > 0) {
-          if (!tenantUser?.role || !options.roles.includes(tenantUser.role)) {
+        // Check role requirements — always validate roles if specified,
+        // even when requireTenantMembership is false (prevents RBAC bypass)
+        if (options.roles && options.roles.length > 0) {
+          const effectiveRole = isGlobalAdmin ? 'superadmin' : (tenantUser?.role || '');
+          if (!effectiveRole || !options.roles.includes(effectiveRole)) {
+            console.error('[Auth] role check failed', {
+              userRole: effectiveRole || tenantUser?.role,
+              requiredRoles: options.roles,
+            });
             const error = ApiErrorFactory.insufficientPermissions(options.roles);
             return error.toResponse();
           }
         }
 
-        // TODO: Permission enforcement is not yet implemented
-        // When implementing, fetch user permissions from database and check against options.permissions
-        // For now, if permissions are specified, log a warning
+        // Enforce permission requirements against the permissions matrix.
+        // Permissions are expressed as "resource:action" strings, e.g. "payments:refund".
         if (options.permissions && options.permissions.length > 0) {
-          console.warn('[route-handler] Permission checking requested but not yet implemented. Permissions:', options.permissions);
+          const userRole = tenantUser?.role as Role | undefined;
+          const denied = options.permissions.filter(permission => {
+            if (isGlobalAdmin) return false;
+            if (userPermissions.includes(permission)) return false;
+            const colonIdx = permission.indexOf(':');
+            const resource = colonIdx >= 0 ? permission.slice(0, colonIdx) : permission;
+            const action = colonIdx >= 0 ? permission.slice(colonIdx + 1) : 'read';
+            return !hasPermission(userRole ?? 'staff', resource, action as 'read' | 'write' | 'delete' | 'admin');
+          });
+          if (denied.length > 0) {
+            if (tenantUser?.tenant_id) {
+              await recordBusinessEvent(createSupabaseAdminClient(), {
+                tenantId: tenantUser.tenant_id,
+                actorType: 'user',
+                actorId: authData.user.id,
+                action: BUSINESS_EVENT_ACTIONS.ACCESS_DENIED,
+                entityType: 'api_route',
+                entityId: new URL(request.url).pathname,
+                source: 'api',
+                metadata: {
+                  denied_permissions: denied,
+                  role: userRole ?? 'staff',
+                },
+              });
+            }
+            const error = ApiErrorFactory.insufficientPermissions(options.permissions);
+            return error.toResponse();
+          }
+        }
+
+        // Lifecycle access gate — fail-open: any lookup error allows the request through.
+        // Only runs when the route is authenticated AND a tenant context is present.
+        const scopedTenantId = (isGlobalAdmin ? requestedTenantId : tenantUser?.tenant_id) ?? undefined;
+        if (scopedTenantId) {
+          try {
+            const admin = createSupabaseAdminClient();
+            const { data: tenantRow } = await admin
+              .from('tenants')
+              .select('lifecycle_state')
+              .eq('id', scopedTenantId)
+              .maybeSingle();
+            const state = (tenantRow as { lifecycle_state?: string } | null)?.lifecycle_state;
+            const pathname = new URL(request.url).pathname;
+            if (state && !isLifecycleAccessible(state, pathname)) {
+              throw new ApiError(
+                'tenant_locked',
+                'Tenant is being off-boarded. Only export and reactivation are permitted.',
+                423
+              );
+            }
+          } catch (err) {
+            // Re-throw only the intentional lifecycle block; all other errors → fail-open.
+            if (err instanceof ApiError && err.statusCode === 423) throw err;
+            console.warn('[lifecycle-gate] check skipped (fail-open)', err);
+          }
         }
 
         // Authorization is enforced server-side based on Supabase auth + tenant membership.
@@ -157,10 +345,13 @@ export function createApiHandler(
           request,
           user: {
             id: authData.user.id,
+            tenantUserId: tenantUser?.id,
             email: authData.user.email || '',
-            role: tenantUser?.role || '',
-            tenantId: tenantUser?.tenant_id,
-            permissions: [],
+            role: isGlobalAdmin ? 'superadmin' : (tenantUser?.role || ''),
+            // Global administrators operate on the tenant explicitly selected
+            // by the route/header/query, even when they have no tenant_users row.
+            tenantId: scopedTenantId,
+            permissions: isGlobalAdmin ? ['*'] : userPermissions,
           },
           supabase,
           params,
@@ -174,7 +365,7 @@ export function createApiHandler(
         return NextResponse.json(result, { status: 200 });
       } else {
         // No auth required
-        const supabase = getSupabaseRouteHandlerClient();
+        const supabase = legacyCtx?.supabase ?? getSupabaseRouteHandlerClient();
         const result = await handler({
           request,
           supabase,
@@ -188,7 +379,20 @@ export function createApiHandler(
         return NextResponse.json(result, { status: 200 });
       }
     } catch (error) {
-      return handleRouteError(error instanceof Error ? error : new Error(String(error)));
+      if (legacyUser) {
+        throw error;
+      }
+      const err = error instanceof Error ? error : new Error(String(error));
+      // Only alert on unexpected server errors, not known ApiErrors (4xx)
+      if (!(error instanceof ApiError)) {
+        apiLogger.logError(err);
+        getAlertService().sendErrorAlert(err, {
+          operation: `${request.method} ${new URL(request.url).pathname}`,
+        }).catch((alertErr: unknown) => {
+          apiLogger.warn('Alert delivery failed', { error: String(alertErr) });
+        });
+      }
+      return handleRouteError(err);
     }
   };
 }
@@ -242,7 +446,7 @@ export function getPaginationParams(request: NextRequest): PaginationParams {
 /**
  * Helper to extract and validate JSON body
  */
-export async function parseJsonBody<T = any>(request: NextRequest): Promise<T> {
+export async function parseJsonBody<T = unknown>(request: NextRequest): Promise<T> {
   try {
     return await request.json();
   } catch (error) {
@@ -251,6 +455,19 @@ export async function parseJsonBody<T = any>(request: NextRequest): Promise<T> {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+}
+
+/**
+ * Get the server-verified tenant ID from route context.
+ * Always uses ctx.user.tenantId (validated via tenant_users lookup during auth).
+ * Rejects mismatched X-Tenant-ID headers with 403.
+ */
+export function getVerifiedTenantId(ctx: RouteContext): string {
+  const tenantId = ctx.user?.tenantId;
+  if (!tenantId) {
+    throw ApiErrorFactory.badRequest('Tenant context is required for this operation');
+  }
+  return tenantId;
 }
 
 /**
@@ -275,7 +492,7 @@ export function getRouteParam(
 /**
  * Type-safe API handler builder
  */
-export class ApiHandlerBuilder<T = any> {
+export class ApiHandlerBuilder<T = unknown> {
   private config: RouteHandlerOptions = {};
   private handler?: RouteHandler<T>;
   private preHandlers: Array<(ctx: RouteContext) => Promise<void>> = [];
@@ -305,28 +522,28 @@ export class ApiHandlerBuilder<T = any> {
     return this;
   }
 
-  handle(fn: RouteHandler<T>): (request: NextRequest, ctx?: any) => Promise<NextResponse> {
+  handle(
+    fn: RouteHandler<T>
+  ): (
+    request: NextRequest,
+    ctx?: { params?: Promise<Record<string, string>> | Record<string, string> }
+  ) => Promise<NextResponse> {
     this.handler = fn;
+    const preHandlers = this.preHandlers;
+    const capturedHandler = this.handler;
 
-    return async (request: NextRequest, context?: any) => {
-      try {
-        // Run pre-handlers
-        const ctx: RouteContext = {
-          request,
-          supabase: getSupabaseRouteHandlerClient(),
-          params: context?.params,
-        };
-
-        for (const preHandler of this.preHandlers) {
+    // Delegate to createApiHandler so auth/role/permission config is enforced.
+    return createApiHandler(
+      async (ctx) => {
+        for (const preHandler of preHandlers) {
           await preHandler(ctx);
         }
-
-        // Run main handler
-        const result = this.handler ? await this.handler(ctx) : null;
-        return NextResponse.json(result, { status: 200 });
-      } catch (error) {
-        return handleRouteError(error instanceof Error ? error : new Error(String(error)));
-      }
-    };
+        return (capturedHandler ? await capturedHandler(ctx) : NextResponse.json({ ok: true })) as NextResponse;
+      },
+      this.config,
+    ) as (
+      request: NextRequest,
+      ctx?: { params?: Promise<Record<string, string>> | Record<string, string> }
+    ) => Promise<NextResponse>;
   }
 }

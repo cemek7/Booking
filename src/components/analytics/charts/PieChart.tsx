@@ -39,19 +39,22 @@ const CustomTooltip: React.FC<
     formatValue?: (value: number) => string;
     showPercentage?: boolean;
     total?: number;
+    payload?: Array<{ value?: number; name?: string; payload?: { fill?: string } }>;
   }
 > = ({ active, payload, formatValue, showPercentage, total }) => {
   if (!active || !payload || !payload.length) {
     return null;
   }
 
-  const value = payload[0].value as number;
+  const firstPayload = payload[0];
+  if (!firstPayload || typeof firstPayload.value !== 'number') return null;
+  const value = firstPayload.value;
   const percentage = total && total > 0 ? (value / total) * 100 : 0;
 
   return (
     <div className="rounded-lg border bg-background p-3 shadow-lg">
-      <p className="text-sm font-medium mb-1">{payload[0].name}</p>
-      <p className="text-lg font-bold" style={{ color: payload[0].payload.fill }}>
+      <p className="text-sm font-medium mb-1">{firstPayload.name}</p>
+      <p className="text-lg font-bold" style={{ color: firstPayload.payload?.fill }}>
         {formatValue ? formatValue(value) : value.toLocaleString()}
       </p>
       {showPercentage && (
@@ -72,13 +75,14 @@ const renderCustomLabel = ({
   outerRadius,
   percent,
 }: {
-  cx: number;
-  cy: number;
-  midAngle: number;
-  innerRadius: number;
-  outerRadius: number;
-  percent: number;
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  innerRadius?: number;
+  outerRadius?: number;
+  percent?: number;
 }) => {
+  if (cx === undefined || cy === undefined || midAngle === undefined || innerRadius === undefined || outerRadius === undefined || percent === undefined) return null;
   const RADIAN = Math.PI / 180;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);

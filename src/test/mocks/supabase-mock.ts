@@ -9,12 +9,12 @@
  * Mock query builder for Supabase operations
  */
 export class MockSupabaseQuery {
-  private filters: Array<{ field: string; value: any; operator: string }> = [];
+  private filters: Array<{ field: string; value: unknown; operator: string }> = [];
   private selectedFields: string = '*';
-  private data: any = null;
-  private error: any = null;
+  private data: unknown = null;
+  private error: unknown = null;
 
-  constructor(data: any = null, error: any = null) {
+  constructor(data: unknown = null, error: unknown = null) {
     this.data = data;
     this.error = error;
   }
@@ -30,7 +30,7 @@ export class MockSupabaseQuery {
   /**
    * INSERT operation
    */
-  insert(data: any): this {
+  insert(data: unknown): this {
     this.data = Array.isArray(data) ? data : [data];
     return this;
   }
@@ -38,7 +38,7 @@ export class MockSupabaseQuery {
   /**
    * UPDATE operation
    */
-  update(data: any): this {
+  update(data: unknown): this {
     this.data = data;
     return this;
   }
@@ -54,7 +54,7 @@ export class MockSupabaseQuery {
   /**
    * WHERE clause - equality
    */
-  eq(field: string, value: any): this {
+  eq(field: string, value: unknown): this {
     this.filters.push({ field, value, operator: 'eq' });
     return this;
   }
@@ -62,7 +62,7 @@ export class MockSupabaseQuery {
   /**
    * WHERE clause - not equal
    */
-  neq(field: string, value: any): this {
+  neq(field: string, value: unknown): this {
     this.filters.push({ field, value, operator: 'neq' });
     return this;
   }
@@ -70,7 +70,7 @@ export class MockSupabaseQuery {
   /**
    * WHERE clause - greater than
    */
-  gt(field: string, value: any): this {
+  gt(field: string, value: unknown): this {
     this.filters.push({ field, value, operator: 'gt' });
     return this;
   }
@@ -78,7 +78,7 @@ export class MockSupabaseQuery {
   /**
    * WHERE clause - less than
    */
-  lt(field: string, value: any): this {
+  lt(field: string, value: unknown): this {
     this.filters.push({ field, value, operator: 'lt' });
     return this;
   }
@@ -86,7 +86,7 @@ export class MockSupabaseQuery {
   /**
    * WHERE clause - in array
    */
-  in(field: string, values: any[]): this {
+  in(field: string, values: unknown[]): this {
     this.filters.push({ field, value: values, operator: 'in' });
     return this;
   }
@@ -94,7 +94,7 @@ export class MockSupabaseQuery {
   /**
    * Execute query and return single record
    */
-  async single(): Promise<{ data: any; error: any }> {
+  async single(): Promise<{ data: unknown; error: unknown }> {
     if (this.error) return { data: null, error: this.error };
     const item = Array.isArray(this.data) ? this.data[0] : this.data;
     return { data: item, error: null };
@@ -103,7 +103,7 @@ export class MockSupabaseQuery {
   /**
    * Execute query and return single record or null
    */
-  async maybeSingle(): Promise<{ data: any; error: any }> {
+  async maybeSingle(): Promise<{ data: unknown; error: unknown }> {
     if (this.error) return { data: null, error: this.error };
     const item = Array.isArray(this.data) ? this.data[0] : this.data;
     return { data: item || null, error: null };
@@ -112,7 +112,7 @@ export class MockSupabaseQuery {
   /**
    * Execute query and return array
    */
-  async array(): Promise<{ data: any[]; error: any }> {
+  async array(): Promise<{ data: unknown[]; error: unknown }> {
     if (this.error) return { data: [], error: this.error };
     return { data: Array.isArray(this.data) ? this.data : [this.data].filter(Boolean), error: null };
   }
@@ -120,7 +120,7 @@ export class MockSupabaseQuery {
   /**
    * Execute query
    */
-  async execute(): Promise<{ data: any; error: any }> {
+  async execute(): Promise<{ data: unknown; error: unknown }> {
     if (this.error) return { data: null, error: this.error };
     return { data: this.data, error: null };
   }
@@ -132,7 +132,7 @@ export class MockSupabaseQuery {
 export class MockSupabaseTable {
   constructor(
     private tableName: string,
-    private mockData: { [key: string]: any } = {}
+    private mockData: Record<string, unknown[]> = {}
   ) {}
 
   select(fields?: string): MockSupabaseQuery {
@@ -141,13 +141,13 @@ export class MockSupabaseTable {
     return query;
   }
 
-  insert(data: any): MockSupabaseQuery {
+  insert(data: unknown): MockSupabaseQuery {
     const item = Array.isArray(data) ? data : [data];
     this.mockData[this.tableName] = [...(this.mockData[this.tableName] || []), ...item];
     return new MockSupabaseQuery(item, null);
   }
 
-  update(data: any): MockSupabaseQuery {
+  update(data: unknown): MockSupabaseQuery {
     return new MockSupabaseQuery(data, null);
   }
 
@@ -155,7 +155,7 @@ export class MockSupabaseTable {
     return new MockSupabaseQuery(null, null);
   }
 
-  upsert(data: any): MockSupabaseQuery {
+  upsert(data: unknown): MockSupabaseQuery {
     return new MockSupabaseQuery(data, null);
   }
 }
@@ -166,7 +166,7 @@ export class MockSupabaseTable {
 export class MockSupabaseClient {
   private tables: { [tableName: string]: MockSupabaseTable } = {};
 
-  constructor(mockData: { [key: string]: any } = {}) {
+  constructor(mockData: Record<string, unknown[]> = {}) {
     Object.keys(mockData).forEach((tableName) => {
       this.tables[tableName] = new MockSupabaseTable(tableName, mockData);
     });
@@ -179,7 +179,7 @@ export class MockSupabaseClient {
     return this.tables[tableName];
   }
 
-  rpc(name: string, params?: any): MockSupabaseQuery {
+  rpc(name: string, params?: unknown): MockSupabaseQuery {
     // Mock RPC calls
     return new MockSupabaseQuery(null, null);
   }
@@ -199,7 +199,7 @@ export class MockSupabaseClient {
  * 
  * const user = await mockSupabase.from('users').select().single();
  */
-export function createMockSupabaseClient(mockData: { [key: string]: any } = {}): MockSupabaseClient {
+export function createMockSupabaseClient(mockData: Record<string, unknown[]> = {}): MockSupabaseClient {
   return new MockSupabaseClient(mockData);
 }
 
@@ -275,7 +275,7 @@ export const MockData = {
   /**
    * Create mock user
    */
-  user: (overrides?: Partial<any>): any => ({
+  user: (overrides?: Partial<Record<string, unknown>>): Record<string, unknown> => ({
     id: 'user-123',
     email: 'test@example.com',
     user_metadata: { name: 'Test User' },
@@ -285,7 +285,7 @@ export const MockData = {
   /**
    * Create mock tenant
    */
-  tenant: (overrides?: Partial<any>): any => ({
+  tenant: (overrides?: Partial<Record<string, unknown>>): Record<string, unknown> => ({
     id: 'tenant-123',
     name: 'Test Tenant',
     created_at: new Date().toISOString(),
@@ -295,7 +295,7 @@ export const MockData = {
   /**
    * Create mock booking
    */
-  booking: (overrides?: Partial<any>): any => ({
+  booking: (overrides?: Partial<Record<string, unknown>>): Record<string, unknown> => ({
     id: 'booking-123',
     customer_id: 'customer-123',
     service_id: 'service-123',
@@ -308,7 +308,7 @@ export const MockData = {
   /**
    * Create mock staff
    */
-  staff: (overrides?: Partial<any>): any => ({
+  staff: (overrides?: Partial<Record<string, unknown>>): Record<string, unknown> => ({
     id: 'staff-123',
     name: 'John Doe',
     email: 'john@example.com',
@@ -319,7 +319,7 @@ export const MockData = {
   /**
    * Create mock service
    */
-  service: (overrides?: Partial<any>): any => ({
+  service: (overrides?: Partial<Record<string, unknown>>): Record<string, unknown> => ({
     id: 'service-123',
     name: 'Hair Cut',
     duration_minutes: 30,
@@ -331,7 +331,7 @@ export const MockData = {
   /**
    * Create mock customer
    */
-  customer: (overrides?: Partial<any>): any => ({
+  customer: (overrides?: Partial<Record<string, unknown>>): Record<string, unknown> => ({
     id: 'customer-123',
     name: 'Jane Smith',
     email: 'jane@example.com',
@@ -358,7 +358,7 @@ export function expectSupabaseResponse<T>(
  * Helper to compare mock errors
  */
 export function expectSupabaseError(
-  response: SupabaseResponse<any>,
+  response: SupabaseResponse<unknown>,
   expectedMessage: string,
   expectedStatus: number = 500
 ) {

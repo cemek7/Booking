@@ -1,15 +1,21 @@
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+export const dynamic = 'force-dynamic';
+import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import AnalyticsService from '@/lib/analyticsService';
+import { validateAnalyticsRequest } from '@/lib/unified-analytics-permissions';
+import type { Role } from '@/types/roles';
 
 export const GET = createHttpHandler(
   async (ctx) => {
     const { searchParams } = new URL(ctx.request.url);
     const vertical = searchParams.get('vertical') as 'beauty' | 'hospitality' | 'medicine';
-    const tenantId = ctx.request.headers.get('X-Tenant-ID') || ctx.user?.tenantId;
+    const tenantId = getVerifiedTenantId(ctx);
+    const userRole = ctx.user?.role as Role;
+    const userId = ctx.user?.id;
 
-    if (!tenantId) {
-      throw ApiErrorFactory.validationError({ tenantId: 'Tenant ID is required' });
+    const validation = validateAnalyticsRequest(userRole, 'tenant', tenantId, userId);
+    if (!validation.allowed) {
+      throw ApiErrorFactory.insufficientPermissions(['tenant']);
     }
 
     if (!vertical) {
@@ -31,5 +37,5 @@ export const GET = createHttpHandler(
     };
   },
   'GET',
-  { auth: true }
+  { auth: true, roles: ['owner', 'superadmin'] }
 );

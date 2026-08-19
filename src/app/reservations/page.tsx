@@ -1,10 +1,13 @@
 "use client";
-import React, { useMemo } from 'react';
+
+export const dynamic = 'force-dynamic';
+import React, { Suspense, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useBookings } from '@/hooks/useBookings';
 import { ReservationsTable } from '@/components/reservations/ReservationsTable';
 import RoleGuard from '@/components/RoleGuard';
 
-export default function ReservationsPage() {
+function ReservationsPageInner() {
   const params = useSearchParams();
   const { start, end } = useMemo(() => {
     const now = new Date();
@@ -25,7 +28,6 @@ export default function ReservationsPage() {
           reservations={data}
           selectable
           onBulkAction={async (action, ids) => {
-            // Placeholder: wire to a bulk action endpoint later
             console.log('bulk', action, ids);
           }}
           onRowClick={(r) => console.log('row', r.id)}
@@ -33,5 +35,13 @@ export default function ReservationsPage() {
       )}
     </div>
     </RoleGuard>
+  );
+}
+
+export default function ReservationsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}>
+      <ReservationsPageInner />
+    </Suspense>
   );
 }

@@ -76,7 +76,8 @@ export class AnalyticsService {
       const dateRange = this.getDateRange(period);
       const previousRange = this.getPreviousDateRange(period);
 
-      // Current period metrics
+      // Current period metrics — Booka spans booking, sales, CRM, and
+      // inventory, so the dashboard measures every pillar, not just bookings.
       const [
         currentBookings,
         currentRevenue,
@@ -86,7 +87,13 @@ export class AnalyticsService {
         currentUtilization,
         previousBookings,
         previousRevenue,
-        avgBookingValue
+        avgBookingValue,
+        currentRetailOrders,
+        previousRetailOrders,
+        currentSalesRevenue,
+        previousSalesRevenue,
+        currentLeads,
+        lowStockCount
       ] = await Promise.all([
         this.getBookingsCount(tenantId, dateRange.start, dateRange.end),
         this.getTotalRevenue(tenantId, dateRange.start, dateRange.end),
@@ -96,7 +103,13 @@ export class AnalyticsService {
         this.getStaffUtilization(tenantId, dateRange.start, dateRange.end),
         this.getBookingsCount(tenantId, previousRange.start, previousRange.end),
         this.getTotalRevenue(tenantId, previousRange.start, previousRange.end),
-        this.getAverageBookingValue(tenantId, dateRange.start, dateRange.end)
+        this.getAverageBookingValue(tenantId, dateRange.start, dateRange.end),
+        this.getRetailOrdersCount(tenantId, dateRange.start, dateRange.end),
+        this.getRetailOrdersCount(tenantId, previousRange.start, previousRange.end),
+        this.getRetailSalesRevenue(tenantId, dateRange.start, dateRange.end),
+        this.getRetailSalesRevenue(tenantId, previousRange.start, previousRange.end),
+        this.getNewLeadsCount(tenantId, dateRange.start, dateRange.end),
+        this.getLowStockCount(tenantId)
       ]);
 
       const metrics: AnalyticsMetric[] = [
@@ -160,6 +173,45 @@ export class AnalyticsService {
           value: avgBookingValue,
           trend: 0,
           type: 'currency',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        // ── Sales pillar ──
+        {
+          id: 'retail_orders',
+          name: 'Retail Orders',
+          value: currentRetailOrders,
+          trend: this.calculateTrend(currentRetailOrders, previousRetailOrders),
+          type: 'count',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        {
+          id: 'sales_revenue',
+          name: 'Sales Revenue',
+          value: currentSalesRevenue,
+          trend: this.calculateTrend(currentSalesRevenue, previousSalesRevenue),
+          type: 'currency',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        // ── CRM pillar ──
+        {
+          id: 'new_leads',
+          name: 'New Leads',
+          value: currentLeads,
+          trend: 0,
+          type: 'count',
+          period,
+          last_updated: new Date().toISOString(),
+        },
+        // ── Inventory pillar ──
+        {
+          id: 'low_stock_items',
+          name: 'Low-Stock Items',
+          value: lowStockCount,
+          trend: 0,
+          type: 'count',
           period,
           last_updated: new Date().toISOString(),
         },
@@ -272,22 +324,20 @@ export class AnalyticsService {
     try {
       const dateRange = this.getDateRange(period);
 
-      const [{ data: staffData, error }, { data: feedbackData }] = await Promise.all([
+      // Query the REAL schema: team members live in `tenant_users`, and their
+      // work is in `reservations` (joined by staff_id = tenant_users.user_id).
+      // The previous `.from('staff')` targeted a table that does not exist.
+      const [staffRes, reservationsRes, feedbackRes] = await Promise.all([
         this.supabase
-          .from('staff')
-          .select(`
-            id,
-            name,
-            reservations!inner(
-              id,
-              start_at,
-              status,
-              metadata
-            )
-          `)
+          .from('tenant_users')
+          .select('user_id, name, email, role')
+          .eq('tenant_id', tenantId),
+        this.supabase
+          .from('reservations')
+          .select('staff_id, status, metadata, start_at')
           .eq('tenant_id', tenantId)
-          .gte('reservations.start_at', dateRange.start.toISOString())
-          .lte('reservations.start_at', dateRange.end.toISOString()),
+          .gte('start_at', dateRange.start.toISOString())
+          .lte('start_at', dateRange.end.toISOString()),
         this.supabase
           .from('customer_feedback')
           .select('staff_user_id, score')
@@ -296,36 +346,52 @@ export class AnalyticsService {
           .lte('created_at', dateRange.end.toISOString()),
       ]);
 
-      if (error) throw error;
-
-      // Index feedback by staff id (staff.id matches customer_feedback.staff_user_id)
-      const feedbackByStaff: Record<string, number[]> = {};
-      for (const fb of feedbackData || []) {
-        const row = fb as { staff_user_id: string; score: number };
-        if (!feedbackByStaff[row.staff_user_id]) feedbackByStaff[row.staff_user_id] = [];
-        feedbackByStaff[row.staff_user_id].push(row.score);
+      if (staffRes.error) {
+        span.recordException(staffRes.error as unknown as Error);
+        return { success: true, performance: [] };
       }
 
-      const performanceData: StaffPerformanceData[] = (staffData || []).map(staff => {
-        const reservations = staff.reservations || [];
-        const completedBookings = reservations.filter(r => r.status === 'completed').length;
+      const staffRows = (staffRes.data ?? []) as Array<{
+        user_id: string; name: string | null; email: string | null; role: string | null;
+      }>;
+      const reservationRows = (reservationsRes.data ?? []) as Array<{
+        staff_id: string | null; status: string | null; metadata: { revenue?: number; tip?: number } | null;
+      }>;
+
+      // Group reservations by staff member (user_id).
+      const reservationsByStaff: Record<string, typeof reservationRows> = {};
+      for (const r of reservationRows) {
+        if (!r.staff_id) continue;
+        (reservationsByStaff[r.staff_id] ??= []).push(r);
+      }
+
+      // Index feedback by staff user id (customer_feedback.staff_user_id = user_id).
+      const feedbackByStaff: Record<string, number[]> = {};
+      for (const fb of feedbackRes.data || []) {
+        const row = fb as { staff_user_id: string; score: number };
+        if (!row.staff_user_id) continue;
+        (feedbackByStaff[row.staff_user_id] ??= []).push(row.score);
+      }
+
+      const performanceData: StaffPerformanceData[] = staffRows.map((staff) => {
+        const reservations = reservationsByStaff[staff.user_id] ?? [];
+        const completedBookings = reservations.filter((r) => r.status === 'completed').length;
         const totalRevenue = reservations.reduce((sum, r) => sum + (r.metadata?.revenue || 0), 0);
         const totalTips = reservations.reduce((sum, r) => sum + (r.metadata?.tip || 0), 0);
 
-        // Calculate utilization (simplified - would need working hours data)
+        // Simplified utilization: booked hours vs available hours in the period.
         const totalHoursInPeriod = this.getWorkingHoursInPeriod(period);
-        const bookedHours = reservations.length * 1; // Assuming 1 hour per booking
+        const bookedHours = reservations.length * 1; // ~1 hour per booking
         const utilizationRate = totalHoursInPeriod > 0 ? (bookedHours / totalHoursInPeriod) * 100 : 0;
 
-        // Derive customer rating from customer_feedback table
-        const scores = feedbackByStaff[staff.id] || [];
+        const scores = feedbackByStaff[staff.user_id] || [];
         const customer_rating = scores.length > 0
           ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2))
           : 0;
 
         return {
-          staff_id: staff.id,
-          staff_name: staff.name,
+          staff_id: staff.user_id,
+          staff_name: staff.name || staff.email || staff.user_id,
           bookings_count: completedBookings,
           revenue_total: Number(totalRevenue),
           utilization_rate: Math.min(utilizationRate, 100),
@@ -657,8 +723,9 @@ export class AnalyticsService {
   private async getStaffUtilization(tenantId: string, start: Date, end: Date): Promise<number> {
     // Simplified calculation - would need actual working hours data
     const totalBookings = await this.getBookingsCount(tenantId, start, end);
+    // Team members live in tenant_users, not a `staff` table.
     const { count: staffCount } = await this.supabase
-      .from('staff')
+      .from('tenant_users')
       .select('*', { count: 'exact', head: true })
       .eq('tenant_id', tenantId);
 
@@ -673,8 +740,71 @@ export class AnalyticsService {
   private async getAverageBookingValue(tenantId: string, start: Date, end: Date): Promise<number> {
     const totalRevenue = await this.getTotalRevenue(tenantId, start, end);
     const totalBookings = await this.getBookingsCount(tenantId, start, end);
-    
+
     return totalBookings > 0 ? totalRevenue / totalBookings : 0;
+  }
+
+  // ── Sales pillar: retail orders sold through WhatsApp/Instagram chats ──
+  private async getRetailOrdersCount(tenantId: string, start: Date, end: Date): Promise<number> {
+    try {
+      const { count } = await this.supabase
+        .from('retail_orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .in('status', ['paid', 'fulfilled', 'completed'])
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      return count || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async getRetailSalesRevenue(tenantId: string, start: Date, end: Date): Promise<number> {
+    try {
+      const { data } = await this.supabase
+        .from('retail_orders')
+        .select('total_cents')
+        .eq('tenant_id', tenantId)
+        .in('status', ['paid', 'fulfilled', 'completed'])
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      return (data || []).reduce((sum, o) => sum + Number((o as { total_cents?: number }).total_cents || 0), 0) / 100;
+    } catch {
+      return 0;
+    }
+  }
+
+  // ── CRM pillar: new leads the AI front desk surfaced ──
+  private async getNewLeadsCount(tenantId: string, start: Date, end: Date): Promise<number> {
+    try {
+      const { count } = await this.supabase
+        .from('leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+      return count || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  // ── Inventory pillar: tracked products at or below their reorder point ──
+  private async getLowStockCount(tenantId: string): Promise<number> {
+    try {
+      const { data } = await this.supabase
+        .from('products')
+        .select('stock_quantity, low_stock_threshold')
+        .eq('tenant_id', tenantId)
+        .eq('track_inventory', true);
+      return (data || []).filter((p) => {
+        const row = p as { stock_quantity?: number; low_stock_threshold?: number };
+        return (row.stock_quantity ?? 0) <= (row.low_stock_threshold ?? 0);
+      }).length;
+    } catch {
+      return 0;
+    }
   }
 
   private getWorkingHoursInPeriod(period: string): number {

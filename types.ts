@@ -2,6 +2,8 @@
 // Booka frontend shared types (components + API shapes)
 // Copy into your repo. Keep in sync with backend OpenAPI.
 
+import type { Role } from './src/types/roles';
+
 // Re-export comprehensive type definitions
 export * from './src/types/roles';
 export * from './src/types/permissions';
@@ -79,7 +81,7 @@ export interface BookingEvent {
     phone?: string;
     email?: string;
   };
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /** Calendar component props */
@@ -171,7 +173,7 @@ export interface ClientProfile {
   name?: string;
   phone?: string;
   email?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   consent?: { channel: Channel; optedIn: boolean; timestamp?: string }[];
 }
 
@@ -228,9 +230,9 @@ export interface AuthMeResponse {
 /** Tenant settings & module config */
 export interface TenantConfig {
   tenantId: string;
-  modules?: Record<string, { installed: boolean; version?: string; config?: any }>;
+  modules?: Record<string, { installed: boolean; version?: string; config?: unknown }>;
   templates?: Record<string, string>;
-  forms?: Record<string, any>; // JSON Schemas per form
+  forms?: Record<string, unknown>; // JSON Schemas per form
   featureFlags?: Record<string, boolean>;
 }
 

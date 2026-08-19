@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { useTenantCurrency } from '@/hooks/useTenantCurrency';
 import { CreateProductRequest, PRODUCT_VALIDATION_RULES } from '@/types/product-catalogue';
 import Button from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
@@ -14,15 +15,18 @@ interface CreateProductModalProps {
   onSuccess: () => void;
 }
 
+interface CategoriesResponse { categories?: Array<{ name: string }>; }
+
 export default function CreateProductModal({ isOpen, onClose, onSuccess }: CreateProductModalProps) {
   const { tenant } = useTenant();
+  const { currency: tenantCurrency } = useTenantCurrency();
   const [formData, setFormData] = useState<CreateProductRequest>({
     name: '',
     description: '',
     short_description: '',
     sku: '',
     price_cents: 0,
-    currency: 'USD',
+    currency: 'NGN',
     cost_price_cents: 0,
     track_inventory: false,
     stock_quantity: 0,
@@ -39,13 +43,18 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Default a new product's currency to the tenant's currency when the modal opens.
+  useEffect(() => {
+    if (isOpen) setFormData((prev) => ({ ...prev, currency: tenantCurrency }));
+  }, [isOpen, tenantCurrency]);
+
   // Fetch categories for dropdown
   const { data: categoriesData } = useQuery({
     queryKey: ['categories', tenant?.id],
     queryFn: async () => {
       if (!tenant?.id) return { categories: [] };
       
-      const response = await authFetch('/api/categories?is_active=true');
+      const response = await authFetch<CategoriesResponse>('/api/categories?is_active=true');
       
       if (response.error) throw new Error('Failed to fetch categories');
       return response.data;
@@ -53,7 +62,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     enabled: !!tenant?.id && isOpen,
   });
 
-  const categories = categoriesData?.categories || [];
+  const categories = categoriesData?.categories?.map(category => category.name) ?? [];
 
   // Create product mutation
   const createProductMutation = useMutation({
@@ -63,7 +72,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
       const response = await authPost('/api/products', productData);
       
       if (response.error) {
-        throw new Error(response.error || 'Failed to create product');
+        throw new Error(String(response.error) || 'Failed to create product');
       }
 
       return response.data;
@@ -90,15 +99,15 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
       newErrors.price_cents = 'Price must be non-negative';
     }
 
-    if (formData.cost_price_cents < 0) {
+    if ((formData.cost_price_cents ?? 0) < 0) {
       newErrors.cost_price_cents = 'Cost price must be non-negative';
     }
 
-    if (formData.stock_quantity < 0) {
+    if ((formData.stock_quantity ?? 0) < 0) {
       newErrors.stock_quantity = 'Stock quantity must be non-negative';
     }
 
-    if (formData.low_stock_threshold < 0) {
+    if ((formData.low_stock_threshold ?? 0) < 0) {
       newErrors.low_stock_threshold = 'Low stock threshold must be non-negative';
     }
 
@@ -111,7 +120,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleInputChange = (key: keyof CreateProductRequest, value: any) => {
+  const handleInputChange = <Key extends keyof CreateProductRequest>(key: Key, value: CreateProductRequest[Key]) => {
     setFormData(prev => ({ ...prev, [key]: value }));
     // Clear error for this field
     if (errors[key]) {
@@ -138,7 +147,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
       short_description: '',
       sku: '',
       price_cents: 0,
-      currency: 'USD',
+      currency: tenantCurrency,
       cost_price_cents: 0,
       track_inventory: false,
       stock_quantity: 0,
@@ -176,7 +185,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
   };
 
   const handleClose = () => {
-    if (!createProductMutation.isLoading) {
+    if (!createProductMutation.isPending) {
       resetForm();
       onClose();
     }
@@ -198,7 +207,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
               <button
                 type="button"
                 onClick={handleClose}
-                disabled={createProductMutation.isLoading}
+                disabled={createProductMutation.isPending}
                 className="text-gray-400 hover:text-gray-600"
               >
                 ✕
@@ -249,18 +258,19 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Category
                   </label>
-                  <select
-                    value={formData.category_id || ''}
-                    onChange={(e) => handleInputChange('category_id', e.target.value || undefined)}
+                  <input
+                    type="text"
+                    list="product-category-suggestions"
+                    value={formData.category || ''}
+                    onChange={(e) => handleInputChange('category', e.target.value || undefined)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    <option value="">Select Category</option>
-                    {categories.map((category: any) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
+                    placeholder="Enter or choose a category"
+                  />
+                  <datalist id="product-category-suggestions">
+                    {categories.map((category: string) => (
+                      <option key={category} value={category} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
 
                 <div className="md:col-span-2">
@@ -323,7 +333,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
                     type="number"
                     step="0.01"
                     min="0"
-                    value={formData.cost_price_cents / 100}
+                    value={(formData.cost_price_cents ?? 0) / 100}
                     onChange={(e) => handleInputChange('cost_price_cents', Math.round(parseFloat(e.target.value || '0') * 100))}
                     className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
                       errors.cost_price_cents ? 'border-red-500' : 'border-gray-300'
@@ -342,10 +352,13 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
                     onChange={(e) => handleInputChange('currency', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                   >
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                    <option value="GBP">GBP</option>
-                    <option value="CAD">CAD</option>
+                    <option value="NGN">NGN (₦)</option>
+                    <option value="GHS">GHS (₵)</option>
+                    <option value="KES">KES</option>
+                    <option value="ZAR">ZAR (R)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="EUR">EUR (€)</option>
                   </select>
                 </div>
               </div>
@@ -483,16 +496,16 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
               type="button"
               variant="outline"
               onClick={handleClose}
-              disabled={createProductMutation.isLoading}
+              disabled={createProductMutation.isPending}
             >
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={createProductMutation.isLoading}
+              disabled={createProductMutation.isPending}
               className="bg-primary text-white"
             >
-              {createProductMutation.isLoading ? (
+              {createProductMutation.isPending ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
                   Creating...

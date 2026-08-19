@@ -3,6 +3,7 @@
 import { useTenant } from '@/lib/supabase/tenant-context';
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
+import BrandMark from '@/components/brand/BrandMark';
 import { usePathname } from 'next/navigation';
 
 interface NavItem { href: string; label: string; ownerOnly?: boolean; roles?: string[] }
@@ -27,13 +28,23 @@ export default function Sidebar() {
   const filtered = baseNav.filter(item => {
     if (item.ownerOnly && !isOwner) return false;
     if (item.roles && role && !item.roles.includes(role)) return false;
-    return true;
+      return true;
   });
 
   return (
     <aside className="w-64">
       <GlassCard className="flex flex-col h-full p-0">
-        <div className="p-6 font-bold text-xl">Booka</div>
+        <div className="p-6">
+          <div className="flex items-center gap-3">
+            <BrandMark variant="booka" className="h-10 w-10" />
+            <div>
+              <div className="font-bold text-xl">Booka</div>
+              <div className="mt-1 text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
+                by Techclave
+              </div>
+            </div>
+          </div>
+        </div>
         <nav className="flex-1 overflow-y-auto">
           <ul className="text-sm">
             {filtered.map(item => {
@@ -56,6 +67,17 @@ export default function Sidebar() {
           <p className="leading-relaxed">
             Navigation aligned with PRD: unified Schedule, role-gated Select Business.
           </p>
+          <div className="mt-3 flex flex-col gap-1">
+            <Link href="/booka" className="transition hover:text-foreground">
+              Product page
+            </Link>
+            <Link href="/products" className="transition hover:text-foreground">
+              Products
+            </Link>
+            <Link href="/" className="transition hover:text-foreground">
+              Techclave home
+            </Link>
+          </div>
         </div>
       </GlassCard>
     </aside>

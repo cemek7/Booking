@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!deployment/env/.env.production.example
+!deployment/env/.env.staging.example
+supabase.txt
 
 # vercel
 .vercel
@@ -39,3 +42,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local generated state
+/.tsbuild/
+/logs/
+/.design-sync-stage/
+/.codex

@@ -1,3 +1,6 @@
+'use client';
+
+import { defaultLogger } from '@/lib/logger';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,7 +9,8 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/components/ui/toast';
+import { authFetch, authPost, authPatch, authDelete } from '@/lib/auth/auth-api-client';
 import {
   Calendar,
   Link,
@@ -38,13 +42,21 @@ interface CalendarSettingsProps {
   currentUserId?: string;
 }
 
+interface CalendarStaffMember { id: string; name?: string | null; email?: string | null; }
+const syncDirections = ['bidirectional', 'to_google', 'from_google'] as const;
+const conflictResolutions = ['block', 'override', 'notify'] as const;
+
+function isOneOf<T extends readonly string[]>(value: string, choices: T): value is T[number] {
+  return choices.includes(value);
+}
+
 const CalendarSettings: React.FC<CalendarSettingsProps> = ({
   tenantId,
   userRole,
   currentUserId
 }) => {
   const [integrations, setIntegrations] = useState<CalendarIntegration[]>([]);
-  const [staffMembers, setStaffMembers] = useState<any[]>([]);
+  const [staffMembers, setStaffMembers] = useState<CalendarStaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -56,18 +68,13 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const loadCalendarIntegrations = async () => {
     try {
-      const response = await fetch(`/api/calendar/integrations?tenant_id=${tenantId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setIntegrations(data.integrations || []);
+      const response = await authFetch<{ integrations?: CalendarIntegration[] }>(`/api/calendar/integrations?tenant_id=${tenantId}`);
+      if (!response.error) {
+        setIntegrations(response.data?.integrations || []);
       }
     } catch (error) {
-      console.error('Failed to load calendar integrations:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load calendar integrations',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to load calendar integrations:', error);
+      toast('error', 'Failed to load calendar integrations');
     } finally {
       setLoading(false);
     }
@@ -75,13 +82,12 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const loadStaffMembers = async () => {
     try {
-      const response = await fetch(`/api/staff?tenant_id=${tenantId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setStaffMembers(data.staff || []);
+      const response = await authFetch<{ staff?: CalendarStaffMember[] }>(`/api/staff?tenant_id=${tenantId}`);
+      if (!response.error) {
+        setStaffMembers(response.data?.staff || []);
       }
     } catch (error) {
-      console.error('Failed to load staff members:', error);
+      defaultLogger.error('Failed to load staff members:', error);
     }
   };
 
@@ -97,20 +103,15 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
         params.append('staff_id', staffId);
       }
 
-      const response = await fetch(`/api/calendar/auth?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-        window.location.href = data.authorization_url;
+      const response = await authFetch<{ authorization_url?: string }>(`/api/calendar/auth?${params}`);
+      if (!response.error && response.data?.authorization_url) {
+        window.location.href = response.data.authorization_url;
       } else {
         throw new Error('Failed to initiate calendar connection');
       }
     } catch (error) {
-      console.error('Failed to connect calendar:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to connect Google Calendar',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to connect calendar:', error);
+      toast('error', 'Failed to connect Google Calendar');
     } finally {
       setConnecting(false);
     }
@@ -118,54 +119,35 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const disconnectCalendar = async (integrationId: string) => {
     try {
-      const response = await fetch(`/api/calendar/integrations/${integrationId}`, {
-        method: 'DELETE'
-      });
+      const response = await authDelete(`/api/calendar/integrations/${integrationId}`);
 
-      if (response.ok) {
+      if (!response.error) {
         await loadCalendarIntegrations();
-        toast({
-          title: 'Success',
-          description: 'Calendar disconnected successfully'
-        });
+        toast('success', 'Calendar disconnected successfully');
       } else {
         throw new Error('Failed to disconnect calendar');
       }
     } catch (error) {
-      console.error('Failed to disconnect calendar:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to disconnect calendar',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to disconnect calendar:', error);
+      toast('error', 'Failed to disconnect calendar');
     }
   };
 
   const syncNow = async (integrationId: string) => {
     setSyncing(integrationId);
     try {
-      const response = await fetch(`/api/calendar/sync/${integrationId}`, {
-        method: 'POST'
-      });
+      const response = await authPost<{ events_synced?: number; conflicts_detected?: number }>(`/api/calendar/sync/${integrationId}`, {});
 
-      if (response.ok) {
-        const result = await response.json();
+      if (!response.error && response.data) {
+        const result = response.data;
         await loadCalendarIntegrations();
-        
-        toast({
-          title: 'Sync Complete',
-          description: `Synced ${result.events_synced} events${result.conflicts_detected > 0 ? `, ${result.conflicts_detected} conflicts detected` : ''}`
-        });
+        toast('success', `Synced ${result.events_synced ?? 0} events${(result.conflicts_detected ?? 0) > 0 ? `, ${result.conflicts_detected} conflicts detected` : ''}`);
       } else {
         throw new Error('Sync failed');
       }
     } catch (error) {
-      console.error('Sync failed:', error);
-      toast({
-        title: 'Error',
-        description: 'Calendar sync failed',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Sync failed:', error);
+      toast('error', 'Calendar sync failed');
     } finally {
       setSyncing(null);
     }
@@ -176,28 +158,17 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
     settings: Partial<CalendarIntegration>
   ) => {
     try {
-      const response = await fetch(`/api/calendar/integrations/${integrationId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
-      });
+      const response = await authPatch(`/api/calendar/integrations/${integrationId}`, settings);
 
-      if (response.ok) {
+      if (!response.error) {
         await loadCalendarIntegrations();
-        toast({
-          title: 'Success',
-          description: 'Calendar settings updated'
-        });
+        toast('success', 'Calendar settings updated');
       } else {
         throw new Error('Failed to update settings');
       }
     } catch (error) {
-      console.error('Failed to update settings:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to update calendar settings',
-        variant: 'destructive'
-      });
+      defaultLogger.error('Failed to update settings:', error);
+      toast('error', 'Failed to update calendar settings');
     }
   };
 
@@ -333,9 +304,11 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <label className="text-sm font-medium">Sync Direction</label>
                     <Select
                       value={integration.sync_direction}
-                      onValueChange={(value: any) =>
-                        updateIntegrationSettings(integration.id, { sync_direction: value })
-                      }
+                      onValueChange={(value) => {
+                        if (isOneOf(value, syncDirections)) {
+                          updateIntegrationSettings(integration.id, { sync_direction: value });
+                        }
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -367,9 +340,11 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <label className="text-sm font-medium">Conflict Resolution</label>
                     <Select
                       value={integration.conflict_resolution}
-                      onValueChange={(value: any) =>
-                        updateIntegrationSettings(integration.id, { conflict_resolution: value })
-                      }
+                      onValueChange={(value) => {
+                        if (isOneOf(value, conflictResolutions)) {
+                          updateIntegrationSettings(integration.id, { conflict_resolution: value });
+                        }
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -444,7 +419,7 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <div className="flex items-center space-x-3">
                       <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
                         <span className="font-medium text-purple-600">
-                          {staff.name.charAt(0).toUpperCase()}
+                          {(staff.name?.charAt(0) ?? '?').toUpperCase()}
                         </span>
                       </div>
                       <div>

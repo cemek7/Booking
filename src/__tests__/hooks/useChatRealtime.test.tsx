@@ -20,17 +20,26 @@ const mockSupabase = {
 
 jest.mock('@/lib/supabase/client', () => ({
   getBrowserSupabase: jest.fn(() => mockSupabase),
+  getSupabaseBrowserClient: jest.fn(() => mockSupabase),
+  // The hook now resolves the realtime-capable client asynchronously.
+  getSupabaseBrowserClientAsync: jest.fn(async () => mockSupabase),
 }));
 
-import { getBrowserSupabase } from '@/lib/supabase/client';
+import { getBrowserSupabase, getSupabaseBrowserClient } from '@/lib/supabase/client';
 const mockGetBrowserSupabase = getBrowserSupabase as jest.MockedFunction<typeof getBrowserSupabase>;
 
 describe('useChatRealtime', () => {
-  let onChatsChange: ((payload: any) => void) | null = null;
-  let onMessagesChange: ((payload: any) => void) | null = null;
+  type RealtimePayload = RealtimePostgresChangesPayload<Record<string, unknown>>;
+  type MockRow = Record<string, unknown>;
+  let onChatsChange: ((payload: RealtimePayload) => void) | null = null;
+  let onMessagesChange: ((payload: RealtimePayload) => void) | null = null;
 
   // Helper to create complete mock chain
-  const mockFromTable = (chatsData: any[] | { error: any; data: null } = [], messagesData: any[] = []) => {
+  const mockFromTable = (
+    chatsData: MockRow[] | { error: unknown; data: null } = [],
+    messagesData: MockRow[] = [],
+    conversationsData: MockRow[] = []
+  ) => {
     mockSupabase.from.mockImplementation((table: string) => {
       if (table === 'chats') {
         const hasError = !Array.isArray(chatsData) && 'error' in chatsData;
@@ -48,6 +57,13 @@ describe('useChatRealtime', () => {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
           order: jest.fn().mockResolvedValue({ data: messagesData, error: null }),
+        };
+      }
+      if (table === 'whatsapp_conversations') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          in: jest.fn().mockResolvedValue({ data: conversationsData, error: null }),
         };
       }
       return {};
@@ -69,6 +85,7 @@ describe('useChatRealtime', () => {
       const chain = {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
+        in: jest.fn(),
         order: jest.fn().mockReturnThis(),
         limit: jest.fn(),
       };
@@ -76,6 +93,8 @@ describe('useChatRealtime', () => {
       // Set final return value based on table
       if (table === 'chats') {
         chain.limit.mockResolvedValue({ data: [], error: null });
+      } else if (table === 'whatsapp_conversations') {
+        chain.in.mockResolvedValue({ data: [], error: null });
       } else {
         chain.order.mockResolvedValue({ data: [], error: null });
       }
@@ -88,7 +107,7 @@ describe('useChatRealtime', () => {
 
     mockSupabase.channel.mockImplementation((name: string) => {
       const channel = {
-        on: jest.fn((event: string, config: any, handler: any) => {
+        on: jest.fn((event: string, config: unknown, handler: (payload: RealtimePayload) => void) => {
           if (name.startsWith('rt-chats-')) {
             onChatsChange = handler;
           } else if (name.startsWith('rt-messages-')) {
@@ -99,10 +118,10 @@ describe('useChatRealtime', () => {
         subscribe: jest.fn(() => channel),
         unsubscribe: jest.fn(),
       };
-      return channel as any;
+      return channel as unknown as RealtimeChannel;
     });
 
-    mockGetBrowserSupabase.mockReturnValue(mockSupabase as any);
+    mockGetBrowserSupabase.mockReturnValue(mockSupabase as unknown as ReturnType<typeof getBrowserSupabase>);
   });
 
   describe('Hook Initialization', () => {
@@ -138,10 +157,14 @@ describe('useChatRealtime', () => {
       expect(result.current.chats[0].subject).toBe('Support Request');
     });
 
-    it('should subscribe to realtime channel when tenantId provided', () => {
+    it('should subscribe to realtime channel when tenantId provided', async () => {
       renderHook(() => useChatRealtime('tenant-123'));
 
-      expect(mockSupabase.channel).toHaveBeenCalledWith('rt-chats-tenant-123');
+      // The realtime client resolves asynchronously now, so the channel is set
+      // up after a tick rather than synchronously on first render.
+      await waitFor(() =>
+        expect(mockSupabase.channel).toHaveBeenCalledWith('rt-chats-tenant-123'),
+      );
     });
 
     it('should not subscribe when tenantId is null', () => {
@@ -182,7 +205,31 @@ describe('useChatRealtime', () => {
       expect(chat.id).toBe('chat-1');
       expect(chat.subject).toBe('Test Chat');
       expect(chat.lastMessageAt).toBe('2024-01-20T10:00:00Z');
+      expect(chat.channel).toBe('whatsapp');
       expect(chat.unread).toBe(3);
+    });
+
+    it('should map instagram channel metadata onto chat summaries', async () => {
+      const mockChats = [
+        {
+          id: 'chat-ig-1',
+          last_message_at: '2024-01-20T10:00:00Z',
+          session_id: null,
+          customer_phone: 'IGSID_123',
+          metadata: { subject: 'IG Lead', channel: 'instagram' },
+          unread_count: 1,
+        },
+      ];
+
+      mockFromTable(mockChats);
+
+      const { result } = renderHook(() => useChatRealtime('tenant-123'));
+
+      await waitFor(() => {
+        expect(result.current.chats).toHaveLength(1);
+      });
+
+      expect(result.current.chats[0]?.channel).toBe('instagram');
     });
 
     it('should use customer_phone as subject when no metadata', async () => {
@@ -452,6 +499,11 @@ describe('useChatRealtime', () => {
     it('should add new message on INSERT', async () => {
       const { result } = renderHook(() => useChatRealtime('tenant-123'));
 
+      // Wait for the async realtime client to resolve before driving state.
+      await waitFor(() => {
+        expect(onChatsChange).toBeDefined();
+      });
+
       act(() => {
         result.current.setActiveId('chat-1');
       });
@@ -597,7 +649,13 @@ describe('useChatRealtime', () => {
         await result.current.send('Test message');
       });
 
-      expect(global.fetch).not.toHaveBeenCalled();
+      // The hook also GETs /api/staff on mount, so a blanket
+      // not.toHaveBeenCalled() no longer isolates send behaviour. Assert the
+      // thing this test is actually about: no message POST was issued.
+      expect(global.fetch).not.toHaveBeenCalledWith(
+        expect.stringContaining('/messages'),
+        expect.objectContaining({ method: 'POST' }),
+      );
     });
 
     it('should URL encode chat ID in send', async () => {
@@ -619,6 +677,23 @@ describe('useChatRealtime', () => {
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining(encodeURIComponent('chat with spaces')),
         expect.any(Object)
+      );
+    });
+
+    it('should throw the API message when send fails', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: false,
+        json: async () => ({ message: 'Instagram replies are only allowed within 24 hours.' }),
+      });
+
+      const { result } = renderHook(() => useChatRealtime('tenant-123'));
+
+      act(() => {
+        result.current.setActiveId('chat-1');
+      });
+
+      await expect(result.current.send('Test message')).rejects.toThrow(
+        'Instagram replies are only allowed within 24 hours.'
       );
     });
   });
@@ -692,33 +767,39 @@ describe('useChatRealtime', () => {
       expect(mockSupabase.channel).toHaveBeenCalled();
     });
 
-    it('should unsubscribe when tenant changes', () => {
+    it('should unsubscribe when tenant changes', async () => {
       const { rerender } = renderHook(
         ({ tenantId }) => useChatRealtime(tenantId),
         { initialProps: { tenantId: 'tenant-1' } }
       );
 
+      await waitFor(() =>
+        expect(mockSupabase.channel).toHaveBeenCalledWith('rt-chats-tenant-1'),
+      );
       rerender({ tenantId: 'tenant-2' });
 
       // Should create new channel for new tenant
-      expect(mockSupabase.channel).toHaveBeenCalledWith('rt-chats-tenant-1');
-      expect(mockSupabase.channel).toHaveBeenCalledWith('rt-chats-tenant-2');
+      await waitFor(() =>
+        expect(mockSupabase.channel).toHaveBeenCalledWith('rt-chats-tenant-2'),
+      );
     });
 
-    it('should unsubscribe messages channel when activeId changes', () => {
+    it('should unsubscribe messages channel when activeId changes', async () => {
       const { result } = renderHook(() => useChatRealtime('tenant-123'));
 
       act(() => {
         result.current.setActiveId('chat-1');
       });
+      await waitFor(() =>
+        expect(mockSupabase.channel).toHaveBeenCalledWith('rt-messages-chat-1'),
+      );
 
       act(() => {
         result.current.setActiveId('chat-2');
       });
-
-      // Should create channels for both active chats
-      expect(mockSupabase.channel).toHaveBeenCalledWith('rt-messages-chat-1');
-      expect(mockSupabase.channel).toHaveBeenCalledWith('rt-messages-chat-2');
+      await waitFor(() =>
+        expect(mockSupabase.channel).toHaveBeenCalledWith('rt-messages-chat-2'),
+      );
     });
   });
 });

@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import cn from 'classnames';
+import { cn } from '@/lib/utils';
 import GlassCard from '@/components/ui/GlassCard';
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -16,6 +16,14 @@ export function CardTitle({ className, children }: { className?: string; childre
 
 export function CardContent({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cn('px-6 py-4', className)}>{children}</div>;
+}
+
+export function CardDescription({ className, children }: { className?: string; children: ReactNode }) {
+  return <p className={cn('text-sm text-gray-500', className)}>{children}</p>;
+}
+
+export function CardFooter({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn('px-6 py-4 border-t border-gray-100 flex items-center', className)}>{children}</div>;
 }
 
 export default Card;

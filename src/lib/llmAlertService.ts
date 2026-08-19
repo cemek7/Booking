@@ -1,3 +1,4 @@
+import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/integrations/email-service';
 import { sendSMS } from '@/lib/integrations/sms-service';
@@ -52,7 +53,7 @@ class LLMAlertService {
       // Get tenant notification config
       const config = await this.getNotificationConfig(tenantId);
       if (!config) {
-        console.warn(`No notification config found for tenant ${tenantId}`);
+        defaultLogger.warn(`No notification config found for tenant ${tenantId}`);
         return;
       }
 
@@ -63,7 +64,7 @@ class LLMAlertService {
       const channels = this.getNotificationChannels(config, alertType);
       
       if (channels.length === 0) {
-        console.log(`No notification channels enabled for tenant ${tenantId}, alert type ${alertType}`);
+        defaultLogger.info(`No notification channels enabled for tenant ${tenantId}, alert type ${alertType}`);
         return;
       }
 
@@ -87,7 +88,7 @@ class LLMAlertService {
         .single();
 
       if (error) {
-        console.error('Failed to save alert notification:', error);
+        defaultLogger.error('Failed to save alert notification:', error);
         return;
       }
 
@@ -95,7 +96,7 @@ class LLMAlertService {
       await this.deliverAlert(savedAlert, config);
 
     } catch (error) {
-      console.error('Failed to send LLM alert:', error);
+      defaultLogger.error('Failed to send LLM alert:', error);
     }
   }
 
@@ -120,19 +121,19 @@ class LLMAlertService {
         .single();
 
       if (settingsError && settingsError.code !== 'PGRST116') {
-        console.error('Failed to get tenant notification settings:', settingsError);
+        defaultLogger.error('Failed to get tenant notification settings:', settingsError);
       }
 
       // Get tenant owner email for notifications
       const { data: owner, error: ownerError } = await this.supabase
-        .from('profiles')
+        .from('tenant_users')
         .select('email, phone')
         .eq('tenant_id', tenantId)
         .eq('role', 'owner')
         .single();
 
       if (ownerError) {
-        console.warn('Failed to get tenant owner details:', ownerError);
+        defaultLogger.warn('Failed to get tenant owner details:', ownerError);
       }
 
       // Return combined config
@@ -150,7 +151,7 @@ class LLMAlertService {
       };
 
     } catch (error) {
-      console.error('Error getting notification config:', error);
+      defaultLogger.error('Error getting notification config:', error);
       return null;
     }
   }
@@ -286,7 +287,7 @@ class LLMAlertService {
       const rejectedReasons = results
         .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
         .map(r => r.reason);
-      console.error('Some alert channels failed:', rejectedReasons);
+      defaultLogger.error('Some alert channels failed:', rejectedReasons);
     }
 
     const supabase = this.supabase;
@@ -299,7 +300,7 @@ class LLMAlertService {
         })
         .eq('id', alert.id);
       if (updateError) {
-        console.error('Failed to persist sent status:', updateError);
+        defaultLogger.error('Failed to persist sent status:', updateError);
       }
     } else {
       const { error: updateError } = await supabase
@@ -310,7 +311,7 @@ class LLMAlertService {
         })
         .eq('id', alert.id);
       if (updateError) {
-        console.error('Failed to persist failed status:', updateError);
+        defaultLogger.error('Failed to persist failed status:', updateError);
       }
     }
   }
@@ -388,7 +389,7 @@ class LLMAlertService {
       });
 
     if (error) {
-      console.error('Failed to save in-app alert:', error);
+      defaultLogger.error('Failed to save in-app alert:', error);
       throw error;
     }
   }
@@ -410,13 +411,13 @@ class LLMAlertService {
         .limit(50);
 
       if (error) {
-        console.error('Failed to get recent alerts:', error);
+        defaultLogger.error('Failed to get recent alerts:', error);
         return [];
       }
 
       return data || [];
     } catch (error) {
-      console.error('Error getting recent alerts:', error);
+      defaultLogger.error('Error getting recent alerts:', error);
       return [];
     }
   }
@@ -435,10 +436,10 @@ class LLMAlertService {
         .eq('id', alertId);
 
       if (error) {
-        console.error('Failed to acknowledge alert:', error);
+        defaultLogger.error('Failed to acknowledge alert:', error);
       }
     } catch (error) {
-      console.error('Error acknowledging alert:', error);
+      defaultLogger.error('Error acknowledging alert:', error);
     }
   }
 }

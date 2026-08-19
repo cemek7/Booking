@@ -222,7 +222,7 @@ class ChaosEngineer {
     const intensityMap = { low: 25, medium: 50, high: 75 };
     const intensity = intensityMap[severity as keyof typeof intensityMap] || 25;
     
-    const workers: any[] = [];
+    const workers: ReturnType<typeof setInterval>[] = [];
     const numWorkers = Math.ceil((intensity / 100) * 4); // Max 4 workers
     
     for (let i = 0; i < numWorkers; i++) {
@@ -263,7 +263,7 @@ class ChaosEngineer {
         break;
       case 'cpu':
         if (handle.workers) {
-          handle.workers.forEach((worker: any) => clearInterval(worker));
+          handle.workers.forEach((worker: ReturnType<typeof setInterval>) => clearInterval(worker));
         }
         handle.active = false;
         break;
@@ -537,7 +537,7 @@ function generateChaosReport(results) {
   }
 
   // Failure modes analysis
-  const failureModes = results.reduce((modes: any, result) => {
+  const failureModes = results.reduce((modes: Record<string, string>, result) => {
     if (!result.success) {
       modes[result.testName] = result.errors.join(', ') || 'Timeout or performance threshold exceeded';
     }

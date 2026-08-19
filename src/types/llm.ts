@@ -2,7 +2,7 @@ import { Role } from './index';
 
 export type LlmContextMessage = {
   id: string;
-  role?: Role | null;
+  role?: string | null;
   content: string | null;
   created_at?: string | null;
 };
@@ -14,6 +14,12 @@ export type TenantLlmSettings = {
   tone_config?: Record<string, unknown> | null;
   preferred_llm_model?: string | null;
   llm_token_rate?: number | null;
+  preferred_language?: string | null;
+  business_hours?: Record<string, { open: string | null; close: string | null; closed: boolean }> | null;
+  greeting?: string | null;
+  signature?: string | null;
+  capture_leads?: boolean;
+  follow_up_delay_hours?: number;
 };
 
 export type RecentChat = {
@@ -35,6 +41,7 @@ export type LlmContext = {
 
 export type GetContextOpts = {
   limit?: number;
+  customerMessage?: string;
   // server-side Supabase client instance
   supabaseClient?: import('@supabase/supabase-js').SupabaseClient | undefined;
 };

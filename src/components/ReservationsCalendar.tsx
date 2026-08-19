@@ -39,7 +39,7 @@ export default function ReservationsCalendar({ tenantId, onDayClick, selectedDat
 
     useEffect(() => {
       let mounted = true;
-      const supabase = getBrowserSupabase() as unknown as SupabaseLite;
+      const supabase = getSupabaseBrowserClient() as unknown as SupabaseLite;
       async function load() {
         try {
           const { data } = await supabase

@@ -3,23 +3,42 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { UsagePanel } from '@/components/UsagePanel.client';
 
-// Mock fetch
-const mockFetch = jest.fn();
-// @ts-ignore
-global.fetch = mockFetch;
+// The panel now uses authFetch + the tenant-currency hook.
+jest.mock('@/lib/auth/auth-api-client', () => ({
+  authFetch: jest.fn(),
+}));
+jest.mock('@/hooks/useTenantCurrency', () => ({
+  useTenantCurrency: () => ({
+    currency: 'NGN',
+    locale: 'en-NG',
+    format: (n: number) => `NGN ${Number(n || 0).toFixed(2)}`,
+  }),
+}));
+
+const { authFetch } = require('@/lib/auth/auth-api-client');
 
 describe('UsagePanel', () => {
-  it('shows loading then data', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ window: [{ day: '2025-11-13', bookings: 2, deposits: 1, llm_tokens: 50 }], quota: { quota: 1000, remaining: 950, allowed: true } }) });
+  beforeEach(() => authFetch.mockReset());
+
+  it('shows the 7-day summary once data loads', async () => {
+    authFetch.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        window: [{ day: '2025-11-13', bookings: 2, deposits: 1, llm_tokens: 50 }],
+        quota: { quota: 1000, remaining: 950, allowed: true },
+      },
+    });
     render(<UsagePanel tenantId="t1" />);
-    expect(screen.getByText(/Loading usage/i)).toBeTruthy();
-    await waitFor(() => screen.getByText('2025-11-13'));
-    expect(screen.getByText('2')).toBeTruthy();
+
+    // Quota surfaced as remaining-of-total (unique text), plus the summary labels.
+    await waitFor(() => expect(screen.getByText(/950 of 1,000 left/)).toBeTruthy());
+    expect(screen.getByText('Deposits taken')).toBeTruthy();
+    expect(screen.getByText('AI activity')).toBeTruthy();
   });
-  it('shows error on fetch failure', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+  it('shows an error when the request fails', async () => {
+    authFetch.mockResolvedValueOnce({ status: 500, error: { message: 'Boom', status: 500 } });
     render(<UsagePanel tenantId="t1" />);
-    await waitFor(() => screen.getByText(/Fetch failed/));
-    expect(screen.getByText(/Fetch failed/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Boom/)).toBeTruthy());
   });
 });

@@ -74,7 +74,7 @@ export class PaymentSecurityService {
     metadata?: Record<string, unknown>
   ): Promise<{
     isIdempotent: boolean;
-    existingTransaction?: any;
+    existingTransaction?: Record<string, unknown>;
     fraud_assessment?: FraudAssessment;
     error?: string;
   }> {
@@ -131,10 +131,19 @@ export class PaymentSecurityService {
         }]);
 
       if (insertError) {
-        // Handle race condition
+        // Handle race condition: concurrent request won the insert — fetch that record
         if (insertError.code === '23505') { // Unique constraint violation
           depositIdempotencyHit(tenantId);
-          return { isIdempotent: true };
+          const { data: existingAfterRace } = await this.supabase
+            .from('idempotency_keys')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .eq('idempotency_hash', idempotencyHash)
+            .gte('created_at', windowStart)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          return { isIdempotent: true, existingTransaction: existingAfterRace ?? undefined };
         }
         throw new Error(`Failed to create idempotency record: ${insertError.message}`);
       }
@@ -250,12 +259,12 @@ export class PaymentSecurityService {
 
     } catch (error) {
       span.recordException(error as Error);
-      // Return low-risk assessment on error to avoid blocking legitimate transactions
+      // Fail closed: on any error, decline to avoid approving fraudulent transactions
       return {
-        risk_score: 10,
-        risk_level: 'low',
+        risk_score: 100,
+        risk_level: 'high',
         flags: ['assessment_error'],
-        recommendation: 'approve',
+        recommendation: 'decline',
         details: { error: (error as Error).message },
       };
     } finally {
@@ -286,10 +295,10 @@ export class PaymentSecurityService {
       
       // Calculate overall fraud score
       const fraudScore = this.calculateOverallFraudScore({
-        chargebackRate,
-        failedPaymentRate,
-        reconciliationDrift,
-        suspiciousActivityCount,
+        chargeback_rate: chargebackRate,
+        failed_payment_rate: failedPaymentRate,
+        reconciliation_drift: reconciliationDrift,
+        suspicious_activity_count: suspiciousActivityCount,
       });
 
       const metrics: SecurityMetrics = {
@@ -431,7 +440,7 @@ export class PaymentSecurityService {
     }
 
     // Check for duplicate amounts
-    const duplicateAmounts = recentPayments?.filter((p: any) => p.amount === params.amount).length || 0;
+    const duplicateAmounts = (recentPayments as Array<{ amount?: number }> | null)?.filter((payment) => payment.amount === params.amount).length || 0;
     if (duplicateAmounts > 2) {
       score += 15;
       flags.push('duplicate_amounts');
@@ -460,7 +469,7 @@ export class PaymentSecurityService {
       .limit(10);
 
     if (pastTransactions) {
-      const failedCount = pastTransactions.filter((t: any) => t.status === 'failed').length;
+      const failedCount = (pastTransactions as Array<{ status?: string }>).filter((transaction) => transaction.status === 'failed').length;
       if (failedCount > pastTransactions.length * 0.5) {
         return { score: 25, flag: 'email_high_failure_rate' };
       }
@@ -470,8 +479,8 @@ export class PaymentSecurityService {
   }
 
   private assessGeographicRisk(countryCode: string, tenantId: string): { score: number; flag?: string } {
-    // High-risk countries (simplified example)
-    const highRiskCountries = ['XX', 'YY']; // Replace with actual high-risk ISO codes
+    // High-risk countries per FATF/sanctions/fraud signal lists (ISO 3166-1 alpha-2)
+    const highRiskCountries = ['KP', 'IR', 'SY', 'CU', 'VE', 'MM', 'BY', 'RU', 'UA', 'AF', 'YE', 'LY', 'SO', 'SS', 'SD', 'CF', 'CD', 'ML', 'NI'];
     
     if (highRiskCountries.includes(countryCode)) {
       return { score: 30, flag: 'high_risk_country' };
@@ -612,8 +621,7 @@ export class PaymentSecurityService {
           alerts,
           metrics,
         },
-        tenant_id: tenantId,
-        location_id: null,
+        tenantId,
       });
     }
   }
