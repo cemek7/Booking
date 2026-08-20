@@ -746,13 +746,7 @@ export default function OnboardingPage({
       <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[0.92fr_1.08fr] lg:items-start">
         <aside className="rounded-[2rem] border border-[var(--brand-line)] bg-[#10211a] p-6 text-[#f5f2e8] shadow-[0_30px_80px_rgba(16,33,26,0.18)] lg:sticky lg:top-6">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <BrandMark variant="booka" className="h-12 w-12 shadow-sm shadow-emerald-600/20" />
-              <div>
-                <p className="brand-kicker text-emerald-300/75">Booka</p>
-                <p className="mt-1 text-sm text-[#d6ddd9]">by Techclave</p>
-              </div>
-            </div>
+            <BrandMark variant="booka" className="h-12 shadow-sm shadow-emerald-600/20" />
             <Link href="/booka" className="rounded-full border border-white/12 bg-white/6 px-3 py-1.5 text-xs text-[#f5f2e8] transition hover:bg-white/10">
               Product
             </Link>

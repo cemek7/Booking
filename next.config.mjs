@@ -4,6 +4,10 @@ import { withSentryConfig } from '@sentry/nextjs';
 const nextConfig = {
   experimental: {
     webpackBuildWorker: false,
+    // Next 16's CLI bridge fails to parse this project's valid TypeScript
+    // configuration. Keep build type safety on the stable compiler API; CI
+    // independently runs `npm run typecheck:ci` before every release build.
+    useTypeScriptCli: false,
   },
 
   // Keep Winston and its file-transport dependency out of the Node.js server bundle

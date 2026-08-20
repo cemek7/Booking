@@ -7,12 +7,8 @@ export default function UnauthorizedPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-linear-to-b from-[#f8f7f2] via-[#f5f2e8] to-[#f0ebdb] px-4">
       <div className="max-w-lg w-full rounded-[2rem] border border-[var(--brand-line)] bg-white/92 p-8 text-center shadow-[0_24px_80px_rgba(16,33,26,0.08)] space-y-5">
-        <div className="mx-auto flex w-fit items-center gap-3">
-          <BrandMark variant="booka" className="h-12 w-12 shadow-sm shadow-emerald-600/20" />
-          <div className="text-left">
-            <p className="brand-kicker text-emerald-700/65">Booka</p>
-            <p className="mt-1 text-sm text-slate-500">by Techclave</p>
-          </div>
+        <div className="mx-auto w-fit">
+          <BrandMark variant="booka" className="h-12 shadow-sm shadow-emerald-600/20" />
         </div>
         <div className="text-4xl font-bold text-amber-600">401</div>
         <h1 className="text-2xl font-semibold text-[var(--brand-ink)]">Unauthorized</h1>

@@ -121,12 +121,8 @@ export default function BookaLanding() {
     <main className="min-h-screen bg-white text-[#10211a]">
       <section className="mx-auto flex w-full max-w-7xl flex-col px-5 py-5 sm:px-6 lg:px-8">
         <header className="flex items-center justify-between gap-4 border-b border-emerald-100/80 pb-4">
-          <Link href="/" className="flex items-center gap-3">
-            <BrandMark variant="booka" className="h-11 w-11 shadow-sm shadow-emerald-600/20" />
-            <div>
-              <p className="brand-kicker text-emerald-700/65">Booka</p>
-              <p className="mt-1 text-sm text-slate-500">by Techclave</p>
-            </div>
+          <Link href="/" aria-label="Booka home">
+            <BrandMark variant="booka" className="h-11 shadow-sm shadow-emerald-600/20" />
           </Link>
 
           <nav className="hidden items-center gap-2 md:flex">
