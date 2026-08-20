@@ -65,7 +65,7 @@ COPY --from=dependencies --chown=nextjs:nodejs /app/package.json ./package.json
 # Copy built application from builder stage
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/next.config.ts ./next.config.ts
+COPY --from=builder --chown=nextjs:nodejs /app/next.config.mjs ./next.config.mjs
 
 # Copy additional files needed at runtime
 COPY --from=builder --chown=nextjs:nodejs /app/supabase ./supabase
