@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for production deployment
-FROM node:18-alpine AS dependencies
+FROM node:20-alpine AS dependencies
 
 # Set working directory
 WORKDIR /app
@@ -14,7 +14,7 @@ RUN npm ci --only=production && \
 # ===================================
 # Build stage
 # ===================================
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ RUN npm run build
 # ===================================
 # Production stage
 # ===================================
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Install security updates and utilities
 RUN apk update && apk upgrade && \
