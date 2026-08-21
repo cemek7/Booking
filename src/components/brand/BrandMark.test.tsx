@@ -16,6 +16,7 @@ describe('BrandMark', () => {
 
     const logo = screen.getByRole('img', { name: 'Booka logo' });
     expect(screen.getByTestId('brand-mark')).toHaveClass('h-10', 'w-10', 'rounded-[1.35rem]');
+    expect(screen.getByTestId('brand-mark-artwork')).toHaveClass('absolute', 'inset-0');
     expect(logo).toHaveAttribute('src', '/brand/booka-mark.png');
   });
 });
