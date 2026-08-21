@@ -202,13 +202,7 @@ export default function AuthMagicLinkForm({ mode = "signin", redirectTo }: Props
   return (
     <div className="mx-auto max-w-xl rounded-[2rem] border border-[var(--brand-line)] bg-white/92 p-6 shadow-[0_24px_80px_rgba(16,33,26,0.08)] backdrop-blur-md sm:p-8">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <BrandMark variant="booka" className="h-12 w-12 shadow-sm shadow-emerald-600/20" />
-          <div>
-            <p className="brand-kicker text-emerald-700/65">Booka</p>
-            <p className="mt-1 text-sm text-slate-500">by Techclave</p>
-          </div>
-        </div>
+        <BrandMark variant="booka" className="h-12 shadow-sm shadow-emerald-600/20" />
 
         <Link
           href="/booka"

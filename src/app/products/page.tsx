@@ -35,12 +35,8 @@ export default function ProductsPage() {
     <main className="min-h-screen bg-[#f6f5ef] text-[#101717]">
       <section className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-6 lg:px-8">
         <header className="flex items-center justify-between gap-4 border-b border-[#d8d3c4] pb-5">
-          <Link href="/" className="flex items-center gap-3">
-            <BrandMark variant="techclave" className="h-11 w-11" />
-            <div>
-              <p className="brand-kicker text-[#4d6a59]">Techclave</p>
-              <p className="mt-1 text-sm text-[#5a625f]">Products</p>
-            </div>
+          <Link href="/" aria-label="Techclave home">
+            <BrandMark variant="techclave" className="h-11" />
           </Link>
           <div className="flex flex-wrap gap-2">
             <Link
