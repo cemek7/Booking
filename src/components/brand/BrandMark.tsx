@@ -9,13 +9,29 @@ export default function BrandMark({ variant = 'techclave', className = '' }: Bra
   const isTechclave = variant === 'techclave';
 
   return (
-    <Image
-      src={isTechclave ? '/brand/techclave-logo.png' : '/brand/booka-logo.png'}
-      alt={isTechclave ? 'Techclave logo' : 'Booka logo'}
-      width={isTechclave ? 1000 : 760}
-      height={isTechclave ? 320 : 340}
-      unoptimized
-      className={`h-auto w-auto rounded-xl object-contain ${className}`}
-    />
+    <div
+      data-testid="brand-mark"
+      className={`relative flex items-center justify-center overflow-hidden rounded-[1.35rem] border ${
+        isTechclave
+          ? 'border-[#163425] bg-[#10211a]'
+          : 'border-emerald-200 bg-emerald-600'
+      } ${className}`}
+    >
+      <div
+        className={`absolute inset-[14%] rounded-[1.05rem] border ${
+          isTechclave ? 'border-[#d4b368]/30' : 'border-white/18'
+        }`}
+      />
+      <div className="absolute h-[64%] w-[64%] overflow-hidden rounded-[0.95rem]">
+        <Image
+          src={isTechclave ? '/brand/techclave-mark.png' : '/brand/booka-mark.png'}
+          alt={isTechclave ? 'Techclave logo' : 'Booka logo'}
+          width={256}
+          height={256}
+          unoptimized
+          className="h-full w-full object-cover"
+        />
+      </div>
+    </div>
   );
 }

@@ -35,7 +35,15 @@ export default function Sidebar() {
     <aside className="w-64">
       <GlassCard className="flex flex-col h-full p-0">
         <div className="p-6">
-          <BrandMark variant="booka" className="h-10" />
+          <div className="flex items-center gap-3">
+            <BrandMark variant="booka" className="h-10 w-10" />
+            <div>
+              <div className="font-bold text-xl">Booka</div>
+              <div className="mt-1 text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
+                by Techclave
+              </div>
+            </div>
+          </div>
         </div>
         <nav className="flex-1 overflow-y-auto">
           <ul className="text-sm">
