@@ -17,12 +17,7 @@ export default function BrandMark({ variant = 'techclave', className = '' }: Bra
           : 'border-emerald-200 bg-emerald-600'
       } ${className}`}
     >
-      <div
-        className={`absolute inset-[14%] rounded-[1.05rem] border ${
-          isTechclave ? 'border-[#d4b368]/30' : 'border-white/18'
-        }`}
-      />
-      <div className="absolute h-[64%] w-[64%] overflow-hidden rounded-[0.95rem]">
+      <div data-testid="brand-mark-artwork" className="absolute inset-0">
         <Image
           src={isTechclave ? '/brand/techclave-mark.png' : '/brand/booka-mark.png'}
           alt={isTechclave ? 'Techclave logo' : 'Booka logo'}
@@ -32,6 +27,11 @@ export default function BrandMark({ variant = 'techclave', className = '' }: Bra
           className="h-full w-full object-cover"
         />
       </div>
+      <div
+        className={`pointer-events-none absolute inset-[14%] rounded-[1.05rem] border ${
+          isTechclave ? 'border-[#d4b368]/30' : 'border-white/18'
+        }`}
+      />
     </div>
   );
 }
