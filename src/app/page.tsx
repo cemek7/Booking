@@ -39,8 +39,12 @@ export default function Home() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(5,150,105,0.12),_transparent_30%),radial-gradient(circle_at_80%_20%,_rgba(245,158,11,0.10),_transparent_28%),linear-gradient(180deg,_#f8f7f2_0%,_#f2efe6_100%)]" />
         <div className="relative mx-auto flex w-full max-w-7xl flex-col px-5 py-6 sm:px-6 lg:px-8">
           <header className="flex items-center justify-between gap-4 border-b border-[#d8d3c4] pb-5">
-            <Link href="/" aria-label="Techclave home">
-              <BrandMark variant="techclave" className="h-11" />
+            <Link href="/" className="flex items-center gap-3">
+              <BrandMark variant="techclave" className="h-11 w-11" />
+              <div>
+                <p className="brand-kicker text-[#4d6a59]">Techclave</p>
+                <p className="mt-1 text-sm text-[#5a625f]">AI operating systems for African businesses</p>
+              </div>
             </Link>
 
             <nav className="hidden items-center gap-2 md:flex">

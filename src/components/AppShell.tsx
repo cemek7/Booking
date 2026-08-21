@@ -57,7 +57,13 @@ export const AppShell: React.FC<AppShellProps> = ({ tenantId, userRole, onLogout
     <div className="min-h-screen flex flex-col">
       <header className="flex items-center justify-between px-4 py-2 border-b bg-white">
         <div className="flex items-center gap-4">
-          <BrandMark variant="booka" className="h-10" />
+          <div className="flex items-center gap-3">
+            <BrandMark variant="booka" className="h-10 w-10" />
+            <div className="flex flex-col">
+              <span className="font-semibold">Booka</span>
+              <span className="text-[11px] uppercase tracking-[0.28em] text-gray-400">by Techclave</span>
+            </div>
+          </div>
           <div className="hidden items-center gap-3 text-sm text-gray-500 md:flex">
             <Link href="/booka" className="transition hover:text-gray-900">
               Product

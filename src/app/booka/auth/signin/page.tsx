@@ -19,8 +19,12 @@ export default function BookaSignInPage({
     <div className="min-h-screen bg-linear-to-b from-[#f8f7f2] via-[#f5f2e8] to-[#f0ebdb] px-4 py-10">
       <main className="mx-auto w-full max-w-5xl">
         <div className="mb-10 flex items-start justify-between gap-4">
-          <Link href="/" aria-label="Techclave home">
-            <BrandMark variant="techclave" className="h-12 shadow-sm shadow-[#10211a]/15" />
+          <Link href="/" className="flex items-center gap-3">
+            <BrandMark variant="techclave" className="h-12 w-12 shadow-sm shadow-[#10211a]/15" />
+            <div>
+              <p className="brand-kicker text-[#597061]">Techclave</p>
+              <p className="mt-1 text-sm text-slate-500">Products for front-desk operations</p>
+            </div>
           </Link>
 
           <Link
