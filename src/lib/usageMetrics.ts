@@ -1,4 +1,4 @@
-// @ts-nocheck
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import metrics from './metrics';
@@ -17,7 +17,7 @@ async function upsertDaily(supabase: SupabaseClient, tenantId: string, field: st
       const row: Record<string, unknown> = { tenant_id: tenantId, day: today, [field]: incr };
       await supabase.from('usage_daily').insert(row);
     } else {
-      const rawVal = (data as Record<string, unknown>)[field];
+      const rawVal = (data as unknown as Record<string, unknown>)[field];
       const currentVal = typeof rawVal === 'number' ? rawVal : 0;
       await supabase.from('usage_daily').update({ [field]: currentVal + incr }).eq('tenant_id', tenantId).eq('day', today);
     }

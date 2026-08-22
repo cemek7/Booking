@@ -1,12 +1,13 @@
-// @ts-nocheck
 /**
  * Analytics Type Definitions
- * 
+ *
  * Comprehensive type definitions for KPI metrics, dashboard analytics,
  * and role-based analytics data across the booking system.
  */
 
-export { UserRole } from './roles';
+import type { UserRole } from './roles';
+
+export type { UserRole } from './roles';
 
 // Time period types for analytics
 export type TimePeriod = 
