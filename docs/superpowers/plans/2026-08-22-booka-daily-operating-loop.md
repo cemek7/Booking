@@ -4,9 +4,9 @@
 
 **Goal:** Give Booka owners a safe, sales-and-booking-focused daily operating objective while preserving the existing dashboard.
 
-**Architecture:** Add a tenant-scoped operational evaluator that derives explainable objectives from existing booking, lead, payment, and message signals. Persist state/action/audit records in Supabase; expose owner-authorized APIs; render the loop as a feature-flagged dashboard module; execute only policy-approved actions through the existing WhatsApp queue.
+**Architecture:** Add a tenant-scoped operational evaluator that derives explainable objectives from existing booking, lead, payment, and message signals. Persist state/action/audit records in Supabase; expose owner-authorized APIs; render the loop as a feature-flagged dashboard module. Owner execution atomically writes an action and a direction-specific operating-delivery outbox; a dedicated worker sends it only through the governed WhatsApp sender, never through the inbound WhatsApp queue.
 
-**Tech Stack:** Next.js App Router, TypeScript, Supabase/Postgres + RLS, Zod, Jest/Testing Library, existing route-handler/auth helpers, existing WhatsApp worker queue.
+**Tech Stack:** Next.js App Router, TypeScript, Supabase/Postgres + RLS, Zod, Jest/Testing Library, existing route-handler/auth helpers, governed WhatsApp sender, and VPS cron.
 
 **Spec:** `docs/superpowers/specs/2026-08-21-booka-daily-operating-loop-design.md`
 
@@ -14,7 +14,7 @@
 
 - Booka is a sales and booking front desk: lead response, qualification, recommendations, deposits, conversion, confirmation, recovery, and follow-up are in scope.
 - Keep the existing dashboard; ship the loop as an owner-only, tenant-flagged module first.
-- Reuse existing queues/jobs; do not add microservices or autonomous policy changes.
+- Reuse existing delivery governance and cron infrastructure; do not add microservices, reuse the inbound WhatsApp queue for outbound work, or permit autonomous policy changes.
 - Execute only active owner-approved policies; sensitive, bespoke, high-value, refund, complaint, or out-of-policy work requires approval.
 - Every objective/action must be tenant-scoped, explainable, deduplicated, and auditable.
 
@@ -22,10 +22,13 @@
 
 ## File structure
 
-- `supabase/migrations/042_operating_loop.sql`: tables, constraints, indexes, RLS policies.
-- `src/lib/operating-loop/types.ts`: stable objective, policy, action, and view types.
+- `supabase/migrations/042_operating_loop.sql`: original tenant-scoped tables, constraints, indexes, and RLS policies.
+- `supabase/migrations/043_operating_loop_delivery_safety.sql`: durable controls, suppression, atomic action/outbox RPCs, RLS, and claim/reconciliation RPCs.
+- `src/lib/operating-loop/types.ts`: stable objective, source-fingerprint, policy, action, and view types.
 - `src/lib/operating-loop/evaluator.ts`: deterministic candidate derivation, scoring, and primary selection.
-- `src/lib/operating-loop/service.ts`: persistence, freshness, policy checks, defer/dismiss/execute orchestration.
+- `src/lib/operating-loop/service.ts`: persistence, validated policy/proposal construction, and defer/dismiss/execute orchestration.
+- `src/lib/operating-loop/delivery-worker.ts`: claimed operating-outbox dispatch through `sendGovernedInitiated`.
+- `src/app/api/worker/operating-loop/route.ts`: cron-protected operating-delivery worker entrypoint.
 - `src/app/api/operating-loop/**/route.ts`: owner-authorized read and mutation contracts.
 - `src/components/dashboard/DailyOperatingLoop.tsx`: focused primary-objective module.
 - `src/app/dashboard/page.tsx`: feature-flagged owner placement without removing current dashboard content.
@@ -53,17 +56,35 @@
 - [ ] Include `evidence`, `affectedRecordIds`, `amountAtRisk`, `expiresAt`, and deterministic `dedupeKey` in every draft.
 - [ ] Run focused tests and TypeScript check; expect pass. Commit `feat(operating-loop): derive prioritized sales objectives`.
 
-### Task 3: Policies, persistence, and safe execution
+### Task 3: Policies, persistence, and safe execution — superseded
 
-**Files:** Create `service.ts`, `service.test.ts`; modify existing WhatsApp queue adapter only if needed.
+The original Task 3 implementation is intentionally not accepted. Its use of `whatsapp_message_queue` sends a proposed outbound action into the inbound `processMessageV2` worker. No later task may consume that implementation.
 
-**Interfaces:** `getLoop(tenantId)`, `executeObjective({ tenantId, actorId, objectiveId })`, `deferObjective(...)`, `dismissObjective(...)`, `getPolicies(tenantId)`, `replacePolicies(...)`.
+### Task 3R-A: Atomic controls, action audit, and durable outbox
 
-- [ ] Write failing tests for stale-objective rejection, tenant mismatch rejection, policy-required execution, dedupe, audit creation, defer scheduling, and immediate automation pause.
-- [ ] Run test; expect failure before implementation.
-- [ ] Implement service reads/writes using existing Supabase server/admin patterns. Re-check tenant/owner authorization and policy eligibility immediately before queueing.
-- [ ] Queue only approved routine confirmation, deposit, and follow-up sends through the existing WhatsApp queue; persist proposed payload and delivery reference in `operating_actions`.
-- [ ] Run focused suite plus queue-adapter tests; expect pass. Commit `feat(operating-loop): safely execute approved objectives`.
+**Files:** Create `043_operating_loop_delivery_safety.sql` and migration integration tests; modify `types.ts`, `service.ts`, and `service.test.ts`.
+
+**Interfaces:** `queueOperatingDelivery(p_tenant_id UUID, p_actor_id UUID, p_objective_id UUID, p_policy_id UUID, p_payload JSONB, p_idempotency_key TEXT) -> { action_id UUID, outbox_id UUID }`; `replaceOperatingPolicies(...)`; `applyOperatingSuppression(...)`. Service methods remain `getLoop`, `executeObjective`, `deferObjective`, `dismissObjective`, `getPolicies`, `replacePolicies`, and `persistObjectiveDrafts`.
+
+- [ ] Write failing migration/service tests proving that one RPC transaction rejects stale, cross-tenant, paused, revoked, invalid-policy, and duplicate execution; otherwise it creates one action and one `operating_delivery_outbox` row with the exact intended recipient/payload/idempotency key.
+- [ ] Run the migration integration and focused service tests; expect the new RPC/tables and service seam to be absent.
+- [ ] Add `operating_loop_settings`, `operating_objective_suppressions`, and `operating_delivery_outbox`. Add a deterministic `sourceFingerprint` to every draft/objective, tenant-aware foreign keys, restrictive RLS/grants, bounded retry fields, a unique `(tenant_id, idempotency_key)`, and composite action references. Add SECURITY DEFINER RPCs with a fixed `search_path` that atomically verify actor ownership, objective status/expiry, policy active/approved/action type, and durable pause before changing records.
+- [ ] Make the service validate policy JSON fail-closed (recognized `maxAmountAtRisk`, optional IANA quiet-hours timezone, and no unknown executable fields), build a proposal from the tenant objective, and call the transaction RPC. It must not import or call `queueWhatsAppMessage`.
+- [ ] Persist defer as a suppression until `scheduled_for`; persist dismissal for the same `dedupeKey` and `sourceFingerprint` only. Make evaluator persistence skip matching active suppressions so a material source change can re-open the work. Replace policies and durable pause in one RPC transaction so no old active policy becomes visible during replacement.
+- [ ] Run migration integration, focused service/evaluator tests, typecheck, lint, and `git diff --check`; expect pass. Commit `fix(operating-loop): atomically queue governed deliveries`.
+
+### Task 3R-B: Governed delivery worker and reconciliation
+
+**Files:** Create `src/lib/operating-loop/delivery-worker.ts`, `delivery-worker.test.ts`, `src/app/api/worker/operating-loop/route.ts`, and route tests; modify VPS cron documentation/configuration only if a matching protected schedule is absent.
+
+**Interfaces:** `runOperatingDeliveryBatch({ admin, limit, now }): Promise<{ claimed: number; sent: number; held: number; failed: number }>`; `claimOperatingDeliveries(p_limit INTEGER)` and `completeOperatingDelivery(...)` RPCs.
+
+- [ ] Write failing tests proving the worker claims only due operating-outbox rows once; sends to `recipient` rather than any inbound `from_number`; uses `sendGovernedInitiated`; preserves service-window, consent, opt-out, template, number-quality, and send-governor blocks as a held audit outcome; and records provider message ID/attempt outcome without falsely completing the objective.
+- [ ] Run focused tests; expect missing worker/module/RPC failure.
+- [ ] Implement a cron-protected worker that claims with `FOR UPDATE SKIP LOCKED` via RPC, loads the recipient conversation, tenant provider, branding, and sends through `sendGovernedInitiated`. It must use a deterministic idempotency key at the provider seam where supported and retain a pending reconciliation state for an ambiguous provider result rather than retrying blindly.
+- [ ] Atomically reconcile sent, held, retry, and dead-letter outcomes to both outbox and immutable action audit. Only a confirmed send marks its objective completed; release/retry processing claims with bounded exponential backoff.
+- [ ] Add the protected GET schedule to `deployment/vps-crontab.txt` using `Authorization: Bearer $CRON_SECRET`; verify its route rejects missing/wrong bearer tokens and do not create a public worker endpoint.
+- [ ] Run worker/governed-sender/route tests, typecheck, lint, and `git diff --check`; expect pass. Commit `feat(operating-loop): deliver approved actions through governed sender`.
 
 ### Task 4: Owner APIs
 
@@ -71,7 +92,7 @@
 
 - [ ] Write failing route tests for unauthenticated, non-owner, cross-tenant, validation, successful GET, execute, defer, dismiss, and policy update requests.
 - [ ] Run tests; expect failure because routes do not exist.
-- [ ] Implement routes with `createHttpHandler`, Zod bodies, and the service interfaces from Task 3.
+- [ ] Implement routes with `createHttpHandler`, Zod bodies, and the corrected service interfaces from Task 3R-A/B.
 - [ ] Return a compact loop view containing primary objective, supporting signals, state (`setup|active|clear`), and action eligibility/reason.
 - [ ] Run route tests, ESLint, and typecheck; expect pass. Commit `feat(operating-loop): add owner operational APIs`.
 
@@ -109,4 +130,4 @@
 
 - Spec coverage: Tasks 1–7 cover onboarding, sales/booking objectives, owner-only controls, policies, dashboard preservation, rollout, observability, and acceptance criteria.
 - Placeholder scan: no TBD/TODO or undefined cross-task interfaces.
-- Type consistency: Task 2 produces drafts consumed by Task 3; Task 3 service is consumed by Task 4 APIs; Task 4 view is consumed by Task 5 UI.
+- Type consistency: Task 2 produces drafts consumed by Task 3R-A; Task 3R-A creates durable outbox records consumed by Task 3R-B; corrected Task 3 service is consumed by Task 4 APIs; Task 4 view is consumed by Task 5 UI.
