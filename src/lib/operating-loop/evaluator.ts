@@ -24,6 +24,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const SCORE_BASE = 101;
+const PERSISTED_PRIORITY_SCALE = 2;
 
 type DerivedObjective = Omit<OperatingObjectiveDraft, 'tenantId'>;
 
@@ -50,10 +51,23 @@ function score(
     revenueRisk,
     growthValue,
     deadline,
-    // Each factor is in the inclusive 0-100 range. Base-101 packing preserves
-    // their lexicographic priority in the scalar persisted as priority_score.
-    total: (((customerUrgency * SCORE_BASE + revenueRisk) * SCORE_BASE + growthValue) * SCORE_BASE) + deadline,
+    total: encodePriorityScore(customerUrgency, revenueRisk, growthValue, deadline),
   };
+}
+
+/**
+ * Packs four 0-100 score factors in their lexicographic order. Dividing the
+ * base-101 value by two preserves that order while keeping the all-100 maximum
+ * (52,030,200) below `NUMERIC(12,4)`'s 99,999,999.9999 maximum.
+ */
+export function encodePriorityScore(
+  customerUrgency: number,
+  revenueRisk: number,
+  growthValue: number,
+  deadline: number,
+): number {
+  const packed = (((customerUrgency * SCORE_BASE + revenueRisk) * SCORE_BASE + growthValue) * SCORE_BASE) + deadline;
+  return packed / PERSISTED_PRIORITY_SCALE;
 }
 
 function draft(

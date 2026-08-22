@@ -1,4 +1,5 @@
 import {
+  encodePriorityScore,
   evaluateOperatingObjectives,
   selectPrimaryObjective,
   type OperatingObjectiveDraft,
@@ -141,7 +142,7 @@ describe('evaluateOperatingObjectives', () => {
       expiresAt: '2026-08-22T10:00:00.000Z',
       dedupeKey: 'reply_to_lead:enquiry-urgent',
       status: 'active',
-      score: { customerUrgency: 0, revenueRisk: 0, growthValue: 0, deadline: 0, total: 103030100 },
+      score: { customerUrgency: 0, revenueRisk: 0, growthValue: 0, deadline: 0, total: 51515050 },
     };
     const highValueRecovery: OperatingObjectiveDraft = {
       tenantId: 'tenant-1',
@@ -154,10 +155,18 @@ describe('evaluateOperatingObjectives', () => {
       expiresAt: '2026-08-23T09:00:00.000Z',
       dedupeKey: 'recover_lead:lead-recovery',
       status: 'active',
-      score: { customerUrgency: 100, revenueRisk: 100, growthValue: 100, deadline: 100, total: 870720 },
+      score: { customerUrgency: 100, revenueRisk: 100, growthValue: 100, deadline: 100, total: 435360 },
     };
 
     expect(selectPrimaryObjective([highValueRecovery, urgentReply])).toBe(urgentReply);
+  });
+
+  test('encodes the maximum factor tuple within the NUMERIC(12,4) persistence bound', () => {
+    const maximumPersistedPriority = encodePriorityScore(100, 100, 100, 100);
+
+    expect(maximumPersistedPriority).toBe(52030200);
+    expect(maximumPersistedPriority).toBeLessThanOrEqual(99999999.9999);
+    expect(encodePriorityScore(100, 0, 0, 0)).toBeGreaterThan(encodePriorityScore(0, 100, 100, 100));
   });
 
   test('derives follow-up urgency and expiry from each due time', () => {

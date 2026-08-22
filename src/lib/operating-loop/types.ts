@@ -14,6 +14,11 @@ export interface ObjectiveScore {
   revenueRisk: number;
   growthValue: number;
   deadline: number;
+  /**
+   * Canonical priority for persistence in `operating_objectives.priority_score`.
+   * It is a base-101 encoding of the factors, scaled by two so the maximum
+   * remains exactly representable by PostgreSQL `NUMERIC(12,4)`.
+   */
   total: number;
 }
 
