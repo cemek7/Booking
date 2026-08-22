@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
