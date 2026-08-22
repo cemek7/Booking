@@ -18,10 +18,10 @@ describe('042 operating-loop migration contract', () => {
       'automation_policies',
       'onboarding_evidence',
     ]) {
-      expect(sql).toMatch(new RegExp(`create table if not exists public\\.${table} \\(`));
-      expect(sql).toMatch(new RegExp(`create table if not exists public\\.${table} \\([^;]*id uuid primary key`));
-      expect(sql).toMatch(new RegExp(`create table if not exists public\\.${table} \\([^;]*tenant_id uuid not null references public\\.tenants\\(id\\) on delete cascade`));
-      expect(sql).toMatch(new RegExp(`create table if not exists public\\.${table} \\([^;]*created_at timestamptz not null default now\\(\\)`));
+      expect(sql).toMatch(new RegExp(`create table public\\.${table} \\(`));
+      expect(sql).toMatch(new RegExp(`create table public\\.${table} \\([^;]*id uuid primary key`));
+      expect(sql).toMatch(new RegExp(`create table public\\.${table} \\([^;]*tenant_id uuid not null references public\\.tenants\\(id\\) on delete cascade`));
+      expect(sql).toMatch(new RegExp(`create table public\\.${table} \\([^;]*created_at timestamptz not null default now\\(\\)`));
     }
 
     expect(sql).toMatch(/operating_loop_state \([^;]*supporting_signals jsonb not null default '\[\]'::jsonb/);
@@ -48,12 +48,12 @@ describe('042 operating-loop migration contract', () => {
       expect(sql).toContain(`constraint ${constraint} check`);
     }
 
-    expect(sql).toMatch(/create unique index if not exists operating_objectives_active_dedupe_idx on public\.operating_objectives \(tenant_id, dedupe_key\) where status = 'active'/);
-    expect(sql).toContain('create index if not exists operating_loop_state_tenant_day_idx');
-    expect(sql).toContain('create index if not exists operating_objectives_tenant_status_idx');
-    expect(sql).toContain('create index if not exists operating_actions_tenant_created_idx');
-    expect(sql).toContain('create index if not exists automation_policies_tenant_status_idx');
-    expect(sql).toContain('create index if not exists onboarding_evidence_tenant_status_idx');
+    expect(sql).toMatch(/create unique index operating_objectives_active_dedupe_idx on public\.operating_objectives \(tenant_id, dedupe_key\) where status = 'active'/);
+    expect(sql).toContain('create index operating_loop_state_tenant_day_idx');
+    expect(sql).toContain('create index operating_objectives_tenant_status_idx');
+    expect(sql).toContain('create index operating_actions_tenant_created_idx');
+    expect(sql).toContain('create index automation_policies_tenant_status_idx');
+    expect(sql).toContain('create index onboarding_evidence_tenant_status_idx');
   });
 
   it('enables tenant reads, owner-only writes, and service-worker access', () => {
@@ -75,5 +75,26 @@ describe('042 operating-loop migration contract', () => {
     expect(sql).toMatch(/create policy automation_policies_owner_manage on public\.automation_policies for all to authenticated using \([\s\S]*with check \(/);
     expect(sql).toMatch(/create policy onboarding_evidence_owner_manage on public\.onboarding_evidence for all to authenticated using \([\s\S]*with check \(/);
     expect(sql).toContain('revoke update, delete on table public.operating_actions from authenticated');
+  });
+
+  it('uses non-recursive authorization and tenant-aware references that retain audits', () => {
+    const sql = migrationSql();
+
+    expect(sql).toContain('create schema if not exists private');
+    expect(sql).toContain('create function private.is_tenant_member');
+    expect(sql).toContain('create function private.is_tenant_owner');
+    expect(sql).toContain('security definer');
+    expect(sql).toContain("set search_path = pg_catalog, public");
+    expect(sql).toContain('revoke all on function private.is_tenant_member(uuid) from public');
+    expect(sql).toContain('revoke all on function private.is_tenant_owner(uuid) from public');
+    expect(sql).not.toContain('using (exists ( select 1 from public.tenant_users membership');
+    expect(sql).toContain('private.is_tenant_member(operating_objectives.tenant_id)');
+    expect(sql).toContain('private.is_tenant_owner(operating_actions.tenant_id)');
+
+    expect(sql).toContain('constraint operating_objectives_tenant_id_id_key unique (tenant_id, id)');
+    expect(sql).toContain('constraint automation_policies_tenant_id_id_key unique (tenant_id, id)');
+    expect(sql).toContain('foreign key (tenant_id, primary_objective_id) references public.operating_objectives (tenant_id, id) on delete set null (primary_objective_id)');
+    expect(sql).toContain('foreign key (tenant_id, objective_id) references public.operating_objectives (tenant_id, id) on delete restrict');
+    expect(sql).toContain('foreign key (tenant_id, policy_id) references public.automation_policies (tenant_id, id) on delete set null (policy_id)');
   });
 });
