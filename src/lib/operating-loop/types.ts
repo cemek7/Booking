@@ -18,6 +18,7 @@ export interface ObjectiveScore {
 }
 
 export interface OperatingObjectiveDraft {
+  tenantId: string;
   kind: OperatingObjectiveKind;
   title: string;
   explanation: string;

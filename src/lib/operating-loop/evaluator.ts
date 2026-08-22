@@ -23,6 +23,9 @@ export type {
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+const SCORE_BASE = 101;
+
+type DerivedObjective = Omit<OperatingObjectiveDraft, 'tenantId'>;
 
 function isoAt(timestamp: number): string {
   return new Date(timestamp).toISOString();
@@ -47,7 +50,9 @@ function score(
     revenueRisk,
     growthValue,
     deadline,
-    total: customerUrgency + revenueRisk + growthValue + deadline,
+    // Each factor is in the inclusive 0-100 range. Base-101 packing preserves
+    // their lexicographic priority in the scalar persisted as priority_score.
+    total: (((customerUrgency * SCORE_BASE + revenueRisk) * SCORE_BASE + growthValue) * SCORE_BASE) + deadline,
   };
 }
 
@@ -60,7 +65,7 @@ function draft(
   amountAtRisk: number | null,
   expiresAt: string,
   objectiveScore: ObjectiveScore,
-): OperatingObjectiveDraft {
+): DerivedObjective {
   return {
     kind,
     title,
@@ -80,11 +85,14 @@ function isCurrent(timestamp: string, nowAt: number): boolean {
   return Number.isFinite(value) && value <= nowAt && value >= nowAt - DAY;
 }
 
-function enquiryObjective(enquiry: OperatingEnquirySignal, nowAt: number): OperatingObjectiveDraft | null {
+function enquiryObjective(enquiry: OperatingEnquirySignal, nowAt: number): DerivedObjective | null {
   if (!isCurrent(enquiry.receivedAt, nowAt)) return null;
 
   const receivedAt = new Date(enquiry.receivedAt).getTime();
-  const expiresAt = isoAt(receivedAt + HOUR);
+  const expiresAtMilliseconds = receivedAt + HOUR;
+  if (expiresAtMilliseconds <= nowAt) return null;
+
+  const expiresAt = isoAt(expiresAtMilliseconds);
   const customerName = enquiry.customerName ?? 'this customer';
 
   if (enquiry.status === 'unanswered') {
@@ -96,7 +104,7 @@ function enquiryObjective(enquiry: OperatingEnquirySignal, nowAt: number): Opera
       { enquiryId: enquiry.id, customerName },
       null,
       expiresAt,
-      score(100, 0, 0, deadlineScore(receivedAt + HOUR, nowAt)),
+      score(100, 0, 0, deadlineScore(expiresAtMilliseconds, nowAt)),
     );
   }
 
@@ -109,14 +117,14 @@ function enquiryObjective(enquiry: OperatingEnquirySignal, nowAt: number): Opera
       { enquiryId: enquiry.id, customerName },
       null,
       expiresAt,
-      score(75, 0, 30, deadlineScore(receivedAt + HOUR, nowAt)),
+      score(75, 0, 30, deadlineScore(expiresAtMilliseconds, nowAt)),
     );
   }
 
   return null;
 }
 
-function leadObjective(lead: OperatingLeadSignal, nowAt: number): OperatingObjectiveDraft | null {
+function leadObjective(lead: OperatingLeadSignal, nowAt: number): DerivedObjective | null {
   if (lead.status !== 'abandoned' || lead.intent !== 'high' || !isCurrent(lead.abandonedAt, nowAt)) return null;
 
   const abandonedAt = new Date(lead.abandonedAt).getTime();
@@ -133,7 +141,7 @@ function leadObjective(lead: OperatingLeadSignal, nowAt: number): OperatingObjec
   );
 }
 
-function bookingObjective(booking: OperatingBookingSignal, nowAt: number): OperatingObjectiveDraft | null {
+function bookingObjective(booking: OperatingBookingSignal, nowAt: number): DerivedObjective | null {
   const startsAt = new Date(booking.startsAt).getTime();
   if (!Number.isFinite(startsAt) || startsAt <= nowAt) return null;
 
@@ -183,9 +191,12 @@ function bookingObjective(booking: OperatingBookingSignal, nowAt: number): Opera
   return null;
 }
 
-function followUpObjective(followUp: OperatingFollowUpSignal, nowAt: number): OperatingObjectiveDraft | null {
+function followUpObjective(followUp: OperatingFollowUpSignal, nowAt: number): DerivedObjective | null {
   const dueAt = new Date(followUp.dueAt).getTime();
-  if (!Number.isFinite(dueAt) || dueAt > nowAt + DAY || dueAt < nowAt - DAY) return null;
+  const expiresAtMilliseconds = dueAt + DAY;
+  // Follow-ups are actionable from one day before their due time through the
+  // following day; once that window closes they cannot be selected again.
+  if (!Number.isFinite(dueAt) || dueAt > nowAt + DAY || expiresAtMilliseconds <= nowAt) return null;
 
   const customerName = followUp.customerName ?? 'this customer';
   return draft(
@@ -195,8 +206,8 @@ function followUpObjective(followUp: OperatingFollowUpSignal, nowAt: number): Op
     `${customerName} is due for a follow-up.`,
     { followUpId: followUp.id, customerName },
     null,
-    isoAt(nowAt + DAY),
-    score(0, 0, 30, deadlineScore(nowAt + DAY, nowAt)),
+    isoAt(expiresAtMilliseconds),
+    score(0, 0, 30, deadlineScore(dueAt, nowAt)),
   );
 }
 
@@ -204,21 +215,25 @@ export function evaluateOperatingObjectives(input: OperatingSignals, now: Date):
   const nowAt = now.getTime();
   if (!Number.isFinite(nowAt)) return [];
 
-  return [
+  const orderedCandidates = [
     ...input.enquiries.map((enquiry) => enquiryObjective(enquiry, nowAt)),
     ...input.leads.map((lead) => leadObjective(lead, nowAt)),
     ...input.bookings.map((booking) => bookingObjective(booking, nowAt)),
     ...input.followUps.map((followUp) => followUpObjective(followUp, nowAt)),
-  ].filter((candidate): candidate is OperatingObjectiveDraft => candidate !== null)
+  ].filter((candidate): candidate is DerivedObjective => candidate !== null)
+    .map((candidate) => ({ ...candidate, tenantId: input.tenantId }))
     .sort(compareCandidates);
+
+  const seenDedupeKeys = new Set<string>();
+  return orderedCandidates.filter((candidate) => {
+    if (seenDedupeKeys.has(candidate.dedupeKey)) return false;
+    seenDedupeKeys.add(candidate.dedupeKey);
+    return true;
+  });
 }
 
 function compareCandidates(left: OperatingObjectiveDraft, right: OperatingObjectiveDraft): number {
   return (
-    right.score.customerUrgency - left.score.customerUrgency ||
-    right.score.revenueRisk - left.score.revenueRisk ||
-    right.score.growthValue - left.score.growthValue ||
-    right.score.deadline - left.score.deadline ||
     right.score.total - left.score.total ||
     left.dedupeKey.localeCompare(right.dedupeKey)
   );
