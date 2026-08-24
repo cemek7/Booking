@@ -23,7 +23,7 @@ The live DB has a history of drifting from migrations → 500s on new pages. Pro
 project** from staging; its schema must match what the 509 new commits expect.
 
 - [ ] Migrations are idempotent (per `CLAUDE.md`), so the safe move is to **re-apply all in order** against
-      the prod DB, from **both** dirs: `db/migrations/` (88 files) and `supabase/migrations/` (27 files).
+      the prod DB, from **both** dirs: `db/migrations/` (122 files) and `supabase/migrations/` (27 files).
       Run against the prod `DATABASE_URL`/`DIRECT_URL`. **Never run against the live DB without a backup.**
 - [ ] Spot-check drift before deploy (read-only) — recent feature migrations the new code depends on:
       ```sql

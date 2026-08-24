@@ -25,6 +25,12 @@ Plus the plan doc revision (`36e1627` → corrected in `54459e0`).
   **globally**, affecting every use of those tokens, not just the flagged elements. I validated
   *contrast* (axe) and regenerated the 40 screenshots, but **did not visually eyeball each frame** to
   confirm the brand aesthetic didn't shift. Low risk (values were nudged, not rehued) but unverified by eye.
+- **Resolution (2026-08-24):** eyeballing the artifacts surfaced an apparent bug — the dark-theme demos
+  (Ember `#140f0c`, Sungrid `#0b1f2a`) appeared light cream in `public/mockups/*.png`. Traced to source:
+  `showcase.css` **is** imported in `(showcase)/layout.tsx`, `.sc-bg`/`themeVars()` are correct, the dark
+  tokens are correct, and axe read the real `#140f0c` off the **live** DOM. The light PNGs were stale/buggy
+  output from the standalone screenshot *tool* and are **not referenced anywhere in `src`** (dead audit
+  artifacts, never displayed). **No rendering bug; zero user-facing impact.** Not regenerating unused assets.
 - **Gap:** the `document-title`/`html-has-lang` flags were dispositioned as headless artifacts via curl —
   correct, but a full manual a11y pass (focus order, reading order) was explicitly **not** done.
 
@@ -52,6 +58,11 @@ Plus the plan doc revision (`36e1627` → corrected in `54459e0`).
 - **Gap:** the DB drift-probe SQL uses table/column names **inferred from migration filenames**
   (`staff_services`, `escalation_queue`, `products`); `reservations.source` is confirmed, the rest are
   **representative** and the operator must confirm exact names. Flagged as such in the doc.
+- **Resolution (2026-08-24):** verified every probe against the actual migrations — all correct:
+  `reservations.source` (`ALTER TABLE public.reservations ADD COLUMN IF NOT EXISTS source`),
+  `escalation_queue` (`039_escalation_queue.sql`), `staff_services` (`041_staff_services.sql`), and
+  `products` (`114_products_catalog.sql`). One genuine drift found and fixed: the doc said `db/migrations/`
+  held **88** files; it now holds **122** (34 added since) — corrected to 122.
 
 ## Cross-cutting notes
 - **Process:** every change reached `staging` via throwaway detached worktrees (never a checkout in a shared
@@ -68,7 +79,9 @@ The `/booka/dashboard` IA was **already implemented** by a concurrent session vi
 `docs/plans/2026-08-15-booka-dashboard-relocation.md` was rewritten to record reality.
 
 ## Open follow-ups (not blocking)
-1. Visually eyeball the regenerated showcase screenshots to confirm Ember/Haven aesthetics post-token-change.
-2. When walking the cutover checklist, replace the representative DB-probe names with the real schema.
+1. ~~Visually eyeball the regenerated showcase screenshots to confirm Ember/Haven aesthetics.~~ **Done
+   2026-08-24** — no rendering bug; source + live DOM correct; light PNGs are unreferenced dead artifacts.
+2. ~~When walking the cutover checklist, replace the representative DB-probe names with the real schema.~~
+   **Done 2026-08-24** — all probe names verified correct against migrations; stale file count (88→122) fixed.
 3. Clear remaining `@ts-nocheck` from payment/auth/encryption files (last two removals found 2 real bugs).
 4. Product registry: no action until product #2 is real.
