@@ -8,6 +8,9 @@ import {
   recordOperatingDraftAnswer,
   skipOperatingDraftQuestion,
 } from '@/lib/onboarding/operating-draft';
+import type { OperatingDraftView } from '@/lib/onboarding/operating-draft';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +22,14 @@ const ActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('add_source'), sourceType: SourceTypeSchema, sourceReference: z.string().trim().min(1).max(2048) }).strict(),
   z.object({ action: z.literal('approve') }).strict(),
 ]);
+
+async function recordReadiness(tenantId: string, actorId: string, action: string, draft: OperatingDraftView) {
+  await captureServerAnalyticsEvent({
+    event: ANALYTICS_EVENTS.OPERATING_ONBOARDING_READINESS_UPDATED,
+    properties: { tenant_id: tenantId, channel: 'web', flow: 'activation', metadata: { action, ...draft.readiness, launch_ready: draft.launch?.ready === true } },
+    distinctId: actorId,
+  });
+}
 
 export const GET = createHttpHandler(
   async (ctx) => getOperatingDraft(getVerifiedTenantId(ctx)),
@@ -33,18 +44,21 @@ export const POST = createHttpHandler(
 
     const tenantId = getVerifiedTenantId(ctx);
     const actorId = ctx.user!.id;
+    let draft: OperatingDraftView;
     switch (parsed.data.action) {
       case 'answer':
-        return recordOperatingDraftAnswer({ tenantId, actorId, questionId: parsed.data.questionId, answer: parsed.data.answer });
+        draft = await recordOperatingDraftAnswer({ tenantId, actorId, questionId: parsed.data.questionId, answer: parsed.data.answer }); break;
       case 'skip':
-        return skipOperatingDraftQuestion({ tenantId, actorId, questionId: parsed.data.questionId });
+        draft = await skipOperatingDraftQuestion({ tenantId, actorId, questionId: parsed.data.questionId }); break;
       case 'add_source':
-        return addOperatingDraftSource({
+        draft = await addOperatingDraftSource({
           tenantId, actorId, sourceType: parsed.data.sourceType, sourceReference: parsed.data.sourceReference,
-        });
+        }); break;
       case 'approve':
-        return approveOperatingDraft({ tenantId, actorId });
+        draft = await approveOperatingDraft({ tenantId, actorId }); break;
     }
+    await recordReadiness(tenantId, actorId, parsed.data.action, draft);
+    return draft;
   },
   'POST',
   { auth: true, roles: ['owner'] },

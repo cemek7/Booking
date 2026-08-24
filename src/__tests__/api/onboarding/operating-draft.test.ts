@@ -6,6 +6,7 @@ const recordOperatingDraftAnswer = jest.fn();
 const skipOperatingDraftQuestion = jest.fn();
 const addOperatingDraftSource = jest.fn();
 const approveOperatingDraft = jest.fn();
+const captureServerAnalyticsEvent = jest.fn();
 
 jest.mock('@/lib/error-handling/route-handler', () => ({
   createHttpHandler: (handler: (ctx: unknown) => unknown, method: string, options: { auth?: boolean; roles?: string[] }) => {
@@ -25,6 +26,10 @@ jest.mock('@/lib/onboarding/operating-draft', () => ({
   addOperatingDraftSource,
   approveOperatingDraft,
 }));
+jest.mock('@/lib/analytics/server', () => ({ captureServerAnalyticsEvent }));
+jest.mock('@/lib/analytics/events', () => ({
+  ANALYTICS_EVENTS: { OPERATING_ONBOARDING_READINESS_UPDATED: 'operating_onboarding_readiness_updated' },
+}));
 
 import { GET, POST } from '@/app/api/onboarding/operating-draft/route';
 
@@ -40,10 +45,11 @@ describe('Operating draft onboarding API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     getOperatingDraft.mockResolvedValue({ readiness: { percent: 0 } });
-    recordOperatingDraftAnswer.mockResolvedValue({ readiness: { percent: 20 } });
+    recordOperatingDraftAnswer.mockResolvedValue({ readiness: { answered: 1, skipped: 0, total: 5, percent: 20 }, launch: { ready: false } });
     skipOperatingDraftQuestion.mockResolvedValue({ readiness: { percent: 0, skipped: 1 } });
     addOperatingDraftSource.mockResolvedValue({ readiness: { percent: 0 } });
     approveOperatingDraft.mockResolvedValue({ launch: { ready: true } });
+    captureServerAnalyticsEvent.mockResolvedValue(undefined);
   });
 
   it('returns the draft only for the server-verified owner tenant', async () => {
@@ -56,11 +62,16 @@ describe('Operating draft onboarding API', () => {
       action: 'answer',
       questionId: 'offer',
       answer: 'We sell braids and take weekend appointments.',
-    }))).resolves.toEqual({ readiness: { percent: 20 } });
+    }))).resolves.toEqual({ readiness: { answered: 1, skipped: 0, total: 5, percent: 20 }, launch: { ready: false } });
 
     expect(recordOperatingDraftAnswer).toHaveBeenCalledWith({
       tenantId: 'tenant-1', actorId: 'owner-1', questionId: 'offer',
       answer: 'We sell braids and take weekend appointments.',
+    });
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_onboarding_readiness_updated',
+      properties: { tenant_id: 'tenant-1', channel: 'web', flow: 'activation', metadata: { action: 'answer', answered: 1, skipped: 0, total: 5, percent: 20, launch_ready: false } },
+      distinctId: 'owner-1',
     });
   });
 
