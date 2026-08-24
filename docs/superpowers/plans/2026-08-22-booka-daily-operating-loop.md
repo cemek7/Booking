@@ -111,11 +111,11 @@ The original Task 3 implementation is intentionally not accepted. Its use of `wh
 
 **Files:** Create `operating-draft.ts`, onboarding draft routes/tests; modify onboarding UI only where it can present a conversational next question and approval summary.
 
-- [ ] Write failing tests for evidence-backed draft fields, plain-language answer recording, skipped questions, explicit approval requirement, and launch-readiness calculation.
-- [ ] Run tests; expect missing module/route failure.
-- [ ] Implement draft state backed by `onboarding_evidence`; accept source references and owner answers, but keep extraction/investigation asynchronous and draft-only.
-- [ ] Render one conversational next question plus readiness progress; show final operating summary before enabling policies or launch state.
-- [ ] Run onboarding tests, typecheck, and lint; expect pass. Commit `feat(onboarding): add conversational front-desk setup`.
+- [x] Write failing tests for evidence-backed draft fields, plain-language answer recording, skipped questions, explicit approval requirement, and launch-readiness calculation.
+- [x] Run tests; observe the expected missing module/route failure.
+- [x] Implement draft state backed by `onboarding_evidence`; accept source references and owner answers, but keep extraction/investigation asynchronous and draft-only.
+- [x] Render one conversational next question plus readiness progress; show final operating summary before enabling policies or launch state.
+- [x] Run onboarding tests, scoped typecheck, lint, and `git diff --check`; commit `feat(onboarding): add conversational front-desk setup`.
 
 ### Task 7: Observability, acceptance, and rollout controls
 
