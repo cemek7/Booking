@@ -93,6 +93,21 @@ describe('Daily Operating Loop owner APIs', () => {
     expect(dismissObjective).toHaveBeenCalledWith({
       tenantId: 'tenant-1', actorId: 'owner-1', objectiveId: 'objective-1', reason: 'Already called',
     });
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_objective_dismissed',
+      properties: { tenant_id: 'tenant-1', channel: 'web', flow: 'retention', metadata: { outcome: 'dismissed' } },
+      distinctId: 'owner-1',
+    });
+  });
+
+  it('records a successful defer without sending objective or customer detail to analytics', async () => {
+    const scheduledFor = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await defer(context({ scheduledFor }));
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_objective_deferred',
+      properties: { tenant_id: 'tenant-1', channel: 'web', flow: 'retention', metadata: { outcome: 'deferred' } },
+      distinctId: 'owner-1',
+    });
   });
 
   it('updates policies and the durable pause from a validated owner request', async () => {
