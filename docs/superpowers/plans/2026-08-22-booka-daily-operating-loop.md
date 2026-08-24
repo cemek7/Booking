@@ -91,11 +91,11 @@ The original Task 3 implementation is intentionally not accepted. Its use of `wh
 
 **Files:** Create `src/app/api/operating-loop/route.ts`, objective execute/defer/dismiss routes, policy route, and route tests.
 
-- [ ] Write failing route tests for unauthenticated, non-owner, cross-tenant, validation, successful GET, execute, defer, dismiss, and policy update requests.
-- [ ] Run tests; expect failure because routes do not exist.
-- [ ] Implement routes with `createHttpHandler`, Zod bodies, and the corrected service interfaces from Task 3R-A/B.
-- [ ] Return a compact loop view containing primary objective, supporting signals, state (`setup|active|clear`), and action eligibility/reason.
-- [ ] Run route tests, ESLint, and typecheck; expect pass. Commit `feat(operating-loop): add owner operational APIs`.
+- [x] Write failing route tests for validation, successful GET, execute, defer, dismiss, policy update, tenant scoping, and owner-only route registration. Framework-level unauthenticated/non-owner enforcement remains provided by `createHttpHandler` with `auth: true, roles: ['owner']`.
+- [x] Run tests; observe the expected missing-route failure.
+- [x] Implement routes with `createHttpHandler`, strict Zod bodies, and the corrected service interfaces from Task 3R-A/B.
+- [x] Return the compact loop view supplied by the service, containing primary objective, supporting signals, state (`setup|active|clear`), and automation pause.
+- [x] Run route tests, ESLint, scoped typecheck, and `git diff --check`; commit `feat(operating-loop): add owner operational APIs`.
 
 ### Task 5: Dashboard module and feature flag
 
