@@ -6,6 +6,8 @@ DROP FUNCTION IF EXISTS public.queue_operating_delivery(UUID, UUID, UUID, UUID, 
 DROP FUNCTION IF EXISTS public.apply_operating_suppression(UUID, UUID, UUID, TEXT, TIMESTAMPTZ, TEXT);
 DROP FUNCTION IF EXISTS public.replace_operating_policies(UUID, UUID, BOOLEAN, JSONB);
 DROP FUNCTION IF EXISTS public.persist_operating_objective_draft(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, NUMERIC, NUMERIC, TIMESTAMPTZ, TEXT);
+DROP FUNCTION IF EXISTS public.claim_operating_deliveries(INTEGER);
+DROP FUNCTION IF EXISTS public.complete_operating_delivery(UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ);
 DROP TABLE IF EXISTS public.operating_actions CASCADE;
 DROP TABLE IF EXISTS public.operating_delivery_outbox CASCADE;
 DROP TABLE IF EXISTS public.operating_objective_suppressions CASCADE;
@@ -71,6 +73,7 @@ CREATE POLICY tenant_users_hierarchy_select ON public.tenant_users
 
 \ir ../../migrations/042_operating_loop.sql
 \ir ../../migrations/043_operating_loop_delivery_safety.sql
+\ir ../../migrations/044_operating_loop_delivery_worker.sql
 
 CREATE OR REPLACE FUNCTION public.assert_true(value BOOLEAN, message TEXT)
 RETURNS VOID
@@ -208,6 +211,40 @@ SELECT public.assert_equals((SELECT count(*) FROM public.operating_delivery_outb
   'approved action writes exactly one dedicated operating delivery outbox row');
 SELECT public.assert_true((SELECT status = 'queued' FROM public.operating_objectives WHERE id = '30000000-0000-0000-0000-000000000001'),
   'queueing does not falsely complete the objective');
+SELECT public.assert_equals((SELECT count(*) FROM public.claim_operating_deliveries(1)), 1,
+  'worker claims one pending operating delivery');
+SELECT public.assert_true((SELECT status = 'processing' FROM public.operating_delivery_outbox WHERE id = (
+  SELECT id FROM public.operating_delivery_outbox WHERE tenant_id = '20000000-0000-0000-0000-000000000001' LIMIT 1
+)), 'claim moves delivery to processing before any provider call');
+SELECT * FROM public.complete_operating_delivery(
+  (SELECT id FROM public.operating_delivery_outbox WHERE tenant_id = '20000000-0000-0000-0000-000000000001' LIMIT 1),
+  'sent', 'provider-message-a', NULL, NULL
+);
+SELECT public.assert_true((SELECT status = 'completed' FROM public.operating_objectives WHERE id = '30000000-0000-0000-0000-000000000001'),
+  'only a recorded sent delivery completes the objective');
+SELECT public.assert_true((SELECT status = 'sent' AND delivery_reference = 'provider-message-a' FROM public.operating_actions
+  WHERE objective_id = '30000000-0000-0000-0000-000000000001' AND action_type = 'execute'),
+  'recorded delivery success marks its action sent with provider reference');
+SELECT public.assert_sqlstate(
+  $$SELECT * FROM public.complete_operating_delivery((SELECT id FROM public.operating_delivery_outbox LIMIT 1), 'sent', 'duplicate', NULL, NULL)$$,
+  'P0001', 'a completed outbox row cannot be completed twice'
+);
+INSERT INTO public.operating_objectives (id, tenant_id, objective_type, dedupe_key, source_fingerprint, title, explanation, expires_at)
+  VALUES ('30000000-0000-0000-0000-000000000010', '20000000-0000-0000-0000-000000000001', 'confirm_booking', 'provider-reference', 'v1:provider-reference', 'Provider reference', 'A confirmed send requires provider evidence.', now() + interval '1 hour');
+SELECT * FROM public.queue_operating_delivery(
+  '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+  '30000000-0000-0000-0000-000000000010', '40000000-0000-0000-0000-000000000001',
+  '{"recipient":"2348111111111","content":"Provider reference","actionType":"confirm_booking"}'::jsonb,
+  'operating:test:provider-reference'
+);
+SELECT public.assert_equals((SELECT count(*) FROM public.claim_operating_deliveries(1)), 1,
+  'worker claims the provider-reference fixture');
+SELECT public.assert_sqlstate(
+  $$SELECT * FROM public.complete_operating_delivery((SELECT id FROM public.operating_delivery_outbox WHERE objective_id = '30000000-0000-0000-0000-000000000010'), 'sent', NULL, NULL, NULL)$$,
+  '22023', 'a sent completion requires a provider message reference'
+);
+SELECT public.assert_true((SELECT status = 'queued' FROM public.operating_objectives WHERE id = '30000000-0000-0000-0000-000000000010'),
+  'a sent completion without provider evidence cannot complete the objective');
 SELECT public.assert_sqlstate(
   $$SELECT * FROM public.queue_operating_delivery('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','{"recipient":"2348111111111","content":"Again","actionType":"confirm_booking"}'::jsonb,'operating:test:objective-a')$$,
   'P0001', 'a queued objective cannot be executed twice'
@@ -310,4 +347,4 @@ SELECT public.assert_sqlstate(
 );
 RESET ROLE;
 
-\echo '042/043 operating-loop migration schema/RLS test passed'
+\echo '042/044 operating-loop migration schema/RLS test passed'

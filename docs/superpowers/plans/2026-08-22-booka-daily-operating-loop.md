@@ -23,7 +23,8 @@
 ## File structure
 
 - `supabase/migrations/042_operating_loop.sql`: original tenant-scoped tables, constraints, indexes, and RLS policies.
-- `supabase/migrations/043_operating_loop_delivery_safety.sql`: durable controls, suppression, atomic action/outbox RPCs, RLS, and claim/reconciliation RPCs.
+- `supabase/migrations/043_operating_loop_delivery_safety.sql`: durable controls, suppression, atomic action/outbox RPCs, and RLS.
+- `supabase/migrations/044_operating_loop_delivery_worker.sql`: atomic claim/reconciliation RPCs for the dedicated operating outbox.
 - `src/lib/operating-loop/types.ts`: stable objective, source-fingerprint, policy, action, and view types.
 - `src/lib/operating-loop/evaluator.ts`: deterministic candidate derivation, scoring, and primary selection.
 - `src/lib/operating-loop/service.ts`: persistence, validated policy/proposal construction, and defer/dismiss/execute orchestration.
@@ -79,12 +80,12 @@ The original Task 3 implementation is intentionally not accepted. Its use of `wh
 
 **Interfaces:** `runOperatingDeliveryBatch({ admin, limit, now }): Promise<{ claimed: number; sent: number; held: number; failed: number }>`; `claimOperatingDeliveries(p_limit INTEGER)` and `completeOperatingDelivery(...)` RPCs.
 
-- [ ] Write failing tests proving the worker claims only due operating-outbox rows once; sends to `recipient` rather than any inbound `from_number`; uses `sendGovernedInitiated`; preserves service-window, consent, opt-out, template, number-quality, and send-governor blocks as a held audit outcome; and records provider message ID/attempt outcome without falsely completing the objective.
-- [ ] Run focused tests; expect missing worker/module/RPC failure.
-- [ ] Implement a cron-protected worker that claims with `FOR UPDATE SKIP LOCKED` via RPC, loads the recipient conversation, tenant provider, branding, and sends through `sendGovernedInitiated`. It must use a deterministic idempotency key at the provider seam where supported and retain a pending reconciliation state for an ambiguous provider result rather than retrying blindly.
-- [ ] Atomically reconcile sent, held, retry, and dead-letter outcomes to both outbox and immutable action audit. Only a confirmed send marks its objective completed; release/retry processing claims with bounded exponential backoff.
-- [ ] Add the protected GET schedule to `deployment/vps-crontab.txt` using `Authorization: Bearer $CRON_SECRET`; verify its route rejects missing/wrong bearer tokens and do not create a public worker endpoint.
-- [ ] Run worker/governed-sender/route tests, typecheck, lint, and `git diff --check`; expect pass. Commit `feat(operating-loop): deliver approved actions through governed sender`.
+- [x] Write failing tests proving the worker claims only due operating-outbox rows once; sends to `recipient` rather than any inbound `from_number`; uses `sendGovernedInitiated`; preserves service-window, consent, opt-out, template, number-quality, and send-governor blocks as a held audit outcome; and records provider message ID/attempt outcome without falsely completing the objective.
+- [x] Run focused tests; observe the expected missing worker/module/RPC failures.
+- [x] Implement a cron-protected worker that claims with `FOR UPDATE SKIP LOCKED` via RPC, loads the recipient conversation, tenant provider, branding, and sends through `sendGovernedInitiated`. The provider interface does not expose an idempotency argument, so the deterministic outbox key is retained for audit/reconciliation and ambiguous provider outcomes are held rather than retried.
+- [x] Atomically reconcile sent, held, retry, and dead-letter outcomes to both outbox and action audit. Only a provider-ID-confirmed send marks its objective completed; missing providers retry with bounded backoff while ambiguous sends are held.
+- [x] Add the protected GET schedule to `deployment/vps-crontab.txt` using `Authorization: Bearer $CRON_SECRET`; verify its route rejects missing/wrong bearer tokens and do not create a public worker endpoint.
+- [x] Run worker/governed-sender/route tests, typecheck, lint, database schema/RLS/concurrency harnesses, and `git diff --check`; commit `feat(operating-loop): deliver approved actions through governed sender`.
 
 ### Task 4: Owner APIs
 
