@@ -15,3 +15,5 @@ esac
 psql "$BOOKA_OPERATING_LOOP_TEST_DATABASE_URL" \
   -v ON_ERROR_STOP=1 \
   -f "$(dirname "$0")/042_operating_loop_schema_test.sql"
+
+bash "$(dirname "$0")/042_operating_loop_concurrency_test.sh"

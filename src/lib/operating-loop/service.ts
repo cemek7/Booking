@@ -9,20 +9,12 @@ const AUTOMATABLE_KINDS = new Set<OperatingObjectiveKind>([
   'follow_up',
 ]);
 
-type QueueWhatsAppMessage = (
-  tenantId: string,
-  fromNumber: string,
-  toNumber: string,
-  content: string,
-  priority?: 'normal',
-  metadata?: Record<string, unknown>,
-) => Promise<string | null>;
-
 type ObjectiveRow = {
   id: string;
   tenant_id: string;
   objective_type: OperatingObjectiveKind;
   dedupe_key: string;
+  source_fingerprint: string;
   title: string;
   explanation: string;
   evidence: Record<string, unknown> | null;
@@ -31,36 +23,42 @@ type ObjectiveRow = {
   amount_at_risk: number | string | null;
   expires_at: string | null;
   status: string;
-  created_at?: string;
-  updated_at?: string;
 };
+
+type PolicyActionType = 'confirm_booking' | 'collect_deposit' | 'follow_up';
+type PolicyStatus = 'draft' | 'active' | 'paused' | 'revoked';
 
 type PolicyRow = {
   id: string;
   tenant_id: string;
   name: string;
-  action_type: 'confirm_booking' | 'collect_deposit' | 'follow_up';
-  status: 'draft' | 'active' | 'paused' | 'revoked';
+  action_type: PolicyActionType;
+  status: PolicyStatus;
   eligibility_rules: Record<string, unknown> | null;
   quiet_hours: Record<string, unknown> | null;
   approved_by: string | null;
   approved_at: string | null;
   created_at?: string;
-  updated_at?: string;
 };
 
 type LoopStateRow = {
   state: 'setup' | 'active' | 'clear';
   supporting_signals: unknown[] | null;
-  automation_paused: boolean;
 };
 
-type OutboundPayload = {
-  actionType: 'confirm_booking' | 'collect_deposit' | 'follow_up';
-  fromNumber: string;
-  toNumber: string;
+type SettingsRow = { automation_paused: boolean };
+
+type OperatingDeliveryPayload = {
+  actionType: PolicyActionType;
+  recipient: string;
   content: string;
   affectedRecordIds: string[];
+};
+
+type RpcResult = { action_id?: string; outbox_id?: string; suppression_id?: string };
+type PersistDraftRpcResult = {
+  outcome: 'suppressed' | 'existing' | 'inserted';
+  objective: ObjectiveRow | null;
 };
 
 export interface ExecuteObjectiveInput {
@@ -80,8 +78,8 @@ export interface DismissObjectiveInput extends ExecuteObjectiveInput {
 export interface AutomationPolicyInput {
   id?: string;
   name: string;
-  actionType: 'confirm_booking' | 'collect_deposit' | 'follow_up';
-  status: 'draft' | 'active' | 'paused' | 'revoked';
+  actionType: PolicyActionType;
+  status: PolicyStatus;
   eligibilityRules?: Record<string, unknown>;
   quietHours?: Record<string, unknown>;
 }
@@ -95,7 +93,6 @@ export interface ReplacePoliciesInput {
 
 export interface OperatingLoopServiceDependencies {
   admin: SupabaseClient;
-  queueWhatsAppMessage: QueueWhatsAppMessage;
   now?: () => Date;
 }
 
@@ -111,6 +108,19 @@ function requireData<T>(data: T | null, error: unknown, resource: string): T {
   if (error) throwDatabaseError(error);
   if (!data) throw ApiErrorFactory.notFound(resource);
   return data;
+}
+
+/**
+ * PostgreSQL `RETURNS TABLE` functions are exposed by PostgREST as arrays.
+ * Mutations must produce exactly one record; accepting none or several makes
+ * a transaction outcome ambiguous and risks showing the owner a false result.
+ */
+function requireExactlyOneRpcRow<T>(data: T[] | null, error: unknown, resource: string): T {
+  if (error) throwDatabaseError(error);
+  if (!Array.isArray(data) || data.length !== 1) {
+    throwDatabaseError(new Error(`${resource} RPC must return exactly one row`));
+  }
+  return data[0];
 }
 
 function mapObjective(row: ObjectiveRow) {
@@ -129,111 +139,75 @@ function mapObjective(row: ObjectiveRow) {
   };
 }
 
-function isTruthyEvidenceFlag(evidence: Record<string, unknown>, key: string): boolean {
-  return evidence[key] === true || evidence[key] === 'true';
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isSensitive(objective: ObjectiveRow): boolean {
-  const evidence = objective.evidence ?? {};
-  return [
-    'sensitive',
-    'bespoke',
-    'highValue',
-    'high_value',
-    'complaint',
-    'refund',
-    'pricingException',
-    'pricing_exception',
-  ].some((key) => isTruthyEvidenceFlag(evidence, key));
+function validTime(value: unknown): value is string {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-function localTime(now: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: timezone,
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(now);
-}
-
-function isWithinQuietHours(quietHours: Record<string, unknown> | null, now: Date): boolean {
-  const start = typeof quietHours?.start === 'string' ? quietHours.start : null;
-  const end = typeof quietHours?.end === 'string' ? quietHours.end : null;
-  if (!start || !end) return false;
-
-  const timezone = typeof quietHours?.timezone === 'string' ? quietHours.timezone : 'Africa/Lagos';
-  let current: string;
+function validIanaTimezone(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
   try {
-    current = localTime(now, timezone);
-  } catch {
+    new Intl.DateTimeFormat('en-GB', { timeZone: value }).format();
     return true;
+  } catch {
+    return false;
   }
-
-  return start <= end
-    ? current >= start && current < end
-    : current >= start || current < end;
 }
 
-function policyAllows(policy: PolicyRow, objective: ObjectiveRow, now: Date): boolean {
-  if (
-    policy.status !== 'active' ||
-    !policy.approved_by ||
-    !policy.approved_at ||
-    policy.action_type !== objective.objective_type ||
-    isSensitive(objective) ||
-    isWithinQuietHours(policy.quiet_hours, now)
-  ) {
-    return false;
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+/** Fail closed: only an explicit monetary cap and valid quiet-hours shape are executable policy data. */
+function validatePolicyShape(policy: AutomationPolicyInput): void {
+  if (!policy.name.trim() || !AUTOMATABLE_KINDS.has(policy.actionType)) {
+    throw ApiErrorFactory.validationError('Invalid automation policy');
+  }
+  if (!['draft', 'active', 'paused', 'revoked'].includes(policy.status)) {
+    throw ApiErrorFactory.validationError('Invalid automation policy status');
   }
 
-  const rules = policy.eligibility_rules ?? {};
-  const amountAtRisk = objective.amount_at_risk == null ? null : Number(objective.amount_at_risk);
-  if (amountAtRisk !== null) {
-    const maximum = rules.maxAmountAtRisk;
-    if (typeof maximum !== 'number' || !Number.isFinite(maximum) || amountAtRisk > maximum) {
-      return false;
-    }
+  const rules = policy.eligibilityRules ?? {};
+  if (!isPlainRecord(rules) || !hasOnlyKeys(rules, ['maxAmountAtRisk'])) {
+    throw ApiErrorFactory.validationError('Automation policy eligibility rules are not recognized');
+  }
+  if ('maxAmountAtRisk' in rules && (
+    typeof rules.maxAmountAtRisk !== 'number'
+    || !Number.isFinite(rules.maxAmountAtRisk)
+    || rules.maxAmountAtRisk < 0
+  )) {
+    throw ApiErrorFactory.validationError('maxAmountAtRisk must be a non-negative number');
   }
 
-  const allowedDedupeKeys = rules.allowedDedupeKeys;
-  if (Array.isArray(allowedDedupeKeys) && !allowedDedupeKeys.includes(objective.dedupe_key)) {
-    return false;
+  const quietHours = policy.quietHours ?? {};
+  if (!isPlainRecord(quietHours) || !hasOnlyKeys(quietHours, ['start', 'end', 'timezone'])) {
+    throw ApiErrorFactory.validationError('Automation policy quiet-hours are not recognized');
   }
-
-  return true;
+  const hasStart = 'start' in quietHours;
+  const hasEnd = 'end' in quietHours;
+  if (hasStart !== hasEnd || (hasStart && (!validTime(quietHours.start) || !validTime(quietHours.end)))) {
+    throw ApiErrorFactory.validationError('Quiet hours require valid start and end times');
+  }
+  if ('timezone' in quietHours && !validIanaTimezone(quietHours.timezone)) {
+    throw ApiErrorFactory.validationError('Quiet-hours timezone must be a valid IANA timezone');
+  }
 }
 
 function bookingMessage(kind: 'confirm_booking' | 'collect_deposit', name: string, startAt: string | null): string {
   const timing = startAt ? ` for ${new Date(startAt).toLocaleString('en-NG')}` : '';
-  if (kind === 'collect_deposit') {
-    return `Hi ${name}, a deposit is due to secure your booking${timing}. Please reply if you need help.`;
-  }
-  return `Hi ${name}, please confirm your booking${timing}. Reply YES to confirm or CHANGE to reschedule.`;
+  return kind === 'collect_deposit'
+    ? `Hi ${name}, a deposit is due to secure your booking${timing}. Please reply if you need help.`
+    : `Hi ${name}, please confirm your booking${timing}. Reply YES to confirm or CHANGE to reschedule.`;
 }
 
-async function defaultQueueWhatsAppMessage(...args: Parameters<QueueWhatsAppMessage>) {
-  const { queueWhatsAppMessage } = await import('@/lib/whatsapp/messageProcessor');
-  return queueWhatsAppMessage(...args);
+function idempotencyKey(objective: ObjectiveRow, policy: PolicyRow): string {
+  return `operating:${objective.tenant_id}:${objective.id}:${policy.id}:${objective.source_fingerprint}`;
 }
 
-export function createOperatingLoopService({
-  admin,
-  queueWhatsAppMessage,
-  now = () => new Date(),
-}: OperatingLoopServiceDependencies) {
-  async function assertOwner(tenantId: string, actorId: string): Promise<void> {
-    const { data, error } = await admin
-      .from('tenant_users')
-      .select('id')
-      .eq('tenant_id', tenantId)
-      .eq('user_id', actorId)
-      .eq('role', 'owner')
-      .maybeSingle();
-
-    if (error) throwDatabaseError(error);
-    if (!data) throw ApiErrorFactory.forbidden('Only the tenant owner may manage the operating loop');
-  }
-
+export function createOperatingLoopService({ admin, now = () => new Date() }: OperatingLoopServiceDependencies) {
   async function loadObjective(objectiveId: string): Promise<ObjectiveRow> {
     const { data, error } = await admin
       .from('operating_objectives')
@@ -243,21 +217,10 @@ export function createOperatingLoopService({
     return requireData(data, error, 'Operating objective');
   }
 
-  function assertObjectiveTenant(objective: ObjectiveRow, tenantId: string): void {
-    if (objective.tenant_id !== tenantId) throw ApiErrorFactory.tenantMismatch();
-  }
-
-  function assertFresh(objective: ObjectiveRow, current: Date): void {
-    const expiresAt = objective.expires_at ? Date.parse(objective.expires_at) : Number.NaN;
-    if (objective.status !== 'active' || !Number.isFinite(expiresAt) || expiresAt <= current.getTime()) {
-      throw ApiErrorFactory.conflict('Operating objective is stale or no longer active');
-    }
-  }
-
   async function loadLoopState(tenantId: string, current: Date): Promise<LoopStateRow | null> {
     const { data, error } = await admin
       .from('operating_loop_state')
-      .select('state, supporting_signals, automation_paused')
+      .select('state, supporting_signals')
       .eq('tenant_id', tenantId)
       .eq('operating_date', current.toISOString().slice(0, 10))
       .maybeSingle<LoopStateRow>();
@@ -265,7 +228,20 @@ export function createOperatingLoopService({
     return data;
   }
 
-  async function loadEligiblePolicy(tenantId: string, objective: ObjectiveRow, current: Date): Promise<PolicyRow> {
+  async function loadSettings(tenantId: string): Promise<SettingsRow | null> {
+    const { data, error } = await admin
+      .from('operating_loop_settings')
+      .select('automation_paused')
+      .eq('tenant_id', tenantId)
+      .maybeSingle<SettingsRow>();
+    if (error) throwDatabaseError(error);
+    return data;
+  }
+
+  async function loadEligiblePolicy(tenantId: string, objective: ObjectiveRow): Promise<PolicyRow> {
+    if (!AUTOMATABLE_KINDS.has(objective.objective_type)) {
+      throw ApiErrorFactory.forbidden('This objective requires owner approval and cannot be automated');
+    }
     const { data, error } = await admin
       .from('automation_policies')
       .select('*')
@@ -274,38 +250,32 @@ export function createOperatingLoopService({
       .eq('status', 'active');
     if (error) throwDatabaseError(error);
 
-    const policy = ((data ?? []) as PolicyRow[]).find((candidate) => policyAllows(candidate, objective, current));
-    if (!policy) {
-      throw ApiErrorFactory.forbidden('An active owner-approved automation policy is required');
-    }
+    const policy = ((data ?? []) as PolicyRow[]).find((candidate) => {
+      try {
+        validatePolicyShape({
+          name: candidate.name,
+          actionType: candidate.action_type,
+          status: candidate.status,
+          eligibilityRules: candidate.eligibility_rules ?? {},
+          quietHours: candidate.quiet_hours ?? {},
+        });
+        return Boolean(candidate.approved_by && candidate.approved_at);
+      } catch {
+        return false;
+      }
+    });
+    if (!policy) throw ApiErrorFactory.forbidden('An active owner-approved automation policy is required');
     return policy;
   }
 
-  async function loadTenantFromNumber(tenantId: string): Promise<string> {
-    const { data, error } = await admin
-      .from('tenants')
-      .select('whatsapp_number')
-      .eq('id', tenantId)
-      .maybeSingle<{ whatsapp_number: string | null }>();
-    const tenant = requireData(data, error, 'Tenant');
-    if (!tenant.whatsapp_number) {
-      throw ApiErrorFactory.conflict('Tenant WhatsApp delivery number is not configured');
-    }
-    return tenant.whatsapp_number;
-  }
-
-  async function buildOutboundPayload(objective: ObjectiveRow): Promise<OutboundPayload> {
+  async function buildDeliveryPayload(objective: ObjectiveRow): Promise<OperatingDeliveryPayload> {
     if (!AUTOMATABLE_KINDS.has(objective.objective_type)) {
       throw ApiErrorFactory.forbidden('This objective requires owner approval and cannot be automated');
     }
-
-    const actionType = objective.objective_type as OutboundPayload['actionType'];
     const recordId = objective.affected_record_ids?.[0];
     if (!recordId) throw ApiErrorFactory.conflict('Objective has no delivery target');
 
-    const fromNumber = await loadTenantFromNumber(objective.tenant_id);
-
-    if (actionType === 'confirm_booking' || actionType === 'collect_deposit') {
+    if (objective.objective_type === 'confirm_booking' || objective.objective_type === 'collect_deposit') {
       const { data, error } = await admin
         .from('reservations')
         .select('customer_name, customer_number, start_at')
@@ -314,12 +284,10 @@ export function createOperatingLoopService({
         .maybeSingle<{ customer_name: string | null; customer_number: string | null; start_at: string | null }>();
       const reservation = requireData(data, error, 'Reservation');
       if (!reservation.customer_number) throw ApiErrorFactory.conflict('Reservation has no WhatsApp recipient');
-
       return {
-        actionType,
-        fromNumber,
-        toNumber: reservation.customer_number,
-        content: bookingMessage(actionType, reservation.customer_name ?? 'there', reservation.start_at),
+        actionType: objective.objective_type,
+        recipient: reservation.customer_number,
+        content: bookingMessage(objective.objective_type, reservation.customer_name ?? 'there', reservation.start_at),
         affectedRecordIds: objective.affected_record_ids ?? [],
       };
     }
@@ -332,11 +300,9 @@ export function createOperatingLoopService({
       .maybeSingle<{ name: string | null; phone: string | null }>();
     const lead = requireData(data, error, 'Lead');
     if (!lead.phone) throw ApiErrorFactory.conflict('Follow-up has no WhatsApp recipient');
-
     return {
-      actionType,
-      fromNumber,
-      toNumber: lead.phone,
+      actionType: 'follow_up',
+      recipient: lead.phone,
       content: `Hi ${lead.name ?? 'there'}, just following up. Reply here if you would like help with your booking.`,
       affectedRecordIds: objective.affected_record_ids ?? [],
     };
@@ -344,262 +310,106 @@ export function createOperatingLoopService({
 
   async function getLoop(tenantId: string) {
     const current = now();
-    const [stateRow, objectivesResult] = await Promise.all([
+    const [stateRow, settings, objectivesResult] = await Promise.all([
       loadLoopState(tenantId, current),
-      admin
-        .from('operating_objectives')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .eq('status', 'active')
-        .gt('expires_at', current.toISOString())
-        .order('priority_score', { ascending: false }),
+      loadSettings(tenantId),
+      admin.from('operating_objectives').select('*').eq('tenant_id', tenantId).eq('status', 'active')
+        .gt('expires_at', current.toISOString()).order('priority_score', { ascending: false }),
     ]);
     if (objectivesResult.error) throwDatabaseError(objectivesResult.error);
-
     const objectives = (objectivesResult.data ?? []) as ObjectiveRow[];
-    const primaryObjective = objectives[0] ? mapObjective(objectives[0]) : null;
     return {
-      state: primaryObjective ? 'active' as const : stateRow?.state ?? 'setup' as const,
-      primaryObjective,
+      state: objectives[0]
+        ? 'active' as const
+        : !stateRow || stateRow.state === 'setup'
+          ? 'setup' as const
+          : 'clear' as const,
+      primaryObjective: objectives[0] ? mapObjective(objectives[0]) : null,
       supportingSignals: stateRow?.supporting_signals ?? [],
-      automationPaused: stateRow?.automation_paused ?? false,
+      automationPaused: settings?.automation_paused ?? false,
     };
   }
 
   async function executeObjective(input: ExecuteObjectiveInput) {
-    const current = now();
     const objective = await loadObjective(input.objectiveId);
-    assertObjectiveTenant(objective, input.tenantId);
-    assertFresh(objective, current);
-    const proposedPayload = await buildOutboundPayload(objective);
+    if (objective.tenant_id !== input.tenantId) throw ApiErrorFactory.tenantMismatch();
+    const policy = await loadEligiblePolicy(input.tenantId, objective);
+    const payload = await buildDeliveryPayload(objective);
+    const { data, error } = await admin.rpc('queue_operating_delivery', {
+      p_tenant_id: input.tenantId,
+      p_actor_id: input.actorId,
+      p_objective_id: input.objectiveId,
+      p_policy_id: policy.id,
+      p_payload: payload,
+      p_idempotency_key: idempotencyKey(objective, policy),
+    });
+    const result = requireExactlyOneRpcRow(data as RpcResult[] | null, error, 'Operating delivery');
+    if (!result.action_id || !result.outbox_id) throwDatabaseError(new Error('Operating delivery RPC returned an invalid result'));
+    return { actionId: result.action_id, outboxId: result.outbox_id, status: 'queued' as const };
+  }
 
-    // These authorization and policy reads deliberately happen immediately
-    // before the atomic claim and enqueue boundary.
-    await assertOwner(input.tenantId, input.actorId);
-    const state = await loadLoopState(input.tenantId, current);
-    if (state?.automation_paused) {
-      throw ApiErrorFactory.forbidden('Operating-loop automation is paused');
-    }
-    const policy = await loadEligiblePolicy(input.tenantId, objective, current);
-
-    const claimedResult = await admin
-      .from('operating_objectives')
-      .update({
-        status: 'completed',
-        completed_at: current.toISOString(),
-        updated_at: current.toISOString(),
-      })
-      .eq('id', input.objectiveId)
-      .eq('tenant_id', input.tenantId)
-      .eq('status', 'active')
-      .gt('expires_at', current.toISOString())
-      .select('*')
-      .maybeSingle<ObjectiveRow>();
-    if (claimedResult.error) throwDatabaseError(claimedResult.error);
-    if (!claimedResult.data) {
-      throw ApiErrorFactory.conflict('Operating objective was already handled or expired');
-    }
-
-    const actionResult = await admin
-      .from('operating_actions')
-      .insert({
-        tenant_id: input.tenantId,
-        objective_id: input.objectiveId,
-        policy_id: policy.id,
-        action_type: 'execute',
-        status: 'proposed',
-        actor_id: input.actorId,
-        proposed_payload: proposedPayload,
-        result_payload: {},
-      })
-      .select('*')
-      .single<{ id: string }>();
-    const action = requireData(actionResult.data, actionResult.error, 'Operating action');
-
-    let deliveryReference: string | null = null;
-    try {
-      deliveryReference = await queueWhatsAppMessage(
-        input.tenantId,
-        proposedPayload.fromNumber,
-        proposedPayload.toNumber,
-        proposedPayload.content,
-        'normal',
-        { objectiveId: input.objectiveId, actionId: action.id, policyId: policy.id },
-      );
-    } catch {
-      deliveryReference = null;
-    }
-
-    if (!deliveryReference) {
-      await Promise.all([
-        admin
-          .from('operating_actions')
-          .update({ status: 'failed', result_payload: { reason: 'queue_failed' } })
-          .eq('id', action.id)
-          .eq('tenant_id', input.tenantId),
-        admin
-          .from('operating_objectives')
-          .update({ status: 'failed', updated_at: now().toISOString() })
-          .eq('id', input.objectiveId)
-          .eq('tenant_id', input.tenantId),
-      ]);
-      throw ApiErrorFactory.externalServiceError('WhatsApp queue');
-    }
-
-    const { error: updateError } = await admin
-      .from('operating_actions')
-      .update({ status: 'queued', delivery_reference: deliveryReference })
-      .eq('id', action.id)
-      .eq('tenant_id', input.tenantId);
-    if (updateError) throwDatabaseError(updateError);
-
-    return { actionId: action.id, status: 'queued' as const, deliveryReference };
+  async function applySuppression(
+    input: ExecuteObjectiveInput,
+    mode: 'defer' | 'dismiss',
+    scheduledFor: string | null,
+    reason: string | null,
+  ) {
+    const { data, error } = await admin.rpc('apply_operating_suppression', {
+      p_tenant_id: input.tenantId,
+      p_actor_id: input.actorId,
+      p_objective_id: input.objectiveId,
+      p_mode: mode,
+      p_scheduled_for: scheduledFor,
+      p_reason: reason,
+    });
+    return requireExactlyOneRpcRow(data as RpcResult[] | null, error, 'Operating objective suppression');
   }
 
   async function deferObjective(input: DeferObjectiveInput) {
-    const current = now();
-    const scheduledAt = Date.parse(input.scheduledFor);
-    if (!Number.isFinite(scheduledAt) || scheduledAt <= current.getTime()) {
+    if (!Number.isFinite(Date.parse(input.scheduledFor)) || Date.parse(input.scheduledFor) <= now().getTime()) {
       throw ApiErrorFactory.validationError('scheduledFor must be a future timestamp');
     }
-
-    const objective = await loadObjective(input.objectiveId);
-    assertObjectiveTenant(objective, input.tenantId);
-    assertFresh(objective, current);
-    await assertOwner(input.tenantId, input.actorId);
-
-    const updatedResult = await admin
-      .from('operating_objectives')
-      .update({ status: 'deferred', updated_at: current.toISOString() })
-      .eq('tenant_id', input.tenantId)
-      .eq('id', input.objectiveId)
-      .eq('status', 'active')
-      .select('*')
-      .maybeSingle<ObjectiveRow>();
-    if (updatedResult.error) throwDatabaseError(updatedResult.error);
-    if (!updatedResult.data) throw ApiErrorFactory.conflict('Operating objective was already handled');
-
-    const { data, error } = await admin
-      .from('operating_actions')
-      .insert({
-        tenant_id: input.tenantId,
-        objective_id: input.objectiveId,
-        action_type: 'defer',
-        status: 'deferred',
-        actor_id: input.actorId,
-        scheduled_for: input.scheduledFor,
-        proposed_payload: {},
-        result_payload: {},
-      })
-      .select('*')
-      .single();
-    return requireData(data, error, 'Operating action');
+    return applySuppression(input, 'defer', input.scheduledFor, null);
   }
 
   async function dismissObjective(input: DismissObjectiveInput) {
-    const current = now();
-    const objective = await loadObjective(input.objectiveId);
-    assertObjectiveTenant(objective, input.tenantId);
-    assertFresh(objective, current);
-    await assertOwner(input.tenantId, input.actorId);
-
-    const updatedResult = await admin
-      .from('operating_objectives')
-      .update({ status: 'dismissed', updated_at: current.toISOString() })
-      .eq('tenant_id', input.tenantId)
-      .eq('id', input.objectiveId)
-      .eq('status', 'active')
-      .select('*')
-      .maybeSingle<ObjectiveRow>();
-    if (updatedResult.error) throwDatabaseError(updatedResult.error);
-    if (!updatedResult.data) throw ApiErrorFactory.conflict('Operating objective was already handled');
-
-    const reason = input.reason?.trim() || null;
-    const { data, error } = await admin
-      .from('operating_actions')
-      .insert({
-        tenant_id: input.tenantId,
-        objective_id: input.objectiveId,
-        action_type: 'dismiss',
-        status: 'dismissed',
-        actor_id: input.actorId,
-        proposed_payload: {},
-        result_payload: { reason },
-      })
-      .select('*')
-      .single();
-    return requireData(data, error, 'Operating action');
+    return applySuppression(input, 'dismiss', null, input.reason?.trim() || null);
   }
 
   async function getPolicies(tenantId: string) {
-    const current = now();
-    const [state, policiesResult] = await Promise.all([
-      loadLoopState(tenantId, current),
-      admin
-        .from('automation_policies')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .neq('status', 'revoked')
+    const [settings, policiesResult] = await Promise.all([
+      loadSettings(tenantId),
+      admin.from('automation_policies').select('*').eq('tenant_id', tenantId).neq('status', 'revoked')
         .order('created_at', { ascending: true }),
     ]);
     if (policiesResult.error) throwDatabaseError(policiesResult.error);
     return {
-      automationPaused: state?.automation_paused ?? false,
-      policies: (policiesResult.data ?? []).map((row) => {
-        const policy = row as PolicyRow;
-        return {
-          id: policy.id,
-          name: policy.name,
-          actionType: policy.action_type,
-          status: policy.status,
-          eligibilityRules: policy.eligibility_rules ?? {},
-          quietHours: policy.quiet_hours ?? {},
-          approvedBy: policy.approved_by,
-          approvedAt: policy.approved_at,
-        };
-      }),
+      automationPaused: settings?.automation_paused ?? false,
+      policies: ((policiesResult.data ?? []) as PolicyRow[]).map((policy) => ({
+        id: policy.id,
+        name: policy.name,
+        actionType: policy.action_type,
+        status: policy.status,
+        eligibilityRules: policy.eligibility_rules ?? {},
+        quietHours: policy.quiet_hours ?? {},
+        approvedBy: policy.approved_by,
+        approvedAt: policy.approved_at,
+      })),
     };
   }
 
   async function replacePolicies(input: ReplacePoliciesInput) {
-    const current = now();
-    await assertOwner(input.tenantId, input.actorId);
-
-    // Persist the global pause first so concurrent executors observe it before
-    // any policy replacement work begins.
-    const { error: stateError } = await admin
-      .from('operating_loop_state')
-      .upsert({
-        tenant_id: input.tenantId,
-        operating_date: current.toISOString().slice(0, 10),
-        automation_paused: input.automationPaused,
-        updated_at: current.toISOString(),
-      }, { onConflict: 'tenant_id,operating_date' });
-    if (stateError) throwDatabaseError(stateError);
-
-    const { error: revokeError } = await admin
-      .from('automation_policies')
-      .update({ status: 'revoked', updated_at: current.toISOString() })
-      .eq('tenant_id', input.tenantId)
-      .neq('status', 'revoked');
-    if (revokeError) throwDatabaseError(revokeError);
-
-    if (input.policies.length > 0) {
-      const rows = input.policies.map((policy) => ({
-        tenant_id: input.tenantId,
-        name: policy.name.trim(),
-        action_type: policy.actionType,
-        status: policy.status,
-        eligibility_rules: policy.eligibilityRules ?? {},
-        quiet_hours: policy.quietHours ?? {},
-        approved_by: policy.status === 'active' ? input.actorId : null,
-        approved_at: policy.status === 'active' ? current.toISOString() : null,
-        updated_at: current.toISOString(),
-      }));
-      const { error: insertError } = await admin.from('automation_policies').insert(rows);
-      if (insertError) throwDatabaseError(insertError);
-    }
-
+    input.policies.forEach(validatePolicyShape);
+    const { error } = await admin.rpc('replace_operating_policies', {
+      p_tenant_id: input.tenantId,
+      p_actor_id: input.actorId,
+      p_automation_paused: input.automationPaused,
+      p_policies: input.policies.map((policy) => ({
+        name: policy.name.trim(), actionType: policy.actionType, status: policy.status,
+        eligibilityRules: policy.eligibilityRules ?? {}, quietHours: policy.quietHours ?? {},
+      })),
+    });
+    if (error) throwDatabaseError(error);
     return getPolicies(input.tenantId);
   }
 
@@ -607,86 +417,43 @@ export function createOperatingLoopService({
     const persisted: ObjectiveRow[] = [];
     for (const draft of drafts) {
       if (draft.tenantId !== tenantId) throw ApiErrorFactory.tenantMismatch();
-
-      const payload = {
-        tenant_id: tenantId,
-        objective_type: draft.kind,
-        dedupe_key: draft.dedupeKey,
-        title: draft.title,
-        explanation: draft.explanation,
-        evidence: draft.evidence,
-        affected_record_ids: draft.affectedRecordIds,
-        priority_score: draft.score.total,
-        amount_at_risk: draft.amountAtRisk,
-        expires_at: draft.expiresAt,
-        status: draft.status,
-      };
-      const { data, error } = await admin
-        .from('operating_objectives')
-        .insert(payload)
-        .select('*')
-        .single<ObjectiveRow>();
-
-      if (!error && data) {
-        persisted.push(data);
-        continue;
+      const { data, error } = await admin.rpc('persist_operating_objective_draft', {
+        p_tenant_id: tenantId,
+        p_objective_type: draft.kind,
+        p_dedupe_key: draft.dedupeKey,
+        p_source_fingerprint: draft.sourceFingerprint,
+        p_title: draft.title,
+        p_explanation: draft.explanation,
+        p_evidence: draft.evidence,
+        p_affected_record_ids: draft.affectedRecordIds,
+        p_priority_score: draft.score.total,
+        p_amount_at_risk: draft.amountAtRisk,
+        p_expires_at: draft.expiresAt,
+        p_status: draft.status,
+      });
+      const result = requireExactlyOneRpcRow(data as PersistDraftRpcResult[] | null, error, 'Operating objective draft');
+      if (result.outcome === 'suppressed') continue;
+      if ((result.outcome !== 'existing' && result.outcome !== 'inserted') || !result.objective) {
+        throwDatabaseError(new Error('Operating objective draft RPC returned an invalid result'));
       }
-
-      if ((error as { code?: string } | null)?.code !== '23505') throwDatabaseError(error);
-      const existingResult = await admin
-        .from('operating_objectives')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .eq('dedupe_key', draft.dedupeKey)
-        .eq('status', 'active')
-        .maybeSingle<ObjectiveRow>();
-      persisted.push(requireData(existingResult.data, existingResult.error, 'Operating objective'));
+      persisted.push(result.objective);
     }
     return persisted;
   }
 
-  return {
-    getLoop,
-    executeObjective,
-    deferObjective,
-    dismissObjective,
-    getPolicies,
-    replacePolicies,
-    persistObjectiveDrafts,
-  };
+  return { getLoop, executeObjective, deferObjective, dismissObjective, getPolicies, replacePolicies, persistObjectiveDrafts };
 }
 
 function createDefaultService() {
-  return createOperatingLoopService({
-    admin: createSupabaseAdminClient(),
-    queueWhatsAppMessage: defaultQueueWhatsAppMessage,
-  });
+  return createOperatingLoopService({ admin: createSupabaseAdminClient() });
 }
 
-export async function getLoop(tenantId: string) {
-  return createDefaultService().getLoop(tenantId);
-}
-
-export async function executeObjective(input: ExecuteObjectiveInput) {
-  return createDefaultService().executeObjective(input);
-}
-
-export async function deferObjective(input: DeferObjectiveInput) {
-  return createDefaultService().deferObjective(input);
-}
-
-export async function dismissObjective(input: DismissObjectiveInput) {
-  return createDefaultService().dismissObjective(input);
-}
-
-export async function getPolicies(tenantId: string) {
-  return createDefaultService().getPolicies(tenantId);
-}
-
-export async function replacePolicies(input: ReplacePoliciesInput) {
-  return createDefaultService().replacePolicies(input);
-}
-
+export async function getLoop(tenantId: string) { return createDefaultService().getLoop(tenantId); }
+export async function executeObjective(input: ExecuteObjectiveInput) { return createDefaultService().executeObjective(input); }
+export async function deferObjective(input: DeferObjectiveInput) { return createDefaultService().deferObjective(input); }
+export async function dismissObjective(input: DismissObjectiveInput) { return createDefaultService().dismissObjective(input); }
+export async function getPolicies(tenantId: string) { return createDefaultService().getPolicies(tenantId); }
+export async function replacePolicies(input: ReplacePoliciesInput) { return createDefaultService().replacePolicies(input); }
 export async function persistObjectiveDrafts(tenantId: string, drafts: OperatingObjectiveDraft[]) {
   return createDefaultService().persistObjectiveDrafts(tenantId, drafts);
 }

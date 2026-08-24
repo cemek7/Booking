@@ -97,6 +97,31 @@ describe('evaluateOperatingObjectives', () => {
     ]));
   });
 
+  test('changes an objective source fingerprint when booking facts materially change', () => {
+    const base = signals({
+      bookings: [{
+        id: 'booking-1',
+        startsAt: '2026-08-22T11:00:00.000Z',
+        status: 'unconfirmed',
+        amount: 45000,
+        customerName: 'Fatima',
+      }],
+    });
+    const changed = signals({
+      bookings: [{
+        ...base.bookings[0],
+        amount: 60000,
+      }],
+    });
+
+    const original = evaluateOperatingObjectives(base, now)[0] as unknown as { sourceFingerprint?: string };
+    const updated = evaluateOperatingObjectives(changed, now)[0] as unknown as { sourceFingerprint?: string };
+
+    expect(original.sourceFingerprint).toMatch(/^v1:/);
+    expect(updated.sourceFingerprint).toMatch(/^v1:/);
+    expect(updated.sourceFingerprint).not.toBe(original.sourceFingerprint);
+  });
+
   test('retains the signal tenant on every derived objective', () => {
     const candidates = evaluateOperatingObjectives(signals({
       tenantId: 'tenant-42',

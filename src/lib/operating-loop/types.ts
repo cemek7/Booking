@@ -32,6 +32,12 @@ export interface OperatingObjectiveDraft {
   amountAtRisk: number | null;
   expiresAt: string;
   dedupeKey: string;
+  /**
+   * Stable identity for the source facts that produced this draft. A defer or
+   * dismissal only suppresses this exact source version, so updated booking or
+   * lead facts can safely reopen the work.
+   */
+  sourceFingerprint: string;
   status: OperatingObjectiveStatus;
   score: ObjectiveScore;
 }

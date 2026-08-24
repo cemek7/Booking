@@ -79,6 +79,7 @@ function draft(
   amountAtRisk: number | null,
   expiresAt: string,
   objectiveScore: ObjectiveScore,
+  sourceFacts: Record<string, string | number | null>,
 ): DerivedObjective {
   return {
     kind,
@@ -89,9 +90,30 @@ function draft(
     amountAtRisk,
     expiresAt,
     dedupeKey: `${kind}:${recordId}`,
+    sourceFingerprint: sourceFingerprint(kind, recordId, sourceFacts),
     status: 'active',
     score: objectiveScore,
   };
+}
+
+function sourceFingerprint(
+  kind: OperatingObjectiveKind,
+  recordId: string,
+  sourceFacts: Record<string, string | number | null>,
+): string {
+  const canonicalFacts = Object.entries(sourceFacts)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value ?? ''}`)
+    .join('&');
+
+  // FNV-1a is deterministic across edge/server runtimes and is sufficient as
+  // a compact version identifier; the source facts remain in the audit record.
+  let hash = 0x811c9dc5;
+  for (const character of `${kind}:${recordId}:${canonicalFacts}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `v1:${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 function isCurrent(timestamp: string, nowAt: number): boolean {
@@ -119,6 +141,7 @@ function enquiryObjective(enquiry: OperatingEnquirySignal, nowAt: number): Deriv
       null,
       expiresAt,
       score(100, 0, 0, deadlineScore(expiresAtMilliseconds, nowAt)),
+      { receivedAt: enquiry.receivedAt, status: enquiry.status },
     );
   }
 
@@ -132,6 +155,7 @@ function enquiryObjective(enquiry: OperatingEnquirySignal, nowAt: number): Deriv
       null,
       expiresAt,
       score(75, 0, 30, deadlineScore(expiresAtMilliseconds, nowAt)),
+      { receivedAt: enquiry.receivedAt, status: enquiry.status },
     );
   }
 
@@ -152,6 +176,12 @@ function leadObjective(lead: OperatingLeadSignal, nowAt: number): DerivedObjecti
     lead.estimatedValue ?? null,
     isoAt(abandonedAt + DAY),
     score(0, 85, 35, deadlineScore(abandonedAt + DAY, nowAt)),
+    {
+      abandonedAt: lead.abandonedAt,
+      estimatedValue: lead.estimatedValue ?? null,
+      intent: lead.intent,
+      status: lead.status,
+    },
   );
 }
 
@@ -173,6 +203,7 @@ function bookingObjective(booking: OperatingBookingSignal, nowAt: number): Deriv
       amountAtRisk,
       isoAt(startsAt),
       score(0, 90, 0, deadline),
+      { amount: booking.amount ?? null, startsAt: booking.startsAt, status: booking.status },
     );
   }
 
@@ -186,6 +217,7 @@ function bookingObjective(booking: OperatingBookingSignal, nowAt: number): Deriv
       amountAtRisk,
       isoAt(startsAt),
       score(0, 80, 0, deadline),
+      { amount: booking.amount ?? null, startsAt: booking.startsAt, status: booking.status },
     );
   }
 
@@ -199,6 +231,7 @@ function bookingObjective(booking: OperatingBookingSignal, nowAt: number): Deriv
       amountAtRisk,
       isoAt(startsAt),
       score(0, 85, 0, deadline),
+      { amount: booking.amount ?? null, startsAt: booking.startsAt, status: booking.status },
     );
   }
 
@@ -222,6 +255,7 @@ function followUpObjective(followUp: OperatingFollowUpSignal, nowAt: number): De
     null,
     isoAt(expiresAtMilliseconds),
     score(0, 0, 30, deadlineScore(dueAt, nowAt)),
+    { dueAt: followUp.dueAt },
   );
 }
 
