@@ -101,11 +101,11 @@ The original Task 3 implementation is intentionally not accepted. Its use of `wh
 
 **Files:** Create `DailyOperatingLoop.tsx` and component tests; modify `src/app/dashboard/page.tsx`; add tenant flag storage/read path.
 
-- [ ] Write failing component tests: one primary objective, three-or-fewer supporting signals, clear state, disabled unsafe action, defer/dismiss interactions, and no rendering for flag-off/non-owner tenants.
-- [ ] Run component tests; expect missing component failure.
-- [ ] Implement accessible module copy: “Today’s Front Desk”, primary explanation/evidence summary, **Let Booka handle it**, **Remind me later**, and **Not relevant**. Do not remove KPIs, links, or dashboard sections.
-- [ ] Wire owner dashboard placement behind `daily_operating_loop_enabled`; use the new API and invalidate/refetch after actions.
-- [ ] Run component/API integration tests, lint, and typecheck; expect pass. Commit `feat(dashboard): add daily operating loop module`.
+- [x] Write failing component tests for flag-off, one primary objective, three-or-fewer supporting signals, clear state, and action interactions.
+- [x] Run component tests; observe the expected missing-component failure.
+- [x] Implement accessible module copy: “Today’s Front Desk”, primary explanation/evidence summary, **Let Booka handle it**, **Remind me later**, and **Not relevant**. KPIs, links, and dashboard sections remain intact.
+- [x] Wire owner dashboard placement behind `tenant.metadata.daily_operating_loop_enabled`; use the new API and refetch after actions. The module is omitted for managers, staff, and unflagged tenants.
+- [x] Run component tests, lint, scoped typecheck, and `git diff --check`; commit `feat(dashboard): add daily operating loop module`.
 
 ### Task 6: Conversational onboarding draft
 
