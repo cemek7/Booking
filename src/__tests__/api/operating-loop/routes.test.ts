@@ -7,6 +7,7 @@ const deferObjective = jest.fn();
 const dismissObjective = jest.fn();
 const getPolicies = jest.fn();
 const replacePolicies = jest.fn();
+const captureServerAnalyticsEvent = jest.fn();
 
 jest.mock('@/lib/error-handling/route-handler', () => ({
   createHttpHandler: (handler: (ctx: unknown) => unknown, method: string, options: { auth?: boolean; roles?: string[] }) => {
@@ -24,6 +25,15 @@ jest.mock('@/lib/error-handling/route-handler', () => ({
 }));
 jest.mock('@/lib/operating-loop/service', () => ({
   getLoop, executeObjective, deferObjective, dismissObjective, getPolicies, replacePolicies,
+}));
+jest.mock('@/lib/analytics/server', () => ({ captureServerAnalyticsEvent }));
+jest.mock('@/lib/analytics/events', () => ({
+  ANALYTICS_EVENTS: {
+    OPERATING_LOOP_VIEWED: 'operating_loop_viewed',
+    OPERATING_OBJECTIVE_EXECUTED: 'operating_objective_executed',
+    OPERATING_OBJECTIVE_DEFERRED: 'operating_objective_deferred',
+    OPERATING_OBJECTIVE_DISMISSED: 'operating_objective_dismissed',
+  },
 }));
 
 import { GET as getOperatingLoop } from '@/app/api/operating-loop/route';
@@ -50,16 +60,27 @@ describe('Daily Operating Loop owner APIs', () => {
     dismissObjective.mockResolvedValue({ action_id: 'action-1', suppression_id: 'suppression-1' });
     getPolicies.mockResolvedValue({ automationPaused: false, policies: [] });
     replacePolicies.mockResolvedValue({ automationPaused: true, policies: [] });
+    captureServerAnalyticsEvent.mockResolvedValue(undefined);
   });
 
   it('returns the compact current loop for the verified tenant', async () => {
     await expect(getOperatingLoop(context())).resolves.toEqual(expect.objectContaining({ state: 'clear' }));
     expect(getLoop).toHaveBeenCalledWith('tenant-1');
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_loop_viewed',
+      properties: { tenant_id: 'tenant-1', channel: 'web', flow: 'retention', metadata: { state: 'clear', has_primary_objective: false } },
+      distinctId: 'owner-1',
+    });
   });
 
   it('executes only the route objective for the verified owner tenant', async () => {
     await expect(execute(context())).resolves.toEqual({ actionId: 'action-1', outboxId: 'outbox-1', status: 'queued' });
     expect(executeObjective).toHaveBeenCalledWith({ tenantId: 'tenant-1', actorId: 'owner-1', objectiveId: 'objective-1' });
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_objective_executed',
+      properties: { tenant_id: 'tenant-1', channel: 'web', flow: 'retention', metadata: { outcome: 'queued' } },
+      distinctId: 'owner-1',
+    });
   });
 
   it('rejects a non-future defer timestamp before it reaches the service', async () => {
