@@ -107,7 +107,13 @@ Register the **prod** host with every provider or logins/webhooks fail silently:
 
 ## Known soft debt (not gating, address soon after)
 
-- **33 prod files still carry `@ts-nocheck`** (type safety off). The last two removals uncovered **2 masked
-  bugs in payment code** — prioritize clearing `@ts-nocheck` from the remaining payment/auth/encryption files.
+- **`@ts-nocheck` debt (re-inventoried against `origin/staging`, 2026-08-24):** **21** `src` files carry a
+  real pragma (down from 33). The security-sensitive picture is now narrow: **payment is done** —
+  `src/lib/paystack.ts` is already fully typed (no pragma); **no auth-session or encryption file** carries a
+  pragma; `src/lib/webhooks/utils.ts` is **dead code** (an orphaned duplicate of the live `src/lib/webhooks.ts`
+  the webhook routes actually import — delete rather than type it). The **one live security-sensitive target
+  left is `src/lib/securityAutomation.ts`** (594 lines, used by `/api/security/evaluate` + `/api/security/pii`)
+  — removing its pragma is the highest-value remaining cleanup and, per past removals, may surface a masked bug.
+  The other ~19 are non-security (whatsapp, eventbus, scheduler, inventory, store, tests, forms).
 - Legacy compatibility shims (WhatsApp webhook aliases, dual dashboard surfaces) remain by design; schedule a
   prune pass post-launch.
