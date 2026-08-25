@@ -3,6 +3,8 @@ import { brandCustomerText } from '@/lib/whatsapp/v2/outboundBranding';
 import { getConversation } from '@/lib/whatsapp/v2/conversationState';
 import { sendGovernedInitiated, type GovernedSendResult } from '@/lib/whatsapp/v2/deliverability/governedSend';
 import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
+import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
+import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 
 export type OperatingDeliveryRow = {
   id: string;
@@ -137,6 +139,16 @@ export async function runOperatingDeliveryBatch(
       && (completionRows[0] as { outbox_id?: unknown; status?: unknown }).outbox_id === row.id
       && (completionRows[0] as { status?: unknown }).status === completion.status;
     if (!confirmed) throw new Error('operating delivery completion was not confirmed');
+
+    await captureServerAnalyticsEvent({
+      event: ANALYTICS_EVENTS.OPERATING_OBJECTIVE_DELIVERY_OUTCOME,
+      properties: {
+        tenant_id: row.tenant_id,
+        channel: 'whatsapp',
+        flow: 'retention',
+        metadata: { outcome: completion.status },
+      },
+    });
 
     if (completion.status === 'sent') totals.sent += 1;
     else if (completion.status === 'held') totals.held += 1;

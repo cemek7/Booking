@@ -113,6 +113,16 @@ describe('operating loop service', () => {
     }));
   });
 
+  it('requires owner approval for a sensitive recovery instead of queueing customer outreach', async () => {
+    const { service, rpc } = makeService(baseTables({
+      operating_objectives: [objective({ objective_type: 'recover_booking' })],
+    }));
+
+    await expect(service.executeObjective({ tenantId: 'tenant-1', actorId: 'owner-1', objectiveId: 'objective-1' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    expect(rpc).not.toHaveBeenCalledWith('queue_operating_delivery', expect.anything());
+  });
+
   it.each([
     ['queue_operating_delivery', (service: ReturnType<typeof createOperatingLoopService>) =>
       service.executeObjective({ tenantId: 'tenant-1', actorId: 'owner-1', objectiveId: 'objective-1' })],
@@ -256,6 +266,18 @@ describe('operating loop service', () => {
     await expect(service.getLoop('tenant-1')).resolves.toEqual(expect.objectContaining({
       state: 'clear',
       primaryObjective: null,
+    }));
+  });
+
+  it('reopens a previously clear loop when a fresh urgent objective is active', async () => {
+    const { service } = makeService(baseTables({
+      operating_loop_state: [{ tenant_id: 'tenant-1', operating_date: '2026-08-22', state: 'clear', supporting_signals: [] }],
+      operating_objectives: [objective({ objective_type: 'reply_to_lead', priority_score: 1000 })],
+    }));
+
+    await expect(service.getLoop('tenant-1')).resolves.toEqual(expect.objectContaining({
+      state: 'active',
+      primaryObjective: expect.objectContaining({ id: 'objective-1', kind: 'reply_to_lead' }),
     }));
   });
 

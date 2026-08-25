@@ -1,5 +1,15 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
+
+const captureServerAnalyticsEvent = jest.fn();
+
+jest.mock('@/lib/analytics/server', () => ({ captureServerAnalyticsEvent }));
+jest.mock('@/lib/analytics/events', () => ({
+  ANALYTICS_EVENTS: {
+    OPERATING_OBJECTIVE_DELIVERY_OUTCOME: 'operating_objective_delivery_outcome',
+  },
+}));
+
 import { runOperatingDeliveryBatch, type OperatingDeliveryWorkerDependencies } from './delivery-worker';
 
 const NOW = new Date('2026-08-24T12:00:00.000Z');
@@ -55,6 +65,11 @@ function replaceDependency(
 }
 
 describe('runOperatingDeliveryBatch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    captureServerAnalyticsEvent.mockResolvedValue(undefined);
+  });
+
   it('marks an approved delivery sent only after the governed sender successfully sends it', async () => {
     const { deps, rpc, sendTextMessage } = workerDependencies();
 
@@ -64,6 +79,15 @@ describe('runOperatingDeliveryBatch', () => {
     expect(rpc.mock.calls[rpc.mock.calls.length - 1]).toEqual(['complete_operating_delivery', {
       p_outbox_id: 'outbox-1', p_status: 'sent', p_provider_message_id: 'provider-message-1', p_error: null, p_available_at: null,
     }]);
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_objective_delivery_outcome',
+      properties: {
+        tenant_id: 'tenant-1',
+        channel: 'whatsapp',
+        flow: 'retention',
+        metadata: { outcome: 'sent' },
+      },
+    });
   });
 
   it('holds an opt-out rather than marking its action completed or retrying it', async () => {
@@ -75,6 +99,15 @@ describe('runOperatingDeliveryBatch', () => {
     expect(rpc.mock.calls[rpc.mock.calls.length - 1]).toEqual(['complete_operating_delivery', expect.objectContaining({
       p_outbox_id: 'outbox-1', p_status: 'held', p_error: 'opted_out',
     })]);
+    expect(captureServerAnalyticsEvent).toHaveBeenCalledWith({
+      event: 'operating_objective_delivery_outcome',
+      properties: {
+        tenant_id: 'tenant-1',
+        channel: 'whatsapp',
+        flow: 'retention',
+        metadata: { outcome: 'held' },
+      },
+    });
   });
 
   it('holds a provider success without a message ID because delivery cannot be reconciled', async () => {

@@ -121,11 +121,11 @@ The original Task 3 implementation is intentionally not accepted. Its use of `wh
 
 **Files:** Create evaluator/service integration tests; modify analytics event registry and tenant settings/feature flag admin surface as needed; update documentation.
 
-- [ ] Write failing end-to-end service tests for: setup objective; safe automatic confirmation; sensitive action requiring approval; clear state reopening on urgent lead; audit/dedupe; feature-flag-off behavior.
-- [ ] Run test suite; expect failure before instrumentation/rollout hooks.
-- [ ] Emit tenant-safe events for objective shown/completed/deferred/dismissed, execution outcome, and onboarding readiness; expose feature flag only to authorized tenant/admin controls.
-- [ ] Add runbook documentation for policy pause, objective diagnosis, queue failure, and rollback (disable flag; no data deletion).
-- [ ] Run targeted tests, full CI test command, ESLint, typecheck, migration validation, and `git diff --check`; expect all pass. Commit `test(operating-loop): cover rollout and safety controls`.
+- [x] Add acceptance coverage for: setup objective; safe automatic confirmation; sensitive action requiring approval; clear state reopening on urgent lead; audit/dedupe; feature-flag-off behavior.
+- [x] Run the acceptance suite and use red tests for the observability/rollout hooks.
+- [x] Emit tenant-safe events for objective shown/completed/deferred/dismissed, execution outcome, and onboarding readiness; expose feature flag only to authorized tenant/admin controls.
+- [x] Add runbook documentation for policy pause, objective diagnosis, queue failure, and rollback (disable flag; no data deletion).
+- [x] Run targeted tests, the full CI test command, scoped ESLint, typecheck, migration validation, and `git diff --check`; all pass. Repository-wide ESLint remains a pre-existing baseline failure in unrelated files. Commit `test(operating-loop): cover rollout and safety controls`.
 
 ## Self-review
 
