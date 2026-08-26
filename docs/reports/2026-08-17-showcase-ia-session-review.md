@@ -83,8 +83,10 @@ The `/booka/dashboard` IA was **already implemented** by a concurrent session vi
    2026-08-24** — no rendering bug; source + live DOM correct; light PNGs are unreferenced dead artifacts.
 2. ~~When walking the cutover checklist, replace the representative DB-probe names with the real schema.~~
    **Done 2026-08-24** — all probe names verified correct against migrations; stale file count (88→122) fixed.
-3. **Re-scoped 2026-08-24:** `@ts-nocheck` re-inventoried on `origin/staging` — 21 real pragmas (was 33).
-   Payment (`paystack.ts`) already typed; no auth/encryption file left; `webhooks/utils.ts` is dead-code
-   duplicate. The **one live security-sensitive removal left is `src/lib/securityAutomation.ts`** (used by
-   `/api/security/*`) — real, potentially bug-surfacing refactor; pending an explicit go-ahead.
+3. ~~Clear remaining `@ts-nocheck` from payment/auth/encryption files.~~ **Done 2026-08-25.** Re-inventoried
+   on `origin/staging` (21 real pragmas, was 33): payment `paystack.ts` already typed; no auth/encryption file
+   left; `webhooks/utils.ts` is dead-code duplicate. Removed the pragma from the one live security file,
+   `src/lib/securityAutomation.ts` (staging `43f89c8`) — surfaced + fixed **2 masked bugs** (security events
+   losing tenant scope via `tenant_id`/`tenantId` mismatch; PII-summary reducer indexing an optional
+   `data_type`). Typecheck clean, baseline unchanged. **No live security-sensitive `@ts-nocheck` remains.**
 4. Product registry: no action until product #2 is real.

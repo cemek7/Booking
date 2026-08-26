@@ -115,5 +115,10 @@ Register the **prod** host with every provider or logins/webhooks fail silently:
   left is `src/lib/securityAutomation.ts`** (594 lines, used by `/api/security/evaluate` + `/api/security/pii`)
   — removing its pragma is the highest-value remaining cleanup and, per past removals, may surface a masked bug.
   The other ~19 are non-security (whatsapp, eventbus, scheduler, inventory, store, tests, forms).
+  **Update 2026-08-25:** `securityAutomation.ts` pragma **removed** (staging `43f89c8`) — surfaced and fixed
+  2 real masked bugs (every published security event was losing its tenant scope via a `tenant_id`/`tenantId`
+  key mismatch; a PII-summary reducer indexed on an optional `data_type`). Typecheck clean, repo baseline
+  unchanged. **No live security-sensitive file carries `@ts-nocheck` any more**; the remaining ~20 are all
+  non-security and non-gating.
 - Legacy compatibility shims (WhatsApp webhook aliases, dual dashboard surfaces) remain by design; schedule a
   prune pass post-launch.
