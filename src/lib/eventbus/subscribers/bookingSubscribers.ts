@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Booking Event Subscribers
  *
@@ -43,34 +42,34 @@ export const bookingConfirmationRequiredHandler: EventHandler = {
 
       // Send WhatsApp confirmation
       const serviceName = (booking.services as { name?: string } | null | undefined)?.name || 'Service';
-      await notificationService.sendWhatsAppConfirmation({
+      await notificationService.sendBookingConfirmation({
         bookingId: booking.id,
         tenantId: booking.tenant_id,
-        customerPhone: customer_phone,
-        customerName: customer_name,
+        customerPhone: String(customer_phone ?? ''),
+        customerName: customer_name ? String(customer_name) : undefined,
         serviceName,
-        bookingDate: new Date(start_time).toLocaleDateString(),
-        bookingTime: new Date(start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        bookingDate: new Date(start_time as string).toLocaleDateString(),
+        bookingTime: new Date(start_time as string).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         status: booking.status
       });
 
       // Schedule reminders
-      await notificationService.scheduleBookingReminders({
+      await notificationService.scheduleReminders({
         bookingId: booking.id,
         tenantId: booking.tenant_id,
-        customerPhone: customer_phone,
-        customerName: customer_name,
+        customerPhone: String(customer_phone ?? ''),
+        customerName: customer_name ? String(customer_name) : undefined,
         serviceName,
-        bookingDate: new Date(start_time).toLocaleDateString(),
-        bookingTime: new Date(start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        appointmentTime: new Date(start_time)
+        bookingDate: new Date(start_time as string).toLocaleDateString(),
+        bookingTime: new Date(start_time as string).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        status: booking.status
       });
 
       await siasOperations.recordCampaignRun({
         tenantId: booking.tenant_id,
         campaignType: 'booking_confirmation',
         action: 'send_reminder',
-        targetPhone: customer_phone,
+        targetPhone: customer_phone != null ? String(customer_phone) : null,
         targetBookingId: booking.id,
         sourceEvent: 'booking.confirmation_required',
         status: 'sent',
@@ -134,10 +133,14 @@ export const bookingCreatedHandler: EventHandler = {
         .maybeSingle();
 
       // Update analytics metrics (fire and forget)
-      await supabase.rpc('increment_booking_count', {
-        p_tenant_id: tenant_id,
-        p_date: new Date().toISOString().split('T')[0]
-      }).catch(err => defaultLogger.warn('[Subscriber] Analytics update failed:', err));
+      try {
+        await supabase.rpc('increment_booking_count', {
+          p_tenant_id: tenant_id,
+          p_date: new Date().toISOString().split('T')[0]
+        });
+      } catch (err) {
+        defaultLogger.warn('[Subscriber] Analytics update failed:', err);
+      }
 
       // Trigger external webhooks (if configured)
       const { data: webhooks } = await supabase
@@ -213,16 +216,16 @@ export const bookingCancelledHandler: EventHandler = {
         return;
       }
 
-      // Send cancellation notification
+      // Send cancellation notification (status update to "cancelled")
       const serviceName = (booking.services as { name?: string } | null | undefined)?.name || 'Service';
-      await notificationService.sendCancellationNotification({
+      await notificationService.sendStatusUpdate({
         bookingId: booking.id,
         tenantId: booking.tenant_id,
-        customerPhone: customer_phone,
+        customerPhone: String(customer_phone ?? ''),
         serviceName,
         bookingDate: new Date(booking.start_at).toLocaleDateString(),
         bookingTime: new Date(booking.start_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        cancellationReason: cancellation_reason
+        status: 'cancelled'
       });
 
       // Cancel scheduled reminders
@@ -236,7 +239,7 @@ export const bookingCancelledHandler: EventHandler = {
         tenantId: booking.tenant_id,
         campaignType: 'reactivation',
         action: 'send_reactivation',
-        targetPhone: customer_phone,
+        targetPhone: customer_phone != null ? String(customer_phone) : null,
         targetBookingId: booking.id,
         sourceEvent: 'booking.cancelled',
         status: 'retry_scheduled',
