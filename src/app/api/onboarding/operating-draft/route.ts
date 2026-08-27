@@ -7,7 +7,7 @@ import {
   getOperatingDraft,
   recordOperatingDraftAnswer,
   skipOperatingDraftQuestion,
-} from '@/lib/onboarding/operating-draft';
+} from '@/lib/onboarding/operating-draft.server';
 import type { OperatingDraftView } from '@/lib/onboarding/operating-draft';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';

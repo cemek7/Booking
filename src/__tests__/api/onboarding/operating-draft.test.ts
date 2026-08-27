@@ -19,7 +19,7 @@ jest.mock('@/lib/error-handling/route-handler', () => ({
   },
 }));
 
-jest.mock('@/lib/onboarding/operating-draft', () => ({
+jest.mock('@/lib/onboarding/operating-draft.server', () => ({
   getOperatingDraft,
   recordOperatingDraftAnswer,
   skipOperatingDraftQuestion,
