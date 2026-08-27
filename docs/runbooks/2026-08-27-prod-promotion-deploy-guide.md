@@ -119,63 +119,70 @@ After changing env, restart the container (§4) so it picks up the new values.
 
 ---
 
-## 4. VPS deploy prompts (copy-paste)
+## 4. Deploy — it's automatic (no manual pull)
 
-Promotion `main` push builds `ghcr.io/cemek7/booking:production-<sha>` + `production-latest`. **The workflow
-does NOT deploy** — pull on the VPS. Also note the `🚀 Production Deployment Pipeline` workflow has failed on
-past `main` pushes; the image the `VPS Deploy` job builds is what you actually pull, so a red
-Production-Pipeline run does not block the manual pull below — but check the `VPS Deploy` job went green.
+This VPS deploys itself. Stack lives at **`/opt/techclave/prod`** (compose `docker-compose.yml`, app image
+`${APP_IMAGE}`, env `/opt/techclave/prod/.env`). A systemd timer **`booka-production-image-refresh.timer`**
+runs every 5 min: it polls `origin/main`, waits for `ghcr.io/cemek7/booking:production-<full-SHA>` to publish,
+pins that immutable tag in prod `.env`, pulls it, recreates the app **only if the image changed**, and
+health-checks. There is **no manual `docker compose pull`** step.
 
-```bash
-# On the VPS
-cd /opt/booka/Booking
-git fetch origin && git checkout main && git pull --ff-only origin main   # sync compose/nginx/runbook files
-
-# (first cutover only) take a prod DB backup, then apply the 4 missing migrations ONCE — see §1
-
-export APP_IMAGE=ghcr.io/cemek7/booking:production-latest
-docker compose -f deployment/docker-compose.production.yml pull
-docker compose -f deployment/docker-compose.production.yml up -d
-docker compose -f deployment/docker-compose.production.yml ps        # all healthy?
-docker compose -f deployment/docker-compose.production.yml logs -f --tail=100 booka-production
-```
-
-Pin to an exact build instead of `-latest` (safer rollback target):
+**Consequence for env changes:** editing `.env` alone does **not** trigger a recreate (the timer only acts on
+an image change). So put all LIVE secrets (§2) in place **before** the merge — the post-merge image swap will
+recreate the container with them. If you must add/change a secret *without* an image change, force one recreate:
 
 ```bash
-export APP_IMAGE=ghcr.io/cemek7/booking:production-<sha>   # the promoted commit's short sha
-docker compose -f deployment/docker-compose.production.yml up -d
+cd /opt/techclave/prod
+docker compose up -d --force-recreate <app-service-name>   # service that runs booka-prod-app; then health-check
 ```
+
+### Go-live flow
+
+1. Ensure prod `.env` has the LIVE secrets you need (§2) and callbacks are registered (§3).
+2. Merge the staging→main PR. On `main`, confirm the **`VPS Deploy`** job goes green (it publishes the image).
+   The separate `🚀 Production Deployment Pipeline` job has failed on past `main` pushes and does **not** gate
+   the image or the timer — only `VPS Deploy` matters.
+3. Within ~5 min the timer pins + pulls the new `production-<SHA>` and recreates the app. Watch:
+   `systemctl status booka-production-image-refresh.service` and `docker ps --format '{{.Image}}\t{{.Status}}'`.
 
 ### Post-deploy smoke tests
 
 ```bash
-curl -fsS  https://<PROD_HOST>/api/health   && echo OK      # app up
-curl -fsS  https://<PROD_HOST>/api/ready    && echo READY   # redis-gated readiness
-curl -sI   https://<PROD_HOST>/             | head -1       # 200 Techclave landing
-curl -sI   https://<PROD_HOST>/booka        | head -1       # 200 Booka
-curl -sI   https://<PROD_HOST>/showcase     | head -1       # 200 showcase
-curl -sI   https://<PROD_HOST>/dashboard    | head -1       # 308 -> /booka/dashboard
+curl -fsS  https://booka.app.techclave.cloud/api/health   && echo OK      # app up
+curl -fsS  https://booka.app.techclave.cloud/api/ready    && echo READY   # redis-gated readiness
+curl -sI   https://booka.app.techclave.cloud/             | head -1       # 200 Techclave landing
+curl -sI   https://booka.app.techclave.cloud/booka        | head -1       # 200 Booka
+curl -sI   https://booka.app.techclave.cloud/showcase     | head -1       # 200 showcase
+curl -sI   https://booka.app.techclave.cloud/dashboard    | head -1       # 308 -> /booka/dashboard
 ```
 
-Then in a browser: sign in as an owner → lands on `/booka/dashboard`; send one WhatsApp message to a connected
-tenant → inbound webhook processes (check logs); one small **LIVE** payment → succeeds + webhook recorded.
+Then in a browser: sign in as an owner → lands on `/booka/dashboard`; one small **LIVE** payment → succeeds +
+webhook recorded.
 
 ### Rollback
 
+The timer follows `main`, so **revert on `main`** to roll back (it will pull the reverted image within 5 min),
+or pin the prior image by hand and recreate:
+
 ```bash
-export APP_IMAGE=ghcr.io/cemek7/booking:production-<previous-sha>
-docker compose -f deployment/docker-compose.production.yml up -d
-# DB: restore the pre-migration backup only if a migration caused breakage (config/callbacks are the usual culprit).
+cd /opt/techclave/prod
+# set APP_IMAGE=ghcr.io/cemek7/booking:production-a55399828431f3731b8cee0e7e9d641c1133a3e7 (current known-good) in .env
+docker compose up -d --force-recreate <app-service-name>
 ```
+(DB is already migrated for this promotion; a rollback is image/config only.)
 
 ---
 
 ## 5. Order of operations
 
-1. Confirm prod DB has migrations 042–044 + 138 (apply the missing ones once — §1).
-2. Set prod LIVE secrets + `APP_URL` (§2).
-3. Register prod callbacks with each provider you're enabling (§3).
+1. ~~Migrations~~ **Already applied on prod** — `onboarding_evidence` + `operating_delivery_outbox` exist,
+   confirming 042–044 landed (042 is a no-op there now); 138 is GRANT-only. Nothing to run.
+2. Put the LIVE secrets in prod `/opt/techclave/prod/.env` **before** the merge (§2), because an env-only edit
+   won't recreate the container — the post-merge image swap will. Host vars already set to
+   `booka.app.techclave.cloud`. Still needed: `DIRECT_URL`, Paystack LIVE, Stripe LIVE (+webhook), Google id/secret.
+3. Register prod callbacks with each provider you're enabling (§3). Keep the `app.techclave.cloud` Supabase
+   redirects too, as a rollback host.
 4. Open + merge the staging→main PR (ask Claude to open it when you're ready).
-5. Confirm the `VPS Deploy` job is green, then pull + restart on the VPS (§4).
-6. Run smoke tests (§4). Roll back if needed.
+5. Confirm the `VPS Deploy` job on `main` is green; the 5-min timer then auto-pulls + recreates (§4). No manual
+   deploy.
+6. Run smoke tests (§4). Roll back by reverting `main` (or pinning the prior image) if needed.
