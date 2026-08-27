@@ -209,7 +209,8 @@ export interface InventoryMovement {
   id: string;
   product_id: string;
   tenant_id: string;
-  movement_type: 'in' | 'out' | 'adjustment' | 'transfer';
+  // DB also stores 'sale'/'damage' (see InventoryService reorder analytics + sale-on-booking flow)
+  movement_type: 'in' | 'out' | 'adjustment' | 'transfer' | 'sale' | 'damage';
   quantity: number;
   quantity_change?: number;
   product?: { id: string; name: string };
@@ -228,6 +229,27 @@ export interface CreateInventoryMovementRequest {
   reason?: string;
   notes?: string;
   reference_id?: string;
+}
+
+export type InventoryMovementType = InventoryMovement['movement_type'];
+
+export interface UpdateInventoryRequest {
+  product_id?: string;
+  variant_id?: string;
+  quantity_change: number;
+  movement_type: InventoryMovementType;
+  reference_type?: string;
+  reference_id?: string;
+  reason?: string;
+}
+
+export interface ProductStockInfo {
+  product_id: string;
+  variant_id?: string;
+  variant_name?: string;
+  current_stock: number;
+  low_stock_threshold: number;
+  is_low_stock: boolean;
 }
 
 export interface ProductCategory {
