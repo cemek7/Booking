@@ -22,9 +22,15 @@ operational: DB parity, prod secrets, and external callback registration. Work t
 The live DB has a history of drifting from migrations → 500s on new pages. Prod is a **separate Supabase
 project** from staging; its schema must match what the 509 new commits expect.
 
-- [ ] Migrations are idempotent (per `CLAUDE.md`), so the safe move is to **re-apply all in order** against
-      the prod DB, from **both** dirs: `db/migrations/` (122 files) and `supabase/migrations/` (27 files).
-      Run against the prod `DATABASE_URL`/`DIRECT_URL`. **Never run against the live DB without a backup.**
+- [ ] Apply any migrations the prod DB is missing, in order, from **both** dirs: `db/migrations/` (122 files)
+      and `supabase/migrations/` (27 files). Run against the prod `DATABASE_URL`/`DIRECT_URL`.
+      **Never run against the live DB without a backup.**
+      ⚠️ **Most migrations are idempotent, but not all — do NOT blindly re-apply the whole set.**
+      `supabase/migrations/042_operating_loop.sql` uses **plain `CREATE TABLE` (×5, no `IF NOT EXISTS`)**, so
+      re-running it against a DB that already has those tables **errors**. Apply each migration exactly once;
+      track what prod has already had. The staging→main promotion adds 4 migrations main lacks:
+      `supabase/migrations/042_operating_loop.sql`, `043_operating_loop_delivery_safety.sql`,
+      `044_operating_loop_delivery_worker.sql`, and `db/migrations/138_harden_retail_sale_functions.sql`.
 - [ ] Spot-check drift before deploy (read-only) — recent feature migrations the new code depends on:
       ```sql
       -- reservations.source (2026-07-31_add_reservations_source.sql)
