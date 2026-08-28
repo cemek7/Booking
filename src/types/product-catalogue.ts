@@ -255,6 +255,7 @@ export interface ProductStockInfo {
 export interface ProductCategory {
   id: string;
   name: string;
+  description?: string | null;
   product_count?: number;
   created_at?: string | null;
   updated_at?: string | null;

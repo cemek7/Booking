@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
@@ -13,7 +12,7 @@ export interface ConnectionStatus {
   signal_strength?: number;
   last_seen: string;
   connection_time?: string;
-  error_message?: string;
+  error_message?: string | null;
   qr_code?: string;
   webhook_url?: string;
   is_business: boolean;
@@ -30,7 +29,7 @@ export interface ConnectionMetrics {
   messages_sent_today: number;
   messages_received_today: number;
   uptime_percentage: number;
-  average_response_time: number;
+  average_response_time: number | null;
   error_count_24h: number;
   last_message_timestamp?: string;
   total_conversations: number;
@@ -142,12 +141,14 @@ class WhatsAppConnectionManager {
       const statusResult = await this.getInstanceStatus(evolutionClient, instanceName);
       
       if (statusResult.success) {
-        await this.updateConnectionStatus(tenantId, instanceName, statusResult.status);
-        
+        if (statusResult.status) {
+          await this.updateConnectionStatus(tenantId, instanceName, statusResult.status);
+        }
+
         // Update metrics
         await this.updateConnectionMetrics(tenantId, instanceName);
       } else {
-        await this.handleConnectionError(tenantId, instanceName, statusResult.error);
+        await this.handleConnectionError(tenantId, instanceName, statusResult.error ?? 'Unknown error');
       }
 
     } catch (error) {
@@ -165,7 +166,7 @@ class WhatsAppConnectionManager {
    * Get instance status from Evolution API
    */
   private async getInstanceStatus(
-    evolutionClient: unknown,
+    evolutionClient: { baseUrl: string; apiKey: string },
     instanceName: string
   ): Promise<{
     success: boolean;
@@ -329,7 +330,7 @@ class WhatsAppConnectionManager {
         .select('id, last_activity')
         .eq('tenant_id', tenantId);
 
-      const activeConversations = conversations?.filter(conv => {
+      const activeConversations = conversations?.filter((conv: { last_activity: string }) => {
         const lastActivity = new Date(conv.last_activity);
         const hoursSinceActivity = (Date.now() - lastActivity.getTime()) / (1000 * 60 * 60);
         return hoursSinceActivity < 24; // Active if activity within 24 hours
