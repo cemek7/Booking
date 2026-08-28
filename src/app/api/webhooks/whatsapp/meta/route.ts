@@ -40,6 +40,14 @@ interface MetaWebhookPayload {
           id?: string;
           status?: string;
           timestamp?: string;
+          recipient_id?: string;
+          conversation?: { id?: string; origin?: { type?: string } };
+          pricing?: {
+            billable?: boolean;
+            pricing_model?: string;
+            category?: string;
+            type?: string;
+          };
         }>;
       };
     }>;
@@ -80,6 +88,10 @@ function verifyMetaSignature(rawBody: string, incomingSignature: string | null, 
     expectedBuffer.length === incomingBuffer.length &&
     timingSafeEqual(expectedBuffer, incomingBuffer)
   );
+}
+
+export function buildStatusIdempotencyKey(wamid: string, status?: string): string {
+  return `${wamid}:${status ?? 'unknown'}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -174,7 +186,7 @@ export async function POST(request: NextRequest) {
           supabase,
           'meta',
           `${metaPhoneNumberId}:status`,
-          status.id,
+          buildStatusIdempotencyKey(status.id, status.status),
           { type: 'status', status, value }
         );
       }
