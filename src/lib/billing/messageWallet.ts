@@ -20,8 +20,10 @@ export interface ReserveOutboundParams {
 }
 
 export type ReserveOutboundResult =
-  // chargeId is null when no charge row exists to correlate: the internal-error
-  // fallback below. Callers must null-check before calling attachWamid.
+  // chargeId is null when no charge row exists to correlate: either the
+  // internal-error fallback below, or a post-reservation insert failure that
+  // was released back to the wallet. Callers must null-check before calling
+  // attachWamid.
   | { allow: true; chargeId: string | null; mode: ReserveMode }
   | { allow: false; reason: 'handoff' };
 
@@ -70,6 +72,26 @@ function firstRow<T>(data: unknown): T | null {
   return (data as T) ?? null;
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+/**
+ * Coerces a NUMERIC column (arrives from PostgREST as a string) into a
+ * finite number, or returns null and logs loudly. Never let a malformed
+ * value silently become NaN and drift into money math or a JSON payload
+ * (NaN serializes to `null`, which the RPC would read as `invalid_amount`
+ * while the caller has already marked the row settled).
+ */
+function safeCredits(value: unknown, context: string): number | null {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) {
+    console.error(`[messageWallet] ${context}: reserved_credits is not a finite number`, { value });
+    return null;
+  }
+  return n;
+}
+
 async function insertChargeRow(
   admin: SupabaseClient,
   row: Record<string, unknown>,
@@ -85,6 +107,31 @@ async function insertChargeRow(
   }
   const inserted = data as { id?: string } | null;
   return inserted?.id ?? null;
+}
+
+/**
+ * Atomically claims a row for a state transition: only succeeds if the row
+ * is still `status='reserved'` at the moment the UPDATE runs. This is the
+ * concurrency guard for every money-moving transition (settle, release,
+ * abandon) — without it, two deliveries racing for the same wamid (e.g.
+ * `delivered` and `read` arriving together) would both pass a plain read
+ * check and both call the settle RPC, which is not idempotent and would
+ * double the wallet adjustment.
+ */
+async function claimReservedRow(
+  admin: SupabaseClient,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<{ claimed: boolean; error: unknown }> {
+  const { data, error } = await admin
+    .from(CHARGES_TABLE)
+    .update(patch)
+    .eq('id', id)
+    .eq('status', 'reserved')
+    .select('id');
+  if (error) return { claimed: false, error };
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  return { claimed: rows.length > 0, error: null };
 }
 
 async function callReserveRpc(
@@ -108,7 +155,11 @@ async function callReserveRpc(
   });
 
   if (error) {
-    return { allowed: false, reservationId: null, reason: error.message ?? 'reserve_error' };
+    // A transport/RPC failure is not the wallet declining the spend — it is
+    // metering itself being broken. Throw so the caller's try/catch routes
+    // this into the safe grace fallback instead of the retry ladder, which
+    // only knows how to interpret a genuine 'insufficient_balance' decision.
+    throw new Error(`reserve_ai_wallet_spend RPC failed: ${error.message}`);
   }
 
   const row = firstRow<ReserveRpcRow>(data);
@@ -117,6 +168,45 @@ async function callReserveRpc(
     reservationId: row?.reservation_id ?? null,
     reason: row?.reason ?? null,
   };
+}
+
+/**
+ * Settles (or releases, at zero) a wallet reservation. Every call site
+ * passes p_meter: 'whatsapp'. Errors are reported structurally rather than
+ * thrown — every caller treats "RPC transport error" and "RPC declined the
+ * settlement" identically: leave the charge row sweepable rather than mark
+ * it terminal with an amount that was never actually moved.
+ */
+async function callSettleRpc(
+  admin: SupabaseClient,
+  params: {
+    tenantId: string;
+    reservationId: string;
+    estimatedCredits: number;
+    actualCredits: number;
+    requestId?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<{ allowed: boolean; reason: string | null }> {
+  const { data, error } = await admin.rpc('settle_ai_wallet_spend', {
+    p_tenant_id: params.tenantId,
+    p_reservation_id: params.reservationId,
+    p_estimated_credits: params.estimatedCredits,
+    p_actual_credits: params.actualCredits,
+    p_tokens: null,
+    p_provider: 'meta',
+    p_model: null,
+    p_request_id: params.requestId ?? null,
+    p_metadata: params.metadata ?? {},
+    p_meter: 'whatsapp',
+  });
+
+  if (error) {
+    return { allowed: false, reason: error.message ?? 'settle_rpc_error' };
+  }
+
+  const row = firstRow<SettleRpcRow>(data);
+  return { allowed: !!row?.allowed, reason: row?.allowed ? null : (row?.reason ?? 'settle_refused') };
 }
 
 /**
@@ -181,14 +271,22 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
 
     if (!reserveRes.allowed && reserveRes.reason === 'insufficient_balance') {
       if (autoRechargeEnabled) {
+        // TODO: stub — always returns false (see attemptAutoRecharge doc comment).
         const recharged = await attemptAutoRecharge(p.admin, p.tenantId).catch((e) => {
-          console.warn('[messageWallet] auto-recharge attempt failed', e);
+          console.warn('[messageWallet] auto-recharge attempt threw', e);
           return false;
         });
         if (recharged) {
           reserveRes = await callReserveRpc(
             p.admin, p.tenantId, sellCredits, initialOverdraft, p.messageKind, p.attribution,
           );
+        } else {
+          // The only operational signal that auto-recharge exists and did
+          // nothing — without this, a tenant with it enabled silently
+          // overdrafts into grace with no trace anywhere.
+          console.warn('[messageWallet] auto-recharge did not succeed, falling back to grace overdraft', {
+            tenantId: p.tenantId,
+          });
         }
       }
 
@@ -214,6 +312,32 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
       message_kind: p.messageKind,
       attribution: p.attribution ?? {},
     });
+
+    if (!chargeId) {
+      // The reservation succeeded and already debited the balance, but there
+      // is now no row anywhere referencing it: the sweeper scans
+      // whatsapp_message_charges and will never find it, and abandonCharge
+      // needs a chargeId that doesn't exist. Release it back rather than
+      // strand it invisibly.
+      console.error(
+        '[messageWallet] reserveOutboundMessage: charge row insert failed after a successful reservation — releasing to avoid stranding credits',
+        { tenantId: p.tenantId, reservationId: reserveRes.reservationId },
+      );
+      const release = await callSettleRpc(p.admin, {
+        tenantId: p.tenantId,
+        reservationId: reserveRes.reservationId,
+        estimatedCredits: sellCredits,
+        actualCredits: 0,
+        metadata: { reason: 'charge_row_insert_failed' },
+      });
+      if (!release.allowed) {
+        console.error(
+          '[messageWallet] reserveOutboundMessage: release-after-insert-failure also failed — credits may be stranded, needs manual reconciliation',
+          { tenantId: p.tenantId, reservationId: reserveRes.reservationId, reason: release.reason },
+        );
+      }
+      return { allow: true, chargeId: null, mode };
+    }
 
     return { allow: true, chargeId, mode };
   } catch (error) {
@@ -244,6 +368,23 @@ async function attemptAutoRecharge(_admin: SupabaseClient, _tenantId: string): P
  * Merges an orphan settlement row into the reservation row once the post-send
  * UPDATE lands, handling the race where Meta's status webhook settles a wamid
  * before the send path has attached it.
+ *
+ * The orphan is written by settleOutboundMessage's no-row branch, which has
+ * no reservation id and so always records settled_credits: 0 without calling
+ * the settle RPC. reserve_ai_wallet_spend has *already* debited the balance
+ * for the reserved row's reservation, so the orphan's 0 must never be copied
+ * over it — that would strand the debit permanently (the row becomes
+ * terminal, so the sweeper, which only looks at status='reserved', can never
+ * rescue it). The merge instead settles the real reservation for the actual
+ * amount and only then finalizes the row.
+ *
+ * Known residual risk: this is two separate statements (delete, then
+ * update), not one atomic transaction — supabase-js/PostgREST doesn't expose
+ * multi-statement client transactions, and building a dedicated merge RPC is
+ * out of scope for this fix (it would need its own migration, validated
+ * against a live Postgres, which this change doesn't include). Both steps'
+ * errors are checked and every failure path logs loudly for manual
+ * reconciliation rather than silently reporting success.
  */
 export async function attachWamid(admin: SupabaseClient, chargeId: string, wamid: string): Promise<void> {
   const { error } = await admin
@@ -258,23 +399,33 @@ export async function attachWamid(admin: SupabaseClient, chargeId: string, wamid
     return;
   }
 
-  // Race: settlement already created an orphan row holding this wamid. Merge
-  // its pricing/delivery data onto the reserved row, mark it settled, and
-  // delete the orphan.
-  const { data: reservedData } = await admin
+  const { data: reservedData, error: reservedErr } = await admin
     .from(CHARGES_TABLE)
-    .select('id, tenant_id')
+    .select('id, tenant_id, wallet_reservation_id, reserved_credits')
     .eq('id', chargeId)
     .maybeSingle();
-  const reserved = reservedData as { id: string; tenant_id: string } | null;
+  if (reservedErr) {
+    console.error('[messageWallet] attachWamid: failed to load reserved row for merge', reservedErr);
+    return;
+  }
+  const reserved = reservedData as {
+    id: string;
+    tenant_id: string;
+    wallet_reservation_id: string | null;
+    reserved_credits: number | string | null;
+  } | null;
   if (!reserved) return;
 
-  const { data: orphanData } = await admin
+  const { data: orphanData, error: orphanErr } = await admin
     .from(CHARGES_TABLE)
-    .select('id, billable, pricing_category, pricing_type, pricing_model, delivery_status, settled_credits')
+    .select('id, billable, pricing_category, pricing_type, pricing_model, delivery_status')
     .eq('tenant_id', reserved.tenant_id)
     .eq('wamid', wamid)
     .maybeSingle();
+  if (orphanErr) {
+    console.error('[messageWallet] attachWamid: failed to load orphan for merge', orphanErr);
+    return;
+  }
   const orphan = orphanData as {
     id: string;
     billable?: boolean | null;
@@ -282,13 +433,47 @@ export async function attachWamid(admin: SupabaseClient, chargeId: string, wamid
     pricing_type?: string | null;
     pricing_model?: string | null;
     delivery_status?: string | null;
-    settled_credits?: number | string | null;
   } | null;
   if (!orphan) return;
 
-  await admin.from(CHARGES_TABLE).delete().eq('id', orphan.id);
+  const reservedCredits = safeCredits(reserved.reserved_credits, 'attachWamid');
+  if (reservedCredits === null) return;
+  const actualCredits = orphan.billable ? reservedCredits : 0;
 
-  await admin
+  // The unique index means the orphan's wamid must be freed before the
+  // reserved row can take it — the delete has to run first. Both this and
+  // the final update are checked below: a failure must not silently look
+  // like a successful merge.
+  const { error: deleteErr } = await admin.from(CHARGES_TABLE).delete().eq('id', orphan.id);
+  if (deleteErr) {
+    console.error('[messageWallet] attachWamid: orphan delete failed, merge aborted', deleteErr);
+    return;
+  }
+
+  let settledCredits = 0;
+  if (reserved.wallet_reservation_id) {
+    const settleResult = await callSettleRpc(admin, {
+      tenantId: reserved.tenant_id,
+      reservationId: reserved.wallet_reservation_id,
+      estimatedCredits: reservedCredits,
+      actualCredits,
+      requestId: wamid,
+      metadata: { wamid, source: 'attachWamid_orphan_merge' },
+    });
+    if (!settleResult.allowed) {
+      // Money did not move. The orphan's pricing data is gone now (Meta will
+      // not re-send it) — this needs a human, not a silently "settled" row
+      // carrying a fabricated amount.
+      console.error(
+        '[messageWallet] attachWamid: settle failed after orphan delete — reservation left open, needs manual reconciliation',
+        { chargeId, wamid, reason: settleResult.reason },
+      );
+      return;
+    }
+    settledCredits = actualCredits;
+  }
+
+  const { error: updateErr } = await admin
     .from(CHARGES_TABLE)
     .update({
       wamid,
@@ -297,11 +482,17 @@ export async function attachWamid(admin: SupabaseClient, chargeId: string, wamid
       pricing_type: orphan.pricing_type ?? null,
       pricing_model: orphan.pricing_model ?? null,
       delivery_status: orphan.delivery_status ?? null,
-      settled_credits: orphan.settled_credits != null ? Number(orphan.settled_credits) : 0,
+      settled_credits: settledCredits,
       status: 'settled',
-      settled_at: new Date().toISOString(),
+      settled_at: nowIso(),
     })
     .eq('id', chargeId);
+  if (updateErr) {
+    console.error(
+      '[messageWallet] attachWamid: final row update failed after settle — wallet balance is correct, charge row needs manual reconciliation',
+      { chargeId, wamid, updateErr },
+    );
+  }
 }
 
 /**
@@ -311,34 +502,60 @@ export async function attachWamid(admin: SupabaseClient, chargeId: string, wamid
  * never held a wallet reservation.
  */
 export async function abandonCharge(admin: SupabaseClient, chargeId: string): Promise<void> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from(CHARGES_TABLE)
     .select('id, tenant_id, status, reserved_credits, wallet_reservation_id')
     .eq('id', chargeId)
     .maybeSingle();
+  if (error) {
+    console.error('[messageWallet] abandonCharge: failed to load charge row', error);
+    return;
+  }
   const row = data as (ChargeRow & { tenant_id?: string }) | null;
   if (!row) return;
   if (row.status === 'settled' || row.status === 'released') return;
 
-  if (row.wallet_reservation_id && row.tenant_id) {
-    await admin.rpc('settle_ai_wallet_spend', {
-      p_tenant_id: row.tenant_id,
-      p_reservation_id: row.wallet_reservation_id,
-      p_estimated_credits: Number(row.reserved_credits ?? 0),
-      p_actual_credits: 0,
-      p_tokens: null,
-      p_provider: 'meta',
-      p_model: null,
-      p_request_id: null,
-      p_metadata: { reason: 'abandoned' },
-      p_meter: 'whatsapp',
-    });
+  if (!row.wallet_reservation_id || !row.tenant_id) {
+    // Free provider or shadow mode: nothing was reserved, so no RPC and no
+    // concurrency guard is needed — just finalize.
+    await admin
+      .from(CHARGES_TABLE)
+      .update({ status: 'released', settled_credits: 0, settled_at: nowIso() })
+      .eq('id', chargeId)
+      .eq('status', 'reserved');
+    return;
   }
 
-  await admin
-    .from(CHARGES_TABLE)
-    .update({ status: 'released', settled_credits: 0, settled_at: new Date().toISOString() })
-    .eq('id', chargeId);
+  const reservedCredits = safeCredits(row.reserved_credits, 'abandonCharge');
+  if (reservedCredits === null) return;
+
+  const claim = await claimReservedRow(admin, chargeId, {
+    status: 'released',
+    settled_credits: 0,
+    settled_at: nowIso(),
+  });
+  if (claim.error) {
+    console.error('[messageWallet] abandonCharge: claim update failed', claim.error);
+    return;
+  }
+  if (!claim.claimed) return; // already settled/released/attached concurrently
+
+  const settleResult = await callSettleRpc(admin, {
+    tenantId: row.tenant_id,
+    reservationId: row.wallet_reservation_id,
+    estimatedCredits: reservedCredits,
+    actualCredits: 0,
+    metadata: { reason: 'abandoned' },
+  });
+  if (!settleResult.allowed) {
+    // Revert the claim: leave the row status='reserved' so it stays
+    // sweepable instead of terminal with money that never actually moved.
+    console.error(
+      '[messageWallet] abandonCharge: settle RPC failed after claim, reverting to reserved',
+      { chargeId, reason: settleResult.reason },
+    );
+    await admin.from(CHARGES_TABLE).update({ status: 'reserved' }).eq('id', chargeId);
+  }
 }
 
 /**
@@ -350,12 +567,19 @@ export async function abandonCharge(admin: SupabaseClient, chargeId: string): Pr
 export async function settleOutboundMessage(p: SettleOutboundParams): Promise<void> {
   const { admin, tenantId, wamid, deliveryStatus, pricing } = p;
 
-  const { data } = await admin
+  const { data, error: selectErr } = await admin
     .from(CHARGES_TABLE)
     .select('id, status, reserved_credits, wallet_reservation_id')
     .eq('tenant_id', tenantId)
     .eq('wamid', wamid)
     .maybeSingle();
+  if (selectErr) {
+    // A failed read must not be treated as "no row" — that would insert an
+    // orphan on top of a live reserved row and lose the settlement to the
+    // unique index instead of merging with it.
+    console.error('[messageWallet] settleOutboundMessage: failed to load charge row, aborting', selectErr);
+    return;
+  }
   const row = data as ChargeRow | null;
 
   if (!row) {
@@ -369,12 +593,13 @@ export async function settleOutboundMessage(p: SettleOutboundParams): Promise<vo
       settled_credits: 0,
       status: 'settled',
       wallet_reservation_id: null,
+      mode: isShadowMode() ? 'shadow' : 'live',
       billable: deliveryStatus === 'failed' ? false : (pricing?.billable ?? null),
       pricing_category: pricing?.category ?? null,
       pricing_type: pricing?.type ?? null,
       pricing_model: pricing?.pricing_model ?? null,
       delivery_status: deliveryStatus,
-      settled_at: new Date().toISOString(),
+      settled_at: nowIso(),
     });
     return;
   }
@@ -400,48 +625,63 @@ export async function settleOutboundMessage(p: SettleOutboundParams): Promise<vo
   if (!row.wallet_reservation_id) {
     // Free provider or shadow mode: no reservation to release, but the
     // pricing/delivery data is exactly what shadow mode exists to collect.
+    // No money moves here, so no concurrency guard is needed.
     await admin
       .from(CHARGES_TABLE)
       .update({
         ...pricingFields,
         settled_credits: 0,
         status: 'settled',
-        settled_at: new Date().toISOString(),
+        settled_at: nowIso(),
       })
       .eq('id', row.id);
     return;
   }
 
-  const reservedCredits = Number(row.reserved_credits ?? 0);
+  const reservedCredits = safeCredits(row.reserved_credits, 'settleOutboundMessage');
+  if (reservedCredits === null) return;
   const billable = deliveryStatus === 'failed' ? false : !!pricing?.billable;
   const settledCredits = billable ? reservedCredits : 0;
+  const targetStatus = deliveryStatus === 'failed' ? 'released' : 'settled';
 
-  const { data: settleData } = await admin.rpc('settle_ai_wallet_spend', {
-    p_tenant_id: tenantId,
-    p_reservation_id: row.wallet_reservation_id,
-    p_estimated_credits: reservedCredits,
-    p_actual_credits: settledCredits,
-    p_tokens: null,
-    p_provider: 'meta',
-    p_model: null,
-    p_request_id: wamid,
-    p_metadata: { wamid, delivery_status: deliveryStatus },
-    p_meter: 'whatsapp',
+  // Claim the row before moving money: only proceed if this call is the one
+  // that flips status away from 'reserved'. Guards against `delivered` and
+  // `read` (or a duplicate webhook) racing for the same wamid and both
+  // calling the non-idempotent settle RPC.
+  const claim = await claimReservedRow(admin, row.id, {
+    ...pricingFields,
+    settled_credits: settledCredits,
+    status: targetStatus,
+    settled_at: nowIso(),
   });
-  // Settlement result isn't branched on: whether or not the RPC reports
-  // allowed, the charge row still records the terminal delivery/pricing
-  // outcome below — a failed settle RPC should not resurface as a stuck send.
-  void (settleData as SettleRpcRow[] | SettleRpcRow | null);
+  if (claim.error) {
+    console.error('[messageWallet] settleOutboundMessage: claim update failed', claim.error);
+    return;
+  }
+  if (!claim.claimed) {
+    // Lost the race to a concurrent settle for the same row.
+    return;
+  }
 
-  await admin
-    .from(CHARGES_TABLE)
-    .update({
-      ...pricingFields,
-      settled_credits: settledCredits,
-      status: deliveryStatus === 'failed' ? 'released' : 'settled',
-      settled_at: new Date().toISOString(),
-    })
-    .eq('id', row.id);
+  const settleResult = await callSettleRpc(admin, {
+    tenantId,
+    reservationId: row.wallet_reservation_id,
+    estimatedCredits: reservedCredits,
+    actualCredits: settledCredits,
+    requestId: wamid,
+    metadata: { wamid, delivery_status: deliveryStatus },
+  });
+
+  if (!settleResult.allowed) {
+    // Money did not move. Revert the claim so the row stays 'reserved' and
+    // the sweeper can retry it, instead of leaving it terminal with a
+    // recorded charge that never happened.
+    console.error(
+      '[messageWallet] settleOutboundMessage: settle RPC failed after claim, reverting to reserved',
+      { wamid, reason: settleResult.reason },
+    );
+    await admin.from(CHARGES_TABLE).update({ status: 'reserved' }).eq('id', row.id);
+  }
 }
 
 /**
@@ -473,23 +713,39 @@ export async function releaseStaleReservations(
   for (const row of rows) {
     if (!row.wallet_reservation_id) continue;
 
-    await admin.rpc('settle_ai_wallet_spend', {
-      p_tenant_id: row.tenant_id,
-      p_reservation_id: row.wallet_reservation_id,
-      p_estimated_credits: Number(row.reserved_credits ?? 0),
-      p_actual_credits: 0,
-      p_tokens: null,
-      p_provider: 'meta',
-      p_model: null,
-      p_request_id: null,
-      p_metadata: { reason: 'stale_reservation_sweep' },
-      p_meter: 'whatsapp',
+    const reservedCredits = safeCredits(row.reserved_credits, 'releaseStaleReservations');
+    if (reservedCredits === null) continue;
+
+    // Claim before settling: the sweep query and this per-row update are not
+    // in the same transaction, so a webhook could settle the row in that
+    // window. Only the call that wins the claim gets to call the RPC.
+    const claim = await claimReservedRow(admin, row.id, {
+      status: 'released',
+      settled_credits: 0,
+      settled_at: nowIso(),
+    });
+    if (claim.error) {
+      console.error('[messageWallet] releaseStaleReservations: claim failed', claim.error);
+      continue;
+    }
+    if (!claim.claimed) continue; // settled/attached concurrently since the sweep query ran
+
+    const settleResult = await callSettleRpc(admin, {
+      tenantId: row.tenant_id,
+      reservationId: row.wallet_reservation_id,
+      estimatedCredits: reservedCredits,
+      actualCredits: 0,
+      metadata: { reason: 'stale_reservation_sweep' },
     });
 
-    await admin
-      .from(CHARGES_TABLE)
-      .update({ status: 'released', settled_credits: 0, settled_at: new Date().toISOString() })
-      .eq('id', row.id);
+    if (!settleResult.allowed) {
+      console.error(
+        '[messageWallet] releaseStaleReservations: settle RPC failed after claim, reverting to reserved',
+        { chargeId: row.id, reason: settleResult.reason },
+      );
+      await admin.from(CHARGES_TABLE).update({ status: 'reserved' }).eq('id', row.id);
+      continue;
+    }
 
     released += 1;
   }
