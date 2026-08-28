@@ -935,7 +935,14 @@ alert would be useless.
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/__tests__/lib/billing/messageWallet.test.ts`. Use the queue-based Supabase mock pattern from `src/__tests__/lib/billing/spendCaps/spendGuard.test.ts` (copy the `Resp` / `pushDb` / `pushErr` / `makeChain` scaffolding), extended with an `rpc` queue and an `insert`/`update`/`delete` chain:
+`src/__tests__/lib/billing/messageWallet.test.ts`. Use the queue-based Supabase mock pattern from `src/__tests__/lib/billing/spendCaps/spendGuard.test.ts` (copy the `Resp` / `pushDb` / `pushErr` / `makeChain` scaffolding), extended with:
+
+- `pushRpc(rows)` — queues the next `admin.rpc()` result, and `rpcCalls: Array<{ name: string; args: Record<string, unknown> }>` recording every RPC call in order.
+- `inserts: Array<{ table: string; row: Record<string, unknown> }>` and `updates: Array<{ table: string; row: Record<string, unknown> }>` recording writes.
+
+Assert on those three arrays only. Do not build query-filter introspection into the
+harness — assert filtering behaviourally, through what the code does with the rows the
+mock returns.
 
 ```ts
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
@@ -1119,13 +1126,25 @@ describe('settleOutboundMessage — unmetered rows', () => {
 });
 
 describe('releaseStaleReservations', () => {
-  it('never sweeps rows that hold no wallet reservation', async () => {
+  it('settles nothing when the sweep returns no metered rows', async () => {
+    // The query filters wallet_reservation_id IS NOT NULL, so free-provider and
+    // shadow rows never reach this code path — the mock returns the empty set the
+    // real query would.
     pushDb([]);
     const r = await releaseStaleReservations(admin, 24 * 60 * 60 * 1000);
     expect(r.released).toBe(0);
-    expect(selects[0].filters).toContainEqual(
-      expect.objectContaining({ column: 'wallet_reservation_id', op: 'not.is', value: null }),
-    );
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it('skips any row that somehow arrives without a reservation id', async () => {
+    pushDb([
+      { id: 'c1', tenant_id: 't1', reserved_credits: 22.4, wallet_reservation_id: null },
+      { id: 'c2', tenant_id: 't1', reserved_credits: 22.4, wallet_reservation_id: 'res-2' },
+    ]);
+    pushRpc([{ allowed: true, balance_credits: 22.4, settlement_id: 's2' }]);
+    const r = await releaseStaleReservations(admin, 24 * 60 * 60 * 1000);
+    expect(r.released).toBe(1);
+    expect(rpcCalls).toHaveLength(1);
   });
 
   it('releases each stale reservation at zero cost exactly once', async () => {
@@ -1637,6 +1656,7 @@ Without this, a broken webhook subscription silently drains every tenant's balan
 **Files:**
 - Create: `src/app/api/worker/message-charges/route.ts`
 - Test: `src/__tests__/api/worker/message-charges.test.ts`
+- Modify: `docs/operations-guide.md` (add a "Workers" entry; Task 13 later adds a separate metering section to the same file)
 
 **Interfaces:**
 - Consumes: `releaseStaleReservations` (Task 7).
@@ -1788,7 +1808,9 @@ Only `mode = 'live'` rows count. Shadow rows record volume but are not revenue, 
 
 ```ts
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { evaluateDrift } from '@/lib/billing/messageReconciliation';
+import { buildMonthlyReconciliation, evaluateDrift } from '@/lib/billing/messageReconciliation';
+
+// Reuse the queue-based Supabase mock scaffolding from Task 7 (`pushDb` / `admin`).
 
 // Pin the cost rate: evaluateDrift multiplies by resolveMessageCostCredits(), so an
 // unset env would make these assertions depend on the provisional default.
@@ -1801,6 +1823,36 @@ const base = {
   month: '2026-10', billableMessages: 1000, settledCredits: 22400,
   releasedMessages: 3, freeMessages: 120, byCategory: { service: 800, utility: 200 },
 };
+
+describe('buildMonthlyReconciliation', () => {
+  it('counts only live rows and aggregates by category', async () => {
+    pushDb([
+      { billable: true,  settled_credits: 22.4, status: 'settled',  pricing_category: 'service' },
+      { billable: true,  settled_credits: 22.4, status: 'settled',  pricing_category: 'utility' },
+      { billable: false, settled_credits: 0,    status: 'settled',  pricing_category: 'service' },
+      { billable: null,  settled_credits: null, status: 'released', pricing_category: null },
+    ]);
+    const r = await buildMonthlyReconciliation(admin, '2026-10');
+    expect(r).toMatchObject({
+      month: '2026-10',
+      billableMessages: 2,
+      settledCredits: 44.8,
+      freeMessages: 1,
+      releasedMessages: 1,
+    });
+    expect(r.byCategory).toEqual({ service: 1, utility: 1 });
+  });
+
+  it('returns a zeroed summary for a month with no rows', async () => {
+    pushDb([]);
+    const r = await buildMonthlyReconciliation(admin, '2026-09');
+    expect(r).toMatchObject({
+      month: '2026-09', billableMessages: 0, settledCredits: 0,
+      freeMessages: 0, releasedMessages: 0,
+    });
+    expect(r.byCategory).toEqual({});
+  });
+});
 
 describe('evaluateDrift', () => {
   it('accepts drift inside tolerance', () => {
@@ -1838,7 +1890,7 @@ Create `src/lib/billing/messageReconciliation.ts`. `buildMonthlyReconciliation` 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest src/__tests__/lib/billing/messageReconciliation.test.ts`
-Expected: PASS (4 tests).
+Expected: PASS (6 tests).
 
 - [ ] **Step 5: Full suite, typecheck, commit**
 
@@ -1854,15 +1906,19 @@ git commit -m "feat(billing): monthly message cost reconciliation and drift chec
 ### Task 13: Environment documentation and shadow-mode rollout notes
 
 **Files:**
-- Modify: `.env.example` (or the repo's canonical env template)
-- Modify: `deployment/env/.env.staging`
+- Modify: `.env.example`
+- Modify: `deployment/env/.env.staging.example`
+- Modify: `deployment/env/.env.production.example`
 - Modify: `docs/operations-guide.md`
+
+There is no `deployment/env/.env.staging` in the repo, and there must not be — the
+committed files are `.example` templates. Never create or commit a real secrets env file.
 
 **Interfaces:**
 - Consumes: everything above.
 - Produces: nothing code-facing.
 
-- [ ] **Step 1: Add the variables to the env template**
+- [ ] **Step 1: Add the variables to all three env templates**
 
 ```bash
 # WhatsApp message metering (Meta bills service messages from 2026-10-01)
@@ -1911,7 +1967,7 @@ Expected: all pass.
 - [ ] **Step 4: Commit and open the PR**
 
 ```bash
-git add .env.example deployment/env/.env.staging docs/operations-guide.md
+git add .env.example deployment/env/.env.staging.example deployment/env/.env.production.example docs/operations-guide.md
 git commit -m "docs(ops): WhatsApp metering env vars and Oct 1 cutover runbook"
 git push -u origin feat/whatsapp-message-metering
 ```
