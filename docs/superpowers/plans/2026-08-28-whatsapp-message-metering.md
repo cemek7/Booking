@@ -756,7 +756,7 @@ export function getReconcileDriftPct(): number {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest src/__tests__/lib/billing/messageRates.test.ts`
-Expected: PASS (13 tests).
+Expected: PASS (12 tests).
 
 - [ ] **Step 5: Typecheck and commit**
 
@@ -909,7 +909,11 @@ The core of the feature.
 6. On `insufficient_balance`: if `auto_recharge_enabled`, attempt the Paystack charge, then retry the reserve **once**. If that fails or is disabled, retry with `p_allow_overdraft_credits = grace_overdraft_credits` and return `mode: 'grace'`. If still refused → `{ allow: false, reason: 'handoff' }`.
 7. On success insert the charge row with `wallet_reservation_id` and `reserved_credits = sell`, return `{ allow: true, chargeId, mode }`.
 
-`attachWamid` handles a real race: Meta's status webhook can arrive before the post-send `UPDATE` lands. If the `UPDATE ... SET wamid` hits `uq_whatsapp_message_charges_tenant_wamid` (Postgres `23505`), an orphan row created by settlement already holds that wamid. Merge it: copy the orphan's `billable` / `pricing_*` / `delivery_status` / `settled_credits` onto the reserved row, mark it `settled`, delete the orphan.
+`attachWamid` handles a real race: Meta's status webhook can arrive before the post-send `UPDATE` lands. If the `UPDATE ... SET wamid` hits `uq_whatsapp_message_charges_tenant_wamid` (Postgres `23505`), an orphan row created by settlement already holds that wamid. Merge it: copy the orphan's `billable` / `pricing_*` / `delivery_status` onto the reserved row, delete the orphan, and mark the row `settled`.
+
+**The merge must also settle the wallet reservation.** The orphan was created by the no-row branch of `settleOutboundMessage`, which had no reservation id and therefore wrote `settled_credits: 0` without calling the settle RPC. The reserved row *does* carry a `wallet_reservation_id`, and `reserve_ai_wallet_spend` has already debited the balance. So the merge must call `settle_ai_wallet_spend` with `p_estimated_credits = reserved_credits`, `p_actual_credits = orphan.billable ? reserved_credits : 0`, and `p_meter: 'whatsapp'`, then write that actual value to `settled_credits` — **never copy the orphan's hardcoded `0`.** Copying it strands the debit permanently: the row becomes terminal so the sweeper can never rescue it, the tenant is down the reserved amount, and Booka's own books record a charge of zero.
+
+Ordering: the unique index means the orphan must be deleted before the reserved row can take its wamid, so both statements' errors must be checked — a failure between them loses the orphan's pricing data irrecoverably, and Meta will not re-send the status. Do this in a single transaction or a dedicated RPC, not two unguarded client round-trips.
 
 `settleOutboundMessage`:
 - `sent` → update `delivery_status` only, no settlement.
