@@ -869,7 +869,9 @@ The core of the feature.
     attribution?: Record<string, unknown>;
   }
   export type ReserveOutboundResult =
-    | { allow: true; chargeId: string; mode: ReserveMode }
+    // chargeId is null when no charge row exists to correlate: the internal-error
+    // fallback below. Callers must null-check before calling attachWamid.
+    | { allow: true; chargeId: string | null; mode: ReserveMode }
     | { allow: false; reason: 'handoff' };
 
   export function reserveOutboundMessage(p: ReserveOutboundParams): Promise<ReserveOutboundResult>;
@@ -914,9 +916,22 @@ The core of the feature.
 - `failed` → settle the reservation at 0, set `status: 'released'`.
 - `delivered`, or `read` when `delivered` was missed → settle at `pricing.billable ? reserved_credits : 0`, set `status: 'settled'`, stamp `settled_at` and all `pricing_*` columns.
 - Row already `settled` or `released` → no-op (replay safety).
+- Row has no `wallet_reservation_id` (free provider or shadow mode) → record
+  `delivery_status`, `billable` and the `pricing_*` columns, set `settled_credits: 0` and
+  `status: 'settled'`, and **do not call the settle RPC** — there is no reservation to
+  release. This is the path that collects shadow-mode data, so it must not be skipped.
 - No row found → insert an orphan charge row carrying the pricing data so `attachWamid` can merge it.
 
-`releaseStaleReservations`: select `status = 'reserved' AND wamid IS NOT NULL AND sent_at < now - olderThanMs`, settle each at 0, set `status: 'released'`, return the count.
+`releaseStaleReservations`: select
+`status = 'reserved' AND wamid IS NOT NULL AND wallet_reservation_id IS NOT NULL AND sent_at < now - olderThanMs`,
+settle each at 0, set `status: 'released'`, return the count.
+
+**The `wallet_reservation_id IS NOT NULL` filter is load-bearing.** Free-provider and
+shadow-mode rows are written with `status: 'reserved'` and no wallet reservation. Without
+this filter the sweeper would pick them up every 15 minutes forever, call
+`settle_ai_wallet_spend` with a null reservation, and report a permanently climbing
+`released` count — which is also the signal used to detect a broken webhook, so the
+alert would be useless.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1087,7 +1102,32 @@ describe('settleOutboundMessage', () => {
   });
 });
 
+describe('settleOutboundMessage — unmetered rows', () => {
+  it('records pricing for a shadow row without calling the settle RPC', async () => {
+    pushDb({ id: 'c1', status: 'reserved', reserved_credits: 0,
+             wallet_reservation_id: null });
+    pushDb({ id: 'c1' });
+    await settleOutboundMessage({
+      admin, tenantId: 't1', wamid: 'wamid.S', deliveryStatus: 'delivered',
+      pricing: { billable: false, category: 'service', type: 'free_customer_service' },
+    });
+    expect(rpcCalls).toHaveLength(0);
+    expect(updates[0].row).toMatchObject({
+      status: 'settled', settled_credits: 0, billable: false, pricing_category: 'service',
+    });
+  });
+});
+
 describe('releaseStaleReservations', () => {
+  it('never sweeps rows that hold no wallet reservation', async () => {
+    pushDb([]);
+    const r = await releaseStaleReservations(admin, 24 * 60 * 60 * 1000);
+    expect(r.released).toBe(0);
+    expect(selects[0].filters).toContainEqual(
+      expect.objectContaining({ column: 'wallet_reservation_id', op: 'not.is', value: null }),
+    );
+  });
+
   it('releases each stale reservation at zero cost exactly once', async () => {
     pushDb([
       { id: 'c1', tenant_id: 't1', reserved_credits: 22.4, wallet_reservation_id: 'res-1' },
@@ -1113,7 +1153,7 @@ Create `src/lib/billing/messageWallet.ts` implementing the exported signatures u
 
 Key requirements:
 - Every wallet RPC call passes `p_meter: 'whatsapp'`.
-- `reserveOutboundMessage` must never throw. Wrap the whole body; on an unexpected error, log and return `{ allow: true, mode: 'grace' }` — an internal metering bug must not take the bot offline, and the grace ceiling still bounds the exposure.
+- `reserveOutboundMessage` must never throw. Wrap the whole body; on an unexpected error, log and return `{ allow: true, chargeId: null, mode: 'grace' }` — an internal metering bug must not take the bot offline. `chargeId: null` is what tells the decorator there is nothing to correlate or settle, so the send proceeds unbilled rather than billed-and-stuck.
 - `attachWamid` catches Postgres `23505` and performs the orphan merge described above.
 - Do not add `@ts-nocheck`.
 
@@ -1166,7 +1206,10 @@ The handoff message costs money, and by definition the wallet is empty when it f
 
 - [ ] **Step 1: Write the failing test**
 
-`src/__tests__/lib/billing/messageHandoff.test.ts`:
+`src/__tests__/lib/billing/messageHandoff.test.ts`. Reuse the same queue-based Supabase
+mock scaffolding as Task 7 (`Resp` / `pushDb` / `pushErr` / `makeChain` / `admin`, copied
+from `src/__tests__/lib/billing/spendCaps/spendGuard.test.ts`) — the snippet below assumes
+`admin` and `pushDb` are already in scope:
 
 ```ts
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
@@ -1289,6 +1332,15 @@ git commit -m "feat(billing): once-per-conversation wallet-exhausted handoff"
   ```
 
 **Behaviour per wrapped send:** reserve → if refused, fire the handoff and return `{ success: false }` → call the underlying send → on `success: false` call `abandonCharge` → on `success: true` with a `messageId` call `attachWamid`. Non-send methods (`createInstance`, `getConnectionStatus`, `getQrCode`, `requestPairingCode`, `deleteInstance`) pass straight through.
+
+`withMetering` takes no Supabase client in `opts`. It obtains one itself via
+`createSupabaseAdminClient()` from `@/lib/supabase/server`, called lazily inside each
+wrapped method rather than at decoration time — `getTenantChannelProviderClient` is called
+on request paths where a module-scope client would be constructed needlessly.
+
+**Null-check `chargeId` before `attachWamid` and `abandonCharge`.** A reservation can
+succeed with `chargeId: null` (the internal-error fallback in Task 7); calling either
+helper with null must be skipped, not passed through.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1610,9 +1662,12 @@ function req(auth?: string) {
 }
 
 describe('GET /api/worker/message-charges', () => {
+  // NODE_ENV is typed readonly, so assign through the index signature.
+  const setNodeEnv = (v: string) => { (process.env as Record<string, string>).NODE_ENV = v; };
+
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.NODE_ENV = 'test';
+    setNodeEnv('test');
     delete process.env.CRON_SECRET;
   });
 
@@ -1624,7 +1679,7 @@ describe('GET /api/worker/message-charges', () => {
   });
 
   it('rejects unauthorised calls in production', async () => {
-    process.env.NODE_ENV = 'production';
+    setNodeEnv('production');
     process.env.CRON_SECRET = 'secret';
     const res = await GET(req('Bearer wrong'));
     expect(res.status).toBe(401);
@@ -1732,8 +1787,15 @@ Only `mode = 'live'` rows count. Shadow rows record volume but are not revenue, 
 `src/__tests__/lib/billing/messageReconciliation.test.ts`:
 
 ```ts
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { evaluateDrift } from '@/lib/billing/messageReconciliation';
+
+// Pin the cost rate: evaluateDrift multiplies by resolveMessageCostCredits(), so an
+// unset env would make these assertions depend on the provisional default.
+beforeEach(() => {
+  process.env.BOOKA_MESSAGE_RATE_CREDITS = '14';
+  process.env.BOOKA_MESSAGE_RECONCILE_DRIFT_PCT = '2';
+});
 
 const base = {
   month: '2026-10', billableMessages: 1000, settledCredits: 22400,
@@ -1864,4 +1926,23 @@ Open the PR against `staging`, not `main`. Body must state that migrations 139-1
 
 **Type consistency.** `ReserveOutboundResult`, `ReserveMode`, `MessageKind`, `SettleOutboundParams` and `CapDecision.degraded` are declared once in Tasks 6-7 and used unchanged in Tasks 8-12. `settleOutboundMessage` takes `pricing.category` / `pricing.type` / `pricing.pricing_model`, matching Meta's payload naming rather than the column names — the mapping to `pricing_category` / `pricing_type` / `pricing_model` happens inside `settleOutboundMessage` only.
 
-**Known deviation from the spec.** The spec's §5 lists the grace fallback as a single `mode: 'grace'`. The plan additionally returns `mode: 'grace'` from `reserveOutboundMessage`'s catch-all error handler, so an internal metering bug degrades into bounded overdraft rather than taking a tenant's bot offline. This is consistent with the spec's fail-open-but-bounded principle and is called out in Task 7.
+**Second review pass (2026-08-28).** Four defects found and fixed:
+
+1. **Type violation.** `reserveOutboundMessage`'s error fallback returned no `chargeId`
+   while `ReserveOutboundResult` required one. `chargeId` is now `string | null`, and
+   Task 9 null-checks before `attachWamid` / `abandonCharge`.
+2. **Sweeper livelock.** Free-provider and shadow rows are written `status: 'reserved'`
+   with no wallet reservation, so the sweeper would have re-swept them every 15 minutes
+   forever and poisoned the very counter used to detect a broken webhook. The select now
+   filters `wallet_reservation_id IS NOT NULL`.
+3. **Shadow data loss.** Settlement's "already settled → no-op" guard had no branch for
+   rows with no reservation, so shadow rows would never have recorded their pricing —
+   defeating the point of shadow mode. Added an explicit no-RPC settlement path.
+4. **Missing client.** `withMetering` had no Supabase client in scope. It now creates one
+   lazily via `createSupabaseAdminClient()`.
+
+Plus two test-hygiene fixes: Task 8's snippet now says where its mock harness comes from,
+and Task 12 pins `BOOKA_MESSAGE_RATE_CREDITS` instead of depending on the default.
+
+**Spec alignment.** The design doc's §5 has been updated to match item 1 — the bounded
+error fallback is now spec, not a plan-level deviation.

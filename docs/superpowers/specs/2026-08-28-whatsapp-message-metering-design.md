@@ -230,7 +230,7 @@ New module: `src/lib/billing/messageWallet.ts`.
 
 ```ts
 reserveOutboundMessage(params): Promise<
-  | { allow: true;  chargeId: string; mode: 'paid' | 'grace' | 'free' | 'shadow' }
+  | { allow: true;  chargeId: string | null; mode: 'paid' | 'grace' | 'free' | 'shadow' }
   | { allow: false; reason: 'handoff' }
 >
 settleOutboundMessage(params): Promise<void>
@@ -261,6 +261,12 @@ when it fires. It must bypass the gate against a small platform-funded allowance
 and must be idempotent — once per conversation, flagged on `chats.metadata`.
 Without this the failure mode is exactly the silent wall the design exists to
 prevent.
+
+**An internal metering error must not silence the bot.** `reserveOutboundMessage` never
+throws: on an unexpected error it returns `{ allow: true, chargeId: null, mode: 'grace' }`.
+The null `chargeId` tells the decorator there is nothing to correlate, so the message is
+sent unbilled rather than billed against a reservation that can never settle. Booka eats
+the cost of its own bugs; the tenant's customer still gets an answer.
 
 **`checkCaps` currently fails open** (`spendGuard.ts` L156–165, `console.warn`
 then `allowed: true`). For LLM spend that is a defensible call. For Meta spend it
