@@ -272,7 +272,7 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
     if (!reserveRes.allowed && reserveRes.reason === 'insufficient_balance') {
       if (autoRechargeEnabled) {
         // TODO: stub — always returns false (see attemptAutoRecharge doc comment).
-        const recharged = await attemptAutoRecharge(p.admin, p.tenantId).catch((e) => {
+        const recharged = await attemptAutoRecharge().catch((e) => {
           console.warn('[messageWallet] auto-recharge attempt threw', e);
           return false;
         });
@@ -360,7 +360,7 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
  * to the grace-overdraft path — safe because grace is bounded, and refusing
  * silently would violate "never let a metering fault silence the bot".
  */
-async function attemptAutoRecharge(_admin: SupabaseClient, _tenantId: string): Promise<boolean> {
+async function attemptAutoRecharge(): Promise<boolean> {
   return false;
 }
 

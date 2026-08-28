@@ -34,6 +34,14 @@ const operatingLoopMigrations = [
   'supabase/migrations/044_operating_loop_delivery_worker.sql',
 ];
 
+const whatsappMeteringMigrations = [
+  'db/migrations/139_whatsapp_metering_wallet.sql',
+  'db/migrations/140_whatsapp_message_charges.sql',
+  'db/migrations/141_overdraft_reservation.sql',
+  'db/migrations/142_fix_topup_ai_wallet_ambiguity.sql',
+  'db/migrations/143_message_handoff_warned_on.sql',
+];
+
 function readMigration(path) {
   return readFileSync(resolve(repoRoot, path), 'utf8').trim();
 }
@@ -77,6 +85,37 @@ BEGIN
 
   IF existing_objects <> 0 THEN
     RAISE EXCEPTION 'Daily Operating Loop schema is present or partial (% objects). Do not replay 042-044.', existing_objects;
+  END IF;
+END;
+$$;`,
+  ),
+);
+
+writeFileSync(
+  resolve(outputDir, '2026-08-28-staging-whatsapp-metering-fresh-only.sql'),
+  bundle(
+    'Booka staging WhatsApp message metering migrations — fresh schema only',
+    whatsappMeteringMigrations,
+    `
+-- Guard: migrations 139-143 must not be partially or fully present.
+DO $$
+DECLARE existing_objects integer;
+BEGIN
+  SELECT count(*) INTO existing_objects
+  FROM (VALUES
+    ((SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ai_wallets' AND column_name = 'message_rate_credits')::text),
+    ((SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ai_wallet_ledger' AND column_name = 'meter')::text),
+    (to_regclass('public.whatsapp_message_charges')::text),
+    (to_regprocedure('public.reserve_ai_wallet_spend(uuid,numeric,text,text,text,text,jsonb,numeric,text)')::text),
+    ((SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'ai_wallets' AND column_name = 'message_handoff_warned_on')::text)
+  ) AS objects(object_name)
+  WHERE object_name IS NOT NULL;
+
+  IF existing_objects <> 0 THEN
+    RAISE EXCEPTION 'WhatsApp metering schema is present or partial (% objects). Do not replay 139-143.', existing_objects;
   END IF;
 END;
 $$;`,
