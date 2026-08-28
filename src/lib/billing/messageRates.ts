@@ -9,6 +9,7 @@ const PROVISIONAL_COST_CREDITS = 14;
 const DEFAULT_MARKUP = 1.6;
 const DEFAULT_GRACE_CREDITS = 100;
 const DEFAULT_DRIFT_PCT = 2;
+const DEFAULT_HANDOFF_REARM_HOURS = 24;
 
 function positiveNumber(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
@@ -44,6 +45,15 @@ export function resolveMessageSellCredits(tenantRate?: number | null): number {
 
 export function getGraceOverdraftDefault(): number {
   return positiveNumber(process.env.BOOKA_MESSAGE_GRACE_CREDITS, DEFAULT_GRACE_CREDITS);
+}
+
+/**
+ * How long a wallet-exhausted handoff keeps one conversation silent before the
+ * customer may be handed off again. Bounds the "topped up and re-exhausted"
+ * case; see triggerWalletHandoff, which also re-arms on a wallet credit.
+ */
+export function getHandoffRearmHours(): number {
+  return positiveNumber(process.env.BOOKA_WALLET_HANDOFF_REARM_HOURS, DEFAULT_HANDOFF_REARM_HOURS);
 }
 
 export function getReconcileDriftPct(): number {
