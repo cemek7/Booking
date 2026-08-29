@@ -6,11 +6,12 @@
 2. [Deployment Guide](#deployment-guide)
 3. [Monitoring & Observability](#monitoring--observability)
 4. [Scheduled Workers](#scheduled-workers)
-5. [Backup & Recovery](#backup--recovery)
-6. [Troubleshooting Guide](#troubleshooting-guide)
-7. [Security Procedures](#security-procedures)
-8. [Maintenance Tasks](#maintenance-tasks)
-9. [Emergency Procedures](#emergency-procedures)
+5. [WhatsApp Message Metering](#whatsapp-message-metering)
+6. [Backup & Recovery](#backup--recovery)
+7. [Troubleshooting Guide](#troubleshooting-guide)
+8. [Security Procedures](#security-procedures)
+9. [Maintenance Tasks](#maintenance-tasks)
+10. [Emergency Procedures](#emergency-procedures)
 
 ## System Overview
 
@@ -355,6 +356,107 @@ Rows the sweeper deliberately does **not** touch: those with no `wallet_reservat
 second exclusion is deliberate and load-bearing — `settle_ai_wallet_spend` is not idempotent, so
 sweeping a row whose reservation was already settled would refund the tenant twice. See the
 WhatsApp message metering section for how those rows are found and resolved by hand.
+
+## WhatsApp Message Metering
+
+From **2026-10-01** Meta bills every delivered WhatsApp service message. Before that date Booka
+absorbed them. This section is the cutover runbook.
+
+### Migrations — apply before deploying this code
+
+Apply in order. **Run these yourself on the VPS**; they are not applied automatically.
+
+```bash
+psql $DATABASE_URL -f db/migrations/139_whatsapp_metering_wallet.sql
+psql $DATABASE_URL -f db/migrations/140_whatsapp_message_charges.sql
+psql $DATABASE_URL -f db/migrations/141_overdraft_reservation.sql
+psql $DATABASE_URL -f db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
+psql $DATABASE_URL -f db/migrations/143_message_handoff_warned_on.sql
+```
+
+Each has a matching `*_rollback.sql`.
+
+**142 is not optional.** It fixes `topup_ai_wallet`, which has never worked: the function
+declares `RETURNS TABLE (… balance_credits …)`, which collides with the column of the same name
+and makes `SET balance_credits = balance_credits + x` ambiguous under plpgsql's default
+`variable_conflict = error`. Without it the wallet cannot be credited at all, so metering would
+go live on a wallet nobody can top up.
+
+### Cutover timeline
+
+| When | Action |
+|---|---|
+| At deploy | Ship with `BOOKA_MESSAGE_METERING_MODE=shadow`. Verify rows appear in `whatsapp_message_charges` with `mode = 'shadow'` and that **no wallet balance moves**. |
+| 2026-09-01 | Meta publishes confirmed Nigeria rates. Update `BOOKA_MESSAGE_RATE_CREDITS` from the provisional 14. |
+| 2026-10-01 | Set `BOOKA_MESSAGE_METERING_MODE=live` and restart. This is a config change, **not a deploy**. |
+| Rollback | Same flag back to `shadow`, restart. Migrations do not need reverting. |
+
+Sizing tier allowances from shadow data:
+
+```sql
+SELECT tenant_id,
+       date_trunc('month', sent_at) AS month,
+       count(*) AS messages
+FROM public.whatsapp_message_charges
+WHERE mode = 'shadow' AND provider = 'meta'
+GROUP BY 1, 2
+ORDER BY 3 DESC;
+```
+
+### Two limitations the cutover plan must not assume away
+
+**1. Auto-recharge is not implemented.** `ai_wallets.auto_recharge_enabled` exists and defaults
+to `false`, and the code path behind it is an explicit stub that always reports failure. This
+codebase has no saved-card auto-debit flow — building one needs stored per-tenant Paystack
+authorization codes plus customer consent, which is its own feature with its own spec.
+
+> **Do not enable `auto_recharge_enabled` for any tenant. It is inert.** A tenant who exhausts
+> credits mid-conversation falls through to the bounded grace overdraft, then to the
+> wallet-exhausted handoff, and must top up manually. Tenants near their limit need a *manual*
+> top-up prompt before 2026-10-01, not an automatic one.
+
+**2. Some stranded reservations need manual reconciliation.** Two error logs mean credits are
+debited with no automatic recovery, because the sweeper deliberately cannot see these rows —
+`settle_ai_wallet_spend` is not idempotent, so sweeping them risks a double refund:
+
+- `attachWamid: settle failed after orphan delete — reservation left open`
+- `reserveOutboundMessage: release-after-insert-failure also failed`
+
+Find them with `findStrandedReservations()` or directly:
+
+```sql
+SELECT id, tenant_id, wallet_reservation_id, reserved_credits, sent_at
+FROM public.whatsapp_message_charges
+WHERE status = 'reserved'
+  AND wamid IS NULL
+  AND wallet_reservation_id IS NOT NULL
+  AND sent_at < now() - interval '1 hour'
+ORDER BY sent_at;
+```
+
+For each row, check `ai_wallet_ledger` for a settlement referencing that `wallet_reservation_id`.
+The two are distinguishable: the **reservation** is the ledger row whose `id` *is* the
+reservation id (`kind = 'reservation'`, written with a NULL `reference`), while a **settlement**
+is a later row whose `reference` *equals* that id (`kind = 'refund'` or `'usage'`). So a hit on
+the query below means the money already moved — the reservation row itself will never match it.
+
+```sql
+SELECT id, kind, amount_credits, created_at
+FROM public.ai_wallet_ledger
+WHERE reference = '<wallet_reservation_id>';
+```
+
+- **No settlement row** → the reservation is genuinely open. Release it manually.
+- **A settlement row already exists** → **do nothing.** The money already moved; releasing again
+  refunds the tenant twice. Only the charge row's bookkeeping is stale.
+
+### Owner notification
+
+A wallet-exhausted handoff writes a `notifications` row for the tenant and sends a line to
+Booka's **own** ops Telegram channel — not the tenant's. Both are capped at one per tenant per
+day via `ai_wallets.message_handoff_warned_on`. Owners currently receive no push notification;
+they see the dashboard row only once logged in. Factor that into how tenants are warned before
+the cutover.
 
 ## Backup & Recovery
 
