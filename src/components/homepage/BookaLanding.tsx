@@ -2,6 +2,7 @@ import Link from 'next/link';
 import BrandMark from '@/components/brand/BrandMark';
 import DemoConversation from '@/components/homepage/DemoConversation';
 import {
+  BOOKA_POSITIONING,
   SIAS_BILLING_PLANS,
   SIAS_OUTCOME_ATRIBUTION,
   SIAS_VERTICAL_PACKAGES,
@@ -25,35 +26,41 @@ const howItWorks = [
   },
 ];
 
-const features = [
+const revenueProblems = [
   {
-    title: 'WhatsApp + Instagram',
-    copy: 'Customers message in the channels they already use. Booka keeps WhatsApp chats and Instagram DMs moving without extra admin or missed handoffs.',
+    title: 'Capture',
+    promise: 'Never lose an enquiry because nobody replied.',
+    copy: 'Booka responds while the customer is still interested, answers the first question and moves the conversation towards a useful next step.',
   },
   {
-    title: 'Sales + booking in one flow',
-    copy: 'Booka does not stop at answering questions. It qualifies demand, recommends the right service or product, handles objections, and moves the customer into a confirmed booking.',
+    title: 'Convert',
+    promise: 'Turn more conversations into booked and paying customers.',
+    copy: 'It qualifies demand, recommends the right service or product, handles common objections and follows up until the opportunity has a clear outcome.',
   },
   {
-    title: 'Human escalation',
-    copy: 'Sensitive cases, refunds, and conflicts move to staff when the assistant should step back.',
+    title: 'Recover',
+    promise: 'Save the sale when the first choice is unavailable.',
+    copy: 'Booka offers alternative times, people, services or products instead of ending the conversation at “not available”.',
   },
   {
-    title: 'Follow-up and recovery',
-    copy: 'No-shows, drop-offs, repeat visits, and reactivation are tracked and pushed forward as part of the product, not left to chance.',
+    title: 'Grow',
+    promise: 'Create repeat business from the customer base you already have.',
+    copy: 'WhatsApp reminders, approved re-engagement and repeat-booking conversations help owners act on empty slots and unfinished demand.',
   },
 ];
+
+const revenueSequence = ['Answer', 'Recommend', 'Sell', 'Book', 'Pay', 'Follow up', 'Retain', 'Report'];
 
 const faqItems = [
   {
     question: 'Is Booka just booking software?',
     answer:
-      'No. Booka is an AI front desk that handles sales conversations, service recommendations, booking, reminders, follow-up, escalation, and recovery in one place for service businesses.',
+      'No. Booka is an AI Revenue Front Desk that handles customer conversations from enquiry to recommendation, sale, booking, follow-up and repeat business.',
   },
   {
     question: 'How does pricing work?',
     answer:
-      'The model is subscription plus usage plus managed service tier. Core starts at ₦15k/mo, and higher tiers add more automation and support.',
+      'Plans start at ₦15k per month and include an automation and messaging allowance. Booka warns you before any overage, and extra usage is opt-in rather than a surprise bill.',
   },
   {
     question: 'Can humans still step in?',
@@ -68,10 +75,10 @@ const faqItems = [
 ];
 
 const launchNotes = [
-  'A Techclave product',
-  'Sales + booking in one front desk',
-  'WhatsApp + Instagram',
-  'Managed onboarding included',
+  'No new customer app',
+  'No customer migration',
+  'WhatsApp + Instagram enquiries',
+  'Human takeover built in',
 ];
 
 const verticalUseCases: Record<
@@ -103,8 +110,8 @@ const verticalUseCases: Record<
   },
   medicine: {
     sales: [
-      'Convert non-sensitive treatment and consultation enquiries into booked visits',
-      'Guide patients toward the right consultation type, test, or follow-up path',
+      'Handle non-clinical guidance and route appointment enquiries to the right team',
+      'Explain available visit types while preserving human escalation for sensitive questions',
     ],
     booking: [
       'Book appointments with the right practitioner, timing, and visit type',
@@ -171,35 +178,29 @@ export default function BookaLanding() {
             </div>
 
             <p className="mt-5 text-xs font-medium uppercase tracking-[0.34em] text-emerald-700/55">
-              AI front desk for sales and bookings
+              {BOOKA_POSITIONING.category}
             </p>
             <h1 className="mt-4 text-5xl font-semibold leading-[0.94] tracking-tight text-[#10211a] sm:text-6xl lg:text-7xl">
-              Turn WhatsApp and Instagram enquiries into sales and confirmed bookings.
+              {BOOKA_POSITIONING.headline}
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
-              Booka replies fast, qualifies demand, recommends the right service or offer, books the right slot,
-              sends reminders, follows up after no-shows, and hands edge cases to a human for salons, clinics, and
-              hospitality teams.
+              Booka answers customer questions, recommends the right service or product, checks availability,
+              follows up, books customers and helps collect payment—while your team steps in when human judgement
+              is needed.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/booka/auth/onboarding"
+                href="#revenue-pilot"
                 className="rounded-full bg-emerald-600 px-6 py-3 text-sm font-medium text-white shadow-[0_12px_30px_rgba(5,150,105,0.18)] transition hover:-translate-y-0.5 hover:bg-emerald-700"
               >
-                Start managed onboarding
+                Apply for the 14-Day Revenue Pilot
               </Link>
               <Link
-                href="/booka/auth/signin"
-                className="rounded-full border border-emerald-200 bg-emerald-50/60 px-6 py-3 text-sm font-medium text-emerald-900 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-50"
-              >
-                Sign in to dashboard
-              </Link>
-              <Link
-                href="#pricing"
+                href="#missed-revenue-report"
                 className="rounded-full border border-emerald-200 bg-white px-6 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:text-emerald-900"
               >
-                See pricing
+                Get a Missed Revenue Report
               </Link>
             </div>
 
@@ -216,13 +217,13 @@ export default function BookaLanding() {
 
             <div className="mt-10 grid gap-3 sm:grid-cols-3">
               {[
-                { value: '< 1 min', label: 'Lead response time' },
-                { value: '40%', label: 'No-show reduction' },
-                { value: '₦3.6m', label: 'Revenue recovered' },
-              ].map((metric) => (
-                <div key={metric.label} className="rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
-                  <div className="text-[11px] uppercase tracking-[0.26em] text-emerald-700/45">{metric.label}</div>
-                  <div className="mt-3 text-2xl font-semibold text-[#10211a]">{metric.value}</div>
+                { title: 'Automated enquiry handling', copy: 'Answers questions and keeps demand moving.' },
+                { title: 'Booking and selling together', copy: 'Recommends, offers alternatives and closes the next step.' },
+                { title: 'Human takeover when needed', copy: 'Routes judgement calls and sensitive cases to staff.' },
+              ].map((capability) => (
+                <div key={capability.title} className="rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
+                  <div className="text-sm font-semibold leading-5 text-[#10211a]">{capability.title}</div>
+                  <div className="mt-2 text-xs leading-5 text-slate-600">{capability.copy}</div>
                 </div>
               ))}
             </div>
@@ -233,6 +234,24 @@ export default function BookaLanding() {
             <div className="relative">
               <DemoConversation />
             </div>
+          </div>
+        </section>
+
+        <section aria-label="Booka revenue workflow" className="pb-20">
+          <div className="rounded-[2rem] border border-emerald-100 bg-[#10211a] p-5 text-[#f5f2e8] shadow-[0_20px_60px_rgba(16,33,26,0.12)] sm:p-6">
+            <p className="text-xs uppercase tracking-[0.32em] text-emerald-300/65">
+              {BOOKA_POSITIONING.campaignLine}
+            </p>
+            <ol className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+              {revenueSequence.map((step, index) => (
+                <li key={step} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-4">
+                  <span className="text-[10px] uppercase tracking-[0.22em] text-emerald-300/55">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <p className="mt-2 text-sm font-medium">{step}</p>
+                </li>
+              ))}
+            </ol>
           </div>
         </section>
 
@@ -259,22 +278,121 @@ export default function BookaLanding() {
         <section className="pb-20">
           <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
             <div className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">Features & benefits</p>
+              <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">Four money problems</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                Built for the front-desk work teams repeat every day.
+                Capture, convert, recover and grow.
               </h2>
               <p className="mt-4 text-sm leading-7 text-slate-600">
-                Booka feels simple on the surface because the infrastructure stays in the background. What your
-                team sees is faster replies, fewer missed leads, better conversion, and a calmer workflow across chat and DMs.
+                Booka is designed around the points where a real customer conversation can create—or quietly
+                lose—revenue. The system handles the repeatable work and gives staff a clear place to step in.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              {features.map((feature) => (
-                <article key={feature.title} className="rounded-[1.75rem] border border-emerald-100 bg-white p-5 shadow-sm">
-                  <h3 className="text-lg font-semibold tracking-tight text-[#10211a]">{feature.title}</h3>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">{feature.copy}</p>
+              {revenueProblems.map((problem) => (
+                <article key={problem.title} className="rounded-[1.75rem] border border-emerald-100 bg-white p-5 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700/55">{problem.title}</p>
+                  <h3 className="mt-3 text-lg font-semibold tracking-tight text-[#10211a]">{problem.promise}</h3>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">{problem.copy}</p>
                 </article>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section id="revenue-pilot" className="scroll-mt-6 pb-20">
+          <div className="overflow-hidden rounded-[2rem] border border-emerald-200 bg-emerald-50/70 shadow-sm">
+            <div className="grid gap-8 p-6 lg:grid-cols-[1.05fr_0.95fr] lg:p-8">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-emerald-700/55">
+                  Booka 14-Day Revenue Pilot
+                </p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10211a] sm:text-4xl">
+                  Put Booka on real enquiries before you decide to continue.
+                </h2>
+                <p className="mt-4 text-sm leading-7 text-slate-700">
+                  We connect and configure Booka for 14 active days. It answers questions, recommends services or
+                  products, qualifies customers, follows up, books appointments and helps close sales across eligible
+                  WhatsApp and Instagram enquiry flows.
+                </p>
+                <div className="mt-6 rounded-3xl border border-emerald-200 bg-white p-5">
+                  <p className="text-sm font-semibold text-[#10211a]">The continuation rule</p>
+                  <p className="mt-2 text-sm leading-7 text-slate-600">
+                    If the pilot does not produce at least one verified booking, sale, deposit or recovered opportunity
+                    attributable to a Booka conversation, there is no obligation to continue. We do not promise a
+                    specific Naira return or conversion lift.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                <div className="rounded-3xl border border-emerald-100 bg-white p-5">
+                  <h3 className="text-lg font-semibold text-[#10211a]">Included</h3>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+                    <li>• Channel connection and live-flow test</li>
+                    <li>• Catalogue, pricing, availability, FAQ and policy setup</li>
+                    <li>• Booking, sales, deposit and payment-link configuration</li>
+                    <li>• Follow-up, escalation, calibration and end-of-pilot report</li>
+                  </ul>
+                </div>
+                <div className="rounded-3xl border border-emerald-100 bg-white p-5">
+                  <h3 className="text-lg font-semibold text-[#10211a]">A good pilot candidate</h3>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">
+                    Has regular weekly enquiries, accurate offers and availability, a connectable business account,
+                    a staff escalation contact, and can confirm completed bookings or offline sales.
+                  </p>
+                  <Link
+                    href="/booka/auth/onboarding"
+                    className="mt-5 inline-flex rounded-full bg-emerald-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-700"
+                  >
+                    Apply for the pilot
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="missed-revenue-report" className="scroll-mt-6 pb-20">
+          <div className="grid gap-6 rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm lg:grid-cols-[0.9fr_1.1fr] lg:p-8">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-emerald-700/55">
+                Missed Revenue Report
+              </p>
+              <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10211a]">
+                How much business is sitting unanswered in your inbox?
+              </h2>
+              <p className="mt-4 text-sm leading-7 text-slate-600">
+                We review a consented, minimized sample of your WhatsApp and Instagram enquiry process and show where
+                unanswered messages, missing follow-ups, availability dead ends and abandoned buying conversations
+                may be costing you opportunities.
+              </p>
+              <Link
+                href="#revenue-pilot"
+                className="mt-6 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-900 transition hover:border-emerald-300"
+              >
+                Get a Missed Revenue Report
+              </Link>
+            </div>
+            <div className="rounded-[1.75rem] border border-emerald-100 bg-emerald-50/60 p-5">
+              <h3 className="text-lg font-semibold text-[#10211a]">What the review looks for</h3>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {[
+                  'Unanswered or materially delayed enquiries',
+                  'Conversations with no clear next step',
+                  'Unavailable choices offered without alternatives',
+                  'Prospects who disappeared without follow-up',
+                  'Missed recommendation or add-on opportunities',
+                  'An estimated recoverable opportunity range',
+                ].map((item) => (
+                  <div key={item} className="rounded-2xl border border-emerald-100 bg-white p-4 text-sm leading-6 text-slate-600">
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 text-xs leading-6 text-slate-500">
+                Any estimate is a range based on the supplied sample, your average transaction value and visible
+                outcomes. It is an opportunity estimate, not a revenue guarantee.
+              </p>
             </div>
           </div>
         </section>
@@ -301,6 +419,7 @@ export default function BookaLanding() {
               {pricingPlans.map((plan) => (
                 <article
                   key={plan.id}
+                  data-testid="pricing-plan"
                   className={`rounded-[1.5rem] border p-5 ${
                     plan.id === 'front-desk'
                       ? 'border-emerald-300 bg-emerald-50/80 shadow-sm'
@@ -317,9 +436,16 @@ export default function BookaLanding() {
                       </div>
                     ))}
                   </div>
+                  <p data-testid="usage-policy" className="mt-5 border-t border-emerald-100 pt-4 text-xs leading-5 text-slate-500">
+                    {plan.usagePolicy}
+                  </p>
                 </article>
               ))}
             </div>
+            <p className="mt-5 text-xs leading-6 text-slate-500">
+              Plans are all-inclusive within fair-use allowances. Usage alerts appear before any transparent,
+              opt-in overage, and large business-initiated sends require approval.
+            </p>
           </div>
         </section>
 
@@ -386,9 +512,9 @@ export default function BookaLanding() {
           <div className="mt-4 rounded-[1.75rem] border border-emerald-100 bg-[#10211a] p-6 text-[#f5f2e8] shadow-[0_20px_60px_rgba(16,33,26,0.12)]">
             <p className="text-xs uppercase tracking-[0.3em] text-emerald-300/65">Channel strategy</p>
             <ul className="mt-4 grid gap-4 text-sm leading-7 text-[#d7ddd9] lg:grid-cols-3">
-              <li>WhatsApp carries the bulk of qualification, booking, reminder, and recovery flows for teams that already operate in chat.</li>
-              <li>Instagram fits best at the enquiry, lead-capture, and conversion stage, especially when customers discover the business through content first.</li>
-              <li>Booka keeps both channels inside one operating layer so sales conversations and bookings do not break across fragmented inboxes.</li>
+              <li>Instagram captures and converts active enquiries while the customer is inside the available messaging window.</li>
+              <li>WhatsApp carries reminders, recovery and repeat-business conversations when the customer has opted in and the business uses approved messaging.</li>
+              <li>Booka records both channels in one operating view while respecting each channel&apos;s consent, timing and messaging rules.</li>
             </ul>
           </div>
         </section>
@@ -452,16 +578,16 @@ export default function BookaLanding() {
               </div>
               <div className="flex flex-wrap gap-3 lg:justify-end">
                 <Link
-                  href="/booka/auth/onboarding"
+                  href="#revenue-pilot"
                   className="rounded-full bg-white px-6 py-3 text-sm font-medium text-emerald-700 shadow-sm transition hover:-translate-y-0.5"
                 >
-                  Start managed onboarding
+                  Apply for the revenue pilot
                 </Link>
                 <Link
-                  href="#pricing"
+                  href="#missed-revenue-report"
                   className="rounded-full border border-white/25 bg-emerald-700 px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:bg-emerald-800"
                 >
-                  Review pricing
+                  Request the missed revenue report
                 </Link>
               </div>
             </div>
