@@ -17,6 +17,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:db:operating-loop": "bash supabase/tests/database/run-042-operating-loop-schema-test.sh",
     "test:integration": "jest --config jest.integration.config.cjs --runInBand",
     "test:e2e:cypress": "cypress run",
     "test:e2e:cypress:open": "cypress open",

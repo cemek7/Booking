@@ -21,6 +21,7 @@ import {
   Users,
 } from 'lucide-react';
 import DashboardKpis from '@/components/dashboard/DashboardKpis';
+import { DailyOperatingLoopPanel } from '@/components/dashboard/DailyOperatingLoopPanel';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { getTenantCapabilities, isRouteEnabled } from '@/lib/capabilities';
@@ -101,8 +102,20 @@ export default async function TenantDashboardPage() {
   const roleLabel = ROLE_LABEL[role] ?? user.role ?? 'User';
   const isOwner = role === 'owner';
   const rawLinks = isOwner ? OWNER_QUICK_LINKS : MANAGER_QUICK_LINKS;
-  const capabilities = tenantId ? await getTenantCapabilities(createSupabaseAdminClient(), tenantId) : undefined;
+  const admin = createSupabaseAdminClient();
+  const [capabilities, loopFlagResult] = await Promise.all([
+    tenantId ? getTenantCapabilities(admin, tenantId) : undefined,
+    isOwner && tenantId
+      ? admin.from('tenants').select('metadata').eq('id', tenantId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
   const quickLinks = capabilities ? rawLinks.filter((link) => isRouteEnabled(link.href, capabilities)) : rawLinks;
+  const dailyOperatingLoopEnabled = Boolean(
+    loopFlagResult.data
+    && typeof loopFlagResult.data.metadata === 'object'
+    && loopFlagResult.data.metadata
+    && (loopFlagResult.data.metadata as Record<string, unknown>).daily_operating_loop_enabled === true,
+  );
 
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-8 px-4 py-8 sm:px-6 lg:px-8">
@@ -133,6 +146,8 @@ export default async function TenantDashboardPage() {
       </div>
 
       <DashboardKpis tenantId={tenantId} userId={user.id} userRole={user.role} />
+
+      {isOwner && <DailyOperatingLoopPanel enabled={dailyOperatingLoopEnabled} />}
 
       <section className="space-y-6">
         {WORKSPACE_GROUPS.map((group) => {

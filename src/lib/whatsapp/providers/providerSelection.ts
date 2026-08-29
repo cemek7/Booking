@@ -74,12 +74,24 @@ export function getDefaultWhatsAppProviderClient(): WhatsAppProviderClient | nul
   return new EvolutionAdapter(config);
 }
 
-export async function getTenantWhatsAppProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
+/**
+ * Unmetered tenant client. Only two callers are legitimate:
+ *   - the wallet-exhausted handoff (metering it would recurse), and
+ *   - internal diagnostics.
+ * Everything customer-facing must go through getTenantChannelProviderClient.
+ */
+export async function getTenantWhatsAppProviderClientUnmetered(
+  tenantId: string,
+): Promise<WhatsAppProviderClient | null> {
   const config = await getTenantWhatsAppConfig(tenantId);
   if (!config) return null;
   if (config.provider === 'waha') return new WahaAdapter(config);
   if (config.provider === 'meta') return new MetaAdapter(config);
   return new EvolutionAdapter(config);
+}
+
+export async function getTenantWhatsAppProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
+  return getTenantWhatsAppProviderClientUnmetered(tenantId);
 }
 
 async function getTenantInstagramProviderConfig(tenantId: string): Promise<ProviderConfig | null> {

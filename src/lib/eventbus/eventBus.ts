@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Event Bus System - Production Ready
  * 
@@ -11,6 +10,7 @@
  */
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { defaultLogger as logger } from '@/lib/logger';
 
@@ -24,8 +24,8 @@ const EventSchema = z.object({
   aggregateType: z.string().min(1),
   eventType: z.string().min(1),
   eventVersion: z.number().int().positive(),
-  payload: z.record(z.unknown()),
-  metadata: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
   timestamp: z.string().datetime(),
   causedBy: z.string().optional(),
   correlationId: z.string().optional(),
@@ -36,7 +36,7 @@ const OutboxEventSchema = z.object({
   id: z.string().uuid(),
   eventId: z.string().uuid(),
   destination: z.string().min(1),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   status: z.enum(['pending', 'processing', 'completed', 'failed', 'dead_letter']),
   attempts: z.number().int().min(0),
   maxAttempts: z.number().int().positive().default(5),
@@ -92,8 +92,11 @@ export class EventBusService {
   private isRunning = false;
   private config: Required<EventBusConfig>;
 
-  constructor(config: EventBusConfig = {}) {
-    this.supabase = createServerSupabaseClient();
+  constructor(config: EventBusConfig = {}, supabaseClient?: SupabaseClient) {
+    // Callers may inject their own Supabase client (e.g. a service-role client
+    // used from a background job). Falls back to the request-scoped server
+    // client for the shared singleton.
+    this.supabase = supabaseClient ?? createServerSupabaseClient();
     this.config = {
       batchSize: config.batchSize || 100,
       pollingInterval: config.pollingInterval || 1000,
@@ -837,4 +840,6 @@ export const CommonEventHandlers = {
   } as EventHandler
 };
 
-export { Event, OutboxEvent, EventHandler };
+// Event, OutboxEvent, and EventHandler are already exported at their
+// declarations (lines ~47/48/64); a second `export { ... }` here conflicts
+// under isolatedModules, so it has been removed.

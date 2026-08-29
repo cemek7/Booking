@@ -25,6 +25,12 @@ export const ANALYTICS_EVENTS = {
   SUBSCRIPTION_STARTED: 'subscription_started',
   SUBSCRIPTION_CANCELED: 'subscription_canceled',
   WALLET_TOPPED_UP: 'wallet_topped_up',
+  OPERATING_LOOP_VIEWED: 'operating_loop_viewed',
+  OPERATING_OBJECTIVE_EXECUTED: 'operating_objective_executed',
+  OPERATING_OBJECTIVE_DELIVERY_OUTCOME: 'operating_objective_delivery_outcome',
+  OPERATING_OBJECTIVE_DEFERRED: 'operating_objective_deferred',
+  OPERATING_OBJECTIVE_DISMISSED: 'operating_objective_dismissed',
+  OPERATING_ONBOARDING_READINESS_UPDATED: 'operating_onboarding_readiness_updated',
 } as const;
 
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[keyof typeof ANALYTICS_EVENTS];

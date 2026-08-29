@@ -1,9 +1,9 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { Product, ProductCategory } from '@/types/product-catalogue';
 import type {
   InteractiveButtonMessage,
   InteractiveListMessage,
+  InteractiveMessagePayload,
 } from '@/lib/whatsapp/providers/types';
 
 interface WhatsAppMessage {
@@ -16,37 +16,7 @@ interface WhatsAppMessage {
     link: string;
     caption?: string;
   };
-  interactive?: {
-    type: 'button' | 'list';
-    header?: {
-      type: 'text' | 'image';
-      text?: string;
-      image?: { link: string };
-    };
-    body: {
-      text: string;
-    };
-    footer?: {
-      text: string;
-    };
-    action: {
-      buttons?: Array<{
-        type: 'reply';
-        reply: {
-          id: string;
-          title: string;
-        };
-      }>;
-      sections?: Array<{
-        title: string;
-        rows: Array<{
-          id: string;
-          title: string;
-          description?: string;
-        }>;
-      }>;
-    };
-  };
+  interactive?: InteractiveMessagePayload;
 }
 
 export function buildProductCatalogMessage(categories: ProductCategory[]): InteractiveListMessage {
@@ -517,11 +487,11 @@ export class WhatsAppProductService {
       return short ? 'Available' : '✅ Available';
     }
 
-    if (product.stock_quantity <= 0) {
+    if ((product.stock_quantity ?? 0) <= 0) {
       return short ? 'Out of stock' : '❌ Out of stock';
     }
 
-    if (product.stock_quantity <= product.low_stock_threshold) {
+    if ((product.stock_quantity ?? 0) <= (product.low_stock_threshold ?? 0)) {
       return short ? 'Low stock' : '⚠️ Low stock - order soon!';
     }
 

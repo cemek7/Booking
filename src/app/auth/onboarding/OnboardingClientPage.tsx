@@ -12,7 +12,9 @@ import { getStoredIsAdmin } from '@/lib/auth/token-storage';
 import { setStoredRole, setStoredTenantId } from '@/lib/auth/token-storage';
 import { sessionVerifiesEmail } from '@/lib/auth/onboarding-verification';
 import BrandMark from '@/components/brand/BrandMark';
+import OperatingDraftInterview, { type OperatingDraftInterviewAction } from '@/components/onboarding/OperatingDraftInterview';
 import { COMMERCIAL_MOTION_DETAILS, capabilitiesForCommercialMotion, resolveCommercialMotion, type CommercialMotion } from '@/lib/business-model';
+import type { OperatingDraftView } from '@/lib/onboarding/operating-draft';
 
 interface ServiceDraft { name: string; duration: string; price: string }
 interface ProductDraft { name: string; price: string; stock: string }
@@ -64,8 +66,8 @@ const CUSTOMER_CHANNELS = [
   { value: 'website', label: 'Website' },
 ];
 
-type Step = 'basics' | 'services' | 'staff' | 'faqs' | 'agent' | 'whatsapp' | 'done';
-const STEPS: Step[] = ['basics', 'services', 'staff', 'faqs', 'agent', 'whatsapp', 'done'];
+type Step = 'basics' | 'services' | 'staff' | 'faqs' | 'agent' | 'whatsapp' | 'operating' | 'done';
+const STEPS: Step[] = ['basics', 'services', 'staff', 'faqs', 'agent', 'whatsapp', 'operating', 'done'];
 const STEP_LABELS: Record<Step, string> = {
   basics: 'Business',
   services: 'Offerings',
@@ -73,6 +75,7 @@ const STEP_LABELS: Record<Step, string> = {
   faqs: 'FAQs',
   agent: 'Agent',
   whatsapp: 'Channels',
+  operating: 'Front desk',
   done: 'Done',
 };
 const BUSINESS_VERTICALS: Record<string, 'beauty' | 'hospitality' | 'medicine' | 'retail' | 'home_services' | 'professional' | 'general'> = {
@@ -211,6 +214,9 @@ export default function OnboardingPage({
   const [notifyDailySummary, setNotifyDailySummary] = useState(true);
   const [notifyWeeklySummary, setNotifyWeeklySummary] = useState(false);
   const [authEmailSent, setAuthEmailSent] = useState(false);
+  const [operatingDraft, setOperatingDraft] = useState<OperatingDraftView | null>(null);
+  const [operatingDraftLoading, setOperatingDraftLoading] = useState(false);
+  const [operatingDraftError, setOperatingDraftError] = useState<string | null>(null);
   const selectedPackage = getVerticalPackage(resolveVertical(businessType));
 
   const baseHeaders = useCallback((extra: Record<string, string> = {}): Record<string, string> => {
@@ -230,6 +236,39 @@ export default function OnboardingPage({
   const tenantHeaders = useCallback((extra: Record<string, string> = {}): Record<string, string> => {
     return tenantId ? baseHeaders({ 'X-Tenant-ID': tenantId, ...extra }) : baseHeaders(extra);
   }, [baseHeaders, tenantId]);
+
+  const loadOperatingDraft = useCallback(async () => {
+    if (!tenantId) return;
+    setOperatingDraftLoading(true);
+    setOperatingDraftError(null);
+    try {
+      const response = await fetch('/api/onboarding/operating-draft', {
+        headers: tenantHeaders(),
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error(`operating-draft:${response.status}`);
+      setOperatingDraft(await response.json() as OperatingDraftView);
+    } catch (error) {
+      setOperatingDraftError(error instanceof Error ? error.message : 'Unable to load front-desk setup');
+      throw error;
+    } finally {
+      setOperatingDraftLoading(false);
+    }
+  }, [tenantHeaders, tenantId]);
+
+  const submitOperatingDraftAction = useCallback(async (action: OperatingDraftInterviewAction) => {
+    if (!tenantId) throw new Error('Workspace setup is not ready');
+    const response = await fetch('/api/onboarding/operating-draft', {
+      method: 'POST',
+      headers: jsonHeaders(tenantHeaders()),
+      body: JSON.stringify(action),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { message?: string; error?: string };
+      throw new Error(body.message || body.error || 'Unable to save your front-desk setup');
+    }
+    setOperatingDraft(await response.json() as OperatingDraftView);
+  }, [jsonHeaders, tenantHeaders, tenantId]);
 
   // Get session token on mount; refresh if needed before API calls
   useEffect(() => {
@@ -483,6 +522,13 @@ export default function OnboardingPage({
 
     void maybeResumeAfterAuth();
   }, [name, ownerName, ownerEmail, ownerPhone, tenantId, step, searchParams]);
+
+  useEffect(() => {
+    if (step !== 'operating' || !tenantId) return;
+    void loadOperatingDraft().catch(() => {
+      toast.error('Your front-desk setup could not be loaded. Please try again.');
+    });
+  }, [loadOperatingDraft, step, tenantId]);
 
   async function submitBasics() {
     if (!name.trim()) { toast.error('Business name is required'); return; }
@@ -1280,6 +1326,33 @@ export default function OnboardingPage({
               </div>
               <button onClick={finalizeChannels} className={ghostBtn}>Skip for now</button>
             </div>
+          )}
+
+          {/* ── Conversational front-desk setup ── */}
+          {step === 'operating' && (
+            operatingDraftLoading ? (
+              <div className="rounded-[1.6rem] border border-[var(--brand-line)] bg-[#fcfbf7] p-6 text-sm text-slate-600">
+                Preparing your front-desk interview…
+              </div>
+            ) : operatingDraftError ? (
+              <div className="space-y-3 rounded-[1.6rem] border border-rose-100 bg-rose-50 p-6 text-sm text-rose-800">
+                <p>Your front-desk interview could not be loaded. Nothing has been changed.</p>
+                <button type="button" onClick={() => void loadOperatingDraft().catch(() => undefined)} className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-800 transition hover:bg-rose-100">
+                  Try again
+                </button>
+              </div>
+            ) : !operatingDraft ? (
+              <div className="rounded-[1.6rem] border border-[var(--brand-line)] bg-[#fcfbf7] p-6 text-sm text-slate-600">
+                Preparing your front-desk interview…
+              </div>
+            ) : (
+              <OperatingDraftInterview
+                enabled={Boolean(tenantId)}
+                draft={operatingDraft}
+                onAction={submitOperatingDraftAction}
+                onContinue={next}
+              />
+            )
           )}
 
           {/* ── Done ── */}

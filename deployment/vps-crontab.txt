@@ -24,6 +24,10 @@ CRON_SECRET=CHANGE_ME
 # WhatsApp outbound worker — every minute (header: Authorization: Bearer)
 * * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/whatsapp" >/dev/null 2>&1
 
+# Daily Operating Loop outbound worker — every minute (header: Authorization: Bearer)
+# Uses operating_delivery_outbox and governed WhatsApp delivery; it is separate from inbound message processing.
+* * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/operating-loop" >/dev/null 2>&1
+
 # due reminders across all tenants — every 10 min (header: Authorization: Bearer)
 # /api/cron/reminders is the all-tenants scheduled counterpart to the session-auth
 # /api/reminders/run; both share runRemindersForTenant().

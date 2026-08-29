@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace } from '@opentelemetry/api';
@@ -88,7 +87,7 @@ export class SecurityAutomationService {
           success: event.success,
           sensitive_data: event.sensitive_data_accessed || false,
         },
-        tenant_id: event.tenant_id || null,
+        tenantId: event.tenant_id || undefined,
       });
 
       span.setAttribute('audit.success', true);
@@ -274,7 +273,7 @@ export class SecurityAutomationService {
           rules_evaluated: rulesEvaluated,
           violations_found: violationsFound,
         },
-        tenant_id: null,
+        tenantId: undefined,
       });
 
       return { success: true, rulesEvaluated, violationsFound };
@@ -323,7 +322,7 @@ export class SecurityAutomationService {
             severity: rule.severity,
             violation_id: violation.rule_id,
           },
-          tenant_id: data.tenant_id || null,
+          tenantId: typeof data.tenant_id === 'string' ? data.tenant_id : undefined,
         });
 
       } catch (error) {
@@ -533,6 +532,7 @@ export class SecurityAutomationService {
         .select('data_type');
       
       const piiGrouped = ((piiSummary || []) as PiiRegistryRow[]).reduce((acc: Record<string, number>, item) => {
+        if (!item.data_type) return acc;
         acc[item.data_type] = (acc[item.data_type] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
