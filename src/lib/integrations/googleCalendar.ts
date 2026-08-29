@@ -1,8 +1,7 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { google, calendar_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 export interface GoogleCalendarConfig {
   calendar_id: string;
@@ -73,10 +72,12 @@ export class GoogleCalendarIntegration {
 
     this.calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
     
-    this.supabase = createServerSupabaseClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // Background calendar sync runs outside a request context, so it needs the
+    // service-role admin client (no cookies/session). The previous call passed
+    // (url, key) to the cookie-based factory whose signature is
+    // (accessToken?, options?) — the key was silently ignored and cookies()
+    // would throw at runtime outside a request scope.
+    this.supabase = createSupabaseAdminClient();
   }
 
   /**
@@ -149,7 +150,7 @@ export class GoogleCalendarIntegration {
           private: {
             booking_id: booking.id,
             tenant_id: booking.tenant_id,
-            staff_id: booking.staff_id,
+            staff_id: booking.staff_id ?? '',
             booka_managed: 'true'
           }
         }

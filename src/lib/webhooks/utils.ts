@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 /**
  * Webhook Utilities - Production Ready
@@ -87,10 +86,10 @@ export function normalizePayload(payload: Record<string, unknown>, provider: str
       return normalizeWhatsAppPayload(payload);
     default:
       return {
-        id: payload.id || generateEventId(),
-        type: payload.type || 'unknown',
+        id: typeof payload.id === 'string' ? payload.id : generateEventId(),
+        type: typeof payload.type === 'string' ? payload.type : 'unknown',
         provider,
-        timestamp: payload.timestamp || Date.now(),
+        timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : Date.now(),
         data: payload,
         metadata: {}
       };
@@ -121,65 +120,121 @@ interface NormalizedWebhook {
 // PROVIDER-SPECIFIC NORMALIZERS
 // ===============================
 
+// Raw payload shapes describing only the fields each normalizer reads.
+// Provider bodies arrive as Record<string, unknown>; these narrow the access.
+interface StripeRawPayload {
+  id?: string;
+  type?: string;
+  created?: number;
+  data?: {
+    object?: { customer?: string; amount?: number; currency?: string; status?: string };
+  };
+}
+
+interface PaystackRawPayload {
+  id?: string;
+  event?: string;
+  created_at?: string;
+  data?: {
+    id?: string;
+    created_at?: string;
+    customer?: { id?: string };
+    amount?: number;
+    currency?: string;
+    status?: string;
+  };
+}
+
+interface EvolutionRawPayload {
+  key?: string;
+  messageId?: string;
+  event?: string;
+  timestamp?: number;
+  instance?: string;
+  data?: {
+    messageType?: string;
+    key?: { remoteJid?: string; id?: string };
+  };
+}
+
+interface WhatsAppRawPayload {
+  entry?: Array<{
+    id?: string;
+    changes?: Array<{
+      field?: string;
+      value?: {
+        metadata?: { phone_number_id?: string; display_phone_number?: string };
+        messages?: unknown[];
+        statuses?: unknown[];
+      };
+    }>;
+  }>;
+}
+
 function normalizeStripePayload(payload: Record<string, unknown>): NormalizedWebhook {
+  const p = payload as StripeRawPayload;
+  const obj = p.data?.object;
   return {
-    id: payload.id,
-    type: mapStripeEventType(payload.type),
+    id: p.id ?? generateEventId(),
+    type: mapStripeEventType(p.type ?? 'unknown'),
     provider: 'stripe',
-    timestamp: payload.created * 1000, // Stripe uses Unix timestamp
+    timestamp: (p.created ?? Math.floor(Date.now() / 1000)) * 1000, // Stripe uses Unix timestamp
     data: payload,
     metadata: {
-      originalType: payload.type,
-      customerId: payload.data?.object?.customer,
-      amount: payload.data?.object?.amount,
-      currency: payload.data?.object?.currency,
-      status: payload.data?.object?.status
+      originalType: p.type,
+      customerId: obj?.customer,
+      amount: obj?.amount,
+      currency: obj?.currency,
+      status: obj?.status
     }
   };
 }
 
 function normalizePaystackPayload(payload: Record<string, unknown>): NormalizedWebhook {
+  const p = payload as PaystackRawPayload;
   return {
-    id: payload.data?.id || payload.id,
-    type: mapPaystackEventType(payload.event),
+    id: p.data?.id ?? p.id ?? generateEventId(),
+    type: mapPaystackEventType(p.event ?? 'unknown'),
     provider: 'paystack',
-    timestamp: new Date(payload.data?.created_at || payload.created_at).getTime(),
+    timestamp: new Date(p.data?.created_at ?? p.created_at ?? Date.now()).getTime(),
     data: payload,
     metadata: {
-      originalType: payload.event,
-      customerId: payload.data?.customer?.id,
-      amount: payload.data?.amount,
-      currency: payload.data?.currency,
-      status: payload.data?.status
+      originalType: p.event,
+      customerId: p.data?.customer?.id,
+      amount: p.data?.amount,
+      currency: p.data?.currency,
+      status: p.data?.status
     }
   };
 }
 
 function normalizeEvolutionPayload(payload: Record<string, unknown>): NormalizedWebhook {
+  const p = payload as EvolutionRawPayload;
   return {
-    id: payload.key || payload.messageId || generateEventId(),
-    type: mapEvolutionEventType(payload.event),
+    id: p.key ?? p.messageId ?? generateEventId(),
+    type: mapEvolutionEventType(p.event ?? 'unknown'),
     provider: 'evolution',
-    timestamp: payload.timestamp || Date.now(),
+    timestamp: p.timestamp ?? Date.now(),
     data: payload,
     metadata: {
-      originalType: payload.event,
-      messageType: payload.data?.messageType,
-      instanceId: payload.instance,
-      fromNumber: payload.data?.key?.remoteJid,
-      messageId: payload.data?.key?.id
+      originalType: p.event,
+      messageType: p.data?.messageType,
+      instanceId: p.instance,
+      fromNumber: p.data?.key?.remoteJid,
+      messageId: p.data?.key?.id
     }
   };
 }
 
 function normalizeWhatsAppPayload(payload: Record<string, unknown>): NormalizedWebhook {
-  const entry = payload.entry?.[0];
+  const p = payload as WhatsAppRawPayload;
+  const entry = p.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
-  
+
   return {
-    id: entry?.id || generateEventId(),
-    type: mapWhatsAppEventType(change?.field),
+    id: entry?.id ?? generateEventId(),
+    type: mapWhatsAppEventType(change?.field ?? 'unknown'),
     provider: 'whatsapp',
     timestamp: Date.now(),
     data: payload,
@@ -559,4 +614,4 @@ export function signTestWebhook(
   }
 }
 
-export { NormalizedWebhook, WebhookProcessor };
+export type { NormalizedWebhook };
