@@ -93,4 +93,20 @@ describe('checkCaps', () => {
     const d = await checkCaps(admin as unknown as Parameters<typeof checkCaps>[0], 't1');
     expect(d.allowed).toBe(true);
   });
+
+  it('marks the decision degraded when the check throws', async () => {
+    pushErr();
+    const d = await checkCaps(admin as unknown as Parameters<typeof checkCaps>[0], 't1');
+    expect(d.allowed).toBe(true);
+    expect(d.degraded).toBe(true);
+  });
+
+  it('marks a healthy decision as not degraded', async () => {
+    pushDb({ daily_budget_credits: 2000, velocity_credits_override: null });
+    pushDb({ timezone: 'UTC' });
+    pushDb([{ amount_credits: -10 }]);
+    pushDb([{ amount_credits: -50 }]);
+    const d = await checkCaps(admin as unknown as Parameters<typeof checkCaps>[0], 't1');
+    expect(d.degraded).toBe(false);
+  });
 });
