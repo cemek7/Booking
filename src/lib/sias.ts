@@ -1,5 +1,11 @@
 export type SIASVertical = 'beauty' | 'hospitality' | 'medicine' | 'retail' | 'home_services' | 'professional' | 'general';
 
+export const BOOKA_POSITIONING = {
+  category: 'AI Revenue Front Desk',
+  headline: 'Turn your WhatsApp and Instagram enquiries into booked and paying customers.',
+  campaignLine: 'Turn conversations into customers.',
+} as const;
+
 export type SIASOutcomeSignal = {
   id: string;
   label: string;
@@ -248,31 +254,35 @@ export const SIAS_CAMPAIGN_ACTIONS = [
 export const SIAS_BILLING_PLANS = [
   {
     id: 'core',
-    name: 'Core',
+    name: 'Booka Core',
     price: '₦15k/mo',
     description: 'Booking core, reminders, and tenant workspace.',
     included: ['Booking intake', 'WhatsApp confirmations', 'Basic analytics'],
+    usagePolicy: 'Includes a limited automation allowance with usage alerts before any overage.',
   },
   {
     id: 'front-desk',
-    name: 'AI Front Desk',
+    name: 'Booka Revenue Front Desk',
     price: '₦45k/mo',
     description: 'Managed conversational front desk with automated follow-up.',
     included: ['Always-on WhatsApp assistant', 'Reminder automation', 'Escalation queue'],
+    usagePolicy: 'Includes standard AI and messaging usage with transparent, opt-in overages.',
   },
   {
     id: 'growth-ops',
-    name: 'Growth Ops',
+    name: 'Booka Growth',
     price: '₦85k/mo',
     description: 'Campaigns, reactivation, revenue recovery, and richer analytics.',
     included: ['Reactivation engine', 'Outcome attribution', 'Campaign retries'],
+    usagePolicy: 'Includes higher AI, follow-up, and campaign usage with approval for large sends.',
   },
   {
     id: 'managed-ops',
-    name: 'Managed Operations',
+    name: 'Managed Revenue Operations',
     price: '₦250k+',
     description: 'Human + AI hybrid operations layer with ongoing service support.',
     included: ['Human escalation', 'Managed onboarding', 'Operational memory'],
+    usagePolicy: 'Custom usage, service levels, and campaign controls are agreed before launch.',
   },
 ] as const;
 
