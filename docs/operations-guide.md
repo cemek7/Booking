@@ -5,11 +5,12 @@
 1. [System Overview](#system-overview)
 2. [Deployment Guide](#deployment-guide)
 3. [Monitoring & Observability](#monitoring--observability)
-4. [Backup & Recovery](#backup--recovery)
-5. [Troubleshooting Guide](#troubleshooting-guide)
-6. [Security Procedures](#security-procedures)
-7. [Maintenance Tasks](#maintenance-tasks)
-8. [Emergency Procedures](#emergency-procedures)
+4. [Scheduled Workers](#scheduled-workers)
+5. [Backup & Recovery](#backup--recovery)
+6. [Troubleshooting Guide](#troubleshooting-guide)
+7. [Security Procedures](#security-procedures)
+8. [Maintenance Tasks](#maintenance-tasks)
+9. [Emergency Procedures](#emergency-procedures)
 
 ## System Overview
 
@@ -318,6 +319,42 @@ smtp:
   password: your-app-password
   from_address: alerts@your-domain.com
 ```
+
+## Scheduled Workers
+
+Scheduling lives in `deployment/vps-crontab.txt`, installed with
+`crontab deployment/vps-crontab.txt`. This project does **not** use Vercel Cron — a worker
+documented here but missing from that file simply never runs.
+
+| Endpoint | Schedule | Auth header |
+|---|---|---|
+| `POST /api/jobs/process` | every minute | `x-cron-secret` |
+| `POST /api/jobs/auto-cancel-unconfirmed` | every 15 min | `x-cron-secret` |
+| `GET /api/worker/whatsapp` | every minute | `Authorization: Bearer` |
+| `GET /api/worker/operating-loop` | every minute | `Authorization: Bearer` |
+| `GET /api/cron/reminders` | every 10 min | `Authorization: Bearer` |
+| `GET /api/cron/nightly` | 22:00 daily | `Authorization: Bearer` |
+| `GET /api/worker/message-charges` | every 15 min | `Authorization: Bearer` |
+
+### `GET /api/worker/message-charges` — stale message-charge sweeper
+
+Releases WhatsApp message-charge reservations that never received a delivery status from Meta,
+returning `{ "released": n }`. Reservations older than 24 hours are released at zero cost.
+
+**`released` is a health signal, not just a counter.** It should normally be 0. A sustained
+non-zero value means Meta has stopped delivering status webhooks, and every message sent in the
+meantime is holding a tenant's credit hostage until this sweep frees it. Investigate the webhook
+subscription before assuming the sweeper is the problem — the sweeper working hard is the symptom.
+
+```bash
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/message-charges"
+```
+
+Rows the sweeper deliberately does **not** touch: those with no `wallet_reservation_id`
+(free-provider and shadow-mode rows, which hold no money) and those with a NULL `wamid`. The
+second exclusion is deliberate and load-bearing — `settle_ai_wallet_spend` is not idempotent, so
+sweeping a row whose reservation was already settled would refund the tenant twice. See the
+WhatsApp message metering section for how those rows are found and resolved by hand.
 
 ## Backup & Recovery
 
