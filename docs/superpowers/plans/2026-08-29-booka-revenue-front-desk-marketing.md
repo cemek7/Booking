@@ -34,7 +34,7 @@
 - Consumes: Existing `SIAS_VERTICAL_PACKAGES`, `SIAS_BILLING_PLANS`, and `SIAS_OUTCOME_ATRIBUTION` exports.
 - Produces: `BOOKA_POSITIONING`, updated plan records, and truthful vertical descriptions consumed by the landing page.
 
-- [ ] **Step 1: Add the approved definitions**
+- [x] **Step 1: Add the approved definitions**
 
 Add to `src/lib/sias.ts`:
 
@@ -64,12 +64,12 @@ usagePolicy: 'Custom usage, service levels, and campaign controls are agreed bef
 
 Update plan display names to `Booka Core`, `Booka Revenue Front Desk`, `Booka Growth`, and `Managed Revenue Operations`. Preserve IDs so existing consumers do not break.
 
-- [ ] **Step 2: Confirm the existing SIAS consumers still type-check**
+- [x] **Step 2: Confirm the existing SIAS consumers still type-check**
 
 Run: `npx tsc --noEmit`
 Expected: exit 0, or no diagnostic references `src/lib/sias.ts` if the repository has unrelated baseline diagnostics. Consumer behavior is exercised test-first in Task 2.
 
-- [ ] **Step 3: Commit the commercial definitions**
+- [x] **Step 3: Commit the commercial definitions**
 
 ```bash
 git add src/lib/sias.ts
@@ -87,7 +87,7 @@ git commit -m "feat(marketing): define Booka revenue front desk offer"
 - Consumes: `BOOKA_POSITIONING`, `SIAS_BILLING_PLANS`, and `SIAS_VERTICAL_PACKAGES` from Task 1.
 - Produces: A public landing page with working in-page pilot and audit CTAs. Plan 2 later replaces the in-page CTA targets with dedicated intake pages.
 
-- [ ] **Step 1: Write the failing rendering test**
+- [x] **Step 1: Write the failing rendering test**
 
 ```tsx
 import { render, screen } from '@testing-library/react';
@@ -123,12 +123,12 @@ describe('BookaLanding', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and confirm it fails**
+- [x] **Step 2: Run the test and confirm it fails**
 
 Run: `npx jest src/components/homepage/BookaLanding.test.tsx -i`
 Expected: FAIL because the conversion anchors, pricing test hooks, and explicit beauty default are not present.
 
-- [ ] **Step 3: Implement the approved landing-page hierarchy**
+- [x] **Step 3: Implement the approved landing-page hierarchy**
 
 In `BookaLanding.tsx`:
 
@@ -156,17 +156,17 @@ Booka answers customer questions, recommends the right service or product, check
 
 In `DemoConversation.tsx`, expose `data-testid="vertical-demo"` and `data-default-vertical="beauty"`, and make beauty the default scenario. The conversation must demonstrate: price question → recommendation → alternative availability → deposit/booking next step. Remove any fixed recovered-revenue or no-show performance claim from its reporting panel.
 
-- [ ] **Step 4: Run the component test**
+- [x] **Step 4: Run the component test**
 
 Run: `npx jest src/components/homepage/BookaLanding.test.tsx -i`
 Expected: PASS.
 
-- [ ] **Step 5: Run a focused unsupported-claim scan**
+- [x] **Step 5: Run a focused unsupported-claim scan**
 
 Run: `rg -n "40%|₦3\.6m|AI booking software|guaranteed revenue" src/components/homepage/BookaLanding.tsx src/components/homepage/DemoConversation.tsx`
 Expected: no output.
 
-- [ ] **Step 6: Commit the landing-page change**
+- [x] **Step 6: Commit the landing-page change**
 
 ```bash
 git add src/components/homepage/BookaLanding.tsx src/components/homepage/DemoConversation.tsx src/components/homepage/BookaLanding.test.tsx
@@ -186,7 +186,7 @@ git commit -m "feat(marketing): launch Booka revenue front desk positioning"
 - Consumes: `BOOKA_POSITIONING` from Task 1.
 - Produces: Consistent discoverability copy without new claims on adjacent Techclave surfaces.
 
-- [ ] **Step 1: Align metadata and adjacent copy**
+- [x] **Step 1: Align metadata and adjacent copy**
 
 Use `Booka | AI Revenue Front Desk` as the Booka page title and this description:
 
@@ -196,7 +196,7 @@ Booka turns WhatsApp and Instagram enquiries into booked and paying customers wi
 
 On the Techclave homepage and products page, describe Booka as an AI Revenue Front Desk. Preserve the channel boundary: Instagram for active enquiry conversion, WhatsApp for the broader customer lifecycle. Do not add outcome numbers.
 
-- [ ] **Step 2: Run the focused component test and lint**
+- [x] **Step 2: Run the focused component test and lint**
 
 Run: `npx jest src/components/homepage/BookaLanding.test.tsx -i`
 Expected: PASS.
@@ -204,14 +204,14 @@ Expected: PASS.
 Run: `npx eslint src/lib/sias.ts src/components/homepage/BookaLanding.tsx src/components/homepage/DemoConversation.tsx src/app/booka/page.tsx src/app/layout.tsx src/app/products/page.tsx src/app/page.tsx`
 Expected: exit 0.
 
-- [ ] **Step 3: Review rendered prose and run the unsupported-claim scan**
+- [x] **Step 3: Review rendered prose and run the unsupported-claim scan**
 
 Review `/booka`, the Techclave homepage, and `/products` for category consistency, truthful channel boundaries, and the approved payment language.
 
 Run: `rg -n "40%|₦3\.6m|AI booking software|guaranteed revenue|unlimited messaging" src/app/booka src/components/homepage src/app/products/page.tsx src/app/page.tsx`
 Expected: no output.
 
-- [ ] **Step 4: Commit the metadata alignment**
+- [x] **Step 4: Commit the metadata alignment**
 
 ```bash
 git add src/app/booka/page.tsx src/app/layout.tsx src/app/products/page.tsx src/app/page.tsx
@@ -227,17 +227,22 @@ git commit -m "fix(marketing): align Booka revenue front desk copy"
 - Consumes: Tasks 1–3.
 - Produces: A verified, independently deployable marketing release.
 
-- [ ] **Step 1: Run the marketing tests**
+- [x] **Step 1: Run the marketing tests**
 
 Run: `npx jest src/components/homepage/BookaLanding.test.tsx -i`
 Expected: all suites pass.
 
-- [ ] **Step 2: Run TypeScript validation for the touched surface**
+- [x] **Step 2: Run TypeScript validation for the touched surface**
 
 Run: `npx tsc --noEmit`
 Expected: exit 0. If unrelated existing errors prevent a clean run, capture the full output and prove no diagnostic references the files in this plan.
 
-- [ ] **Step 3: Run formatting and claim checks**
+Verification note (2026-08-29): the full check remains blocked by existing mock-typing errors in
+`src/components/analytics/AnalyticsProvider.test.tsx` and
+`src/components/analytics/PostHogIdentity.test.tsx`. After correcting the new test to use the
+repository's explicit Jest-global import pattern, no diagnostic references a file changed by this plan.
+
+- [x] **Step 3: Run formatting and claim checks**
 
 Run: `git diff --check`
 Expected: no output.
@@ -245,12 +250,12 @@ Expected: no output.
 Run: `rg -n "40%|₦3\.6m|AI booking software|guaranteed revenue|unlimited messaging" src/app/booka src/components/homepage src/app/products/page.tsx src/app/page.tsx`
 Expected: no output.
 
-- [ ] **Step 4: Review the page at mobile and desktop widths**
+- [x] **Step 4: Review the page at mobile and desktop widths**
 
 Run: `npm run dev`
 Expected: the Booka page loads at `/booka`; hero, eight-step sequence, vertical cards, pilot, audit, pricing, and FAQ are readable at 390px and 1440px without horizontal overflow.
 
-- [ ] **Step 5: Commit any verification-only corrections**
+- [x] **Step 5: Commit any verification-only corrections**
 
 If verification required a correction, stage only the files from this plan and commit:
 
