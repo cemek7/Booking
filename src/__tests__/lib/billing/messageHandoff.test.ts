@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 
 const sendTextMessage = jest.fn() as jest.Mock<() => Promise<unknown>>;
-jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
+jest.mock('@/lib/whatsapp/providers/unmetered', () => ({
   getTenantWhatsAppProviderClientUnmetered: jest.fn(async () => ({ sendTextMessage })),
 }));
 jest.mock('@/lib/monitoring/telegramAlert', () => ({
@@ -109,7 +109,7 @@ const admin: MockClient = {
 };
 const adminAny = admin as unknown as Parameters<typeof triggerWalletHandoff>[0];
 
-const providerMod = jest.requireMock('@/lib/whatsapp/providers/providerSelection') as {
+const providerMod = jest.requireMock('@/lib/whatsapp/providers/unmetered') as {
   getTenantWhatsAppProviderClientUnmetered: jest.Mock<() => Promise<unknown>>;
 };
 const telegramMod = jest.requireMock('@/lib/monitoring/telegramAlert') as {

@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/providerSelection';
+// Imported from the leaf module, not from providerSelection: providerSelection
+// imports the metering factory, and metering imports this file.
+import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/unmetered';
 import { sendTelegramInfo } from '@/lib/monitoring/telegramAlert';
 import { getHandoffRearmHours } from '@/lib/billing/messageRates';
 

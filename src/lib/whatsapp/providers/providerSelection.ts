@@ -2,9 +2,9 @@ import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getInstagramSecret } from '@/lib/instagram/secrets';
 import { EvolutionAdapter } from './evolution';
-import { InstagramAdapter } from './instagram';
 import { MetaAdapter } from './meta';
 import { WahaAdapter } from './waha';
+import { getProviderClient } from './factory';
 import type { ProviderConfig, WhatsAppProviderClient } from './types';
 
 function trimTrailingSlash(value: string): string {
@@ -74,24 +74,21 @@ export function getDefaultWhatsAppProviderClient(): WhatsAppProviderClient | nul
   return new EvolutionAdapter(config);
 }
 
+// Re-exported from its own leaf module. It must NOT be defined here: the
+// wallet-exhausted handoff imports it, and this module imports the metering
+// factory, so defining it here would close the cycle
+// providerSelection -> factory -> metered -> messageHandoff -> providerSelection.
+export { getTenantWhatsAppProviderClientUnmetered } from './unmetered';
+
 /**
- * Unmetered tenant client. Only two callers are legitimate:
- *   - the wallet-exhausted handoff (metering it would recurse), and
- *   - internal diagnostics.
- * Everything customer-facing must go through getTenantChannelProviderClient.
+ * Metered tenant WhatsApp client. Goes through getProviderClient, whose gate is
+ * `config.tenantId` — populated by getTenantWhatsAppConfig — so this is metered
+ * without needing to know anything about metering itself.
  */
-export async function getTenantWhatsAppProviderClientUnmetered(
-  tenantId: string,
-): Promise<WhatsAppProviderClient | null> {
+export async function getTenantWhatsAppProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
   const config = await getTenantWhatsAppConfig(tenantId);
   if (!config) return null;
-  if (config.provider === 'waha') return new WahaAdapter(config);
-  if (config.provider === 'meta') return new MetaAdapter(config);
-  return new EvolutionAdapter(config);
-}
-
-export async function getTenantWhatsAppProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
-  return getTenantWhatsAppProviderClientUnmetered(tenantId);
+  return getProviderClient(config);
 }
 
 async function getTenantInstagramProviderConfig(tenantId: string): Promise<ProviderConfig | null> {
@@ -106,6 +103,7 @@ async function getTenantInstagramProviderConfig(tenantId: string): Promise<Provi
     baseUrl: trimTrailingSlash(process.env.INSTAGRAM_GRAPH_BASE_URL || 'https://graph.instagram.com/v25.0'),
     apiKey: secret.accessToken,
     instanceName: secret.igId,
+    tenantId,
   };
 }
 
@@ -115,7 +113,7 @@ export async function getTenantChannelProviderClient(
 ): Promise<WhatsAppProviderClient | null> {
   if (channel === 'instagram') {
     const config = await getTenantInstagramProviderConfig(tenantId);
-    return config ? new InstagramAdapter(config) : null;
+    return config ? getProviderClient(config) : null;
   }
 
   return getTenantWhatsAppProviderClient(tenantId);
