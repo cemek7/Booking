@@ -8,9 +8,9 @@ const products = [
     status: 'Shipping now',
     href: '/booka',
     summary:
-      'AI front desk for service businesses on WhatsApp and Instagram. It handles enquiries, recommendations, sales conversion, booking intake, reminders, follow-ups, and revenue recovery.',
+      'AI Revenue Front Desk for service businesses. It converts active Instagram and WhatsApp enquiries, then uses WhatsApp for opted-in reminders, recovery and repeat-business conversations.',
     audience: 'Beauty, hospitality, and clinic teams that sell and book in chat',
-    outcome: 'More conversion, more confirmed bookings, fewer no-shows, stronger repeat revenue',
+    outcome: 'Enquiry conversion, recommendations, bookings, payment links, follow-up and human escalation',
   },
   {
     name: 'Managed Ops',
@@ -69,7 +69,7 @@ export default function ProductsPage() {
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-[#4f5d59]">
               Techclave is the company brand. Each product stays narrow enough to explain in one sentence and useful
-              enough to run a real workflow. Booka leads with one clear promise: it sells and books through chat.
+              enough to run a real workflow. Booka leads with one clear promise: it turns conversations into customers.
             </p>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
                 {[
@@ -89,7 +89,7 @@ export default function ProductsPage() {
             <p className="brand-kicker text-[#d4b368]">Featured now</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight">Booka</h2>
             <p className="mt-3 text-sm leading-7 text-[#d7ddd9]">
-              The first Techclave product: an AI front desk built for service teams that lose sales and bookings in chat.
+              The first Techclave product: an AI Revenue Front Desk that recommends, sells, books and follows up in chat.
             </p>
           </div>
         </section>
