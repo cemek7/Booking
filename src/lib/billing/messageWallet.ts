@@ -564,6 +564,34 @@ export async function abandonCharge(admin: SupabaseClient, chargeId: string): Pr
  * reservation (free provider / shadow mode — records data but never calls the
  * settle RPC), and replay safety for already-terminal rows.
  */
+/**
+ * Resolves which tenant a wamid was charged to, for settlement paths that do
+ * not already know.
+ *
+ * Shared-gateway traffic has no `whatsapp_configurations` row — that is what
+ * makes it shared — so the Meta status webhook cannot map its phone_number_id
+ * to a tenant. Those sends ARE metered (the shared-gateway config carries a
+ * tenantId), so without this they would reserve credit and never settle it.
+ * `whatsapp_message_charges` is UNIQUE on (tenant_id, wamid), so the wamid
+ * alone identifies the row and therefore the tenant.
+ */
+export async function resolveChargeTenantByWamid(
+  admin: SupabaseClient,
+  wamid: string,
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from(CHARGES_TABLE)
+    .select('tenant_id')
+    .eq('wamid', wamid)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[messageWallet] resolveChargeTenantByWamid failed', { wamid, error });
+    return null;
+  }
+  return (data as { tenant_id?: string } | null)?.tenant_id ?? null;
+}
+
 export async function settleOutboundMessage(p: SettleOutboundParams): Promise<void> {
   const { admin, tenantId, wamid, deliveryStatus, pricing } = p;
 

@@ -1,7 +1,10 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 const settleOutboundMessage = jest.fn() as jest.Mock<() => Promise<void>>;
-jest.mock('@/lib/billing/messageWallet', () => ({ settleOutboundMessage }));
+const resolveChargeTenantByWamid = jest.fn() as jest.Mock<() => Promise<string | null>>;
+jest.mock('@/lib/billing/messageWallet', () => ({
+  settleOutboundMessage, resolveChargeTenantByWamid,
+}));
 
 import { settleStatusEvent } from '@/app/api/webhooks/whatsapp/meta/route';
 
@@ -53,5 +56,32 @@ describe('settleStatusEvent', () => {
     await settleStatusEvent(admin, 't1', { id: 'wamid.A', status: 'delivered' });
     const call = settleOutboundMessage.mock.calls[0][0] as { pricing?: unknown };
     expect(call.pricing).toBeUndefined();
+  });
+});
+
+describe('settleStatusEvent — shared-gateway tenant resolution', () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it('resolves the tenant from the charge row when the webhook has none', async () => {
+    // Shared-gateway traffic has no whatsapp_configurations row, so this webhook
+    // cannot map phone_number_id to a tenant — but those sends ARE metered.
+    // Skipping them would reserve credit that never settles.
+    resolveChargeTenantByWamid.mockResolvedValue('t-shared');
+    await settleStatusEvent(admin, null, { id: 'wamid.A', status: 'delivered' });
+    expect(resolveChargeTenantByWamid).toHaveBeenCalledWith(admin, 'wamid.A');
+    expect(settleOutboundMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 't-shared' }),
+    );
+  });
+
+  it('does not resolve when the webhook already knows the tenant', async () => {
+    await settleStatusEvent(admin, 't1', { id: 'wamid.A', status: 'delivered' });
+    expect(resolveChargeTenantByWamid).not.toHaveBeenCalled();
+  });
+
+  it('settles nothing when no charge row claims the wamid', async () => {
+    resolveChargeTenantByWamid.mockResolvedValue(null);
+    await settleStatusEvent(admin, null, { id: 'wamid.A', status: 'delivered' });
+    expect(settleOutboundMessage).not.toHaveBeenCalled();
   });
 });

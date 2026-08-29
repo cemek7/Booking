@@ -84,6 +84,18 @@ export function withMetering(
         await attachWamid(admin, chargeId, result.messageId);
       } else if (!result?.success) {
         await abandonCharge(admin, chargeId);
+      } else {
+        // success with no messageId: the provider accepted the send but returned
+        // a body we could not parse an id from. Without a wamid the charge row
+        // is invisible to the sweeper, which filters `wamid IS NOT NULL`, so
+        // leaving it would strand the credits permanently and silently. Abandon
+        // and say so — under-charging for a delivered message is recoverable
+        // from these logs; a stranded reservation is not.
+        console.error('[metered] send reported success with no messageId — abandoning charge', {
+          tenantId: opts.tenantId,
+          chargeId,
+        });
+        await abandonCharge(admin, chargeId);
       }
     } catch (error) {
       // The message already went out. Settlement bookkeeping failing must not

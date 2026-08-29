@@ -797,6 +797,21 @@ async function sendReplyByChannel(
   const sendResult = await client.sendTextMessage(externalId, finalText);
 
   if (!sendResult.success) {
+    if (sendResult.reason === 'wallet_exhausted') {
+      // A DESIGNED outcome, not a failure: the wallet could not fund this reply,
+      // so withMetering already sent the customer a handoff message instead.
+      // Throwing here would skip markMessagesProcessed, and the queue row's
+      // pending_messages have already been drained by claimBatch — so the retry
+      // finds nothing to do, returns false, and the worker resets it to
+      // 'pending' without incrementing retry_count. That row then cycles
+      // forever, and once ~20 accumulate they fill the LIMIT 20 claim batch and
+      // starve inbound messages for every other tenant.
+      console.warn('[pipeline] reply not sent: message wallet exhausted, handoff issued', {
+        tenantId,
+        channel,
+      });
+      return;
+    }
     if (channel === 'instagram') {
       // Instagram sends are best-effort for now — log and continue
       console.error(`[pipeline] Outbound Instagram send failed (tenant=${tenantId}, to=${externalId})`);

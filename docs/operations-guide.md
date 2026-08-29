@@ -422,7 +422,8 @@ debited with no automatic recovery, because the sweeper deliberately cannot see 
 - `attachWamid: settle failed after orphan delete — reservation left open`
 - `reserveOutboundMessage: release-after-insert-failure also failed`
 
-Find them with `findStrandedReservations()` or directly:
+The 15-minute sweeper reports them: a non-zero `stranded` count in its response, and an error
+log naming each `chargeId`. To list them directly:
 
 ```sql
 SELECT id, tenant_id, wallet_reservation_id, reserved_credits, sent_at
@@ -446,7 +447,24 @@ FROM public.ai_wallet_ledger
 WHERE reference = '<wallet_reservation_id>';
 ```
 
-- **No settlement row** → the reservation is genuinely open. Release it manually.
+- **No settlement row** → the reservation is genuinely open. Release it with the RPC, so the
+  release lands in the ledger like any other movement. Do **not** patch
+  `ai_wallets.balance_credits` directly — that leaves no ledger row, and the next reconciliation
+  reads the credit as phantom.
+
+  ```sql
+  SELECT * FROM public.settle_ai_wallet_spend(
+    '<tenant_id>'::uuid,
+    '<wallet_reservation_id>'::uuid,
+    <reserved_credits>,   -- from the row above
+    0,                    -- actual: nothing was delivered
+    NULL, 'meta', NULL, NULL, '{"reason":"manual_reconciliation"}'::jsonb, 'whatsapp'
+  );
+
+  UPDATE public.whatsapp_message_charges
+     SET status = 'released', settled_credits = 0, settled_at = now()
+   WHERE id = '<charge_id>';
+  ```
 - **A settlement row already exists** → **do nothing.** The money already moved; releasing again
   refunds the tenant twice. Only the charge row's bookkeeping is stale.
 

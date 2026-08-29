@@ -171,6 +171,55 @@ describe('processMessageV2 channel=instagram', () => {
     expect(args[2]).toBe('whatsapp');
   });
 
+  it('does not throw when the message wallet is exhausted', async () => {
+    // withMetering returns { success: false, reason: 'wallet_exhausted' } after
+    // it has already sent the customer a handoff. That is a DESIGNED outcome.
+    // Throwing skips markMessagesProcessed, and claimBatch has already drained
+    // pending_messages — so the retry finds nothing, returns false, and the
+    // worker resets the row to 'pending' without incrementing retry_count. It
+    // then cycles forever, and ~20 such rows fill the LIMIT 20 claim batch and
+    // starve inbound messages for every other tenant.
+    mockClaimBatch.mockResolvedValue({ combined: 'book me', messageIds: ['msg-9'] });
+    const conv = makeConv({
+      channel: 'whatsapp',
+      phone_number: '+2348000000000',
+      external_id: '+2348000000000',
+    });
+    mockGetConversation.mockResolvedValue(conv);
+    mockEnsureConversation.mockResolvedValue(conv);
+    mockGetTenantWhatsAppConfig.mockResolvedValue({
+      provider: 'meta', baseUrl: 'https://x', apiKey: 'k', instanceName: 'i', tenantId: 'tenant-1',
+    });
+    mockGetProviderClient.mockReturnValue({
+      sendTextMessage: jest.fn(async () => ({ success: false, reason: 'wallet_exhausted' })),
+    });
+
+    await expect(
+      processMessageV2('+2348000000000', 'tenant-1', 'book me', 'msg-9'),
+    ).resolves.not.toThrow();
+  });
+
+  it('still throws on a genuine send failure, so the worker can retry', async () => {
+    mockClaimBatch.mockResolvedValue({ combined: 'book me', messageIds: ['msg-10'] });
+    const conv = makeConv({
+      channel: 'whatsapp',
+      phone_number: '+2348000000000',
+      external_id: '+2348000000000',
+    });
+    mockGetConversation.mockResolvedValue(conv);
+    mockEnsureConversation.mockResolvedValue(conv);
+    mockGetTenantWhatsAppConfig.mockResolvedValue({
+      provider: 'meta', baseUrl: 'https://x', apiKey: 'k', instanceName: 'i', tenantId: 'tenant-1',
+    });
+    mockGetProviderClient.mockReturnValue({
+      sendTextMessage: jest.fn(async () => ({ success: false, reason: 'network_error' })),
+    });
+
+    await expect(
+      processMessageV2('+2348000000000', 'tenant-1', 'book me', 'msg-10'),
+    ).rejects.toThrow();
+  });
+
   it('returns false when claimBatch returns null (still accumulating)', async () => {
     mockClaimBatch.mockResolvedValue(null);
 

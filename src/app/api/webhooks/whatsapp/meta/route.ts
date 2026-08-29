@@ -8,7 +8,7 @@ import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQualityWebhook';
 import { MetaAdapter } from '@/lib/whatsapp/providers/meta';
-import { settleOutboundMessage } from '@/lib/billing/messageWallet';
+import { resolveChargeTenantByWamid, settleOutboundMessage } from '@/lib/billing/messageWallet';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -121,15 +121,24 @@ const SETTLEABLE_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
  */
 export async function settleStatusEvent(
   admin: SupabaseClient,
-  tenantId: string,
+  tenantId: string | null,
   status: MetaStatusEvent,
 ): Promise<void> {
   if (!status.id || !status.status) return;
   if (!SETTLEABLE_STATUSES.has(status.status)) return;
   try {
+    // Shared-gateway traffic has no whatsapp_configurations row, so this webhook
+    // cannot map its phone_number_id to a tenant — but those sends are metered
+    // all the same. Fall back to the charge row, which the wamid identifies
+    // uniquely. Skipping instead would reserve credit that is never settled and
+    // leave the sweeper's `released` counter permanently non-zero, killing the
+    // one signal that says the webhook has broken.
+    const resolvedTenantId = tenantId ?? await resolveChargeTenantByWamid(admin, status.id);
+    if (!resolvedTenantId) return;
+
     await settleOutboundMessage({
       admin,
-      tenantId,
+      tenantId: resolvedTenantId,
       wamid: status.id,
       deliveryStatus: status.status as 'sent' | 'delivered' | 'read' | 'failed',
       pricing: status.pricing,
@@ -242,11 +251,9 @@ export async function POST(request: NextRequest) {
         // single retry would settle the same delivery twice against a
         // non-idempotent settle RPC.
         if (isDuplicateStatus) continue;
-        // Shared-gateway traffic has no config.tenant_id. Skipping it is
-        // correct: those sends were never reserved against a tenant wallet, so
-        // there is nothing to settle.
-        if (!configuredTenantId) continue;
-        await settleStatusEvent(supabase, configuredTenantId, status);
+        // configuredTenantId is undefined for shared-gateway traffic;
+        // settleStatusEvent resolves it from the charge row in that case.
+        await settleStatusEvent(supabase, configuredTenantId ?? null, status);
       }
 
       for (const message of value.messages ?? []) {

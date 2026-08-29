@@ -1,7 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 const releaseStaleReservations = jest.fn() as jest.Mock<() => Promise<{ released: number }>>;
+const findStrandedReservations = jest.fn() as jest.Mock<() => Promise<unknown[]>>;
 jest.mock('@/lib/billing/messageWallet', () => ({ releaseStaleReservations }));
+jest.mock('@/lib/billing/messageReconciliation', () => ({ findStrandedReservations }));
 jest.mock('@/lib/supabase/server', () => ({ createSupabaseAdminClient: () => ({}) }));
 
 import { GET } from '@/app/api/worker/message-charges/route';
@@ -27,13 +29,23 @@ describe('GET /api/worker/message-charges', () => {
     jest.clearAllMocks();
     setNodeEnv('test');
     delete process.env.CRON_SECRET;
+    findStrandedReservations.mockResolvedValue([]);
   });
 
   it('releases stale reservations', async () => {
     releaseStaleReservations.mockResolvedValue({ released: 3 });
     const res = await GET(req());
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ released: 3 });
+    await expect(res.json()).resolves.toEqual({ released: 3, stranded: 0 });
+  });
+
+  it('reports stranded reservations the sweep structurally cannot see', async () => {
+    // The sweep filters wamid IS NOT NULL, so reserved rows with a NULL wamid
+    // are invisible to every automatic path. This is their only alarm.
+    releaseStaleReservations.mockResolvedValue({ released: 0 });
+    findStrandedReservations.mockResolvedValue([{ chargeId: 'chg-1' }, { chargeId: 'chg-2' }]);
+    const res = await GET(req());
+    await expect(res.json()).resolves.toEqual({ released: 0, stranded: 2 });
   });
 
   it('rejects unauthorised calls in production', async () => {

@@ -106,6 +106,18 @@ describe('withMetering', () => {
     expect(abandonCharge).not.toHaveBeenCalled();
   });
 
+  it('abandons the charge when the send succeeds without a messageId', async () => {
+    // The provider accepted the send but returned an unparseable body. Without a
+    // wamid the charge row is invisible to the sweeper (which filters
+    // wamid IS NOT NULL), so doing nothing here strands the credits forever.
+    const inner = makeInner({ success: true });
+    const client = withMetering(inner as never, opts);
+    const r = await client.sendTextMessage('234', 'hi');
+    expect(r.success).toBe(true);
+    expect(attachWamid).not.toHaveBeenCalled();
+    expect(abandonCharge).toHaveBeenCalledWith(expect.anything(), 'c1');
+  });
+
   it('still sends when metering itself throws', async () => {
     reserveOutboundMessage.mockRejectedValue(new Error('metering exploded'));
     const inner = makeInner({ success: true, messageId: 'wamid.A' });
