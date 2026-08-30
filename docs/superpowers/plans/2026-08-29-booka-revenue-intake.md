@@ -33,7 +33,7 @@
 - Consumes: `auth.role()` and the existing service-role database access pattern.
 - Produces: `public.booka_revenue_requests`, used by all later tasks in this plan.
 
-- [ ] **Step 1: Write the schema verification SQL first**
+- [x] **Step 1: Write the schema verification SQL first**
 
 Create `scripts/sql/verify_booka_revenue_requests.sql`:
 
@@ -72,7 +72,7 @@ begin
 end $$;
 ```
 
-- [ ] **Step 2: Run the verification against a disposable PostgreSQL database and confirm it fails**
+- [x] **Step 2: Run the verification against a disposable PostgreSQL database and confirm it fails**
 
 Run:
 
@@ -83,7 +83,7 @@ psql postgresql://postgres:booka@127.0.0.1:55432/postgres -f scripts/sql/verify_
 
 Expected: the verification exits non-zero because the table does not exist.
 
-- [ ] **Step 3: Create the additive migration**
+- [x] **Step 3: Create the additive migration**
 
 Create `db/migrations/122_booka_revenue_requests.sql` with:
 
@@ -141,6 +141,8 @@ commit;
 
 - [ ] **Step 4: Apply and verify in the disposable database**
 
+> Pending owner execution. The migration and verification script are ready; live database commands were deliberately left to the owner on 2026-08-29.
+
 Run:
 
 ```bash
@@ -151,7 +153,7 @@ docker rm -f booka-revenue-intake-db
 
 Expected: both SQL files exit 0; the container is removed.
 
-- [ ] **Step 5: Commit the schema**
+- [x] **Step 5: Commit the schema**
 
 ```bash
 git add db/migrations/122_booka_revenue_requests.sql scripts/sql/verify_booka_revenue_requests.sql
@@ -169,7 +171,7 @@ git commit -m "feat(booka): add revenue request intake schema"
 - Consumes: `booka_revenue_requests` from Task 1; `cacheGet`, `cacheSet`, and `isRedisConfigured` from `src/lib/redis.ts`.
 - Produces: `BookaRevenueRequestSchema`, `BookaRevenueRequestInput`, `AuditSummarySchema`, and public `POST /api/public/booka/revenue-requests` returning `{ id, request_type, status }`.
 
-- [ ] **Step 1: Write endpoint tests**
+- [x] **Step 1: Write endpoint tests**
 
 Cover these exact cases:
 
@@ -186,12 +188,12 @@ it('returns the existing open request when the unique contact constraint is hit'
 
 Use mocked `createSupabaseAdminClient`, `isRedisConfigured`, `cacheGet`, and `cacheSet`. Assert the insert payload never contains `conversation`, `messages`, `chat_sample`, or `customer_data` keys.
 
-- [ ] **Step 2: Run the tests and confirm they fail**
+- [x] **Step 2: Run the tests and confirm they fail**
 
 Run: `npx jest src/__tests__/app/api/public/booka/revenue-requests.route.test.ts -i`
 Expected: FAIL because the module and route do not exist.
 
-- [ ] **Step 3: Implement the shared schemas**
+- [x] **Step 3: Implement the shared schemas**
 
 In `src/lib/booka/revenue-intake.ts`, export:
 
@@ -218,16 +220,16 @@ export const AuditSummarySchema = z.object({
 
 Define `BookaRevenueRequestSchema` with the migration's enums and limits: names 2–120 characters, email valid and lowercased, phone 7–30 characters, optional URLs valid, average transaction value positive, `channels` as a non-empty array of `whatsapp|instagram`, consent literal `true`, optional `sample_review_consent`, and honeypot `company_website` max 0 characters. Add a refinement requiring `other_vertical` when vertical is `other`.
 
-- [ ] **Step 4: Implement the public endpoint**
+- [x] **Step 4: Implement the public endpoint**
 
 Use `createHttpHandler(..., 'POST', { auth: false })` and `createSupabaseAdminClient()`. Enforce five submissions per IP per hour using Redis key `rate:booka-revenue-request:<ip>`; degrade gracefully on Redis errors and log the failure. Return a generic accepted response for a populated honeypot without inserting. On PostgreSQL error `23505`, select the existing open request by `request_type` and lowercase email and return it rather than creating duplicates.
 
-- [ ] **Step 5: Run the route tests**
+- [x] **Step 5: Run the route tests**
 
 Run: `npx jest src/__tests__/app/api/public/booka/revenue-requests.route.test.ts -i`
 Expected: PASS.
 
-- [ ] **Step 6: Commit the endpoint**
+- [x] **Step 6: Commit the endpoint**
 
 ```bash
 git add src/lib/booka/revenue-intake.ts src/app/api/public/booka/revenue-requests/route.ts src/__tests__/app/api/public/booka/revenue-requests.route.test.ts
@@ -246,7 +248,7 @@ git commit -m "feat(booka): accept revenue pilot and audit requests"
 - Consumes: `POST /api/public/booka/revenue-requests` from Task 2.
 - Produces: `<RevenueRequestForm requestType="revenue_pilot" | "missed_revenue_report" />` and two indexable public pages.
 
-- [ ] **Step 1: Write the form tests**
+- [x] **Step 1: Write the form tests**
 
 Test that the form:
 
@@ -257,12 +259,12 @@ expect(screen.getByRole('button', { name: 'Apply for the Revenue Pilot' })).toBe
 
 Also cover required consent, conditional `other_vertical`, channel selection, successful fetch payload, server error display, disabled submit while pending, and a Missed Revenue Report success message that says Booka will contact the applicant about a consented sample rather than requesting messages in the form.
 
-- [ ] **Step 2: Run the component tests and confirm they fail**
+- [x] **Step 2: Run the component tests and confirm they fail**
 
 Run: `npx jest src/components/booka/RevenueRequestForm.test.tsx -i`
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement the shared client form**
+- [x] **Step 3: Implement the shared client form**
 
 Use controlled React state and submit JSON to `/api/public/booka/revenue-requests`. Include:
 
@@ -280,11 +282,11 @@ Use controlled React state and submit JSON to `/api/public/booka/revenue-request
 
 Do not render a textarea or file input for customer conversations.
 
-- [ ] **Step 4: Implement the pages**
+- [x] **Step 4: Implement the pages**
 
 The pilot page must state the qualification rules, included setup, success definition, and that the 14 active days begin after live verification. The audit page must state the seven report outputs, use an opportunity-range disclaimer, and explain that Booka will agree a privacy-safe sample handoff after submission.
 
-- [ ] **Step 5: Run component tests and lint**
+- [x] **Step 5: Run component tests and lint**
 
 Run: `npx jest src/components/booka/RevenueRequestForm.test.tsx -i`
 Expected: PASS.
@@ -292,7 +294,7 @@ Expected: PASS.
 Run: `npx eslint src/components/booka/RevenueRequestForm.tsx src/app/booka/revenue-pilot/page.tsx src/app/booka/missed-revenue-report/page.tsx`
 Expected: exit 0.
 
-- [ ] **Step 6: Commit the public pages**
+- [x] **Step 6: Commit the public pages**
 
 ```bash
 git add src/components/booka/RevenueRequestForm.tsx src/components/booka/RevenueRequestForm.test.tsx src/app/booka/revenue-pilot/page.tsx src/app/booka/missed-revenue-report/page.tsx
@@ -315,16 +317,16 @@ git commit -m "feat(booka): add revenue pilot and audit application pages"
 - Consumes: `booka_revenue_requests` and `AuditSummarySchema`.
 - Produces: Superadmin GET list filters, PATCH workflow updates, and an internal queue for pilot/audit operations.
 
-- [ ] **Step 1: Write API tests**
+- [x] **Step 1: Write API tests**
 
 Cover superadmin-only access, `request_type` and `status` filters, default newest-first ordering, PATCH status validation, audit-summary range validation, and rejection of audit summaries on `revenue_pilot` records.
 
-- [ ] **Step 2: Run API tests and confirm they fail**
+- [x] **Step 2: Run API tests and confirm they fail**
 
 Run: `npx jest src/__tests__/app/api/superadmin/booka-revenue-requests.routes.test.ts -i`
 Expected: FAIL because the routes do not exist.
 
-- [ ] **Step 3: Implement the superadmin routes**
+- [x] **Step 3: Implement the superadmin routes**
 
 Use `{ auth: true, roles: ['superadmin'], requireTenantMembership: false }`. GET returns `{ data, total }` with optional exact enum filters and pagination capped at 200. PATCH accepts:
 
@@ -338,22 +340,22 @@ Use `{ auth: true, roles: ['superadmin'], requireTenantMembership: false }`. GET
 
 Set `updated_at` on every change. Require `request_type='missed_revenue_report'` before saving `audit_summary`; change status to `audit_ready` in the same update.
 
-- [ ] **Step 4: Write the client and printable-report tests**
+- [x] **Step 4: Write the client and printable-report tests**
 
 Cover request-type/status filters, qualification notes, status transition, audit summary entry, NGN range display, and the empty state. For `AuditReportPrintView`, assert the business name, seven audit outputs, opportunity low/high range, every assumption, the opportunity-not-guarantee disclaimer, and absence of customer message content.
 
-- [ ] **Step 5: Implement the queue UI and printable audit deliverable**
+- [x] **Step 5: Implement the queue UI and printable audit deliverable**
 
 Render contact details, vertical, channel badges, weekly enquiry band, average transaction value, consent flags, status, notes, and audit summary. Never add raw-chat upload or display. Use existing superadmin auth-fetch conventions.
 
 `AuditReportPrintView` accepts `{ businessName: string; createdAt: string; summary: AuditSummary }`, renders a white print-safe one-page report, and includes a `Print or save as PDF` button that calls `window.print()`. Hide the button with `print:hidden`. The admin uses the browser's Save as PDF flow and sends the resulting document through the agreed concierge channel; no public unauthenticated report URL is created.
 
-- [ ] **Step 6: Run the queue tests**
+- [x] **Step 6: Run the queue tests**
 
 Run: `npx jest src/__tests__/app/api/superadmin/booka-revenue-requests.routes.test.ts src/__tests__/app/dashboard/superadmin/RevenueRequestsClient.test.tsx src/__tests__/app/dashboard/superadmin/AuditReportPrintView.test.tsx -i`
 Expected: PASS.
 
-- [ ] **Step 7: Commit the internal queue**
+- [x] **Step 7: Commit the internal queue**
 
 ```bash
 git add src/app/api/superadmin/booka-revenue-requests src/app/dashboard/superadmin/booka-revenue-requests src/__tests__/app/api/superadmin/booka-revenue-requests.routes.test.ts src/__tests__/app/dashboard/superadmin/RevenueRequestsClient.test.tsx src/__tests__/app/dashboard/superadmin/AuditReportPrintView.test.tsx
@@ -371,7 +373,7 @@ git commit -m "feat(superadmin): manage Booka revenue requests"
 - Consumes: Public pages and API from Tasks 2–3.
 - Produces: Live landing-page navigation and a deployment schema check.
 
-- [ ] **Step 1: Update the landing-page test expectations**
+- [x] **Step 1: Update the landing-page test expectations**
 
 Change CTA assertions to:
 
@@ -382,16 +384,16 @@ expect(screen.getByRole('link', { name: 'Get a Missed Revenue Report' }))
   .toHaveAttribute('href', '/booka/missed-revenue-report');
 ```
 
-- [ ] **Step 2: Run the test and confirm it fails on the anchor links**
+- [x] **Step 2: Run the test and confirm it fails on the anchor links**
 
 Run: `npx jest src/components/homepage/BookaLanding.test.tsx -i`
 Expected: FAIL because the links still use in-page anchors.
 
-- [ ] **Step 3: Change the links and add deployment verification**
+- [x] **Step 3: Change the links and add deployment verification**
 
 Update every pilot and audit CTA to the dedicated pages. Extend `deployment/scripts/post-deploy-ai-front-desk.sh` with a read-only `information_schema.columns` check requiring `booka_revenue_requests.request_type`, `status`, and `audit_summary`.
 
-- [ ] **Step 4: Run the full intake verification**
+- [x] **Step 4: Run the full intake verification**
 
 Run: `npx jest src/__tests__/app/api/public/booka/revenue-requests.route.test.ts src/components/booka/RevenueRequestForm.test.tsx src/__tests__/app/api/superadmin/booka-revenue-requests.routes.test.ts src/__tests__/app/dashboard/superadmin/RevenueRequestsClient.test.tsx src/__tests__/app/dashboard/superadmin/AuditReportPrintView.test.tsx src/components/homepage/BookaLanding.test.tsx -i`
 Expected: all suites pass.
@@ -402,7 +404,7 @@ Expected: exit 0.
 Run: `git diff --check`
 Expected: no output.
 
-- [ ] **Step 5: Commit the integration**
+- [x] **Step 5: Commit the integration**
 
 ```bash
 git add src/components/homepage/BookaLanding.tsx src/components/homepage/BookaLanding.test.tsx deployment/scripts/post-deploy-ai-front-desk.sh

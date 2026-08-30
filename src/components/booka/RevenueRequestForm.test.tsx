@@ -1,7 +1,9 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RevenueRequestForm from '@/components/booka/RevenueRequestForm';
+
+const fetchMock = jest.fn<typeof fetch>();
 
 function fillRequiredFields() {
   fireEvent.change(screen.getByLabelText(/business name/i), {
@@ -25,7 +27,8 @@ function fillRequiredFields() {
 
 describe('RevenueRequestForm', () => {
   beforeEach(() => {
-    global.fetch = jest.fn() as typeof fetch;
+    fetchMock.mockReset();
+    global.fetch = fetchMock;
   });
 
   it('renders the revenue pilot action', () => {
@@ -42,7 +45,7 @@ describe('RevenueRequestForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply for the Revenue Pilot' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/consent to contact/i);
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('shows other_vertical only when other is selected', () => {
@@ -54,18 +57,18 @@ describe('RevenueRequestForm', () => {
   });
 
   it('submits selected channels and normalized form fields', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
+    fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ id: 'req_1', request_type: 'revenue_pilot', status: 'new' }),
-    });
+    } as Response);
     render(<RevenueRequestForm requestType="revenue_pilot" />);
     fillRequiredFields();
     fireEvent.click(screen.getByRole('checkbox', { name: /instagram/i }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply for the Revenue Pilot' }));
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
-    const [, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({
       request_type: 'revenue_pilot',
       business_name: 'Ada Beauty Studio',
@@ -76,10 +79,10 @@ describe('RevenueRequestForm', () => {
   });
 
   it('displays a server error', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
+    fetchMock.mockResolvedValue({
       ok: false,
       json: async () => ({ message: 'Request could not be saved' }),
-    });
+    } as Response);
     render(<RevenueRequestForm requestType="revenue_pilot" />);
     fillRequiredFields();
 
@@ -89,8 +92,8 @@ describe('RevenueRequestForm', () => {
   });
 
   it('disables submit while the request is pending', async () => {
-    let resolveFetch: ((value: unknown) => void) | undefined;
-    (global.fetch as jest.Mock).mockReturnValue(
+    let resolveFetch: ((value: Response) => void) | undefined;
+    fetchMock.mockReturnValue(
       new Promise((resolve) => {
         resolveFetch = resolve;
       }),
@@ -101,14 +104,17 @@ describe('RevenueRequestForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply for the Revenue Pilot' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: /submitting/i })).toBeDisabled());
-    resolveFetch?.({ ok: true, json: async () => ({ id: 'req_1' }) });
+    await act(async () => {
+      resolveFetch?.({ ok: true, json: async () => ({ id: 'req_1' }) } as Response);
+    });
+    expect(await screen.findByText(/application is in the review queue/i)).toBeInTheDocument();
   });
 
   it('explains the privacy-safe next step for a missed revenue report', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
+    fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ id: 'req_2', request_type: 'missed_revenue_report', status: 'new' }),
-    });
+    } as Response);
     render(<RevenueRequestForm requestType="missed_revenue_report" />);
     fillRequiredFields();
 
