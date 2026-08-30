@@ -46,6 +46,7 @@ export type WalletHandoffReason =
   | 'already_handed_off'
   | 'no_provider'
   | 'unsupported_channel'
+  | 'opted_out'
   | 'error';
 
 /**
@@ -225,6 +226,30 @@ async function stampChat(
 }
 
 /**
+ * Has this customer unsubscribed? Read errors return false — a failed lookup
+ * must not silently suppress a handoff the tenant is paying for — but a real
+ * opt-out always wins.
+ */
+async function isOptedOut(
+  admin: SupabaseClient,
+  tenantId: string,
+  toNumber: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('whatsapp_conversations')
+    .select('opted_out_at')
+    .eq('tenant_id', tenantId)
+    .eq('phone_number', toNumber)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[messageHandoff] opt-out check failed, proceeding', { tenantId, error });
+    return false;
+  }
+  return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at;
+}
+
+/**
  * Sends the wallet-exhausted handoff message for one conversation, at most
  * once per re-arm window. Never throws.
  */
@@ -274,6 +299,17 @@ export async function triggerWalletHandoff(
         tenantId,
       });
       return { sent: false, reason: 'error' };
+    }
+
+    // COMPLIANCE: never hand off to someone who has unsubscribed. This send
+    // goes through the unmetered client, which bypasses sendGovernedInitiated's
+    // opt-out checks entirely, so this is the only place that guard exists on
+    // this path. The sharpest case is a customer texting STOP into an exhausted
+    // wallet: without this they would be told a human will follow up, moments
+    // after asking not to be contacted.
+    if (await isOptedOut(admin, tenantId, toNumber)) {
+      console.warn('[messageHandoff] suppressed: customer has opted out', { tenantId });
+      return { sent: false, reason: 'opted_out' };
     }
 
     const metadata = (chat.metadata ?? {}) as Record<string, unknown>;
@@ -330,12 +366,56 @@ export async function triggerWalletHandoff(
       await markHandoffUnanchored(admin, tenantId, today);
     }
 
+    await persistHandoffMessage(admin, tenantId, chat.id, toNumber, result.messageId);
     await notifyOwner(admin, tenantId, toNumber, markers.warnedOn, today);
 
     return { sent: true, reason: 'sent' };
   } catch (error) {
     console.error('[messageHandoff] triggerWalletHandoff failed', { tenantId, error });
     return { sent: false, reason: 'error' };
+  }
+}
+
+/**
+ * Records the handoff in the conversation thread.
+ *
+ * This message is sent outside the normal reply path, which is the only place
+ * outbound messages are persisted — so without this the customer sees "a member
+ * of our team will reply to you here shortly" while staff open the chat and see
+ * an inbound message with no reply at all. That is exactly the moment a human is
+ * being asked to take over, so they need to know what was already promised.
+ *
+ * Best-effort: a failed insert must not turn a delivered handoff into a
+ * reported failure.
+ */
+async function persistHandoffMessage(
+  admin: SupabaseClient,
+  tenantId: string,
+  chatId: string,
+  toNumber: string,
+  messageId?: string,
+): Promise<void> {
+  try {
+    const { error } = await admin.from('messages').insert({
+      tenant_id: tenantId,
+      chat_id: chatId,
+      to_number: toNumber,
+      content: HANDOFF_TEXT,
+      direction: 'outbound',
+      message_type: 'text',
+      channel: 'whatsapp',
+      evolution_message_id: messageId ?? null,
+      timestamp: new Date().toISOString(),
+    });
+    if (error) {
+      console.warn('[messageHandoff] handoff sent but not recorded in the thread', {
+        tenantId,
+        chatId,
+        error,
+      });
+    }
+  } catch (error) {
+    console.warn('[messageHandoff] failed to persist the handoff message', { tenantId, error });
   }
 }
 

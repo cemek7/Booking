@@ -22,6 +22,7 @@ import { claimBatch } from './messageBatcher';
 import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
 import { getTenantWhatsAppConfig, isTenantWhatsAppAgentEnabled } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
+import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/unmetered';
 import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
 import type { ProviderConfig } from '@/lib/whatsapp/providers';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
@@ -392,9 +393,16 @@ async function handleOptOutSignal(
   tenantId: string,
   signal: OptOutSignal
 ): Promise<void> {
-  const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) return;
-  const client = getProviderClient(evolutionConfig);
+  // COMPLIANCE: opt-out confirmations go through the UNMETERED client.
+  // getProviderClient meters any config carrying a tenantId, and a refused
+  // reservation makes withMetering send the wallet-exhausted handoff instead —
+  // so a customer who texted STOP would be told "a member of our team will
+  // reply to you here shortly", the opposite of what they asked for, and that
+  // handoff would itself be an unsolicited message to someone who just
+  // unsubscribed. These are regulatory messages, not commercial ones: Booka
+  // funds them, and they must send whatever the tenant's balance is.
+  const client = await getTenantWhatsAppProviderClientUnmetered(tenantId);
+  if (!client) return;
 
   if (signal === 'stop') {
     await supabaseAdmin
