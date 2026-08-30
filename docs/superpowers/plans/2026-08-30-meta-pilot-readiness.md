@@ -158,19 +158,19 @@ git commit -m "feat(meta): add pilot readiness checker"
 - Consumes: `npm run meta:pilot:check` from Task 2.
 - Produces: one operator checklist for staging dashboard configuration, webhook handshakes, managed-account connections, end-to-end revenue flow, and App Review evidence.
 
-- [ ] **Step 1: Write the runbook acceptance checklist**
+- [x] **Step 1: Write the runbook acceptance checklist**
 
 Include exact staging URLs, exact WhatsApp and Instagram permission names, Development-mode tester boundaries, WABA subscription/phone checks, WhatsApp approved-template restrictions, Instagram customer-initiated 24-hour messaging constraints, and the explicit prohibition on public tenant onboarding before Advanced Access.
 
-- [ ] **Step 2: Add the end-to-end pilot test matrix**
+- [x] **Step 2: Add the end-to-end pilot test matrix**
 
 Require evidence for inbound enquiry, AI answer, recommendation, alternative offer, booking, deposit/payment link, abandoned-enquiry follow-up where the channel permits it, reminder/template send, cancellation/no-show recovery, repeat booking, direct/influenced/recovered attribution, owner report, human handoff, invalid-signature rejection, and duplicate-webhook idempotency.
 
-- [ ] **Step 3: Add Meta App Review evidence capture**
+- [x] **Step 3: Add Meta App Review evidence capture**
 
 List the screencasts, test credentials, reviewer instructions, permission-to-feature mapping, privacy-policy/data-deletion URLs, and webhook proof needed for `business_management`, `whatsapp_business_management`, `whatsapp_business_messaging`, `instagram_business_basic`, and `instagram_business_manage_messages`.
 
-- [ ] **Step 4: Verify documentation consistency**
+- [x] **Step 4: Verify documentation consistency**
 
 Run:
 
@@ -181,7 +181,7 @@ git diff --check
 
 Expected: every required launch term is present and no whitespace errors are reported.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/runbooks/meta-controlled-pilot.md docs/instagram-meta-setup-guide.md

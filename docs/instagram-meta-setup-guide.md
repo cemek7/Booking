@@ -10,6 +10,10 @@
 >
 > ⚠️ Meta renames menus and bumps the Graph API version often. Treat labels as
 > "find the thing that does X". Adapter targets Graph API `v25.0`.
+>
+> For the full controlled-pilot launch gate, WhatsApp setup, revenue-flow test
+> matrix, and App Review evidence checklist, use
+> `docs/runbooks/meta-controlled-pilot.md`.
 
 ## THE TWO URLs — do not mix them up
 
@@ -90,10 +94,13 @@ professional). In Development mode, only app roles/testers can message it — up
 test users before App Review. Add the test IG account under **App Roles → Roles →
 Instagram Testers** and accept the invite from inside that IG account.
 
-## App Review (later — only to go public)
+## App Review (later — only to serve accounts Booka does not own or manage)
 
-To message real customers beyond testers, submit `instagram_business_manage_messages` for
-**App Review** with a screencast of the booking flow. Not needed for the ≤25-user pilot.
+Standard Access is limited to professional accounts Booka owns or manages and has added
+in the App Dashboard. To serve professional accounts Booka does not own or manage, request
+Advanced Access for `instagram_business_basic` and
+`instagram_business_manage_messages` with a screencast of the complete customer-initiated
+booking flow. The controlled managed-account pilot does not prove public onboarding approval.
 
 ## Architecture notes (already built, WhatsApp-safe)
 
