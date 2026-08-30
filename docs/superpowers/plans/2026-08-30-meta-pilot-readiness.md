@@ -106,11 +106,11 @@ git commit -m "fix(meta): standardize WhatsApp Graph API version"
 - Reports per channel: `status`, `missing`, `apiVersion`, `webhookUrl`, and public callback URLs only.
 - Reports WhatsApp `publicOnboardingConfigured` separately from `controlled_pilot_ready`.
 
-- [ ] **Step 1: Write failing Node tests**
+- [x] **Step 1: Write failing Node tests**
 
 Cover three configurations: empty environment returns `not_ready`; managed pilot variables return `controlled_pilot_ready` for both channels; adding `META_EMBEDDED_SIGNUP_CONFIG_ID` makes WhatsApp `publicOnboardingConfigured` true. Recursively assert that no configured secret or access-token value appears in `JSON.stringify(result)`.
 
-- [ ] **Step 2: Run the checker test and confirm it fails**
+- [x] **Step 2: Run the checker test and confirm it fails**
 
 Run:
 
@@ -120,15 +120,15 @@ node --test scripts/check-meta-pilot-readiness.test.mjs
 
 Expected: module-not-found failure because the checker does not exist.
 
-- [ ] **Step 3: Implement deterministic readiness evaluation**
+- [x] **Step 3: Implement deterministic readiness evaluation**
 
 Require HTTPS `APP_URL`; derive `/api/webhooks/whatsapp/meta`, `/api/webhooks/instagram`, and `/api/auth/instagram/callback`. For WhatsApp require `META_APP_ID`, `META_APP_SECRET` or `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_PHONE_NUMBER_ID`, and `WHATSAPP_ACCESS_TOKEN`. For Instagram require `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_OAUTH_STATE_SECRET`, and an exact HTTPS `INSTAGRAM_OAUTH_REDIRECT_URI`. Return missing variable names, never their values.
 
-- [ ] **Step 4: Add the operator command and align templates**
+- [x] **Step 4: Add the operator command and align templates**
 
 Add `"meta:pilot:check": "node scripts/check-meta-pilot-readiness.mjs"`. Ensure all four environment examples contain the same canonical variable names, `WHATSAPP_API_VERSION=v25.0`, and the correct staging/production callback comments.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 Run:
 
@@ -139,7 +139,7 @@ npm run meta:pilot:check
 
 Expected: tests pass; the local command may report missing configuration but exits successfully and prints no secrets.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/check-meta-pilot-readiness.mjs scripts/check-meta-pilot-readiness.test.mjs package.json .env.example env.example deployment/env
