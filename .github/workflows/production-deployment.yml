@@ -133,24 +133,16 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run database migrations
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Database migrations are applied MANUALLY against the shared Supabase
+      # project as a separate, reviewed step before promotion (see
+      # production-readiness.yml). The previous `npm run db:migrate` /
+      # `npm run db:validate` steps referenced scripts that do not exist in
+      # package.json, so this job failed on every push to main even though the
+      # real deploy (deploy-vps.yml) and the migrations themselves were fine.
+      - name: Database migrations (applied manually)
         run: |
-          npm run db:migrate
-          echo "✅ Database migration completed"
-
-      - name: Validate database schema
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          npm run db:validate
-          echo "✅ Database schema validated"
+          echo "ℹ️ Migrations are applied manually to the shared Supabase before promotion."
+          echo "   No automated migration runner is configured (see production-readiness.yml)."
 
   # Staging Deployment
   deploy-staging:
