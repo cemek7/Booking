@@ -372,6 +372,7 @@ psql $DATABASE_URL -f db/migrations/140_whatsapp_message_charges.sql
 psql $DATABASE_URL -f db/migrations/141_overdraft_reservation.sql
 psql $DATABASE_URL -f db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
 psql $DATABASE_URL -f db/migrations/143_message_handoff_warned_on.sql
+psql $DATABASE_URL -f db/migrations/144_low_balance_alerts.sql
 ```
 
 Each has a matching `*_rollback.sql`.
@@ -470,11 +471,35 @@ WHERE reference = '<wallet_reservation_id>';
 
 ### Owner notification
 
-A wallet-exhausted handoff writes a `notifications` row for the tenant and sends a line to
-Booka's **own** ops Telegram channel — not the tenant's. Both are capped at one per tenant per
-day via `ai_wallets.message_handoff_warned_on`. Owners currently receive no push notification;
-they see the dashboard row only once logged in. Factor that into how tenants are warned before
-the cutover.
+Two alerts, different urgency. Both are capped at one per tenant per day, so an owner with 200
+live conversations still gets one message.
+
+| Trigger | Goes to | Capped by |
+|---|---|---|
+| Balance falls to `ai_wallets.low_balance_threshold_credits` (default 25) | in-app + owner email | `low_balance_warned_on` |
+| Wallet exhausted, handoff issued | in-app + owner email + **owner WhatsApp** | `message_handoff_warned_on` |
+
+The low-balance warning is the one that matters operationally: it fires while the tenant can
+still act, rather than after the bot has already gone quiet. A top-up re-arms it automatically by
+lifting the balance back over the threshold.
+
+The owner's WhatsApp alert is sent through the **unmetered** client and is platform-funded. It has
+to be: a metered send would reserve credit against the very wallet the alert is about, be refused,
+and fire another customer-facing handoff — so the alert would fail at exactly the moment it is
+needed, and would recurse.
+
+Owner contact details come from `tenant_users` where `role = 'owner'`. Staff and managers are
+deliberately not alerted — they cannot top up a wallet. **A tenant with no owner email or phone on
+file gets the dashboard row only**, which is logged; check this before the cutover for any tenant
+you expect to run close to their balance.
+
+Booka's own ops Telegram channel still receives a line on exhaustion. That is telemetry for us,
+not a tenant notification.
+
+`public.notifications` has no severity column, and none was added: nothing reads one today, so it
+would be an unused schema change. The discriminator is `meta->>'kind'`
+(`wallet_low_balance` / `wallet_handoff`), which a future dashboard can filter or sort on without
+a migration.
 
 ## Backup & Recovery
 

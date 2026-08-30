@@ -40,6 +40,7 @@ const whatsappMeteringMigrations = [
   'db/migrations/141_overdraft_reservation.sql',
   'db/migrations/142_fix_topup_ai_wallet_ambiguity.sql',
   'db/migrations/143_message_handoff_warned_on.sql',
+  'db/migrations/144_low_balance_alerts.sql',
 ];
 
 function readMigration(path) {
@@ -97,7 +98,7 @@ writeFileSync(
     'Booka staging WhatsApp message metering migrations — fresh schema only',
     whatsappMeteringMigrations,
     `
--- Guard: migrations 139-143 must not be partially or fully present.
+-- Guard: migrations 139-144 must not be partially or fully present.
 DO $$
 DECLARE existing_objects integer;
 BEGIN
@@ -115,7 +116,7 @@ BEGIN
   WHERE object_name IS NOT NULL;
 
   IF existing_objects <> 0 THEN
-    RAISE EXCEPTION 'WhatsApp metering schema is present or partial (% objects). Do not replay 139-143.', existing_objects;
+    RAISE EXCEPTION 'WhatsApp metering schema is present or partial (% objects). Do not replay 139-144.', existing_objects;
   END IF;
 END;
 $$;`,

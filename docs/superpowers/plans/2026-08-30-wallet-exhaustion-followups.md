@@ -3,7 +3,8 @@
 **Spec:** `docs/superpowers/specs/2026-08-30-wallet-exhaustion-followups-design.md`
 **Branch:** `feat/wallet-exhaustion-followups` off `staging`
 **Order:** Phase 1 → 2 → 3. Phases 1 and 2 are independent of Phase 3 and should ship first.
-**Status:** Task 1.1 landed 2026-08-30. Task 1.2 needs a product decision. Phases 2 and 3 open.
+**Status:** Phase 1 Task 1.1 and **all of Phase 2** landed 2026-08-30. Task 1.2 needs a
+product decision (handoff copy). Phase 3 (auto-recharge) open, gated on Task 3.1.
 
 Migrations are plaintext, idempotent, RLS-aware, validated in a throwaway `postgres:16-alpine`
 container. **The user runs migrations on the VPS.** Next free number is **144**.
@@ -41,7 +42,7 @@ copy decision — get it agreed before changing the string, do not pick one sile
 
 ---
 
-## Phase 2 — Tell the owner (§2)
+## Phase 2 — Tell the owner (§2) — ✅ DONE 2026-08-30
 
 ### Task 2.1 — Migration 144: low-balance alert marker
 
@@ -92,12 +93,14 @@ client (assert it explicitly — the recursion guard must be pinned on purpose, 
 a failing channel does not fail the others; the per-tenant-per-day cap holds across many
 conversations.
 
-### Task 2.4 — Severity on `notifications`
+### Task 2.4 — Severity on `notifications` — ✅ DECIDED: no column
 
 **Files:** decision, then possibly `db/migrations/145_*`
 
-`public.notifications` has no severity column, so "urgent" survives only as title text. Either add
-one or accept the dashboard cannot sort by it. **Decide explicitly**; do not leave it implicit.
+**Decision: do not add one.** Only three call sites read `notifications` and none sort by
+severity, so a column would be a schema change with no consumer. The discriminator already exists
+as `meta->>'kind'` (`wallet_low_balance` / `wallet_handoff`), which a future dashboard can filter
+or sort on without a migration. Revisit if a UI actually needs to rank them.
 
 ---
 

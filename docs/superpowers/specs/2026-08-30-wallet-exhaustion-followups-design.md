@@ -1,7 +1,7 @@
 # Wallet-exhaustion follow-ups — design
 
 **Date:** 2026-08-30
-**Status:** §3 landed in full; §1 and §2 proposed
+**Status:** §2 and §3 landed; §1 (auto-recharge) proposed
 **Depends on:** `2026-08-28-whatsapp-message-metering-design.md`, migrations 139–143
 
 ## Why
@@ -120,9 +120,9 @@ screen and a receipt.
 
 ---
 
-## 2. Owner notification
+## 2. Owner notification — **LANDED 2026-08-30**
 
-### Current state — verified
+### Current state before the change
 
 `notifyOwner` in `src/lib/billing/messageHandoff.ts` writes a `notifications` row and sends a line
 to **Booka's own** ops Telegram channel (process-level `TELEGRAM_CHAT_ID`), capped at one per

@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/unmetered';
 import { sendTelegramInfo } from '@/lib/monitoring/telegramAlert';
 import { getHandoffRearmHours } from '@/lib/billing/messageRates';
+import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
 
 /**
  * Wallet-exhausted handoff: the one message a customer gets when the tenant's
@@ -479,9 +480,10 @@ async function markHandoffUnanchored(
 }
 
 /**
- * Tells the tenant their wallet is empty: a `notifications` row on their
- * dashboard, plus a line of ops telemetry to Booka's own Telegram channel
- * (process-level TELEGRAM_CHAT_ID — not the tenant's).
+ * Tells the tenant their wallet is empty: an in-app row, an email to the owner
+ * and a platform-funded WhatsApp to the owner (all via deliverWalletAlert),
+ * plus a line of ops telemetry to Booka's own Telegram channel (process-level
+ * TELEGRAM_CHAT_ID — not the tenant's).
  *
  * Capped at one per tenant per day via `ai_wallets.message_handoff_warned_on`:
  * one exhaustion refuses a send in every live conversation, so without the cap
@@ -502,15 +504,18 @@ async function notifyOwner(
       return;
     }
 
-    // notifications columns are: tenant_id, title, message, meta, read (NO type/body/metadata).
-    await admin.from('notifications').insert({
-      tenant_id: tenantId,
+    await deliverWalletAlert(admin, {
+      tenantId,
+      kind: 'wallet_handoff',
       title: 'Message wallet empty — replies paused',
       message:
         'Your message wallet is out of credit, so the assistant has told this customer '
         + 'a team member will follow up. Top up to resume automated replies.',
-      meta: { kind: 'wallet_handoff', customer_phone: toNumber },
-      read: false,
+      meta: { customer_phone: toNumber },
+      // Exhaustion is the one case worth a platform-funded WhatsApp to the
+      // owner: their bot has stopped answering customers and a dashboard row
+      // they are not looking at will not tell them.
+      whatsappOwner: true,
     });
 
     const { error: markErr } = await admin
