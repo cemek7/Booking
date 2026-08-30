@@ -16,6 +16,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { getEventBus } from '../eventbus/eventBus';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
+import { siasOperations } from '@/lib/sias-operations';
 
 // ===============================
 // PAYMENT SCHEMAS & TYPES
@@ -1867,6 +1868,32 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
         source: 'handlePaymentSuccess',
       },
     });
+
+    const normalizedCurrency = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
+      ? currency.toUpperCase()
+      : null;
+    const hasReportableAmount = Number.isSafeInteger(amountMinor)
+      && Number(amountMinor) >= 0
+      && normalizedCurrency !== null;
+
+    await siasOperations.recordOutcomeAttribution({
+      tenantId,
+      reservationId: bookingId,
+      signal: 'payment_completed',
+      sourceEvent: `payment.${provider}.completed`,
+      attributedTo: provider,
+      value: 1,
+      attributionType: 'processed',
+      verificationStatus: 'system_verified',
+      amountCents: hasReportableAmount ? amountMinor : null,
+      currency: hasReportableAmount ? normalizedCurrency : null,
+      evidenceType: 'payment_completed',
+      verifiedAt: new Date().toISOString(),
+      metadata: {
+        provider,
+        provider_reference: reference,
+      },
+    }).catch(() => undefined);
 
     if (!reservation) return;
 

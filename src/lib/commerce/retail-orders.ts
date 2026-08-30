@@ -584,6 +584,7 @@ export async function transitionRetailOrder(input: {
     payment_status: RetailPaymentStatus;
     fulfillment_status: RetailFulfillmentStatus;
     total_cents: number;
+    currency: string;
     metadata: Record<string, unknown> | null;
     items: Array<Record<string, unknown>>;
     cart_id: string | null;
@@ -733,7 +734,18 @@ export async function transitionRetailOrder(input: {
         customerPhone: order.external_customer_ref,
         signal: 'retail_sale',
         sourceEvent: 'frontdesk.retail.paid',
-        value: Number(order.total_cents ?? 0) > 0 ? Number(order.total_cents) / 100 : 1,
+        value: 1,
+        attributionType: 'processed',
+        verificationStatus: input.actorUserId === 'payment_webhook'
+          ? 'system_verified'
+          : 'merchant_confirmed',
+        amountCents: Number(order.total_cents),
+        currency: order.currency.toUpperCase(),
+        evidenceType: input.actorUserId === 'payment_webhook'
+          ? 'payment_completed'
+          : 'retail_order_marked_paid',
+        verifiedAt: now,
+        verifiedBy: input.actorUserId === 'payment_webhook' ? null : input.actorUserId,
         metadata: {
           retail_order_id: order.id,
           cart_id: order.cart_id,

@@ -21,6 +21,13 @@ export type CampaignRunInput = {
   attribution?: AnyRecord;
 };
 
+export type RevenueAttributionType = 'processed' | 'influenced' | 'recovered';
+export type RevenueVerificationStatus =
+  | 'unverified'
+  | 'merchant_confirmed'
+  | 'system_verified'
+  | 'rejected';
+
 export type AttributionInput = {
   tenantId: string;
   signal: (typeof SIAS_OUTCOME_ATRIBUTION)[number]['id'] | string;
@@ -33,6 +40,14 @@ export type AttributionInput = {
   windowHours?: number | null;
   campaignRunId?: string | null;
   metadata?: AnyRecord;
+  attributionType?: RevenueAttributionType | null;
+  verificationStatus?: RevenueVerificationStatus;
+  amountCents?: number | null;
+  currency?: string | null;
+  evidenceType?: string | null;
+  verifiedAt?: string | Date | null;
+  verifiedBy?: string | null;
+  attributionWindowStartedAt?: string | Date | null;
 };
 
 export type MemoryInput = {
@@ -66,11 +81,39 @@ function normalizeDate(value?: string | Date | null): string | undefined {
   return value instanceof Date ? value.toISOString() : value;
 }
 
+export function validateAttributionInput(input: AttributionInput): void {
+  const hasAmount = input.amountCents !== undefined && input.amountCents !== null;
+  const hasCurrency = input.currency !== undefined && input.currency !== null;
+
+  if (hasAmount && (!Number.isSafeInteger(input.amountCents) || Number(input.amountCents) < 0)) {
+    throw new Error('amountCents must be a non-negative integer in minor units');
+  }
+  if (hasCurrency && !/^[A-Z]{3}$/.test(String(input.currency))) {
+    throw new Error('currency must be a three-letter uppercase ISO code');
+  }
+  if (hasAmount && !input.attributionType) {
+    throw new Error('attributionType is required when amountCents is supplied');
+  }
+  if (hasAmount !== hasCurrency) {
+    throw new Error('amountCents and currency must be supplied together');
+  }
+
+  const verificationStatus = input.verificationStatus ?? 'unverified';
+  if (
+    (verificationStatus === 'merchant_confirmed' || verificationStatus === 'system_verified')
+    && !input.evidenceType?.trim()
+  ) {
+    throw new Error('evidenceType is required for verified attribution');
+  }
+}
+
 export class SiasOperationsService {
   private supabase: ReturnType<typeof createSupabaseAdminClient>;
 
-  constructor(supabase?: ReturnType<typeof createSupabaseAdminClient>) {
-    this.supabase = supabase ?? createSupabaseAdminClient();
+  constructor(supabase?: unknown) {
+    this.supabase = supabase
+      ? supabase as ReturnType<typeof createSupabaseAdminClient>
+      : createSupabaseAdminClient();
   }
 
   async recordCampaignRun(input: CampaignRunInput) {
@@ -148,6 +191,8 @@ export class SiasOperationsService {
   }
 
   async recordOutcomeAttribution(input: AttributionInput) {
+    validateAttributionInput(input);
+
     const payload = {
       tenant_id: input.tenantId,
       reservation_id: input.reservationId ?? null,
@@ -160,6 +205,14 @@ export class SiasOperationsService {
       window_hours: input.windowHours ?? null,
       campaign_run_id: input.campaignRunId ?? null,
       metadata: input.metadata ?? {},
+      attribution_type: input.attributionType ?? null,
+      verification_status: input.verificationStatus ?? 'unverified',
+      amount_cents: input.amountCents ?? null,
+      currency: input.currency ?? null,
+      evidence_type: input.evidenceType ?? null,
+      verified_at: normalizeDate(input.verifiedAt) ?? null,
+      verified_by: input.verifiedBy ?? null,
+      attribution_window_started_at: normalizeDate(input.attributionWindowStartedAt) ?? null,
     };
 
     const { data, error } = await this.supabase

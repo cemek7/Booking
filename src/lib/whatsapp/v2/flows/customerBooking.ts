@@ -901,13 +901,16 @@ async function recordUpsellConversion(
   const productIds = Array.isArray(pending?.product_ids) ? pending!.product_ids! : [];
   const totalCents = typeof pending?.total_cents === 'number' ? pending!.total_cents! : 0;
 
-  // Attribution: monetary value in major units (fallback to 1 if unknown).
+  // Acceptance is an influenced outcome, not verified money. Payment completion
+  // records the explicit amount separately when provider evidence exists.
   await siasOperations.recordOutcomeAttribution({
     tenantId,
     customerPhone: externalId,
     signal: 'upsell_conversion',
     sourceEvent: `frontdesk.${mode}.accepted`,
-    value: totalCents > 0 ? totalCents / 100 : 1,
+    value: 1,
+    attributionType: 'influenced',
+    verificationStatus: 'unverified',
     metadata: { product_ids: productIds, mode, offered_at: pending?.offered_at ?? null },
   }).catch(() => undefined);
 
