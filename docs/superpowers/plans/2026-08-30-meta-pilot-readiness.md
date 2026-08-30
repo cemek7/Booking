@@ -199,21 +199,21 @@ git commit -m "docs(meta): add controlled pilot runbook"
 - Consumes: centralized API version, readiness checker, and pilot runbook.
 - Produces: a tested branch ready to merge into staging; live Meta mutations remain operator actions.
 
-- [ ] **Step 1: Run the focused Meta suites**
+- [x] **Step 1: Run the focused Meta suites**
 
 ```bash
 npx jest src/__tests__/api/tenants/meta-embedded-signup.test.ts src/__tests__/api/webhooks/instagram/route.test.ts src/__tests__/api/webhooks/meta-status-settlement.test.ts src/__tests__/api/webhooks/meta-status-idempotency.test.ts --runInBand
 node --test scripts/check-meta-pilot-readiness.test.mjs
 ```
 
-- [ ] **Step 2: Run changed-file lint and CI typecheck**
+- [x] **Step 2: Run changed-file lint and CI typecheck**
 
 ```bash
 npx eslint src/lib/whatsapp/metaApiConfig.ts src/app/api/tenants/[tenantId]/whatsapp/meta/embedded-signup/route.ts src/components/settings/MetaWhatsAppConnectSection.tsx scripts/check-meta-pilot-readiness.mjs
 npm run typecheck:ci
 ```
 
-- [ ] **Step 3: Run repository verification**
+- [x] **Step 3: Run repository verification**
 
 ```bash
 npm test -- --runInBand
@@ -221,11 +221,11 @@ git diff --check
 git status --short
 ```
 
-- [ ] **Step 4: Record the remaining external actions**
+- [x] **Step 4: Record the remaining external actions**
 
 Report the exact environment variables still missing without values, the Meta Dashboard handshakes still requiring the operator, and the boundary between controlled pilot readiness and public onboarding approval.
 
-- [ ] **Step 5: Commit any verification-only corrections**
+- [x] **Step 5: Commit any verification-only corrections**
 
 ```bash
 git add -u
