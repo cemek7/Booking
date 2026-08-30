@@ -25,6 +25,7 @@ import { runDueTeardownTasks, runOperationalPurge, runFinancialPurge } from '@/l
 import { recomputeProfile } from '@/lib/customers/profile';
 import { normalizePhone } from '@/lib/customers/identity';
 import { revalidateActiveMetaConnections } from '@/lib/whatsapp/metaConnectionValidation';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 const supabaseAdmin = createSupabaseAdminClient();
 type LooseRow = Record<string, unknown>;
@@ -188,7 +189,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // are disabled and marked action_required instead of falling back to a global token.
   try {
     const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
-    const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
+    const version = getWhatsAppGraphApiVersion();
     results.meta_credential_revalidation = await revalidateActiveMetaConnections(supabaseAdmin, {
       apiBase: `${baseUrl}/${version}`,
     });

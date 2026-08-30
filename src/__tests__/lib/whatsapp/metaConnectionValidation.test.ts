@@ -12,7 +12,7 @@ import {
 
 const mockFetch = jest.mocked(fetchWithTimeout);
 const mockGetStoredProviderApiKey = jest.mocked(getStoredProviderApiKey);
-const metaConfig = { apiBase: 'https://graph.example/v18.0' };
+const metaConfig = { apiBase: 'https://graph.example/v25.0' };
 
 function response(status: number, body: unknown = {}): Response {
   return { ok: status >= 200 && status < 300, status, json: jest.fn().mockResolvedValue(body) } as unknown as Response;
