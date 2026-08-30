@@ -3,7 +3,6 @@ import { defaultLogger } from '@/lib/logger';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
 import { siasOperations } from '@/lib/sias-operations';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type CampaignRow = {
   id: string;
