@@ -1,7 +1,7 @@
 # Wallet-exhaustion follow-ups — design
 
 **Date:** 2026-08-30
-**Status:** proposed (§3 partly landed — see §3.1)
+**Status:** §3 landed in full; §1 and §2 proposed
 **Depends on:** `2026-08-28-whatsapp-message-metering-design.md`, migrations 139–143
 
 ## Why
@@ -187,12 +187,13 @@ Fixed two ways:
 
 ### 3.2 Remaining
 
-- **The 24-hour service window is not asserted.** The handoff sends free-form text, which Meta only
-  permits inside the customer-service window. Today this is *implicitly* safe: the handoff requires
-  a `chats` row, and only inbound conversations have one, so there has always been a recent inbound.
-  That is a coincidence of the current call graph, not a check. Assert
-  `whatsapp_conversations.last_inbound_at` is within 24h before sending, and skip otherwise —
-  outside the window Meta rejects the send anyway, so the only thing lost is a confusing error.
+- ~~**The 24-hour service window is not asserted.**~~ **Landed 2026-08-30.** The handoff sends
+  free-form text, which Meta permits only inside the customer-service window. This was *implicitly*
+  safe — a handoff needs a `chats` row and only inbound conversations have one — but that was a
+  property of the call graph, not a check. `readConversationGuards` now reads
+  `whatsapp_conversations.last_inbound_at` in the **same query** as the opt-out check (same row, no
+  extra round trip) and returns `outside_service_window` when it is older than 24h. Fails toward
+  sending on a read error or a missing row, matching the opt-out guard.
 - **Instagram.** `triggerWalletHandoff` returns `unsupported_channel` for Instagram. When that
   channel is supported, the opt-out check must be extended: Instagram opt-out state does not live
   in `whatsapp_conversations`.

@@ -3,6 +3,7 @@
 **Spec:** `docs/superpowers/specs/2026-08-30-wallet-exhaustion-followups-design.md`
 **Branch:** `feat/wallet-exhaustion-followups` off `staging`
 **Order:** Phase 1 → 2 → 3. Phases 1 and 2 are independent of Phase 3 and should ship first.
+**Status:** Task 1.1 landed 2026-08-30. Task 1.2 needs a product decision. Phases 2 and 3 open.
 
 Migrations are plaintext, idempotent, RLS-aware, validated in a throwaway `postgres:16-alpine`
 container. **The user runs migrations on the VPS.** Next free number is **144**.
@@ -13,7 +14,7 @@ container. **The user runs migrations on the VPS.** Next free number is **144**.
 
 Small, and it removes an implicit assumption before anyone else changes the call graph.
 
-### Task 1.1 — Assert the 24-hour service window before a handoff
+### Task 1.1 — Assert the 24-hour service window before a handoff — ✅ DONE 2026-08-30
 
 **Files:** `src/lib/billing/messageHandoff.ts`, `src/__tests__/lib/billing/messageHandoff.test.ts`
 

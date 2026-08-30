@@ -47,6 +47,7 @@ export type WalletHandoffReason =
   | 'no_provider'
   | 'unsupported_channel'
   | 'opted_out'
+  | 'outside_service_window'
   | 'error';
 
 /**
@@ -225,28 +226,54 @@ async function stampChat(
   return true;
 }
 
+const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
- * Has this customer unsubscribed? Read errors return false — a failed lookup
- * must not silently suppress a handoff the tenant is paying for — but a real
- * opt-out always wins.
+ * The two conversation-level reasons not to send a handoff, read in ONE query
+ * because they live in the same row.
+ *
+ *  - `optedOut`: this send bypasses sendGovernedInitiated, so this is the only
+ *    opt-out guard on the path.
+ *  - `outsideServiceWindow`: the handoff is free-form text, which Meta permits
+ *    only within 24h of the customer's last inbound message. Today that holds
+ *    implicitly — a handoff needs a `chats` row and only inbound conversations
+ *    have one — but that is a coincidence of the current call graph, not a
+ *    check. Outside the window Meta rejects the send anyway, so asserting it
+ *    costs nothing and turns a confusing provider error into a clear skip.
+ *
+ * Both fail toward SENDING on a read error: a broken lookup must not silently
+ * kill a feature the tenant depends on. A real opt-out or a real stale window
+ * always wins.
  */
-async function isOptedOut(
+async function readConversationGuards(
   admin: SupabaseClient,
   tenantId: string,
   toNumber: string,
-): Promise<boolean> {
+): Promise<{ optedOut: boolean; outsideServiceWindow: boolean }> {
   const { data, error } = await admin
     .from('whatsapp_conversations')
-    .select('opted_out_at')
+    .select('opted_out_at, last_inbound_at')
     .eq('tenant_id', tenantId)
     .eq('phone_number', toNumber)
     .maybeSingle();
 
   if (error) {
-    console.warn('[messageHandoff] opt-out check failed, proceeding', { tenantId, error });
-    return false;
+    console.warn('[messageHandoff] conversation guard lookup failed, proceeding', { tenantId, error });
+    return { optedOut: false, outsideServiceWindow: false };
   }
-  return !!(data as { opted_out_at?: string | null } | null)?.opted_out_at;
+
+  const row = data as { opted_out_at?: string | null; last_inbound_at?: string | null } | null;
+  if (!row) return { optedOut: false, outsideServiceWindow: false };
+
+  const lastInboundMs = row.last_inbound_at ? Date.parse(row.last_inbound_at) : Number.NaN;
+  return {
+    optedOut: !!row.opted_out_at,
+    // An unparseable or missing timestamp is treated as in-window, consistent
+    // with failing toward sending. Only a timestamp we can read AND that is
+    // genuinely stale blocks the send.
+    outsideServiceWindow: Number.isFinite(lastInboundMs)
+      && Date.now() - lastInboundMs > SERVICE_WINDOW_MS,
+  };
 }
 
 /**
@@ -307,9 +334,14 @@ export async function triggerWalletHandoff(
     // this path. The sharpest case is a customer texting STOP into an exhausted
     // wallet: without this they would be told a human will follow up, moments
     // after asking not to be contacted.
-    if (await isOptedOut(admin, tenantId, toNumber)) {
+    const guards = await readConversationGuards(admin, tenantId, toNumber);
+    if (guards.optedOut) {
       console.warn('[messageHandoff] suppressed: customer has opted out', { tenantId });
       return { sent: false, reason: 'opted_out' };
+    }
+    if (guards.outsideServiceWindow) {
+      console.warn('[messageHandoff] suppressed: outside the 24h service window', { tenantId });
+      return { sent: false, reason: 'outside_service_window' };
     }
 
     const metadata = (chat.metadata ?? {}) as Record<string, unknown>;
