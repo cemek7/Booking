@@ -129,7 +129,7 @@ function seedSendPath(options: {
 } = {}) {
   const metadata = options.metadata ?? {};
   pushDb({ id: 'chat-1', metadata });
-  pushDb({ opted_out_at: options.optedOutAt ?? null });
+  pushDb({ opted_out_at: options.optedOutAt ?? null, last_inbound_at: hoursAgo(1) });
   pushDb(options.wallet ?? null);
   pushDb({ id: 'chat-1', metadata });
   pushDb(options.stampRows ?? [{ id: 'chat-1' }]);
@@ -208,7 +208,7 @@ describe('triggerWalletHandoff', () => {
     // Exhaust 09:00 → top up 10:00 → re-exhaust 15:00: the stamp is only six
     // hours old, so the clock alone would keep this customer silent.
     pushDb({ id: 'chat-1', metadata: { wallet_handoff_at: hoursAgo(6) } });
-    pushDb({ opted_out_at: null });
+    pushDb({ opted_out_at: null, last_inbound_at: hoursAgo(1) });
     pushDb([{ id: 'ledger-1' }]); // ai_wallet_ledger: a topup landed since
     pushDb(null); // wallet markers
     pushDb({ id: 'chat-1', metadata: { wallet_handoff_at: hoursAgo(6) } });
@@ -309,7 +309,7 @@ describe('triggerWalletHandoff', () => {
 
   it('suppresses the handoff while stamping is known to be broken for the tenant', async () => {
     pushDb({ id: 'chat-1', metadata: {} });
-    pushDb({ opted_out_at: null });
+    pushDb({ opted_out_at: null, last_inbound_at: hoursAgo(1) });
     pushDb({ message_handoff_unanchored_on: today });
     const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
     expect(r).toEqual({ sent: false, reason: 'already_handed_off' });
@@ -358,7 +358,7 @@ describe('triggerWalletHandoff — opt-out compliance', () => {
     // wallet: without this the customer is told a human will follow up moments
     // after asking not to be contacted.
     pushDb({ id: 'chat-1', metadata: {} });
-    pushDb({ opted_out_at: '2026-08-30T00:00:00Z' });
+    pushDb({ opted_out_at: '2026-08-30T00:00:00Z', last_inbound_at: hoursAgo(1) });
     const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
     expect(r).toEqual({ sent: false, reason: 'opted_out' });
     expect(sendTextMessage).not.toHaveBeenCalled();
@@ -368,6 +368,41 @@ describe('triggerWalletHandoff — opt-out compliance', () => {
     // A failed lookup must not silently suppress a handoff the tenant relies on.
     pushDb({ id: 'chat-1', metadata: {} });
     pushDbErr({ message: 'boom' });
+    pushDb(null);
+    pushDb({ id: 'chat-1', metadata: {} });
+    pushDb([{ id: 'chat-1' }]);
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+    const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+    expect(r).toEqual({ sent: true, reason: 'sent' });
+  });
+});
+
+describe('triggerWalletHandoff — 24h service window', () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it('does not send free-form text outside the service window', async () => {
+    // Meta only permits free-form messages within 24h of the customer's last
+    // inbound. This held implicitly before — a handoff needs a chats row, and
+    // only inbound conversations have one — but that was a property of the call
+    // graph, not a check.
+    pushDb({ id: 'chat-1', metadata: {} });
+    pushDb({ opted_out_at: null, last_inbound_at: hoursAgo(25) });
+    const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+    expect(r).toEqual({ sent: false, reason: 'outside_service_window' });
+    expect(sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it('sends when the last inbound is recent', async () => {
+    seedSendPath();
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+    const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+    expect(r).toEqual({ sent: true, reason: 'sent' });
+  });
+
+  it('sends when there is no conversation row to judge the window by', async () => {
+    // Fail toward sending: a missing row is not evidence the window has closed.
+    pushDb({ id: 'chat-1', metadata: {} });
+    pushDb(null);
     pushDb(null);
     pushDb({ id: 'chat-1', metadata: {} });
     pushDb([{ id: 'chat-1' }]);
