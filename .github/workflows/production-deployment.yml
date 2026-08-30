@@ -1,10 +1,12 @@
 name: 🚀 Production Deployment Pipeline
 
+# Manual-only: this pipeline is placeholder scaffolding (echo-only deploy steps,
+# live-URL health checks) and duplicates the real production deploy in
+# deploy-vps.yml. It was auto-running on every push/PR to main and failing
+# (its migration job called non-existent npm scripts), producing false-failure
+# noise on every promotion. Restricted to workflow_dispatch until it is built
+# out into a real deploy path.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
