@@ -35,8 +35,8 @@ export function buildMetaPilotReadiness(env = process.env) {
   const whatsappMissing = [];
   if (!appUrl) whatsappMissing.push('APP_URL (HTTPS required)');
   if (!configured(env, 'META_APP_ID')) whatsappMissing.push('META_APP_ID');
-  if (!configured(env, 'META_APP_SECRET') && !configured(env, 'WHATSAPP_APP_SECRET')) {
-    whatsappMissing.push('META_APP_SECRET or WHATSAPP_APP_SECRET');
+  if (!configured(env, 'WHATSAPP_APP_SECRET')) {
+    whatsappMissing.push('WHATSAPP_APP_SECRET');
   }
   if (!configured(env, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN')) {
     whatsappMissing.push('WHATSAPP_WEBHOOK_VERIFY_TOKEN');

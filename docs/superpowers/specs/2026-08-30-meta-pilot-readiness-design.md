@@ -1,6 +1,6 @@
 # Booka Meta Pilot Readiness
 
-**Date:** 2026-08-30  
+**Date:** 2026-08-30
 **Status:** Approved in chat; awaiting written-spec review
 
 ## Objective

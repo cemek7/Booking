@@ -24,4 +24,6 @@ test('bundle is atomic, guarded, verified, and excludes disposable setup', () =>
     sql.lastIndexOf('sias_outcome_attributions missing columns') <
       sql.lastIndexOf('commit;'),
   );
+  assert.equal(sql.endsWith('\n'), true);
+  assert.equal(sql.endsWith('\n\n'), false);
 });

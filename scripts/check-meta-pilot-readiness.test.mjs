@@ -12,6 +12,7 @@ const controlledPilotEnvironment = {
   APP_URL: 'https://staging.app.techclave.cloud',
   META_APP_ID: 'public-whatsapp-app-id',
   META_APP_SECRET: 'private-whatsapp-app-secret',
+  WHATSAPP_APP_SECRET: 'private-whatsapp-webhook-secret',
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: 'private-whatsapp-verify-token',
   WHATSAPP_BUSINESS_ACCOUNT_ID: 'public-waba-id',
   WHATSAPP_PHONE_NUMBER_ID: 'public-phone-id',
@@ -53,6 +54,7 @@ test('reports both managed channels ready without claiming public onboarding', (
 
   for (const secret of [
     controlledPilotEnvironment.META_APP_SECRET,
+    controlledPilotEnvironment.WHATSAPP_APP_SECRET,
     controlledPilotEnvironment.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
     controlledPilotEnvironment.WHATSAPP_ACCESS_TOKEN,
     controlledPilotEnvironment.INSTAGRAM_APP_SECRET,
@@ -61,6 +63,16 @@ test('reports both managed channels ready without claiming public onboarding', (
   ]) {
     assert.equal(output.includes(secret), false);
   }
+});
+
+test('does not approve WhatsApp when its webhook app secret is missing', () => {
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    WHATSAPP_APP_SECRET: '',
+  });
+
+  assert.equal(readiness.whatsapp.status, 'not_ready');
+  assert.ok(readiness.whatsapp.missing.includes('WHATSAPP_APP_SECRET'));
 });
 
 test('reports Embedded Signup configuration separately from Meta approval', () => {
