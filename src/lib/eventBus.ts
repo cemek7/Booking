@@ -18,25 +18,32 @@ export type {
   EventHandler,
 } from './eventbus/eventBus';
 
-import { getEventBus } from './eventbus/eventBus';
+import { EventBusService, getEventBus } from './eventbus/eventBus';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface PublishEventOptions {
-  supabase?: unknown;
+  supabase?: SupabaseClient;
   event: string;
   payload: Record<string, unknown>;
   tenantId?: string;
 }
 
 /**
- * Publish a generic event via the shared EventBus instance.
+ * Publish a generic event via the EventBus.
  * Accepts the legacy object signature: { supabase?, event, payload, tenantId? }
+ *
+ * When a `supabase` client is supplied (as the payment/scheduling/security
+ * services do), the event is published through THAT client rather than the
+ * shared singleton's request-scoped client. Previously the injected client was
+ * silently ignored, so events raised from background/service contexts — where
+ * the singleton's cookie-based client cannot read a request — were dropped.
  */
 export async function publishEvent(options: PublishEventOptions): Promise<null | void> {
   try {
-    const { event: eventType, payload, tenantId } = options;
+    const { event: eventType, payload, tenantId, supabase } = options;
     const aggregateId = (payload.id as string) ?? 'system';
     const aggregateType = eventType.split('.')[0] ?? 'system';
-    const bus = getEventBus();
+    const bus = supabase ? new EventBusService({}, supabase) : getEventBus();
     await bus.publishEvent(aggregateId, aggregateType, eventType, payload, { tenantId });
   } catch {
     return null;

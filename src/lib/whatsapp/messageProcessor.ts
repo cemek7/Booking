@@ -1,9 +1,8 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
-import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getTenantWhatsAppConfig, isTenantWhatsAppAgentEnabled } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
-import { detectIntent } from '@/lib/intentDetector';
+import { detectIntent, type IntentType } from '@/lib/intentDetector';
 import { dialogBookingBridge } from '@/lib/dialogBookingBridge';
 import dialogManager from '@/lib/dialogManager';
 import { reviewCollectionAgent } from '@/lib/ai/reviewCollectionAgent';
@@ -116,7 +115,7 @@ class WhatsAppMessageProcessor {
       defaultLogger.info(`Processing batch of ${messages.length} messages`);
 
       // Process messages in parallel with limited concurrency
-      const promises = messages.map(message => 
+      const promises = (messages as MessageQueueItem[]).map(message =>
         this.processMessage(message).catch(error => {
           defaultLogger.error(`Failed to process message ${message.id}:`, error);
           return this.markMessageFailed(message.id, error.message);
@@ -146,8 +145,14 @@ class WhatsAppMessageProcessor {
         throw new Error('No WhatsApp configuration found for tenant');
       }
 
-      // Only reply if the tenant owner has enabled the AI agent
-      if (!whatsappConfig.agent_enabled) {
+      // Only reply if the tenant owner has enabled the AI agent.
+      // NOTE: this previously read `whatsappConfig.agent_enabled`, which does
+      // not exist on EvolutionAPIConfig — it was always undefined, so every
+      // message was skipped and the agent never replied. Use the dedicated
+      // fail-closed lookup that reads the whatsapp_configurations.agent_enabled
+      // column directly.
+      const agentEnabled = await isTenantWhatsAppAgentEnabled(message.tenant_id);
+      if (!agentEnabled) {
         defaultLogger.info(`[PROCESSOR] Agent disabled for tenant ${message.tenant_id}, skipping reply`);
         await this.updateMessageStatus(message.id, 'completed');
         return;
@@ -179,9 +184,13 @@ class WhatsAppMessageProcessor {
       const intentResult = await detectIntent(
         message.content,
         {
-          previousIntent: conversationState.context.last_intent,
+          previousIntent: conversationState.context.last_intent as IntentType | undefined,
           conversationTurn: conversationState.conversation_history.length,
-          tenantVertical: conversationState.context.tenant_vertical,
+          tenantVertical: (['beauty', 'hospitality', 'medicine'].includes(
+            conversationState.context.tenant_vertical as string
+          )
+            ? conversationState.context.tenant_vertical
+            : undefined) as 'beauty' | 'hospitality' | 'medicine' | undefined,
           timeOfDay: this.getTimeOfDay()
         },
         message.tenant_id,
@@ -304,7 +313,7 @@ class WhatsAppMessageProcessor {
 
     } catch (error) {
       defaultLogger.error(`Error processing message ${message.id}:`, error);
-      await this.handleMessageError(message, error);
+      await this.handleMessageError(message, error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -355,7 +364,7 @@ class WhatsAppMessageProcessor {
         .eq('id', tenantId)
         .maybeSingle();
       if (tenantLookupError) {
-        defaultLogger.error(`[MessageProcessor] Failed to fetch tenant industry for ${tenantId}:`, tenantLookupError.message, tenantLookupError);
+        defaultLogger.error(`[MessageProcessor] Failed to fetch tenant industry for ${tenantId}: ${tenantLookupError.message}`, tenantLookupError);
       }
 
       const conversationState: ConversationState = {
