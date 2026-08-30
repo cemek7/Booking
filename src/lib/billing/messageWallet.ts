@@ -5,6 +5,7 @@ import {
   getGraceOverdraftDefault,
 } from '@/lib/billing/messageRates';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
+import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
 
 const CHARGES_TABLE = 'whatsapp_message_charges';
 
@@ -65,6 +66,8 @@ type WalletRow = {
   message_rate_credits?: number | string | null;
   grace_overdraft_credits?: number | string | null;
   auto_recharge_enabled?: boolean | null;
+  low_balance_threshold_credits?: number | string | null;
+  low_balance_warned_on?: string | null;
 };
 
 function firstRow<T>(data: unknown): T | null {
@@ -141,7 +144,12 @@ async function callReserveRpc(
   allowOverdraftCredits: number,
   messageKind: MessageKind,
   attribution?: Record<string, unknown>,
-): Promise<{ allowed: boolean; reservationId: string | null; reason: string | null }> {
+): Promise<{
+  allowed: boolean;
+  reservationId: string | null;
+  reason: string | null;
+  balanceCredits: number | null;
+}> {
   const { data, error } = await admin.rpc('reserve_ai_wallet_spend', {
     p_tenant_id: tenantId,
     p_amount_credits: amountCredits,
@@ -167,6 +175,7 @@ async function callReserveRpc(
     allowed: !!row?.allowed,
     reservationId: row?.reservation_id ?? null,
     reason: row?.reason ?? null,
+    balanceCredits: row?.balance_credits != null ? Number(row.balance_credits) : null,
   };
 }
 
@@ -246,7 +255,10 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
 
     const { data: walletData } = await p.admin
       .from('ai_wallets')
-      .select('message_rate_credits, grace_overdraft_credits, auto_recharge_enabled')
+      .select(
+        'message_rate_credits, grace_overdraft_credits, auto_recharge_enabled, '
+        + 'low_balance_threshold_credits, low_balance_warned_on',
+      )
       .eq('tenant_id', p.tenantId)
       .maybeSingle();
     const wallet = walletData as WalletRow | null;
@@ -301,6 +313,11 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
       return { allow: false, reason: 'handoff' };
     }
 
+    // Warn the owner while they can still act. Cheap in the common case: the
+    // wallet row is already loaded and the balance came back with the
+    // reservation, so a healthy balance costs two comparisons and no I/O.
+    await maybeWarnLowBalance(p.admin, p.tenantId, reserveRes.balanceCredits, wallet);
+
     const mode: ReserveMode = reserveRes.reason === 'reserved_grace' ? 'grace' : 'paid';
     const chargeId = await insertChargeRow(p.admin, {
       tenant_id: p.tenantId,
@@ -345,6 +362,67 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
     // the cost of its own bugs: let the send proceed unbilled and unstuck.
     console.error('[messageWallet] reserveOutboundMessage failed', error);
     return { allow: true, chargeId: null, mode: 'grace' };
+  }
+}
+
+/**
+ * Emits a low-balance warning when the post-reservation balance crosses the
+ * tenant's threshold downward, at most once per tenant per day.
+ *
+ * `ai_wallets.low_balance_threshold_credits` has existed since migration 077
+ * (DEFAULT 25) and nothing on the message path ever read it. Warning only at
+ * exhaustion is warning after the damage — the bot is already silent and
+ * customers are already being handed off. This fires while the tenant can still
+ * top up.
+ *
+ * A top-up re-arms it naturally by lifting the balance back over the threshold.
+ * Never throws, and never blocks a send: a healthy balance returns before any
+ * I/O at all.
+ */
+async function maybeWarnLowBalance(
+  admin: SupabaseClient,
+  tenantId: string,
+  balanceCredits: number | null,
+  wallet: WalletRow | null,
+): Promise<void> {
+  try {
+    if (balanceCredits === null || !Number.isFinite(balanceCredits)) return;
+
+    const threshold = wallet?.low_balance_threshold_credits != null
+      ? Number(wallet.low_balance_threshold_credits)
+      : null;
+    if (threshold === null || !Number.isFinite(threshold) || threshold <= 0) return;
+    if (balanceCredits > threshold) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    if (wallet?.low_balance_warned_on === today) return;
+
+    // Claim the day BEFORE delivering. Two concurrent sends can both observe a
+    // stale marker; claiming first narrows that to the width of one update
+    // instead of the width of an email round-trip.
+    const { error } = await admin
+      .from('ai_wallets')
+      .upsert({ tenant_id: tenantId, low_balance_warned_on: today }, { onConflict: 'tenant_id' });
+    if (error) {
+      console.warn('[messageWallet] could not claim the low-balance warning day', {
+        tenantId, error,
+      });
+      return;
+    }
+
+    await deliverWalletAlert(admin, {
+      tenantId,
+      kind: 'wallet_low_balance',
+      title: 'Message wallet running low',
+      message:
+        `Your message wallet is down to ${balanceCredits.toFixed(0)} credits. `
+        + 'Top up to keep automated replies running — once it reaches zero, customers '
+        + 'get a "someone will follow up" message instead of an answer.',
+      meta: { balance_credits: balanceCredits, threshold_credits: threshold },
+    });
+  } catch (error) {
+    // An alert must never cost a tenant a message.
+    console.warn('[messageWallet] low-balance warning failed', { tenantId, error });
   }
 }
 

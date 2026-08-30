@@ -411,3 +411,32 @@ describe('triggerWalletHandoff — 24h service window', () => {
     expect(r).toEqual({ sent: true, reason: 'sent' });
   });
 });
+
+describe('triggerWalletHandoff — owner reaches the owner', () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it('messages the owner on WhatsApp through the unmetered client', async () => {
+    // Before this the owner got a dashboard row they had to already be logged
+    // in to see. The owner send MUST be unmetered: a metered one would reserve
+    // against the very wallet that is empty, be refused, and fire another
+    // customer handoff.
+    pushDb({ id: 'chat-1', metadata: {} });                       // chats
+    pushDb({ opted_out_at: null, last_inbound_at: hoursAgo(1) }); // guards
+    pushDb(null);                                                 // wallet markers
+    pushDb({ id: 'chat-1', metadata: {} });                       // metadata re-read
+    pushDb([{ id: 'chat-1' }]);                                   // stamp update
+    pushDb(null);                                                 // messages insert
+    pushDb(null);                                                 // notifications insert
+    pushDb({ email: 'owner@example.com', phone: '2349000000000' }); // owner lookup
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+
+    const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+    expect(r).toEqual({ sent: true, reason: 'sent' });
+
+    // Two sends: the customer handoff and the owner alert.
+    expect(sendTextMessage).toHaveBeenCalledTimes(2);
+    expect(sendTextMessage.mock.calls[0][0]).toBe('2348012345678');
+    expect(sendTextMessage.mock.calls[1][0]).toBe('2349000000000');
+    expect(providerMod.getTenantWhatsAppProviderClientUnmetered).toHaveBeenCalledWith('t1');
+  });
+});

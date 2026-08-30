@@ -9,7 +9,12 @@ import {
 jest.mock('@/lib/billing/spendCaps/spendGuard', () => ({
   checkCaps: jest.fn(),
 }));
+
+jest.mock('@/lib/billing/walletAlerts', () => ({
+  deliverWalletAlert: jest.fn(),
+}));
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
+import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
 
 // ── queue-based supabase mock ────────────────────────────────────────────────
 // Extends the pattern from spendGuard.test.ts with RPC call recording and
@@ -40,6 +45,7 @@ type MockChain = {
   in: FluentMethod;
   insert: (row: Record<string, unknown>) => MockChain;
   update: (row: Record<string, unknown>) => MockChain;
+  upsert: (row: Record<string, unknown>) => MockChain;
   delete: FluentMethod;
   maybeSingle: () => Promise<QueryResp>;
   single: () => Promise<QueryResp>;
@@ -55,6 +61,7 @@ const rpcResponses: Resp[] = [];
 const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
 const updates: Array<{ table: string; row: Record<string, unknown> }> = [];
+const upserts: Array<{ table: string; row: Record<string, unknown> }> = [];
 
 function pushDb(data: unknown) {
   responses.push({ data, error: null });
@@ -87,6 +94,10 @@ function makeChain(table: string): MockChain {
     inserts.push({ table, row });
     return chain;
   };
+  chain.upsert = (row: Record<string, unknown>) => {
+    upserts.push({ table, row });
+    return chain;
+  };
   chain.update = (row: Record<string, unknown>) => {
     updates.push({ table, row });
     return chain;
@@ -112,6 +123,7 @@ beforeEach(() => {
   rpcCalls.length = 0;
   inserts.length = 0;
   updates.length = 0;
+  upserts.length = 0;
 });
 
 describe('reserveOutboundMessage', () => {
@@ -493,5 +505,77 @@ describe('releaseStaleReservations', () => {
     expect(r.released).toBe(0);
     const revertUpdate = updates[updates.length - 1];
     expect(revertUpdate.row).toMatchObject({ status: 'reserved' });
+  });
+});
+
+describe('reserveOutboundMessage — low-balance warning', () => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  beforeEach(() => {
+    process.env.BOOKA_MESSAGE_METERING_MODE = 'live';
+    process.env.BOOKA_MESSAGE_RATE_CREDITS = '14';
+    process.env.BOOKA_MESSAGE_MARKUP = '1.6';
+    jest.clearAllMocks();
+    (deliverWalletAlert as jest.Mock).mockResolvedValue(undefined);
+    (checkCaps as jest.Mock).mockResolvedValue({ allowed: true, degraded: false });
+  });
+
+  function seedReserve(wallet: Record<string, unknown>, balanceAfter: number) {
+    pushDb(wallet);
+    pushRpc([{ allowed: true, balance_credits: balanceAfter, reservation_id: 'res-1', reason: 'reserved' }]);
+  }
+
+  it('warns while the tenant can still act, not after the bot goes silent', async () => {
+    seedReserve({ grace_overdraft_credits: 100, low_balance_threshold_credits: 25 }, 20);
+    pushDb(null);             // claim the warning day
+    pushDb({ id: 'charge-1' });
+    const r = await reserveOutboundMessage({
+      admin: adminAny, tenantId: 't1', provider: 'meta', messageKind: 'freeform',
+    });
+    expect(r.allow).toBe(true);
+    expect(deliverWalletAlert).toHaveBeenCalledTimes(1);
+    const alert = (deliverWalletAlert as jest.Mock).mock.calls[0][1] as { kind: string };
+    expect(alert.kind).toBe('wallet_low_balance');
+  });
+
+  it('stays quiet while the balance is healthy', async () => {
+    seedReserve({ grace_overdraft_credits: 100, low_balance_threshold_credits: 25 }, 400);
+    pushDb({ id: 'charge-1' });
+    await reserveOutboundMessage({
+      admin: adminAny, tenantId: 't1', provider: 'meta', messageKind: 'freeform',
+    });
+    expect(deliverWalletAlert).not.toHaveBeenCalled();
+  });
+
+  it('warns once per day, not once per message', async () => {
+    seedReserve(
+      { grace_overdraft_credits: 100, low_balance_threshold_credits: 25, low_balance_warned_on: today },
+      20,
+    );
+    pushDb({ id: 'charge-1' });
+    await reserveOutboundMessage({
+      admin: adminAny, tenantId: 't1', provider: 'meta', messageKind: 'freeform',
+    });
+    expect(deliverWalletAlert).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when no threshold is configured', async () => {
+    seedReserve({ grace_overdraft_credits: 100 }, 1);
+    pushDb({ id: 'charge-1' });
+    await reserveOutboundMessage({
+      admin: adminAny, tenantId: 't1', provider: 'meta', messageKind: 'freeform',
+    });
+    expect(deliverWalletAlert).not.toHaveBeenCalled();
+  });
+
+  it('never lets an alert failure cost the tenant a message', async () => {
+    (deliverWalletAlert as jest.Mock).mockRejectedValueOnce(new Error('smtp down'));
+    seedReserve({ grace_overdraft_credits: 100, low_balance_threshold_credits: 25 }, 20);
+    pushDb(null);
+    pushDb({ id: 'charge-1' });
+    const r = await reserveOutboundMessage({
+      admin: adminAny, tenantId: 't1', provider: 'meta', messageKind: 'freeform',
+    });
+    expect(r).toMatchObject({ allow: true, chargeId: 'charge-1' });
   });
 });
