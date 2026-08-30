@@ -151,6 +151,7 @@ RETURNS TABLE (
   reason TEXT
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -224,6 +225,7 @@ RETURNS TABLE (
   reason TEXT
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -310,6 +312,7 @@ RETURNS TABLE (
   ledger_id UUID
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -357,7 +360,20 @@ BEGIN
 END;
 $$;
 
+-- SECURITY: Postgres grants EXECUTE to PUBLIC on every new function, and 077
+-- never revoked it. Verified in a container: after 077, `anon` and
+-- `authenticated` can execute all four wallet functions. That was survivable
+-- only because topup_ai_wallet was broken and always raised — this migration
+-- fixes it, so without these REVOKEs it would become an anonymously callable
+-- RPC that creates wallet credit out of nothing. Migration 141 did the same for
+-- reserve/settle; this closes the remaining two.
+REVOKE ALL ON FUNCTION public.topup_ai_wallet(UUID, NUMERIC, TEXT, TEXT, JSONB)
+  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.ensure_ai_wallet(UUID, TEXT)
+  FROM PUBLIC, anon, authenticated;
+
 GRANT EXECUTE ON FUNCTION public.topup_ai_wallet(UUID, NUMERIC, TEXT, TEXT, JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.ensure_ai_wallet(UUID, TEXT) TO service_role;
 -- END db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
 
 -- BEGIN db/migrations/143_message_handoff_warned_on.sql

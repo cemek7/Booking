@@ -21,6 +21,7 @@ RETURNS TABLE (
   reason TEXT
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   wallet public.ai_wallets;
@@ -96,6 +97,7 @@ RETURNS TABLE (
   reason TEXT
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   wallet public.ai_wallets;

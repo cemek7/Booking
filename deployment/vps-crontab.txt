@@ -35,3 +35,8 @@ CRON_SECRET=CHANGE_ME
 
 # nightly rebooking follow-ups / cycle nudges — 22:00 daily (header: Authorization: Bearer)
 0 22 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/nightly" >/dev/null 2>&1
+
+# stale message-charge reservation sweeper — every 15 min (header: Authorization: Bearer)
+# Releases wallet reservations that never got a Meta delivery status. A sustained
+# non-zero "released" count means the Meta status webhook has stopped delivering.
+*/15 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/message-charges" >/dev/null 2>&1

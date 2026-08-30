@@ -15,6 +15,7 @@ RETURNS TABLE (
   ledger_id UUID
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   wallet public.ai_wallets;
@@ -62,3 +63,17 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.topup_ai_wallet(UUID, NUMERIC, TEXT, TEXT, JSONB) TO service_role;
+
+-- The execution boundary is held on BOTH sides. Rolling back restores the
+-- previous (broken) function body, which is what a rollback is for — but it
+-- must never restore PUBLIC/anon EXECUTE on functions that create or move
+-- wallet credit. Postgres grants EXECUTE to PUBLIC on every new function and
+-- 077 never revoked it, so re-issuing these here is what keeps a rollback from
+-- reinstating a vulnerability in the name of symmetry. Matches migration 141.
+REVOKE ALL ON FUNCTION public.topup_ai_wallet(UUID, NUMERIC, TEXT, TEXT, JSONB)
+  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.ensure_ai_wallet(UUID, TEXT)
+  FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.topup_ai_wallet(UUID, NUMERIC, TEXT, TEXT, JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.ensure_ai_wallet(UUID, TEXT) TO service_role;

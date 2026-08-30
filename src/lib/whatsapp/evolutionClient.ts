@@ -9,6 +9,12 @@ export interface EvolutionAPIConfig {
   apiKey: string;
   instanceName: string;
   webhookUrl?: string;
+  /**
+   * Whose wallet pays for sends made with this config. pipeline.ts types its
+   * config as `EvolutionAPIConfig | ProviderConfig`, so the field has to exist
+   * on both or the metering gate is unreachable from the AI reply path.
+   */
+  tenantId?: string;
 }
 
 export interface WhatsAppMessage {
@@ -648,6 +654,7 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
           baseUrl: `${baseUrl}/${apiVersion}`,
           apiKey: sharedGatewayToken,
           instanceName: sharedGatewayId,
+          tenantId,
         };
       }
       return null;
@@ -680,6 +687,7 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       apiKey:   resolvedApiKey,
       instanceName: data.instance_name,
       webhookUrl: data.webhook_url,
+      tenantId,
     };
 
   } catch (error) {

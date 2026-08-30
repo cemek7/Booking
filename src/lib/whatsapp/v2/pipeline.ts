@@ -22,6 +22,7 @@ import { claimBatch } from './messageBatcher';
 import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
 import { getTenantWhatsAppConfig, isTenantWhatsAppAgentEnabled } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
+import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/unmetered';
 import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
 import type { ProviderConfig } from '@/lib/whatsapp/providers';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
@@ -392,9 +393,16 @@ async function handleOptOutSignal(
   tenantId: string,
   signal: OptOutSignal
 ): Promise<void> {
-  const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) return;
-  const client = getProviderClient(evolutionConfig);
+  // COMPLIANCE: opt-out confirmations go through the UNMETERED client.
+  // getProviderClient meters any config carrying a tenantId, and a refused
+  // reservation makes withMetering send the wallet-exhausted handoff instead —
+  // so a customer who texted STOP would be told "a member of our team will
+  // reply to you here shortly", the opposite of what they asked for, and that
+  // handoff would itself be an unsolicited message to someone who just
+  // unsubscribed. These are regulatory messages, not commercial ones: Booka
+  // funds them, and they must send whatever the tenant's balance is.
+  const client = await getTenantWhatsAppProviderClientUnmetered(tenantId);
+  if (!client) return;
 
   if (signal === 'stop') {
     await supabaseAdmin
@@ -797,6 +805,21 @@ async function sendReplyByChannel(
   const sendResult = await client.sendTextMessage(externalId, finalText);
 
   if (!sendResult.success) {
+    if (sendResult.reason === 'wallet_exhausted') {
+      // A DESIGNED outcome, not a failure: the wallet could not fund this reply,
+      // so withMetering already sent the customer a handoff message instead.
+      // Throwing here would skip markMessagesProcessed, and the queue row's
+      // pending_messages have already been drained by claimBatch — so the retry
+      // finds nothing to do, returns false, and the worker resets it to
+      // 'pending' without incrementing retry_count. That row then cycles
+      // forever, and once ~20 accumulate they fill the LIMIT 20 claim batch and
+      // starve inbound messages for every other tenant.
+      console.warn('[pipeline] reply not sent: message wallet exhausted, handoff issued', {
+        tenantId,
+        channel,
+      });
+      return;
+    }
     if (channel === 'instagram') {
       // Instagram sends are best-effort for now — log and continue
       console.error(`[pipeline] Outbound Instagram send failed (tenant=${tenantId}, to=${externalId})`);

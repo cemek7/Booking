@@ -36,6 +36,7 @@ RETURNS TABLE (
   reason TEXT
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -109,6 +110,7 @@ RETURNS TABLE (
   reason TEXT
 )
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
