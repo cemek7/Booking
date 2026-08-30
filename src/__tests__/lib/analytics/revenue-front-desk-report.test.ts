@@ -47,6 +47,7 @@ describe('buildRevenueFrontDeskReport', () => {
       { id: 'e1', event_type: 'inquiry_received', actor_role: 'system', correlation_id: 'journey-1' },
       { id: 'e2', event_type: 'inquiry_received', actor_role: 'system', correlation_id: 'journey-1' },
       { id: 'e3', event_type: 'lead_qualified', actor_role: 'system', correlation_id: 'journey-1' },
+      { id: 'e3b', event_type: 'lead_created', actor_role: 'system', correlation_id: 'journey-1' },
       { id: 'e4', event_type: 'booking_created', actor_role: 'system', correlation_id: 'journey-1' },
       { id: 'e5', event_type: 'upsell_accepted', actor_role: 'assistant', correlation_id: 'journey-2' },
       { id: 'e6', event_type: 'payment_completed', actor_role: 'system', correlation_id: 'journey-2' },

@@ -34,7 +34,7 @@
 - Consumes: `public.sias_outcome_attributions` from migration 080.
 - Produces: additive columns used by the attribution service and reports.
 
-- [ ] **Step 1: Write the disposable baseline and verification SQL**
+- [x] **Step 1: Write the disposable baseline and verification SQL**
 
 Create `scripts/sql/test_revenue_attribution_baseline.sql` so migration 080 can run outside Supabase:
 
@@ -68,6 +68,8 @@ end if;
 
 - [ ] **Step 2: Confirm verification fails in disposable PostgreSQL**
 
+> Pending owner execution. Database and Docker commands were deliberately left to the owner on 2026-08-29.
+
 Run:
 
 ```bash
@@ -79,7 +81,7 @@ psql postgresql://postgres:booka@127.0.0.1:55433/postgres -f scripts/sql/verify_
 
 Expected: the first two commands exit 0; verification exits non-zero because the additive columns are absent.
 
-- [ ] **Step 3: Write the additive migration**
+- [x] **Step 3: Write the additive migration**
 
 Add:
 
@@ -127,6 +129,8 @@ Do not populate `amount_cents` from legacy `value`.
 
 - [ ] **Step 4: Apply and verify the migration**
 
+> Pending owner execution together with Step 2.
+
 Run:
 
 ```bash
@@ -137,7 +141,7 @@ docker rm -f booka-attribution-db
 
 Expected: migration and verification exit 0; the disposable container is removed.
 
-- [ ] **Step 5: Commit the schema**
+- [x] **Step 5: Commit the schema**
 
 ```bash
 git add db/migrations/123_revenue_attribution_verification.sql scripts/sql/test_revenue_attribution_baseline.sql scripts/sql/verify_revenue_attribution_verification.sql
@@ -155,7 +159,7 @@ git commit -m "feat(analytics): add verified revenue attribution fields"
 - Consumes: Schema from Task 1.
 - Produces: `RevenueAttributionType`, `RevenueVerificationStatus`, and an extended `recordOutcomeAttribution(input)` contract.
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Assert that:
 
@@ -175,12 +179,12 @@ await service.recordOutcomeAttribution({
 
 inserts snake_case values. Also assert negative `amountCents`, lowercase currency, verified status without evidence, and `amountCents` without `attributionType` are rejected before a database call.
 
-- [ ] **Step 2: Run tests and confirm they fail**
+- [x] **Step 2: Run tests and confirm they fail**
 
 Run: `npx jest src/__tests__/lib/sias-operations.attribution.test.ts -i`
 Expected: FAIL because the fields and validation do not exist.
 
-- [ ] **Step 3: Extend the service contract**
+- [x] **Step 3: Extend the service contract**
 
 Export:
 
@@ -191,12 +195,12 @@ export type RevenueVerificationStatus = 'unverified' | 'merchant_confirmed' | 's
 
 Extend `AttributionInput` with camelCase versions of all Task 1 fields. Add a pure `validateAttributionInput()` called before insert. Preserve `value` for non-monetary signal counts, but use `amountCents` for every monetary report.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `npx jest src/__tests__/lib/sias-operations.attribution.test.ts -i`
 Expected: PASS.
 
-- [ ] **Step 5: Update existing money-producing call sites**
+- [x] **Step 5: Update existing money-producing call sites**
 
 Modify these call sites only where they have an explicit amount and evidence:
 
@@ -208,7 +212,7 @@ Modify these call sites only where they have an explicit amount and evidence:
 
 Payment-completion paths with a verified provider event record `attributionType='processed'`, `verificationStatus='system_verified'`, the exact paid amount in minor units, and `evidenceType='payment_completed'`. Do not invent amounts. If a path records only a count or predicted lift, keep `amountCents` null and `verificationStatus='unverified'`.
 
-- [ ] **Step 6: Run affected tests and commit**
+- [x] **Step 6: Run affected tests and commit**
 
 Run: `npx jest src/__tests__/lib/sias-operations.attribution.test.ts src/__tests__/app/api/sias/ops.routes.test.ts src/__tests__/lib/payments/lifecycle.retail.test.ts -i`
 Expected: PASS.
@@ -228,7 +232,7 @@ git commit -m "feat(analytics): record explicit revenue attribution"
 - Consumes: `ai_front_desk_events`, `sias_outcome_attributions`, and an injected `SupabaseClient`.
 - Produces: `buildRevenueFrontDeskReport(client, input): Promise<RevenueFrontDeskReport>`.
 
-- [ ] **Step 1: Define the report contract in the failing test**
+- [x] **Step 1: Define the report contract in the failing test**
 
 Use this shape:
 
@@ -262,16 +266,16 @@ export interface RevenueFrontDeskReport {
 
 Test tenant and date filters, event-type counts, distinct-event deduplication by `correlation_id`, exclusion of rejected/unverified money, separation of the three revenue types, currency mismatch rejection, and data-completeness flags.
 
-- [ ] **Step 2: Run the tests and confirm they fail**
+- [x] **Step 2: Run the tests and confirm they fail**
 
 Run: `npx jest src/__tests__/lib/analytics/revenue-front-desk-report.test.ts -i`
 Expected: FAIL because the service does not exist.
 
-- [ ] **Step 3: Implement deterministic aggregation**
+- [x] **Step 3: Implement deterministic aggregation**
 
 Query only the requested tenant and inclusive/exclusive period `[start, end)`. Count funnel events from `ai_front_desk_events`. Sum `amount_cents` only for `merchant_confirmed` or `system_verified` attribution rows. Use three independent reducers keyed by `attribution_type`; never compute an overall generated-revenue sum. Treat missing correlation IDs as unique rows rather than collapsing them.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `npx jest src/__tests__/lib/analytics/revenue-front-desk-report.test.ts -i`
 Expected: PASS.
@@ -294,28 +298,28 @@ git commit -m "feat(analytics): aggregate Booka revenue front desk outcomes"
 - Consumes: `buildRevenueFrontDeskReport` from Task 3.
 - Produces: authenticated `GET /api/analytics/revenue-front-desk?start=<ISO>&end=<ISO>` and the tenant report UI.
 
-- [ ] **Step 1: Write route tests**
+- [x] **Step 1: Write route tests**
 
 Cover owner/manager access, staff denial, authenticated tenant scoping despite a spoofed header, ISO date validation, a maximum 93-day window, and pass-through of the deterministic report.
 
-- [ ] **Step 2: Run route tests and confirm they fail**
+- [x] **Step 2: Run route tests and confirm they fail**
 
 Run: `npx jest src/__tests__/app/api/analytics/revenue-front-desk.route.test.ts -i`
 Expected: FAIL because the route does not exist.
 
-- [ ] **Step 3: Implement the route**
+- [x] **Step 3: Implement the route**
 
 Use `createHttpHandler` with `{ auth: true, roles: ['owner', 'manager'] }`, `getVerifiedTenantId(ctx)`, Zod-coerced ISO datetimes, and reject `end <= start` or windows over 93 days.
 
-- [ ] **Step 4: Write the report component tests**
+- [x] **Step 4: Write the report component tests**
 
 Assert separate cards for Processed, Influenced, and Recovered Revenue; funnel counts; verification warning; no `Generated Revenue` label; NGN formatting; loading/error/empty states.
 
-- [ ] **Step 5: Implement the report UI**
+- [x] **Step 5: Implement the report UI**
 
 Use the existing reports page and auth-fetch conventions. Render money cards separately, display the period and data-completeness warning, and label the funnel `Enquiry → Qualified → Booking/Sale → Payment`. Do not expose internal cost.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `npx jest src/__tests__/app/api/analytics/revenue-front-desk.route.test.ts src/components/reports/RevenueFrontDeskReport.test.tsx -i`
 Expected: PASS.
@@ -338,7 +342,7 @@ git commit -m "feat(reports): show Booka revenue front desk outcomes"
 - Consumes: `tenant_revenue_ledger`, `tenant_cost_ledger`, `ai_front_desk_events`, and `booka_revenue_requests` after Plans 1–2.
 - Produces: internal per-tenant subscription/usage revenue, provider cost, gross contribution, conversation volume, and cost per verified outcome.
 
-- [ ] **Step 1: Write aggregation tests**
+- [x] **Step 1: Write aggregation tests**
 
 Pin these equations:
 
@@ -354,24 +358,24 @@ cost_per_verified_outcome_credits = verified_outcomes === 0
 
 Test separate `llm`, `whatsapp`, `server`, and `payment` costs, date filtering, zero-revenue behavior, and no cross-tenant aggregation.
 
-- [ ] **Step 2: Run tests and confirm they fail**
+- [x] **Step 2: Run tests and confirm they fail**
 
 Run: `npx jest src/__tests__/lib/analytics/booka-unit-economics.test.ts -i`
 Expected: FAIL because the service does not exist.
 
-- [ ] **Step 3: Implement the unit-economics service**
+- [x] **Step 3: Implement the unit-economics service**
 
 Return ledger-derived totals only. Never estimate provider cost from customer revenue. Include a completeness flag when a tenant has AI events but no corresponding `tenant_cost_ledger` entries.
 
-- [ ] **Step 4: Write and implement the superadmin route**
+- [x] **Step 4: Write and implement the superadmin route**
 
 Use `{ auth: true, roles: ['superadmin'], requireTenantMembership: false }`. Accept optional `tenant_id`, `start`, and `end`; cap the period at 366 days. Return no customer message content or phone numbers.
 
-- [ ] **Step 5: Add internal analytics cards**
+- [x] **Step 5: Add internal analytics cards**
 
 Add a Booka Unit Economics section to the existing superadmin analytics page with recognized revenue, provider cost, gross contribution, gross margin, verified outcomes, and cost per verified outcome. Clearly label incomplete cost capture.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `npx jest src/__tests__/lib/analytics/booka-unit-economics.test.ts src/__tests__/app/api/superadmin/booka-unit-economics.route.test.ts -i`
 Expected: PASS.
@@ -390,20 +394,22 @@ git commit -m "feat(superadmin): report Booka unit economics"
 - Consumes: All prior tasks.
 - Produces: A verified analytics release suitable for the first pilot cohort.
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 Run: `npx jest src/__tests__/lib/sias-operations.attribution.test.ts src/__tests__/lib/analytics/revenue-front-desk-report.test.ts src/__tests__/app/api/analytics/revenue-front-desk.route.test.ts src/components/reports/RevenueFrontDeskReport.test.tsx src/__tests__/lib/analytics/booka-unit-economics.test.ts src/__tests__/app/api/superadmin/booka-unit-economics.route.test.ts src/__tests__/app/api/sias/ops.routes.test.ts -i`
 Expected: all suites pass.
 
-- [ ] **Step 2: Run typecheck and lint**
+- [x] **Step 2: Run typecheck and lint**
 
 Run: `npm run typecheck:full`
 Expected: exit 0, or no diagnostic from a file in this plan if pre-existing unrelated diagnostics remain.
 
+> Verification result: no diagnostic came from a Phase 3 file. The command still reports the pre-existing Jest mock typing errors in `AnalyticsProvider.test.tsx` and `PostHogIdentity.test.tsx`.
+
 Run: `npx eslint src/lib/sias-operations.ts src/lib/analytics/revenue-front-desk-report.ts src/lib/analytics/booka-unit-economics.ts src/app/api/analytics/revenue-front-desk/route.ts src/app/api/superadmin/booka-unit-economics/route.ts src/components/reports/RevenueFrontDeskReport.tsx src/app/dashboard/reports/page.tsx src/app/dashboard/superadmin/analytics/page.tsx`
 Expected: exit 0.
 
-- [ ] **Step 3: Run claim and formatting checks**
+- [x] **Step 3: Run claim and formatting checks**
 
 Run: `rg -n "generated revenue|total generated|Booka generated" src/components/reports src/app/dashboard/reports src/app/dashboard/superadmin/analytics`
 Expected: no output.
@@ -413,9 +419,11 @@ Expected: no output.
 
 - [ ] **Step 4: Verify tenant isolation manually**
 
+> Live disposable-database verification is pending owner execution. Automated coverage verifies two-tenant aggregation separation, tenant filtering on every source query, authenticated tenant scoping, spoofed-header rejection, and superadmin-only unit-economics access.
+
 Seed two tenants with distinct events, attribution rows, and cost ledgers in a disposable database. Call the tenant report as each tenant and confirm each response contains only its own counts and money. Call the superadmin unit-economics endpoint and confirm it can filter either tenant without returning phone numbers or message content.
 
-- [ ] **Step 5: Commit verification corrections if required**
+- [x] **Step 5: Commit verification corrections if required**
 
 Stage only files from this plan and commit:
 

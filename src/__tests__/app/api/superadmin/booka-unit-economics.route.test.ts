@@ -90,6 +90,19 @@ describe('GET /api/superadmin/booka-unit-economics', () => {
     expect(JSON.stringify(result)).not.toMatch(/phone|message|conversation_content/i);
   });
 
+  it('defaults to a recent period when dates are omitted', async () => {
+    const admin = { from: jest.fn() };
+    mockCreateAdmin.mockReturnValue(admin);
+
+    await callGet(legacyRequest('http://localhost/api/superadmin/booka-unit-economics'));
+
+    expect(mockBuildUnitEconomics).toHaveBeenCalledWith(admin, {
+      start: expect.any(String),
+      end: expect.any(String),
+      tenantId: undefined,
+    });
+  });
+
   it('denies a non-superadmin at the authenticated route boundary', async () => {
     const admin = {
       auth: {

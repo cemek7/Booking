@@ -8,8 +8,8 @@ import { buildBookaUnitEconomics } from '@/lib/analytics/booka-unit-economics';
 
 const MAX_WINDOW_MS = 366 * 24 * 60 * 60 * 1000;
 const QuerySchema = z.object({
-  start: z.string().datetime({ offset: true }),
-  end: z.string().datetime({ offset: true }),
+  start: z.string().datetime({ offset: true }).optional(),
+  end: z.string().datetime({ offset: true }).optional(),
   tenant_id: z.string().trim().min(1).max(120).optional(),
 });
 
@@ -17,16 +17,20 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const searchParams = new URL(ctx.request.url).searchParams;
     const parsed = QuerySchema.safeParse({
-      start: searchParams.get('start'),
-      end: searchParams.get('end'),
+      start: searchParams.get('start') || undefined,
+      end: searchParams.get('end') || undefined,
       tenant_id: searchParams.get('tenant_id') || undefined,
     });
     if (!parsed.success) {
       throw ApiErrorFactory.validationError(parsed.error.flatten().fieldErrors);
     }
 
-    const startMs = Date.parse(parsed.data.start);
-    const endMs = Date.parse(parsed.data.end);
+    const now = new Date();
+    const start = parsed.data.start
+      ?? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const end = parsed.data.end ?? now.toISOString();
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
     if (endMs <= startMs) {
       throw ApiErrorFactory.badRequest('end must be after start');
     }
@@ -35,8 +39,8 @@ export const GET = createHttpHandler(
     }
 
     return buildBookaUnitEconomics(createSupabaseAdminClient(), {
-      start: parsed.data.start,
-      end: parsed.data.end,
+      start,
+      end,
       tenantId: parsed.data.tenant_id,
     });
   },

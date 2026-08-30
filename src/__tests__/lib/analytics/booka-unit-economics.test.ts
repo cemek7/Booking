@@ -142,4 +142,15 @@ describe('buildBookaUnitEconomics', () => {
       expect(query.filters).toContainEqual(['eq', 'tenant_id', 'tenant-9']);
     }
   });
+
+  it('does not treat a manual cost adjustment as provider-cost capture', async () => {
+    const { client } = makeClient({
+      cost: [{ tenant_id: 'tenant-4', cost_type: 'manual_adjustment', actual_cost_credits: 3 }],
+      events: [{ id: 'e1', tenant_id: 'tenant-4', correlation_id: 'conversation-4' }],
+    });
+
+    const result = await buildBookaUnitEconomics(client, period);
+
+    expect(result.tenants[0].cost_capture_complete).toBe(false);
+  });
 });

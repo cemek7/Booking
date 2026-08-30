@@ -49,15 +49,6 @@ const VERIFIED_STATUSES = new Set(['merchant_confirmed', 'system_verified']);
 const AUTOMATED_ROLES = new Set(['assistant', 'ai', 'booka', 'system']);
 const HUMAN_ROLES = new Set(['agent', 'human', 'manager', 'owner', 'staff']);
 
-function eventKey(row: ReportRow, index: number): string {
-  const type = String(row.event_type ?? 'unknown');
-  const correlationId = typeof row.correlation_id === 'string' && row.correlation_id
-    ? row.correlation_id
-    : null;
-  const uniqueId = typeof row.id === 'string' && row.id ? row.id : String(index);
-  return correlationId ? `${type}:correlation:${correlationId}` : `${type}:row:${uniqueId}`;
-}
-
 function handlingKey(row: ReportRow, index: number): string {
   return typeof row.correlation_id === 'string' && row.correlation_id
     ? `correlation:${row.correlation_id}`
@@ -114,16 +105,18 @@ export async function buildRevenueFrontDeskReport(
     ),
   ]);
 
-  const seenEventKeys = new Set<string>();
-  const deduplicatedEvents = eventRows.filter((row, index) => {
-    const key = eventKey(row, index);
-    if (seenEventKeys.has(key)) return false;
-    seenEventKeys.add(key);
-    return true;
-  });
   const countEvents = (...types: string[]) => {
     const accepted = new Set(types);
-    return deduplicatedEvents.filter((row) => accepted.has(String(row.event_type))).length;
+    const outcomeKeys = new Set<string>();
+    eventRows.forEach((row, index) => {
+      if (!accepted.has(String(row.event_type))) return;
+      const correlationId = typeof row.correlation_id === 'string' && row.correlation_id
+        ? row.correlation_id
+        : null;
+      const rowId = typeof row.id === 'string' && row.id ? row.id : String(index);
+      outcomeKeys.add(correlationId ? `correlation:${correlationId}` : `row:${rowId}`);
+    });
+    return outcomeKeys.size;
   };
 
   const handlingGroups = new Map<string, { automated: boolean; human: boolean; handoff: boolean }>();

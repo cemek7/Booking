@@ -122,6 +122,7 @@ export async function buildBookaUnitEconomics(
   const tenants = [...tenantIds].sort().map((tenantId): BookaUnitEconomicsRow => {
     const tenantRevenue = revenueRows.filter((row) => row.tenant_id === tenantId);
     const tenantCosts = costRows.filter((row) => row.tenant_id === tenantId);
+    const tenantProviderCosts = tenantCosts.filter((row) => row.cost_type !== 'manual_adjustment');
     const tenantEvents = eventRows.filter((row) => row.tenant_id === tenantId);
     const tenantAttributions = attributionRows.filter((row) => row.tenant_id === tenantId);
 
@@ -159,7 +160,7 @@ export async function buildBookaUnitEconomics(
       ...calculateRatios(recognizedRevenue, providerCost, verifiedOutcomes),
       conversation_volume: conversationKeys.size,
       verified_outcomes: verifiedOutcomes,
-      cost_capture_complete: !(tenantEvents.length > 0 && tenantCosts.length === 0),
+      cost_capture_complete: !(tenantEvents.length > 0 && tenantProviderCosts.length === 0),
     };
   });
 
