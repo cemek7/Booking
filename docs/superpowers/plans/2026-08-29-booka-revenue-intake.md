@@ -27,6 +27,7 @@
 
 **Files:**
 - Create: `db/migrations/122_booka_revenue_requests.sql`
+- Create: `scripts/sql/test_booka_revenue_requests_baseline.sql`
 - Create: `scripts/sql/verify_booka_revenue_requests.sql`
 
 **Interfaces:**
@@ -146,6 +147,7 @@ commit;
 Run:
 
 ```bash
+psql postgresql://postgres:booka@127.0.0.1:55432/postgres -f scripts/sql/test_booka_revenue_requests_baseline.sql
 psql postgresql://postgres:booka@127.0.0.1:55432/postgres -f db/migrations/122_booka_revenue_requests.sql
 psql postgresql://postgres:booka@127.0.0.1:55432/postgres -f scripts/sql/verify_booka_revenue_requests.sql
 docker rm -f booka-revenue-intake-db
