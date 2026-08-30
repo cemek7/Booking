@@ -191,13 +191,13 @@ export default function BookaLanding() {
 
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="#revenue-pilot"
+                href="/booka/revenue-pilot"
                 className="rounded-full bg-emerald-600 px-6 py-3 text-sm font-medium text-white shadow-[0_12px_30px_rgba(5,150,105,0.18)] transition hover:-translate-y-0.5 hover:bg-emerald-700"
               >
                 Apply for the 14-Day Revenue Pilot
               </Link>
               <Link
-                href="#missed-revenue-report"
+                href="/booka/missed-revenue-report"
                 className="rounded-full border border-emerald-200 bg-white px-6 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:text-emerald-900"
               >
                 Get a Missed Revenue Report
@@ -341,7 +341,7 @@ export default function BookaLanding() {
                     a staff escalation contact, and can confirm completed bookings or offline sales.
                   </p>
                   <Link
-                    href="/booka/auth/onboarding"
+                    href="/booka/revenue-pilot"
                     className="mt-5 inline-flex rounded-full bg-emerald-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-700"
                   >
                     Apply for the pilot
@@ -367,7 +367,7 @@ export default function BookaLanding() {
                 may be costing you opportunities.
               </p>
               <Link
-                href="#revenue-pilot"
+                href="/booka/missed-revenue-report"
                 className="mt-6 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-900 transition hover:border-emerald-300"
               >
                 Get a Missed Revenue Report
@@ -578,13 +578,13 @@ export default function BookaLanding() {
               </div>
               <div className="flex flex-wrap gap-3 lg:justify-end">
                 <Link
-                  href="#revenue-pilot"
+                  href="/booka/revenue-pilot"
                   className="rounded-full bg-white px-6 py-3 text-sm font-medium text-emerald-700 shadow-sm transition hover:-translate-y-0.5"
                 >
                   Apply for the revenue pilot
                 </Link>
                 <Link
-                  href="#missed-revenue-report"
+                  href="/booka/missed-revenue-report"
                   className="rounded-full border border-white/25 bg-emerald-700 px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:bg-emerald-800"
                 >
                   Request the missed revenue report

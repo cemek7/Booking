@@ -18,11 +18,11 @@ describe('BookaLanding', () => {
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /revenue pilot/i })[0]).toHaveAttribute(
       'href',
-      '#revenue-pilot',
+      '/booka/revenue-pilot',
     );
     expect(screen.getAllByRole('link', { name: /missed revenue report/i })[0]).toHaveAttribute(
       'href',
-      '#missed-revenue-report',
+      '/booka/missed-revenue-report',
     );
     expect(document.querySelector('#revenue-pilot')).toBeInTheDocument();
     expect(document.querySelector('#missed-revenue-report')).toBeInTheDocument();
