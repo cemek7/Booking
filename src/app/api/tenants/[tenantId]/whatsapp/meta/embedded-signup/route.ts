@@ -7,6 +7,7 @@ import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getStoredProviderApiKey, upsertStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
 import { subscribeMetaWaba, verifyMetaPhone, verifyMetaPhoneBelongsToWaba } from '@/lib/whatsapp/metaConnectionValidation';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 const CompletionSchema = z.object({
   code: z.string().min(1),
@@ -30,7 +31,7 @@ const AgentEnabledSchema = z.object({
 
 function metaApiConfig() {
   const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
-  const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
+  const version = getWhatsAppGraphApiVersion();
   return { apiBase: `${baseUrl}/${version}` };
 }
 
@@ -80,7 +81,11 @@ export const GET = createHttpHandler(
       // authenticated endpoint keeps the browser configuration available when
       // deployment secrets are injected after the Next.js image is built.
       embeddedSignup: process.env.META_APP_ID && process.env.META_EMBEDDED_SIGNUP_CONFIG_ID
-        ? { appId: process.env.META_APP_ID, configId: process.env.META_EMBEDDED_SIGNUP_CONFIG_ID }
+        ? {
+            appId: process.env.META_APP_ID,
+            configId: process.env.META_EMBEDDED_SIGNUP_CONFIG_ID,
+            apiVersion: getWhatsAppGraphApiVersion(),
+          }
         : null,
       connection: data ?? null,
       billing: {
