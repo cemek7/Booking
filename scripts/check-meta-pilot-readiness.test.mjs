@@ -75,6 +75,20 @@ test('does not approve WhatsApp when its webhook app secret is missing', () => {
   assert.ok(readiness.whatsapp.missing.includes('WHATSAPP_APP_SECRET'));
 });
 
+test('does not approve WhatsApp with an unsupported Graph API version', () => {
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    WHATSAPP_API_VERSION: 'v18.0',
+  });
+
+  assert.equal(readiness.whatsapp.status, 'not_ready');
+  assert.ok(
+    readiness.whatsapp.missing.includes(
+      'WHATSAPP_API_VERSION (must be v25.0)',
+    ),
+  );
+});
+
 test('reports Embedded Signup configuration separately from Meta approval', () => {
   const { readiness } = runChecker({
     ...controlledPilotEnvironment,

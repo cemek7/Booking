@@ -22,6 +22,7 @@ function resolveHttpsAppUrl(env) {
 
 export function buildMetaPilotReadiness(env = process.env) {
   const appUrl = resolveHttpsAppUrl(env);
+  const whatsappApiVersion = env.WHATSAPP_API_VERSION?.trim() || DEFAULT_GRAPH_API_VERSION;
   const whatsappWebhookUrl = appUrl
     ? `${appUrl}/api/webhooks/whatsapp/meta`
     : null;
@@ -49,6 +50,14 @@ export function buildMetaPilotReadiness(env = process.env) {
   }
   if (!configured(env, 'WHATSAPP_ACCESS_TOKEN')) {
     whatsappMissing.push('WHATSAPP_ACCESS_TOKEN');
+  }
+  if (
+    !configured(env, 'WHATSAPP_API_VERSION') ||
+    whatsappApiVersion !== DEFAULT_GRAPH_API_VERSION
+  ) {
+    whatsappMissing.push(
+      `WHATSAPP_API_VERSION (must be ${DEFAULT_GRAPH_API_VERSION})`,
+    );
   }
 
   const instagramMissing = [];
@@ -92,7 +101,7 @@ export function buildMetaPilotReadiness(env = process.env) {
     whatsapp: {
       status: whatsappStatus,
       missing: whatsappMissing,
-      apiVersion: env.WHATSAPP_API_VERSION?.trim() || DEFAULT_GRAPH_API_VERSION,
+      apiVersion: whatsappApiVersion,
       webhookUrl: whatsappWebhookUrl,
       publicOnboardingConfigured,
       metaApprovalVerified: false,
