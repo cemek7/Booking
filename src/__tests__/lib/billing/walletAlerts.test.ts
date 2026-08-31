@@ -45,7 +45,7 @@ beforeEach(() => {
 
 describe('resolveTenantOwner', () => {
   it('returns the owner contact details', async () => {
-    pushDb({ email: 'owner@example.com', phone: '2348012345678' });
+    pushDb([{ email: 'owner@example.com', phone: '2348012345678' }]);
     await expect(resolveTenantOwner(admin, 't1')).resolves.toEqual({
       email: 'owner@example.com', phone: '2348012345678',
     });
@@ -57,8 +57,30 @@ describe('resolveTenantOwner', () => {
   });
 
   it('returns null when the tenant has no owner row', async () => {
-    pushDb(null);
+    pushDb([]);
     await expect(resolveTenantOwner(admin, 't1')).resolves.toBeNull();
+  });
+
+  it('survives duplicate owner rows and picks the contactable one', async () => {
+    // tenant_users has a PK on id and no unique constraint on (tenant_id, role),
+    // so two owner rows are structurally possible. maybeSingle() would error on
+    // that and the tenant would silently get no alert at all.
+    pushDb([
+      { email: null, phone: null },
+      { email: 'owner@example.com', phone: '2348012345678' },
+    ]);
+    await expect(resolveTenantOwner(admin, 't1')).resolves.toEqual({
+      email: 'owner@example.com', phone: '2348012345678',
+    });
+  });
+
+  it('falls back to a phone-only owner', async () => {
+    // WhatsApp-native tenants are onboarded phone-first: ownerOnboarding.ts
+    // inserts the owner row with user_id AND email both NULL.
+    pushDb([{ email: null, phone: '2348012345678' }]);
+    await expect(resolveTenantOwner(admin, 't1')).resolves.toEqual({
+      email: null, phone: '2348012345678',
+    });
   });
 });
 
@@ -71,7 +93,7 @@ describe('deliverWalletAlert', () => {
   };
 
   /** notifications insert resolves first, then the owner lookup. */
-  function seedOwner(owner: unknown = { email: 'owner@example.com', phone: '2348012345678' }) {
+  function seedOwner(owner: unknown = [{ email: 'owner@example.com', phone: '2348012345678' }]) {
     pushDb(null);
     pushDb(owner);
   }
@@ -108,7 +130,7 @@ describe('deliverWalletAlert', () => {
 
   it('still writes the in-app row when the owner cannot be resolved', async () => {
     pushDb(null);
-    pushDb(null);
+    pushDb([]);
     await deliverWalletAlert(admin, alert);
     expect(inserts.find((i) => i.table === 'notifications')).toBeDefined();
     expect(sendTransactionalEmail).not.toHaveBeenCalled();
@@ -126,5 +148,35 @@ describe('deliverWalletAlert', () => {
   it('never throws, so an alert failure cannot break the caller', async () => {
     pushDbErr({ message: 'boom' });
     await expect(deliverWalletAlert(admin, alert)).resolves.toBeUndefined();
+  });
+});
+
+describe('deliverWalletAlert — WhatsApp-native owners', () => {
+  const lowBalance = {
+    tenantId: 't1',
+    kind: 'wallet_low_balance' as const,
+    title: 'Message wallet running low',
+    message: 'Top up to keep automated replies running.',
+  };
+
+  it('reaches an owner with no email over WhatsApp, even for an email-only alert', async () => {
+    // The low-balance warning is the one that actually helps — it fires while
+    // the tenant can still act. Sending it by email alone would deliver nothing
+    // at all to phone-first WhatsApp-native tenants, which is the segment Booka
+    // onboards over WhatsApp in the first place.
+    pushDb(null);
+    pushDb([{ email: null, phone: '2349000000000' }]);
+    await deliverWalletAlert(admin, lowBalance);
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
+    expect(sendTextMessage).toHaveBeenCalledTimes(1);
+    expect(getTenantWhatsAppProviderClientUnmetered).toHaveBeenCalledWith('t1');
+  });
+
+  it('does not spend a WhatsApp message when the owner has an email', async () => {
+    pushDb(null);
+    pushDb([{ email: 'owner@example.com', phone: '2349000000000' }]);
+    await deliverWalletAlert(admin, lowBalance);
+    expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
+    expect(sendTextMessage).not.toHaveBeenCalled();
   });
 });

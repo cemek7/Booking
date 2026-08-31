@@ -489,9 +489,22 @@ and fire another customer-facing handoff — so the alert would fail at exactly 
 needed, and would recurse.
 
 Owner contact details come from `tenant_users` where `role = 'owner'`. Staff and managers are
-deliberately not alerted — they cannot top up a wallet. **A tenant with no owner email or phone on
-file gets the dashboard row only**, which is logged; check this before the cutover for any tenant
-you expect to run close to their balance.
+deliberately not alerted — they cannot top up a wallet.
+
+**Not every owner has an email.** WhatsApp-native tenants are onboarded phone-first: the
+onboarding flow creates the owner's `tenant_users` row with `user_id` and `email` both NULL, so
+they never touch the dashboard and never use a magic link. Those owners are alerted over WhatsApp
+instead — including the low-balance warning, which would otherwise reach them not at all. An
+owner with an email does **not** also get a WhatsApp for the low-balance warning; there is no
+point spending a platform-funded message on a tenant who will see the email.
+
+`tenant_users` has no unique constraint on `(tenant_id, role)`, so a tenant can have more than one
+owner row. The lookup takes the most contactable one rather than erroring, which would otherwise
+turn "this tenant has two owners" into "this tenant gets no alert at all".
+
+**Only a tenant with neither an email nor a phone on any owner row gets the dashboard row alone.**
+That case is logged. Check for it before the cutover on any tenant you expect to run close to
+their balance.
 
 Booka's own ops Telegram channel still receives a line on exhaustion. That is telemetry for us,
 not a tenant notification.
