@@ -13,6 +13,7 @@
     "typecheck:ci": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p tsconfig.ci.json --noEmit --pretty false",
     "typecheck:full": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "worker": "node scripts/whatsapp-worker.mjs",
+    "meta:pilot:check": "node scripts/check-meta-pilot-readiness.mjs",
     "lint": "eslint",
     "test": "jest",
     "test:watch": "jest --watch",

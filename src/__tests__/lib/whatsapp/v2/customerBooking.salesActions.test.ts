@@ -326,7 +326,9 @@ describe('handleCustomerBooking sales actions', () => {
         tenantId: 'tenant-1',
         customerPhone: '+2348000000000',
         signal: 'upsell_conversion',
-        value: 6500,
+        value: 1,
+        attributionType: 'influenced',
+        verificationStatus: 'unverified',
         metadata: expect.objectContaining({ product_ids: ['prd-7'], mode: 'upsell' }),
       }),
     );

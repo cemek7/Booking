@@ -10,6 +10,11 @@ jest.mock('@/lib/ai/front-desk-events', () => ({
   recordFrontDeskEvent: (...args: unknown[]) => mockRecordFrontDeskEvent(...args),
 }));
 
+const mockRecordAttribution = jest.fn();
+jest.mock('@/lib/sias-operations', () => ({
+  siasOperations: { recordOutcomeAttribution: (...args: unknown[]) => mockRecordAttribution(...args) },
+}));
+
 const mockTransitionRetailOrder = jest.fn();
 const mockGetRetailOrderById = jest.fn();
 jest.mock('@/lib/commerce/retail-orders', () => ({
@@ -111,6 +116,47 @@ describe('retail payment lifecycle helpers', () => {
     mockBrandCustomerText.mockResolvedValue('branded text');
     mockSendTextMessage.mockResolvedValue({ success: true, messageId: 'msg-1' });
     mockRecordFrontDeskEvent.mockResolvedValue(undefined);
+    mockRecordAttribution.mockResolvedValue(undefined);
+  });
+
+  it('records a provider-verified processed amount for a paid reservation', async () => {
+    const reservationBuilder: Record<string, jest.Mock> = {};
+    const reservationChain = () => reservationBuilder;
+    for (const method of ['update', 'eq', 'not', 'select']) {
+      reservationBuilder[method] = jest.fn(reservationChain);
+    }
+    reservationBuilder.maybeSingle = jest.fn(async () => ({ data: null, error: null }));
+
+    const transactionBuilder: Record<string, jest.Mock> = {};
+    const transactionChain = () => transactionBuilder;
+    for (const method of ['update', 'eq']) {
+      transactionBuilder[method] = jest.fn(transactionChain);
+    }
+    transactionBuilder.then = jest.fn((resolve) => resolve({ data: null, error: null }));
+
+    mockCreateServerSupabaseClient.mockReturnValue({
+      from: jest.fn((table: string) => table === 'reservations' ? reservationBuilder : transactionBuilder),
+    });
+
+    await handlePaymentSuccess({
+      tenantId: 'tenant-1',
+      reference: 'ref-booking-1',
+      provider: 'paystack',
+      reservationId: 'booking-1',
+      amountMinor: 4500000,
+      currency: 'ngn',
+    });
+
+    expect(mockRecordAttribution).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1',
+      reservationId: 'booking-1',
+      sourceEvent: 'payment.paystack.completed',
+      attributionType: 'processed',
+      verificationStatus: 'system_verified',
+      amountCents: 4500000,
+      currency: 'NGN',
+      evidenceType: 'payment_completed',
+    }));
   });
 
   it('marks a retail order paid and notifies the customer on payment success', async () => {

@@ -8,6 +8,8 @@ import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQualityWebhook';
 import { MetaAdapter } from '@/lib/whatsapp/providers/meta';
+import { resolveChargeTenantByWamid, settleOutboundMessage } from '@/lib/billing/messageWallet';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -88,6 +90,63 @@ function verifyMetaSignature(rawBody: string, incomingSignature: string | null, 
     expectedBuffer.length === incomingBuffer.length &&
     timingSafeEqual(expectedBuffer, incomingBuffer)
   );
+}
+
+export interface MetaStatusEvent {
+  id?: string;
+  status?: string;
+  timestamp?: string;
+  recipient_id?: string;
+  conversation?: { id?: string; origin?: { type?: string } };
+  pricing?: {
+    billable?: boolean;
+    pricing_model?: string;
+    category?: string;
+    type?: string;
+  };
+}
+
+const SETTLEABLE_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
+
+/**
+ * Settles one delivery status against the tenant's message wallet.
+ *
+ * Meta's own `pricing` object is forwarded verbatim rather than re-derived
+ * locally. That is what keeps this correct across the 2026-10-01 pricing change
+ * with no deploy: Booka charges what Meta says it billed, not what Booka
+ * believes Meta's rules to be.
+ *
+ * Never throws. A 500 out of this webhook makes Meta retry the whole payload,
+ * which re-runs message ingestion — a settlement bug must not become a
+ * duplicate-reply bug.
+ */
+export async function settleStatusEvent(
+  admin: SupabaseClient,
+  tenantId: string | null,
+  status: MetaStatusEvent,
+): Promise<void> {
+  if (!status.id || !status.status) return;
+  if (!SETTLEABLE_STATUSES.has(status.status)) return;
+  try {
+    // Shared-gateway traffic has no whatsapp_configurations row, so this webhook
+    // cannot map its phone_number_id to a tenant — but those sends are metered
+    // all the same. Fall back to the charge row, which the wamid identifies
+    // uniquely. Skipping instead would reserve credit that is never settled and
+    // leave the sweeper's `released` counter permanently non-zero, killing the
+    // one signal that says the webhook has broken.
+    const resolvedTenantId = tenantId ?? await resolveChargeTenantByWamid(admin, status.id);
+    if (!resolvedTenantId) return;
+
+    await settleOutboundMessage({
+      admin,
+      tenantId: resolvedTenantId,
+      wamid: status.id,
+      deliveryStatus: status.status as 'sent' | 'delivered' | 'read' | 'failed',
+      pricing: status.pricing,
+    });
+  } catch (error) {
+    defaultLogger.error('[WEBHOOK-META] Settlement failed', { wamid: status.id, error });
+  }
 }
 
 export function buildStatusIdempotencyKey(wamid: string, status?: string): string {
@@ -182,13 +241,20 @@ export async function POST(request: NextRequest) {
 
       for (const status of value.statuses ?? []) {
         if (!status.id) continue;
-        await handleIdempotency(
+        const isDuplicateStatus = await handleIdempotency(
           supabase,
           'meta',
           `${metaPhoneNumberId}:status`,
           buildStatusIdempotencyKey(status.id, status.status),
           { type: 'status', status, value }
         );
+        // Meta retries the whole payload on any non-200, so without this a
+        // single retry would settle the same delivery twice against a
+        // non-idempotent settle RPC.
+        if (isDuplicateStatus) continue;
+        // configuredTenantId is undefined for shared-gateway traffic;
+        // settleStatusEvent resolves it from the charge row in that case.
+        await settleStatusEvent(supabase, configuredTenantId ?? null, status);
       }
 
       for (const message of value.messages ?? []) {
@@ -260,7 +326,7 @@ async function sendSharedGatewayRoutingPrompt(to: string, phoneNumberId: string)
   const token = process.env.WHATSAPP_ACCESS_TOKEN || '';
   if (!token) return;
   const base = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
-  const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
+  const version = getWhatsAppGraphApiVersion();
   const client = new MetaAdapter({ provider: 'meta', baseUrl: `${base}/${version}`, apiKey: token, instanceName: phoneNumberId });
   await client.sendTextMessage(
     to,

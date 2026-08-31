@@ -98,6 +98,7 @@ jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
 jest.mock('@/lib/sias-operations', () => ({
   siasOperations: {
     recordCampaignRun: jest.fn(async () => undefined),
+    recordOutcomeAttribution: jest.fn(async () => undefined),
   },
 }));
 

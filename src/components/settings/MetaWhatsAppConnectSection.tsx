@@ -43,7 +43,7 @@ function relativeTime(value: string | null): string {
 export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [configured, setConfigured] = useState(false);
-  const [embeddedSignup, setEmbeddedSignup] = useState<{ appId: string; configId: string } | null>(null);
+  const [embeddedSignup, setEmbeddedSignup] = useState<{ appId: string; configId: string; apiVersion: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -55,7 +55,7 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
     fetch(`/api/tenants/${tenantId}/whatsapp/meta/embedded-signup`)
       .then(async (res) => {
         if (!res.ok) throw new Error('Unable to load WhatsApp connection status');
-        return res.json() as Promise<{ configured: boolean; connection: Connection | null; embeddedSignup?: { appId: string; configId: string } | null }>;
+        return res.json() as Promise<{ configured: boolean; connection: Connection | null; embeddedSignup?: { appId: string; configId: string; apiVersion: string } | null }>;
       })
       .then((data) => { setConfigured(data.configured); setConnection(data.connection); setEmbeddedSignup(data.embeddedSignup ?? null); })
       .catch((error) => toast.error(error instanceof Error ? error.message : 'Unable to load WhatsApp connection status'))
@@ -112,7 +112,7 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
         script.onerror = () => reject(new Error('Could not load Meta Embedded Signup'));
         document.body.appendChild(script);
       });
-      window.FB!.init({ appId, cookie: true, xfbml: false, version: 'v18.0' });
+      window.FB!.init({ appId, cookie: true, xfbml: false, version: embeddedSignup.apiVersion });
 
       let finishTimeout: ReturnType<typeof setTimeout> | undefined;
       const receiveMessage = (event: MessageEvent) => {

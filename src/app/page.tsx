@@ -6,7 +6,7 @@ const productCards = [
     name: 'Booka',
     stage: 'Live product',
     summary:
-      'AI front desk for service businesses on WhatsApp and Instagram. It qualifies demand, sells the right service or offer, confirms bookings, sends reminders, follows up, and recovers missed revenue.',
+      'AI Revenue Front Desk for service businesses. It converts active WhatsApp and Instagram enquiries, recommends the right offer, books customers, helps collect payment and follows up.',
     href: '/booka',
     accent: 'emerald',
   },
@@ -89,7 +89,7 @@ export default function Home() {
               </h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-[#4f5d59]">
                 We build practical operating software for African businesses. Each product is focused on one hard
-                workflow. Booka is the first: an AI front desk for service businesses that sell and book through WhatsApp and Instagram.
+                workflow. Booka is the first: an AI Revenue Front Desk for service businesses that sell and book through WhatsApp and Instagram.
               </p>
 
               <div className="mt-9 flex flex-wrap gap-3">
@@ -113,8 +113,8 @@ export default function Home() {
                 <p className="brand-kicker text-[#d4b368]">Featured product</p>
                 <h2 className="mt-3 text-3xl font-semibold tracking-tight">Booka</h2>
                 <p className="mt-3 text-sm leading-7 text-[#d7ddd9]">
-                  A WhatsApp and Instagram front desk for service businesses that lose sales, bookings, reminders,
-                  and repeat revenue in chat.
+                  An AI Revenue Front Desk that turns active WhatsApp and Instagram enquiries into booked and paying
+                  customers, then carries opted-in follow-up and repeat-business conversations on WhatsApp.
                 </p>
                 <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5">
                   <div>
@@ -134,7 +134,7 @@ export default function Home() {
                 {[
                   { value: 'Booka', label: 'First live product' },
                   { value: 'WhatsApp + IG', label: 'Where it works' },
-                  { value: '24/7', label: 'Always answering' },
+                  { value: 'Human + AI', label: 'How conversations run' },
                   { value: 'Product-first', label: 'How we ship' },
                 ].map((item) => (
                   <div key={item.label} className="rounded-[1.5rem] border border-[#d8d3c4] bg-white/80 p-4 shadow-sm">
@@ -194,8 +194,8 @@ export default function Home() {
                   Pick the product you need. We run everything behind it.
                 </h2>
                 <p className="mt-4 text-sm leading-7 text-[#53605c]">
-                  Techclave builds and operates the products. Booka is the one to start with today — a focused tool
-                  you can buy, switch on, and use this week. As we ship more, each one stays just as specific.
+                  Techclave builds and operates the products. Booka is the one to start with today—an AI Revenue
+                  Front Desk you can pilot against real enquiries. As we ship more, each product stays just as specific.
                 </p>
               </div>
               <div className="grid gap-4">

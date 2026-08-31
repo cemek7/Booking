@@ -25,7 +25,7 @@ const brandDisplay = localFont({
 export const metadata: Metadata = {
   title: "Techclave | AI Operating Systems for African Businesses",
   description:
-    "Techclave builds AI products for customer operations. Booka is the first product: an AI front desk for beauty, hospitality, and clinic teams that handles sales, bookings, and follow-up on WhatsApp and Instagram.",
+    "Techclave builds AI products for customer operations. Booka is the first product: an AI Revenue Front Desk that turns WhatsApp and Instagram enquiries into booked and paying customers.",
 };
 
 export default function RootLayout({

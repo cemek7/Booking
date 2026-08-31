@@ -1,7 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/providerSelection';
+// Imported from the leaf module, not from providerSelection: providerSelection
+// imports the metering factory, and metering imports this file.
+import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/unmetered';
 import { sendTelegramInfo } from '@/lib/monitoring/telegramAlert';
 import { getHandoffRearmHours } from '@/lib/billing/messageRates';
+import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
 
 /**
  * Wallet-exhausted handoff: the one message a customer gets when the tenant's
@@ -44,6 +47,8 @@ export type WalletHandoffReason =
   | 'already_handed_off'
   | 'no_provider'
   | 'unsupported_channel'
+  | 'opted_out'
+  | 'outside_service_window'
   | 'error';
 
 /**
@@ -222,6 +227,56 @@ async function stampChat(
   return true;
 }
 
+const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The two conversation-level reasons not to send a handoff, read in ONE query
+ * because they live in the same row.
+ *
+ *  - `optedOut`: this send bypasses sendGovernedInitiated, so this is the only
+ *    opt-out guard on the path.
+ *  - `outsideServiceWindow`: the handoff is free-form text, which Meta permits
+ *    only within 24h of the customer's last inbound message. Today that holds
+ *    implicitly — a handoff needs a `chats` row and only inbound conversations
+ *    have one — but that is a coincidence of the current call graph, not a
+ *    check. Outside the window Meta rejects the send anyway, so asserting it
+ *    costs nothing and turns a confusing provider error into a clear skip.
+ *
+ * Both fail toward SENDING on a read error: a broken lookup must not silently
+ * kill a feature the tenant depends on. A real opt-out or a real stale window
+ * always wins.
+ */
+async function readConversationGuards(
+  admin: SupabaseClient,
+  tenantId: string,
+  toNumber: string,
+): Promise<{ optedOut: boolean; outsideServiceWindow: boolean }> {
+  const { data, error } = await admin
+    .from('whatsapp_conversations')
+    .select('opted_out_at, last_inbound_at')
+    .eq('tenant_id', tenantId)
+    .eq('phone_number', toNumber)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[messageHandoff] conversation guard lookup failed, proceeding', { tenantId, error });
+    return { optedOut: false, outsideServiceWindow: false };
+  }
+
+  const row = data as { opted_out_at?: string | null; last_inbound_at?: string | null } | null;
+  if (!row) return { optedOut: false, outsideServiceWindow: false };
+
+  const lastInboundMs = row.last_inbound_at ? Date.parse(row.last_inbound_at) : Number.NaN;
+  return {
+    optedOut: !!row.opted_out_at,
+    // An unparseable or missing timestamp is treated as in-window, consistent
+    // with failing toward sending. Only a timestamp we can read AND that is
+    // genuinely stale blocks the send.
+    outsideServiceWindow: Number.isFinite(lastInboundMs)
+      && Date.now() - lastInboundMs > SERVICE_WINDOW_MS,
+  };
+}
+
 /**
  * Sends the wallet-exhausted handoff message for one conversation, at most
  * once per re-arm window. Never throws.
@@ -272,6 +327,22 @@ export async function triggerWalletHandoff(
         tenantId,
       });
       return { sent: false, reason: 'error' };
+    }
+
+    // COMPLIANCE: never hand off to someone who has unsubscribed. This send
+    // goes through the unmetered client, which bypasses sendGovernedInitiated's
+    // opt-out checks entirely, so this is the only place that guard exists on
+    // this path. The sharpest case is a customer texting STOP into an exhausted
+    // wallet: without this they would be told a human will follow up, moments
+    // after asking not to be contacted.
+    const guards = await readConversationGuards(admin, tenantId, toNumber);
+    if (guards.optedOut) {
+      console.warn('[messageHandoff] suppressed: customer has opted out', { tenantId });
+      return { sent: false, reason: 'opted_out' };
+    }
+    if (guards.outsideServiceWindow) {
+      console.warn('[messageHandoff] suppressed: outside the 24h service window', { tenantId });
+      return { sent: false, reason: 'outside_service_window' };
     }
 
     const metadata = (chat.metadata ?? {}) as Record<string, unknown>;
@@ -328,12 +399,56 @@ export async function triggerWalletHandoff(
       await markHandoffUnanchored(admin, tenantId, today);
     }
 
+    await persistHandoffMessage(admin, tenantId, chat.id, toNumber, result.messageId);
     await notifyOwner(admin, tenantId, toNumber, markers.warnedOn, today);
 
     return { sent: true, reason: 'sent' };
   } catch (error) {
     console.error('[messageHandoff] triggerWalletHandoff failed', { tenantId, error });
     return { sent: false, reason: 'error' };
+  }
+}
+
+/**
+ * Records the handoff in the conversation thread.
+ *
+ * This message is sent outside the normal reply path, which is the only place
+ * outbound messages are persisted — so without this the customer sees "a member
+ * of our team will reply to you here shortly" while staff open the chat and see
+ * an inbound message with no reply at all. That is exactly the moment a human is
+ * being asked to take over, so they need to know what was already promised.
+ *
+ * Best-effort: a failed insert must not turn a delivered handoff into a
+ * reported failure.
+ */
+async function persistHandoffMessage(
+  admin: SupabaseClient,
+  tenantId: string,
+  chatId: string,
+  toNumber: string,
+  messageId?: string,
+): Promise<void> {
+  try {
+    const { error } = await admin.from('messages').insert({
+      tenant_id: tenantId,
+      chat_id: chatId,
+      to_number: toNumber,
+      content: HANDOFF_TEXT,
+      direction: 'outbound',
+      message_type: 'text',
+      channel: 'whatsapp',
+      evolution_message_id: messageId ?? null,
+      timestamp: new Date().toISOString(),
+    });
+    if (error) {
+      console.warn('[messageHandoff] handoff sent but not recorded in the thread', {
+        tenantId,
+        chatId,
+        error,
+      });
+    }
+  } catch (error) {
+    console.warn('[messageHandoff] failed to persist the handoff message', { tenantId, error });
   }
 }
 
@@ -365,9 +480,10 @@ async function markHandoffUnanchored(
 }
 
 /**
- * Tells the tenant their wallet is empty: a `notifications` row on their
- * dashboard, plus a line of ops telemetry to Booka's own Telegram channel
- * (process-level TELEGRAM_CHAT_ID — not the tenant's).
+ * Tells the tenant their wallet is empty: an in-app row, an email to the owner
+ * and a platform-funded WhatsApp to the owner (all via deliverWalletAlert),
+ * plus a line of ops telemetry to Booka's own Telegram channel (process-level
+ * TELEGRAM_CHAT_ID — not the tenant's).
  *
  * Capped at one per tenant per day via `ai_wallets.message_handoff_warned_on`:
  * one exhaustion refuses a send in every live conversation, so without the cap
@@ -388,15 +504,18 @@ async function notifyOwner(
       return;
     }
 
-    // notifications columns are: tenant_id, title, message, meta, read (NO type/body/metadata).
-    await admin.from('notifications').insert({
-      tenant_id: tenantId,
+    await deliverWalletAlert(admin, {
+      tenantId,
+      kind: 'wallet_handoff',
       title: 'Message wallet empty — replies paused',
       message:
         'Your message wallet is out of credit, so the assistant has told this customer '
         + 'a team member will follow up. Top up to resume automated replies.',
-      meta: { kind: 'wallet_handoff', customer_phone: toNumber },
-      read: false,
+      meta: { customer_phone: toNumber },
+      // Exhaustion is the one case worth a platform-funded WhatsApp to the
+      // owner: their bot has stopped answering customers and a dashboard row
+      // they are not looking at will not tell them.
+      whatsappOwner: true,
     });
 
     const { error: markErr } = await admin

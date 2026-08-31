@@ -107,6 +107,8 @@ async function executeCampaignRow(campaign: CampaignRow, tenantId: string) {
     customerPhone: campaign.target_phone ?? null,
     attributedTo: campaign.action,
     value: 1,
+    attributionType: signal === 'revenue_recovery' ? 'recovered' : 'influenced',
+    verificationStatus: 'unverified',
     campaignRunId: campaign.id,
     metadata: {
       campaign_type: campaign.campaign_type,
