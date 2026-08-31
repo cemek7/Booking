@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "auth.changes",
+      "paths": [
+        "^src/(app/api|lib/error-handling)/"
+      ],
+      "requires": [
+        "authorization_tests",
+        "tenant_isolation_review"
+      ]
+    },
+    {
+      "id": "database.migrations",
+      "paths": [
+        "^db/migrations/"
+      ],
+      "requires": [
+        "forward_fix_note",
+        "rls_and_function_privilege_review"
+      ]
+    },
+    {
+      "id": "webhook.changes",
+      "paths": [
+        "^src/app/api/webhooks/",
+        "^scripts/sync-whatsapp-webhooks\\.mjs$"
+      ],
+      "requires": [
+        "signature_verification_test",
+        "idempotency_review"
+      ]
+    },
+    {
+      "id": "billing.changes",
+      "paths": [
+        "^src/lib/(billing|payments)/",
+        "^src/app/api/payments/"
+      ],
+      "requires": [
+        "idempotency_test",
+        "authorization_review"
+      ]
+    },
+    {
+      "id": "production.secrets",
+      "paths": [
+        "^(deployment/|\\.github/workflows/)"
+      ],
+      "block": true,
+      "evidenceKind": "deterministic"
+    }
+  ]
+}
