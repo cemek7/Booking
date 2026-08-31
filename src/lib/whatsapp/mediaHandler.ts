@@ -1,5 +1,5 @@
 import { defaultLogger } from '@/lib/logger';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 
@@ -55,7 +55,11 @@ type DownloadedMedia =
     };
 
 class WhatsAppMediaHandler {
-  private supabase = createServerSupabaseClient();
+  // Media processing runs from the WhatsApp webhook (no request/cookie scope),
+  // so it needs the service-role admin client — the cookie-based
+  // createServerSupabaseClient() would run storage/DB writes as anon and fail
+  // RLS. Matches the sibling connectionManager service.
+  private supabase = createSupabaseAdminClient();
   private readonly MAX_FILE_SIZE = 64 * 1024 * 1024; // 64MB
   private readonly SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   private readonly SUPPORTED_DOCUMENT_TYPES = [
