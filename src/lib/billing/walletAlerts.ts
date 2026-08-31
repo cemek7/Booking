@@ -28,6 +28,12 @@ export interface WalletAlert {
   /**
    * Also message the owner on WhatsApp. Reserve this for exhaustion — it costs
    * Booka a platform-funded message every time.
+   *
+   * Note that an owner with NO email always gets WhatsApp regardless, because
+   * otherwise they get nothing at all: WhatsApp-native tenants are onboarded
+   * phone-first (see ownerOnboarding.ts, which inserts an owner row with
+   * user_id and email both NULL), so "every owner has an email" is false for
+   * exactly the segment Booka onboards over WhatsApp.
    */
   whatsappOwner?: boolean;
 }
@@ -40,7 +46,14 @@ export interface TenantOwner {
 /**
  * The tenant owner's contact details. Staff and managers are deliberately
  * excluded: they cannot top up a wallet, so alerting them is noise.
- * Mirrors the existing lookup in src/lib/llmAlertService.ts.
+ *
+ * Deliberately NOT `.maybeSingle()`, unlike the older lookup in
+ * llmAlertService.ts. `tenant_users` has a primary key on `id` and nothing
+ * else — no unique constraint on (tenant_id, role) — so a tenant with two owner
+ * rows is structurally possible, and `.maybeSingle()` errors on more than one
+ * match. That would turn "this tenant has two owners" into "this tenant gets no
+ * alert at all", silently, for the tenant most likely to have a messy setup.
+ * Take the rows and pick the most contactable instead.
  */
 export async function resolveTenantOwner(
   admin: SupabaseClient,
@@ -51,15 +64,20 @@ export async function resolveTenantOwner(
     .select('email, phone')
     .eq('tenant_id', tenantId)
     .eq('role', 'owner')
-    .maybeSingle();
+    .limit(5);
 
   if (error) {
     console.warn('[walletAlerts] owner lookup failed', { tenantId, error });
     return null;
   }
-  const row = data as TenantOwner | null;
-  if (!row?.email && !row?.phone) return null;
-  return row;
+
+  const rows = (Array.isArray(data) ? data : data ? [data] : []) as TenantOwner[];
+  // Prefer a row with an email, then any row with a phone. With duplicate owner
+  // rows the first one is not necessarily the populated one.
+  const withEmail = rows.find((r) => !!r?.email);
+  const withPhone = rows.find((r) => !!r?.phone);
+  if (!withEmail && !withPhone) return null;
+  return { email: withEmail?.email ?? null, phone: withEmail?.phone ?? withPhone?.phone ?? null };
 }
 
 function emailHtml(alert: WalletAlert): string {
@@ -128,9 +146,19 @@ export async function deliverWalletAlert(
 
     // Settled independently: a dead SMTP key must not cost the owner their
     // WhatsApp alert, and vice versa.
+    // An owner with no email gets WhatsApp whatever the alert asked for —
+    // otherwise a WhatsApp-native tenant, onboarded phone-first with no email on
+    // file, would silently receive nothing at all from the low-balance warning.
+    const needsWhatsapp = alert.whatsappOwner || !owner.email;
+    if (!alert.whatsappOwner && needsWhatsapp) {
+      console.info('[walletAlerts] owner has no email on file, alerting over WhatsApp instead', {
+        tenantId: alert.tenantId, kind: alert.kind,
+      });
+    }
+
     const results = await Promise.allSettled([
       emailOwner(alert, owner),
-      alert.whatsappOwner ? whatsappOwner(alert, owner) : Promise.resolve(),
+      needsWhatsapp ? whatsappOwner(alert, owner) : Promise.resolve(),
     ]);
     results.forEach((r) => {
       if (r.status === 'rejected') {
