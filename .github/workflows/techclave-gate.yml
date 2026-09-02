@@ -1,0 +1,61 @@
+name: Techclave Gate
+
+on:
+  pull_request_target:
+    branches: [staging, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+
+jobs:
+  advisory-release-decision:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted Gate code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Fetch pull-request metadata as data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" > gate-files.json
+          gh api -H "Accept: application/vnd.github.v3.diff" "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > gate.diff
+
+      - name: Run advisory release validation
+        run: |
+          node scripts/techclave-gate/run.cjs \
+            --files-json gate-files.json \
+            --diff-file gate.diff \
+            --output-dir gate-output
+
+      - name: Publish release decision
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const result = JSON.parse(fs.readFileSync('gate-output/gate-result.json', 'utf8'));
+            const summary = fs.readFileSync('gate-output/gate-summary.md', 'utf8');
+            const conclusion = result.decision === 'VALIDATION_INCOMPLETE' ? 'action_required' : 'neutral';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Techclave Gate',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion,
+              output: { title: `Advisory: ${result.decision}`, summary },
+            });
+
+      - name: Upload redacted evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: techclave-gate-${{ github.event.pull_request.number }}
+          path: gate-output/
+          retention-days: 14
