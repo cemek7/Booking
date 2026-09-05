@@ -152,7 +152,15 @@ export async function processMessageV2(
   // ── 3. Route to appropriate flow handler ──────────────────────────────────
   // Owner onboarding is handled separately from the main pipeline
   if (conv.current_flow === 'onboarding' || (conv.role === 'owner' && conv.current_flow === 'idle' && !await isTenantActivated(tenantId))) {
-    await handleOnboarding(externalId, tenantId, normalized, conv);
+    const onboardingReply = await handleOnboarding(externalId, tenantId, normalized, conv);
+    // handleOnboarding's return value used to be discarded here, which made the
+    // entire WhatsApp-native owner signup silent: every step computed its reply
+    // and threw it away, so an owner saying "hi" got nothing back.
+    if (onboardingReply) {
+      const onboardingConfig = await resolveProviderConfig(tenantId, channel);
+      await sendReplyByChannel(onboardingConfig, tenantId, externalId, onboardingReply, channel);
+    }
+    await markMessagesProcessed(batch.messageIds);
     return true;
   }
 

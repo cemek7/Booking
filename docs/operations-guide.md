@@ -498,6 +498,23 @@ instead — including the low-balance warning, which would otherwise reach them 
 owner with an email does **not** also get a WhatsApp for the low-balance warning; there is no
 point spending a platform-funded message on a tenant who will see the email.
 
+Onboarding now *asks* for an email in chat (steps 6 and 7 of `ownerOnboarding.ts`) and verifies it
+with a six-digit code mailed to the address, so newly onboarded tenants should have one on file.
+It is asked **after** activation and can be skipped, so it is a coverage improvement, not a
+guarantee — the WhatsApp fallback above remains the thing that makes the alert reliable. To see
+how much of the base is reachable by email before the cutover:
+
+```sql
+SELECT count(*) FILTER (WHERE email IS NOT NULL) AS with_email,
+       count(*) FILTER (WHERE email IS NULL AND phone IS NOT NULL) AS phone_only,
+       count(*) FILTER (WHERE email IS NULL AND phone IS NULL) AS unreachable
+FROM public.tenant_users
+WHERE role = 'owner';
+```
+
+The verification code lives only in `whatsapp_conversations.flow_data`, salted-hashed per tenant
+and never stored in the clear, and is cleared when onboarding completes. No migration backs it.
+
 `tenant_users` has no unique constraint on `(tenant_id, role)`, so a tenant can have more than one
 owner row. The lookup takes the most contactable one rather than erroring, which would otherwise
 turn "this tenant has two owners" into "this tenant gets no alert at all".
