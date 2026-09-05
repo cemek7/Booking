@@ -1,18 +1,30 @@
 /**
- * Owner Onboarding Flow (5-step chat)
+ * Owner Onboarding Flow (chat)
  *
  * Guides a new business owner through setup entirely via WhatsApp chat.
  * All free-form parsing is done by L2 Flash-Lite — no templates to fill in.
  *
  * State is stored in whatsapp_conversations.flow_data:
- *   { onboarding_step: 0-5, partial_tenant: {...}, partial_services: [...] }
+ *   { onboarding_step, partial_tenant: {...}, partial_services: [...] }
  *
  * Steps:
  *   0 → 1: Greeting + business type/location
  *   1 → 2: Services list
  *   2 → 3: Team (solo or named staff)
  *   3 → 4: Working hours
- *   4 → 5: Activation (generate routing_code + QR + send link)
+ *   4 → 6: Activation (routing_code + link), then ask for an email address
+ *   6 → 7: Email captured, verification code sent to it
+ *   7 → 5: Code confirmed, address written to tenant_users
+ *   5:     Done
+ *
+ * The email epilogue is numbered 6 and 7, not 5 and 6, because
+ * `onboarding_step` is persisted per conversation: renumbering would misroute
+ * owners who are mid-signup right now, and would ask already-finished tenants
+ * for an email they were never promised.
+ *
+ * Activation deliberately still happens at the end of step 4. The email is an
+ * epilogue, never a gate — an owner who stops replying after giving their hours
+ * is live anyway, which is how this flow behaved before email capture existed.
  */
 
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
@@ -20,6 +32,17 @@ import { callGoogleAI } from '@/lib/google-ai';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import { generateRoutingCode } from '../identityResolver';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
+import { sendTransactionalEmail } from '@/lib/integrations/email-service';
+import {
+  buildChallenge,
+  clearChallenge,
+  generateCode,
+  isSkipRequest,
+  MAX_ATTEMPTS,
+  parseEmail,
+  verifyCode,
+  type EmailVerificationState,
+} from './ownerEmailCapture';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import type { AIResponse } from '../actionValidator';
 
@@ -75,6 +98,8 @@ export async function handleOnboarding(
     case 2: return handleStep2(phone, tenantId, message, conv!);
     case 3: return handleStep3(phone, tenantId, message, conv!);
     case 4: return handleStep4(phone, tenantId, message, conv!);
+    case 6: return handleStep6(phone, tenantId, message, conv!);
+    case 7: return handleStep7(phone, tenantId, message, conv!);
     default: return 'Your setup is complete! Just message me any time to manage your business.';
   }
 }
@@ -421,11 +446,36 @@ Only include days that are open.`;
     await supabaseAdmin.from('staff_schedules').insert(rows);
   }
 
+
   // ── Activation ────────────────────────────────────────────────────────────
+  const activation = await activateTenant(resolvedTenantId);
+
+  // Stay in the `onboarding` flow for the email epilogue. Flipping current_flow
+  // to 'managing' here would route the owner's next message to the owner-command
+  // handler instead, and steps 6 and 7 below would never run at all.
+  const convChannel4: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId4 = conv.external_id ?? phone;
+  await updateConversation(convExternalId4, resolvedTenantId, {
+    current_flow: 'onboarding',
+    flow_step: 4,
+    flow_data: { ...conv.flow_data, onboarding_step: 6 },
+  }, convChannel4);
+
+  return `${activation}\n\n${EMAIL_ASK}`;
+}
+
+// ─── Activation + completion ──────────────────────────────────────────────────
+
+/**
+ * Generates the routing code, flips the tenant live, and builds the "you're
+ * live" message. Runs at the end of step 4, before email capture, so the tenant
+ * is usable whether or not the owner finishes the epilogue.
+ */
+async function activateTenant(tenantId: string): Promise<string> {
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
-    .select('name, metadata, tone_config')
-    .eq('id', resolvedTenantId)
+    .select('name')
+    .eq('id', tenantId)
     .single();
 
   const routingCode = await generateRoutingCode(tenantData?.name ?? 'BIZ');
@@ -433,21 +483,212 @@ Only include days that are open.`;
   await supabaseAdmin
     .from('tenants')
     .update({ routing_code: routingCode, v2_enabled: true })
-    .eq('id', resolvedTenantId);
-
-  const convChannel4: ConvChannel = conv.channel ?? 'whatsapp';
-  const convExternalId4 = conv.external_id ?? phone;
-  await updateConversation(convExternalId4, resolvedTenantId, {
-    current_flow: 'managing',
-    flow_step: 0,
-    flow_data: { onboarding_step: 5 },
-  }, convChannel4);
+    .eq('id', tenantId);
 
   const waNumber = process.env.EVOLUTION_DEFAULT_PHONE ?? '2348000000000';
   const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
   const businessName = tenantData?.name ?? 'your business';
-  const activationSettings = getTenantSettings(tenantData);
-  const bookingNoun = String(activationSettings.booking_noun ?? 'booking');
 
-  return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.\n\nTo manage your business, just message me any time:\n  • "Who's booked tomorrow?"\n  • "Block Thursday afternoon"\n  • "Change braids price to 6000"\n  • "How was this week?"\n\nYou're all set! 🎉`;
+  return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.`;
+}
+
+const HOW_TO_MANAGE = `To manage your business, just message me any time:\n  • "Who's booked tomorrow?"\n  • "Block Thursday afternoon"\n  • "Change braids price to 6000"\n  • "How was this week?"`;
+
+/**
+ * Leaves the onboarding flow for good. Any half-finished email challenge is
+ * cleared so no code hash outlives the conversation that issued it.
+ */
+async function finishOnboarding(
+  phone: string,
+  tenantId: string,
+  conv: ConvState,
+  closing: string,
+): Promise<string> {
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId = conv.external_id ?? phone;
+  await updateConversation(convExternalId, tenantId, {
+    current_flow: 'managing',
+    flow_step: 0,
+    flow_data: { ...clearChallenge(conv.flow_data ?? {}), onboarding_step: 5 },
+  }, convChannel);
+
+  return `${closing}\n\n${HOW_TO_MANAGE}\n\nYou're all set! 🎉`;
+}
+
+// ─── Steps 6 & 7: email capture and verification ──────────────────────────────
+
+const EMAIL_ASK = `One last thing — what email should I use for your receipts and account alerts?\n\nIt's how I reach you if your message balance runs low, before your bot goes quiet. Reply *skip* if you'd rather not.`;
+
+// Deliberately promises nothing further. There is no post-onboarding command
+// for setting an email, and a WhatsApp-native owner has no dashboard login to
+// be pointed at either, so "you can add one later" would be a promise Booka
+// cannot keep — the same trap as the handoff copy.
+const SKIPPED_CLOSING = `No problem — I'll send your account alerts to this WhatsApp number instead.`;
+
+async function persistFlowData(
+  phone: string,
+  tenantId: string,
+  conv: ConvState,
+  flow_data: Record<string, unknown>,
+): Promise<void> {
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId = conv.external_id ?? phone;
+  await updateConversation(convExternalId, tenantId, { flow_data }, convChannel);
+  conv.flow_data = flow_data;
+}
+
+/**
+ * Issues a fresh code and mails it. Returns false when the address could not be
+ * mailed at all, which is itself the most useful verification signal available:
+ * a typo'd domain fails here rather than being stored as reachable.
+ */
+async function issueEmailChallenge(
+  phone: string,
+  tenantId: string,
+  conv: ConvState,
+  email: string,
+): Promise<boolean> {
+  const code = generateCode();
+  const sent = await sendTransactionalEmail({
+    to: email,
+    subject: `${code} is your Booka verification code`,
+    html: `<p>Your Booka verification code is <strong>${code}</strong>.</p>`
+      + '<p>Type it back into your Booka WhatsApp chat to confirm this address. It expires in 15 minutes.</p>'
+      + '<p>If you did not ask for this, you can ignore this email.</p>',
+    text: `Your Booka verification code is ${code}. Type it back into your Booka WhatsApp chat to confirm this address. It expires in 15 minutes.`,
+  }).catch((error) => {
+    console.warn('[ownerOnboarding] verification email threw', { tenantId, error });
+    return { success: false } as const;
+  });
+
+  if (!sent?.success) return false;
+
+  await persistFlowData(phone, tenantId, conv, {
+    ...(conv.flow_data ?? {}),
+    ...buildChallenge(email, code, tenantId),
+    onboarding_step: 7,
+  });
+  return true;
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  return `${local.slice(0, 2)}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+}
+
+async function handleStep6(
+  phone: string,
+  tenantId: string | null,
+  message: string,
+  conv: ConvState
+): Promise<string> {
+  const resolvedTenantId = tenantId ?? conv.flow_data?.tenant_id;
+  if (!resolvedTenantId) return 'Something went wrong. Please start over.';
+
+  // Address first, skip-word second: "arno@salon.ng" contains "no", and an owner
+  // who typed a real address is plainly not asking to skip.
+  const email = parseEmail(message);
+  if (email) {
+    const ok = await issueEmailChallenge(phone, resolvedTenantId, conv, email);
+    if (!ok) {
+      return `I couldn't send anything to *${email}* — that address may have a typo. Send it again, or reply *skip*.`;
+    }
+    return `I've sent a 6-digit code to *${email}*. What does it say?\n\nIt expires in 15 minutes. Send a different address any time to change it, or reply *skip*.`;
+  }
+
+  if (isSkipRequest(message)) {
+    return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
+  }
+
+  return `I didn't catch an email address there. Send it like *ada@salon.ng*, or reply *skip* if you'd rather not.`;
+}
+
+async function handleStep7(
+  phone: string,
+  tenantId: string | null,
+  message: string,
+  conv: ConvState
+): Promise<string> {
+  const resolvedTenantId = tenantId ?? conv.flow_data?.tenant_id;
+  if (!resolvedTenantId) return 'Something went wrong. Please start over.';
+
+  const state = (conv.flow_data ?? {}) as EmailVerificationState & Record<string, unknown>;
+
+  // Any address supersedes the pending challenge — an owner correcting a typo
+  // should not have to ask for a resend first, and re-sending the SAME address
+  // is plainly a request for a fresh code rather than something to ignore.
+  const newEmail = parseEmail(message);
+  if (newEmail) {
+    const ok = await issueEmailChallenge(phone, resolvedTenantId, conv, newEmail);
+    if (!ok) {
+      return `I couldn't send anything to *${newEmail}* — that address may have a typo. Send it again, or reply *skip*.`;
+    }
+    return `New code sent to *${newEmail}*. What does it say?`;
+  }
+
+  if (/\bresend\b|\bsend again\b|\bnew code\b/i.test(message) && state.email_pending) {
+    const ok = await issueEmailChallenge(phone, resolvedTenantId, conv, state.email_pending);
+    return ok
+      ? `Sent a fresh code to *${maskEmail(state.email_pending)}*. What does it say?`
+      : `I couldn't reach *${maskEmail(state.email_pending)}* just now. Send a different address, or reply *skip*.`;
+  }
+
+  if (isSkipRequest(message)) {
+    return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
+  }
+
+  const { outcome, next } = verifyCode(message, state, resolvedTenantId);
+
+  if (outcome === 'ok') {
+    const email = state.email_pending!;
+    const { error } = await supabaseAdmin
+      .from('tenant_users')
+      .update({ email })
+      .eq('tenant_id', resolvedTenantId)
+      .eq('role', 'owner')
+      .eq('phone', phone);
+
+    // supabase-js resolves with an error rather than throwing, so this has to be
+    // read explicitly. Saying "confirmed" over a failed write would leave the
+    // owner believing they are reachable when nothing was stored.
+    if (error) {
+      console.error('[ownerOnboarding] failed to store verified owner email', {
+        tenantId: resolvedTenantId, error,
+      });
+      return finishOnboarding(
+        phone, resolvedTenantId, conv,
+        `That code is right, but I couldn't save your address just now. I'll send your account alerts to this WhatsApp number instead.`,
+      );
+    }
+
+    return finishOnboarding(
+      phone, resolvedTenantId, conv,
+      `✅ *${email}* is confirmed. Receipts and account alerts will go there.`,
+    );
+  }
+
+  if (outcome === 'wrong') {
+    await persistFlowData(phone, resolvedTenantId, conv, { ...state, ...next });
+    const left = MAX_ATTEMPTS - (next.email_code_attempts ?? MAX_ATTEMPTS);
+    if (left <= 0) {
+      return `That code doesn't match, and that was the last try. Send your email address again for a fresh code, or reply *skip*.`;
+    }
+    return `That code doesn't match. ${left} ${left === 1 ? 'try' : 'tries'} left — or say *resend* for a new code.`;
+  }
+
+  if (outcome === 'expired' || outcome === 'locked') {
+    // Back to step 6 rather than a dead end. The next challenge carries a
+    // brand-new code, so restarting does not weaken the attempt limit.
+    await persistFlowData(phone, resolvedTenantId, conv, {
+      ...clearChallenge(state),
+      onboarding_step: 6,
+    });
+    return outcome === 'expired'
+      ? `That code has expired. Send your email address again and I'll issue a new one, or reply *skip*.`
+      : `Too many wrong codes. Send your email address again for a fresh one, or reply *skip*.`;
+  }
+
+  // no_pending — nothing to verify against; do not strand the owner here.
+  return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
 }
