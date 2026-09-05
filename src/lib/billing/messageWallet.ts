@@ -6,6 +6,7 @@ import {
 } from '@/lib/billing/messageRates';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
+import { attemptAutoRecharge } from '@/lib/billing/walletTopup';
 
 const CHARGES_TABLE = 'whatsapp_message_charges';
 
@@ -66,6 +67,10 @@ type WalletRow = {
   message_rate_credits?: number | string | null;
   grace_overdraft_credits?: number | string | null;
   auto_recharge_enabled?: boolean | null;
+  auto_recharge_amount_credits?: number | string | null;
+  paystack_authorization_code?: string | null;
+  paystack_authorization_email?: string | null;
+  auto_recharge_failed_at?: string | null;
   low_balance_threshold_credits?: number | string | null;
   low_balance_warned_on?: string | null;
 };
@@ -257,6 +262,8 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
       .from('ai_wallets')
       .select(
         'message_rate_credits, grace_overdraft_credits, auto_recharge_enabled, '
+        + 'auto_recharge_amount_credits, paystack_authorization_code, '
+        + 'paystack_authorization_email, auto_recharge_failed_at, '
         + 'low_balance_threshold_credits, low_balance_warned_on',
       )
       .eq('tenant_id', p.tenantId)
@@ -283,8 +290,9 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
 
     if (!reserveRes.allowed && reserveRes.reason === 'insufficient_balance') {
       if (autoRechargeEnabled) {
-        // TODO: stub — always returns false (see attemptAutoRecharge doc comment).
-        const recharged = await attemptAutoRecharge().catch((e) => {
+        const recharged = await attemptAutoRecharge({
+          admin: p.admin, tenantId: p.tenantId, wallet,
+        }).catch((e) => {
           console.warn('[messageWallet] auto-recharge attempt threw', e);
           return false;
         });
@@ -424,22 +432,6 @@ async function maybeWarnLowBalance(
     // An alert must never cost a tenant a message.
     console.warn('[messageWallet] low-balance warning failed', { tenantId, error });
   }
-}
-
-/**
- * Best-effort attempt to top up a tenant's wallet via their saved Paystack
- * payment method before falling back to the bounded grace overdraft.
- *
- * Not yet wired to a real charge: this codebase has no saved-card auto-debit
- * flow for AI/message wallets today (only one-off checkout charges), and per
- * the dependency-verification rule we do not implement a payment integration
- * without first confirming the exact API against Paystack's current docs.
- * Until that's built, this always reports failure so the caller falls through
- * to the grace-overdraft path — safe because grace is bounded, and refusing
- * silently would violate "never let a metering fault silence the bot".
- */
-async function attemptAutoRecharge(): Promise<boolean> {
-  return false;
 }
 
 /**
