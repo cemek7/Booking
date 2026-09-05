@@ -5,6 +5,7 @@ import type {
   InteractiveListMessage,
   InteractiveMessagePayload,
 } from '@/lib/whatsapp/providers/types';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 interface WhatsAppMessage {
   to: string;
@@ -299,7 +300,9 @@ export class WhatsAppProductService {
   constructor(config?: { accessToken?: string; phoneNumberId?: string; baseUrl?: string }) {
     this.accessToken = config?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || '';
     this.phoneNumberId = config?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || '';
-    const rootBaseUrl = (config?.baseUrl || 'https://graph.facebook.com/v18.0').replace(/\/+$/, '');
+    const rootBaseUrl = (
+      config?.baseUrl || `https://graph.facebook.com/${getWhatsAppGraphApiVersion()}`
+    ).replace(/\/+$/, '');
     this.baseUrl = `${rootBaseUrl}/${this.phoneNumberId}/messages`;
   }
 

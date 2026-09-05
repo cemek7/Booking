@@ -9,6 +9,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQualityWebhook';
 import { MetaAdapter } from '@/lib/whatsapp/providers/meta';
 import { resolveChargeTenantByWamid, settleOutboundMessage } from '@/lib/billing/messageWallet';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -325,7 +326,7 @@ async function sendSharedGatewayRoutingPrompt(to: string, phoneNumberId: string)
   const token = process.env.WHATSAPP_ACCESS_TOKEN || '';
   if (!token) return;
   const base = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
-  const version = process.env.WHATSAPP_API_VERSION || 'v18.0';
+  const version = getWhatsAppGraphApiVersion();
   const client = new MetaAdapter({ provider: 'meta', baseUrl: `${base}/${version}`, apiKey: token, instanceName: phoneNumberId });
   await client.sendTextMessage(
     to,

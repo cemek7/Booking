@@ -22,9 +22,20 @@ function endOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0);
 }
 
-function isoDateOnly(iso?: string) {
+// Build a YYYY-MM-DD key from a Date using its LOCAL calendar day, not UTC.
+// Using toISOString() here shifts the day across the UTC boundary for any
+// non-UTC timezone (e.g. WAT/UTC+1), which mismatched the calendar cell keys
+// against the reservation keys and dropped bookings onto the wrong day.
+function localDateKey(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function reservationDateKey(iso?: string) {
   if (!iso) return '';
-  return new Date(iso).toISOString().slice(0, 10);
+  return localDateKey(new Date(iso));
 }
 
 export default function ReservationsCalendar({ tenantId, onDayClick, selectedDate }: { tenantId: string; onDayClick?: (isoDate: string) => void; selectedDate?: string | undefined }) {
@@ -85,7 +96,7 @@ export default function ReservationsCalendar({ tenantId, onDayClick, selectedDat
   const byDate = useMemo(() => {
     const map = new Map<string, Reservation[]>();
     for (const r of reservations) {
-      const key = isoDateOnly(r.start_at);
+      const key = reservationDateKey(r.start_at);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
@@ -99,7 +110,7 @@ export default function ReservationsCalendar({ tenantId, onDayClick, selectedDat
   for (let i = 0; i < firstDay; i++) cells.push({});
   for (let d = 1; d <= daysInMonth; d++) {
     const dt = new Date(date.getFullYear(), date.getMonth(), d);
-    cells.push({ dayNumber: d, iso: dt.toISOString().slice(0, 10) });
+    cells.push({ dayNumber: d, iso: localDateKey(dt) });
   }
 
   return (

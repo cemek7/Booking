@@ -2,6 +2,7 @@ import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { getStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 export interface EvolutionAPIConfig {
   provider?: 'evolution' | 'waha' | 'meta';
@@ -648,7 +649,7 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       const sharedGatewayToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
       if (sharedGatewayId && sharedGatewayToken) {
         const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
-        const apiVersion = process.env.WHATSAPP_API_VERSION || 'v18.0';
+        const apiVersion = getWhatsAppGraphApiVersion();
         return {
           provider: 'meta',
           baseUrl: `${baseUrl}/${apiVersion}`,
