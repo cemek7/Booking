@@ -51,8 +51,8 @@ export default function BillingClient() {
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [topUpAmount, setTopUpAmount] = useState('100');
-  const [topUpDescription, setTopUpDescription] = useState('Manual top-up');
   const [topUpMessage, setTopUpMessage] = useState<string | null>(null);
+  const [topUpPending, setTopUpPending] = useState(false);
   const headers = useAuthHeaders();
 
   useEffect(() => {
@@ -109,6 +109,9 @@ export default function BillingClient() {
 
   const lowBalanceThreshold = wallet?.low_balance_threshold_credits ?? 0;
 
+  // Sends the owner to Paystack. Credits arrive only when the signed webhook
+  // lands — this used to POST straight to /api/billing/wallet, which credited
+  // the wallet with no payment at all.
   async function submitTopUp() {
     setTopUpMessage(null);
     const amount = Number(topUpAmount);
@@ -117,21 +120,27 @@ export default function BillingClient() {
       return;
     }
 
-    const res = await authFetch<WalletSummary>('/api/billing/wallet', {
+    setTopUpPending(true);
+    const res = await authFetch<{ authorization_url?: string }>('/api/billing/wallet/checkout', {
       method: 'POST',
       body: {
         amount_credits: amount,
-        description: topUpDescription.trim() || 'Manual top-up',
+        callback_url: typeof window !== 'undefined' ? window.location.href : undefined,
       },
     });
+    setTopUpPending(false);
 
     if (res.error) {
       setTopUpMessage(res.error.message);
       return;
     }
 
-    setWallet((res.data as WalletSummary) ?? null);
-    setTopUpMessage('Top-up applied.');
+    const url = (res.data as { authorization_url?: string } | null)?.authorization_url;
+    if (!url) {
+      setTopUpMessage('Could not start the payment. Please try again.');
+      return;
+    }
+    window.location.href = url;
   }
 
   return (
@@ -281,7 +290,8 @@ export default function BillingClient() {
           <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">Top up credits</h2>
             <p className="mt-1 text-sm text-slate-500">
-              This is a manual top-up for now. We can wire Paystack/Stripe later without changing the wallet model.
+              1 credit = &#8358;1. You&rsquo;ll be taken to Paystack to pay by card; your balance updates once the
+              payment is confirmed. Paying by card also lets you turn on auto top-up later.
             </p>
 
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -294,24 +304,19 @@ export default function BillingClient() {
                   placeholder="100"
                   inputMode="decimal"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700">Description</label>
-                <input
-                  value={topUpDescription}
-                  onChange={(e) => setTopUpDescription(e.target.value)}
-                  className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
-                  placeholder="Manual top-up"
-                />
+                <p className="mt-1 text-xs text-slate-500">
+                  You&rsquo;ll pay &#8358;{Number(topUpAmount) > 0 ? Number(topUpAmount).toLocaleString() : '0'}
+                </p>
               </div>
             </div>
 
             <div className="mt-4 flex items-center gap-3">
               <button
                 onClick={submitTopUp}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+                disabled={topUpPending}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
               >
-                Add credits
+                {topUpPending ? 'Starting payment…' : 'Continue to payment'}
               </button>
               {topUpMessage && <span className="text-sm text-slate-600">{topUpMessage}</span>}
             </div>

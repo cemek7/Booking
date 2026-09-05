@@ -67,7 +67,7 @@ jest.mock('@/lib/billing/ai-wallet', () => ({
 }));
 jest.mock('@/lib/google-ai', () => ({ callGoogleAI: async () => ({}) }));
 
-import { handleOnboarding } from '@/lib/whatsapp/v2/flows/ownerOnboarding';
+import { handleOnboarding, handleOwnerEmailUpdate } from '@/lib/whatsapp/v2/flows/ownerOnboarding';
 import {
   buildChallenge, generateCode, hashCode, MAX_ATTEMPTS, CODE_TTL_MS,
 } from '@/lib/whatsapp/v2/flows/ownerEmailCapture';
@@ -183,8 +183,11 @@ describe('step 6 — capturing the address', () => {
     expect(patch.current_flow).toBe('managing');
     expect((patch.flow_data as Row).onboarding_step).toBe(5);
     expect(reply).toContain('WhatsApp number');
-    // Must not promise a "my email is ..." command that does not exist.
-    expect(reply).not.toContain('my email is');
+    // The copy promises a "my email is ..." command; handleOwnerEmailUpdate is
+    // what keeps that promise, and its tests below pin the behaviour. If that
+    // command is ever removed, this copy must change with it.
+    expect(reply).toContain('my email is');
+    expect(typeof handleOwnerEmailUpdate).toBe('function');
     expect(reply).toContain("You're all set");
   });
 
@@ -306,5 +309,57 @@ describe('generateCode', () => {
   it('never emits a code the hash of one tenant would match for another', () => {
     const code = generateCode();
     expect(hashCode(code, 'tenant-a')).not.toBe(hashCode(code, 'tenant-b'));
+  });
+});
+
+// ── Post-onboarding "my email is ..." ─────────────────────────────────────────
+
+describe('handleOwnerEmailUpdate', () => {
+  const done = () => ({ ...conv({ onboarding_step: 5 }), current_flow: 'managing' as const });
+
+  it('ignores messages that are not about email', async () => {
+    expect(await handleOwnerEmailUpdate(PHONE, TENANT, "who's booked tomorrow?", done())).toBeNull();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('ignores a bare address with no mention of email', async () => {
+    // Otherwise any owner message containing an address would hijack the turn.
+    expect(await handleOwnerEmailUpdate(PHONE, TENANT, 'invoice ada@salon.ng please', done())).toBeNull();
+  });
+
+  it('ignores staff, who cannot change the owner contact', async () => {
+    const staff = { ...done(), role: 'staff' as const };
+    expect(await handleOwnerEmailUpdate(PHONE, TENANT, 'my email is ada@salon.ng', staff)).toBeNull();
+  });
+
+  it('sends a code and routes the conversation back to the verification step', async () => {
+    const reply = await handleOwnerEmailUpdate(PHONE, TENANT, 'my email is ada@salon.ng', done());
+
+    expect((mockSendEmail.mock.calls[0][0] as { to: string }).to).toBe('ada@salon.ng');
+    // Without current_flow 'onboarding' the code the owner types next goes to
+    // the owner-command handler and the verification never completes.
+    const patch = mockUpdateConversation.mock.calls.at(-1)![2] as Row;
+    expect(patch.current_flow).toBe('onboarding');
+    expect((patch.flow_data as Row).onboarding_step).toBe(7);
+    expect(reply).toContain('ada@salon.ng');
+  });
+
+  it('asks again when the message mentions email but has no address', async () => {
+    const reply = await handleOwnerEmailUpdate(PHONE, TENANT, 'change my email please', done());
+    expect(reply).toContain("couldn't read an email address");
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('completes end to end: the code lands and the address is stored', async () => {
+    await handleOwnerEmailUpdate(PHONE, TENANT, 'my email is ada@salon.ng', done());
+    const code = /\b(\d{6})\b/.exec((mockSendEmail.mock.calls[0][0] as { text: string }).text)![1];
+    const armedState = lastFlowData();
+
+    const reply = await handleOnboarding(PHONE, TENANT, code, conv(armedState));
+
+    expect(updates).toContainEqual({ table: 'tenant_users', patch: { email: 'ada@salon.ng' } });
+    expect(reply).toContain('confirmed');
+    // And the owner is handed back to normal command handling.
+    expect((mockUpdateConversation.mock.calls.at(-1)![2] as Row).current_flow).toBe('managing');
   });
 });

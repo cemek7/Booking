@@ -373,9 +373,16 @@ psql $DATABASE_URL -f db/migrations/141_overdraft_reservation.sql
 psql $DATABASE_URL -f db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
 psql $DATABASE_URL -f db/migrations/143_message_handoff_warned_on.sql
 psql $DATABASE_URL -f db/migrations/144_low_balance_alerts.sql
+psql $DATABASE_URL -f db/migrations/145_wallet_paid_topup.sql
 ```
 
 Each has a matching `*_rollback.sql`.
+
+**145 is what makes top-up a payment.** It adds `wallet_topup_intents` (the row that ties a
+Paystack reference to a tenant and an amount before the customer pays), the stored card
+authorization columns on `ai_wallets`, and `credit_wallet_topup` — the idempotent claim-and-credit
+function the webhook calls. Without it, `POST /api/billing/wallet/checkout` returns an error and
+no owner can pay for credits.
 
 **142 is not optional.** It fixes `topup_ai_wallet`, which has never worked: the function
 declares `RETURNS TABLE (… balance_credits …)`, which collides with the column of the same name
@@ -404,17 +411,69 @@ GROUP BY 1, 2
 ORDER BY 3 DESC;
 ```
 
-### Two limitations the cutover plan must not assume away
+### Paying for credits
 
-**1. Auto-recharge is not implemented.** `ai_wallets.auto_recharge_enabled` exists and defaults
-to `false`, and the code path behind it is an explicit stub that always reports failure. This
-codebase has no saved-card auto-debit flow — building one needs stored per-tenant Paystack
-authorization codes plus customer consent, which is its own feature with its own spec.
+**1 credit = NGN 1.** Two ways credits enter a wallet, and only two:
 
-> **Do not enable `auto_recharge_enabled` for any tenant. It is inert.** A tenant who exhausts
-> credits mid-conversation falls through to the bounded grace overdraft, then to the
-> wallet-exhausted handoff, and must top up manually. Tenants near their limit need a *manual*
-> top-up prompt before 2026-10-01, not an automatic one.
+| Path | Route | Who | Payment |
+|---|---|---|---|
+| Owner tops up | `POST /api/billing/wallet/checkout` | owner | Paystack card checkout; credited by the webhook |
+| Booka credits a tenant by hand | `POST /api/billing/wallet` | **superadmin** | none — use for refunds, goodwill, migration |
+
+`POST /api/billing/wallet` used to be `roles: ['owner']` and credited the wallet with no payment
+at all, which let any owner mint themselves credits *and* book them as revenue. It is superadmin
+only now, and runs on the service-role client because migration 142 revoked `topup_ai_wallet` to
+`service_role`.
+
+The owner path never credits directly. It writes a `wallet_topup_intents` row **before** the
+customer pays, sends them to Paystack, and the signed `charge.success` webhook calls
+`credit_wallet_topup`, which claims the intent and credits the wallet in one transaction. That
+claim is what makes Paystack's routine webhook retries safe: a second delivery finds no pending
+intent and credits nothing. A payment short of the intent amount is refused and the intent marked
+`failed`.
+
+To see top-ups that never completed:
+
+```sql
+SELECT reference, tenant_id, amount_credits, origin, status, created_at
+FROM public.wallet_topup_intents
+WHERE status <> 'paid'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+A `pending` row older than an hour means the owner opened checkout and did not pay, or the webhook
+never arrived — check Paystack's dashboard for that reference before crediting anything by hand.
+
+### Auto-recharge
+
+**Auto-recharge is now implemented, and still off for every tenant.**
+`ai_wallets.auto_recharge_enabled` defaults to `false` and must stay there until you deliberately
+turn it on per tenant. Turning it on does nothing by itself: it also needs
+`auto_recharge_amount_credits` and a **saved card**.
+
+Booka can only save a card that Paystack marks `reusable`, which is why the checkout requests
+`channels: ['card']` — a bank-transfer or USSD authorization is never reusable. The card is stored
+only from a verified `charge.success`, together with the email that created it, because Paystack
+rejects a recurring charge sent with any other address.
+
+```sql
+-- Which tenants could actually auto-recharge today
+SELECT tenant_id,
+       auto_recharge_enabled,
+       auto_recharge_amount_credits,
+       paystack_card_brand, paystack_card_last4,
+       auto_recharge_failed_at, auto_recharge_failure_reason
+FROM public.ai_wallets
+WHERE paystack_authorization_code IS NOT NULL;
+```
+
+When the balance cannot fund a send, the reserve path charges the saved card and re-reserves. A
+decline stamps `auto_recharge_failed_at` and backs off for 24 hours — without that, a dead card is
+re-charged on every single send, which is a stream of failed charges against the tenant's bank and
+a stream of latency on Booka's inbound path. Saving a new card clears the stamp. A tenant whose
+recharge fails falls through to the bounded grace overdraft and then the handoff, exactly as
+before.
 
 **2. Some stranded reservations need manual reconciliation.** Two error logs mean credits are
 debited with no automatic recovery, because the sweeper deliberately cannot see these rows —
@@ -514,6 +573,15 @@ WHERE role = 'owner';
 
 The verification code lives only in `whatsapp_conversations.flow_data`, salted-hashed per tenant
 and never stored in the clear, and is cleared when onboarding completes. No migration backs it.
+
+On wallet exhaustion the conversation is also **reserved for a human**: `human_handling_until` is
+set (default 60 minutes, `BOOKA_HANDOFF_HUMAN_MINUTES`) so the assistant stays out, and the chat is
+flipped to `pending` so it surfaces in the dashboard inbox. That is what makes the handoff copy —
+"a member of our team will reply to you here shortly" — a promise Booka can keep: staff reply from
+the inbox over WhatsApp and hand the thread back with `POST /api/chats/[id]/release`. The window is
+deliberately far shorter than the 24-hour handoff re-arm so the assistant resumes promptly once the
+wallet is topped up. An **owner or staff** thread is never reserved this way — silencing it would
+cut off the one person who can fix the wallet.
 
 `tenant_users` has no unique constraint on `(tenant_id, role)`, so a tenant can have more than one
 owner row. The lookup takes the most contactable one rather than erroring, which would otherwise

@@ -28,7 +28,7 @@ import type { ProviderConfig } from '@/lib/whatsapp/providers';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
 import { looksLikeShowcaseRequest, sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
 import { handleOwnerCommand } from './flows/ownerCommands';
-import { handleOnboarding } from './flows/ownerOnboarding';
+import { handleOnboarding, handleOwnerEmailUpdate } from './flows/ownerOnboarding';
 import { handleCustomerBooking } from './flows/customerBooking';
 import { detectOptOutKeyword, type OptOutSignal } from './optOut';
 import { brandCustomerText } from './outboundBranding';
@@ -186,6 +186,17 @@ async function handleOwnerOrStaffMessage(
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const providerConfig = await resolveProviderConfig(tenantId, channel);
+
+  // "my email is ..." — handled ahead of L1 and L2 because it is mechanical,
+  // needs no model call, and is what the onboarding skip copy promises. It
+  // routes the conversation back into the onboarding flow at the verification
+  // step, so the code the owner types next lands in handleStep7.
+  const emailUpdateReply = await handleOwnerEmailUpdate(externalId, tenantId, message, conv!);
+  if (emailUpdateReply) {
+    await sendReplyByChannel(providerConfig, tenantId, externalId, emailUpdateReply, channel);
+    await markMessagesProcessed(allMessageIds);
+    return;
+  }
 
   // L1 check — yes/no/numbers for confirming AI-proposed actions
   const l1Match = matchRule(message, {

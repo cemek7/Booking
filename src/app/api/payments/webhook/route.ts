@@ -7,6 +7,8 @@ import Stripe from 'stripe';
 import crypto from 'crypto';
 import { defaultLogger } from '@/lib/logger';
 import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { creditVerifiedTopup } from '@/lib/billing/walletTopup';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 interface PaymentWebhookPayload {
   provider?: string;
@@ -17,7 +19,16 @@ interface PaymentWebhookPayload {
     reference?: string;
     status?: string;
     created_at?: string;
+    amount?: number;
     metadata?: Record<string, unknown> | null;
+    customer?: { email?: string } | null;
+    authorization?: {
+      authorization_code?: string;
+      reusable?: boolean;
+      last4?: string;
+      card_type?: string;
+      channel?: string;
+    } | null;
   };
   status?: string;
   event?: string;
@@ -150,6 +161,47 @@ export const POST = createHttpHandler(
       }
     } catch (e) {
       defaultLogger.warn('payment webhook: webhook_events handling failed', e);
+    }
+
+    // ── Wallet top-up ────────────────────────────────────────────────────────
+    // Runs before the transactions lookup because a wallet top-up has no
+    // `transactions` row — its reference is tied to a `wallet_topup_intents`
+    // row this server wrote before the customer paid. The tenant and the
+    // amount are read from that row, never from this payload.
+    //
+    // Reached only after the signature check above, and the replay guard
+    // already ran; `credit_wallet_topup` is idempotent on top of that, because
+    // Paystack retries are routine and webhook_events is best-effort.
+    if (/^bokawallet_/.test(String(ref)) && /success/i.test(String(status))) {
+      const chargedMinor = Number(parsed.data?.amount ?? 0);
+      if (!Number.isFinite(chargedMinor) || chargedMinor <= 0) {
+        defaultLogger.warn('[api/payments/webhook] wallet top-up with no amount', { ref });
+        return { ok: true, wallet_topup: false, reason: 'no_amount' };
+      }
+
+      // Admin client: credit_wallet_topup is granted to service_role only, and
+      // ctx.supabase here is an unauthenticated anon client (auth: false).
+      // A throw is deliberate — it makes Paystack retry rather than silently
+      // dropping a payment the customer already made.
+      const credit = await creditVerifiedTopup({
+        admin: createSupabaseAdminClient(),
+        reference: String(ref),
+        amountMinor: chargedMinor,
+        customerEmail: parsed.data?.customer?.email ?? null,
+        authorization: parsed.data?.authorization ?? null,
+      });
+
+      if (credit.credited) {
+        defaultLogger.info('[api/payments/webhook] wallet topped up', {
+          ref, tenantId: credit.tenantId, amountCredits: credit.amountCredits,
+        });
+      } else {
+        // 'no_pending_intent' is the ordinary replay case, not a failure.
+        defaultLogger.warn('[api/payments/webhook] wallet top-up not credited', {
+          ref, reason: credit.reason,
+        });
+      }
+      return { ok: true, wallet_topup: credit.credited };
     }
 
     // Update transaction status using provider verification if needed

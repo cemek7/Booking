@@ -519,11 +519,10 @@ async function finishOnboarding(
 
 const EMAIL_ASK = `One last thing — what email should I use for your receipts and account alerts?\n\nIt's how I reach you if your message balance runs low, before your bot goes quiet. Reply *skip* if you'd rather not.`;
 
-// Deliberately promises nothing further. There is no post-onboarding command
-// for setting an email, and a WhatsApp-native owner has no dashboard login to
-// be pointed at either, so "you can add one later" would be a promise Booka
-// cannot keep — the same trap as the handoff copy.
-const SKIPPED_CLOSING = `No problem — I'll send your account alerts to this WhatsApp number instead.`;
+// The "my email is ..." promise is kept by handleOwnerEmailUpdate below, which
+// re-enters this same verification flow at step 7. Do not reword this to
+// promise anything that command does not actually do.
+const SKIPPED_CLOSING = `No problem — I'll send your account alerts to this WhatsApp number instead. You can add one any time by saying "my email is ...".`;
 
 async function persistFlowData(
   phone: string,
@@ -658,7 +657,7 @@ async function handleStep7(
       });
       return finishOnboarding(
         phone, resolvedTenantId, conv,
-        `That code is right, but I couldn't save your address just now. I'll send your account alerts to this WhatsApp number instead.`,
+        `That code is right, but I couldn't save your address just now. I'll send your account alerts to this WhatsApp number — say "my email is ..." to try again.`,
       );
     }
 
@@ -691,4 +690,50 @@ async function handleStep7(
 
   // no_pending — nothing to verify against; do not strand the owner here.
   return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
+}
+
+// ─── Post-onboarding: "my email is ..." ───────────────────────────────────────
+
+/**
+ * Lets an owner add or change their email long after onboarding, which is what
+ * the skip copy promises. Recognised only when the message both names an email
+ * address and says "email" — specific enough not to collide with the ordinary
+ * owner commands this runs ahead of.
+ *
+ * It re-enters the onboarding flow at step 7 rather than duplicating the
+ * verification loop: `handleStep7` already sends codes, counts attempts, writes
+ * the verified address, and returns the conversation to `managing` when it is
+ * done. Returns null when the message is not an email update, so the caller
+ * falls through to its normal handling.
+ */
+export async function handleOwnerEmailUpdate(
+  phone: string,
+  tenantId: string,
+  message: string,
+  conv: ConvState,
+): Promise<string | null> {
+  if (conv.role !== 'owner') return null;
+  if (!/\be-?mail\b/i.test(message)) return null;
+
+  const email = parseEmail(message);
+  if (!email) {
+    return `I couldn't read an email address in that. Send it like *my email is ada@salon.ng*.`;
+  }
+
+  const ok = await issueEmailChallenge(phone, tenantId, conv, email);
+  if (!ok) {
+    return `I couldn't send anything to *${email}* — that address may have a typo. Try again.`;
+  }
+
+  // issueEmailChallenge has already written the challenge and onboarding_step 7.
+  // Routing back through the onboarding flow is what makes the next message —
+  // the code — reach handleStep7.
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId = conv.external_id ?? phone;
+  await updateConversation(convExternalId, tenantId, {
+    current_flow: 'onboarding',
+    flow_data: { ...(conv.flow_data ?? {}), onboarding_step: 7 },
+  }, convChannel);
+
+  return `I've sent a 6-digit code to *${email}*. What does it say?\n\nIt expires in 15 minutes.`;
 }
