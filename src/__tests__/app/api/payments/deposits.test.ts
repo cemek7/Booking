@@ -42,6 +42,15 @@ import PaymentService from '@/lib/paymentService';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { POST } from '@/app/api/payments/deposits/route';
 
+type QueryResult = { data: unknown; error: null };
+type QueryChain = {
+  select: () => QueryChain;
+  eq: () => QueryChain;
+  in: () => QueryChain;
+  maybeSingle: () => Promise<QueryResult>;
+  single: () => Promise<QueryResult>;
+};
+
 // ─── Admin client mock ────────────────────────────────────────────────────────
 // The route-handler wrapper calls createSupabaseAdminClient() TWICE:
 //   1. auth.getUser(token)
@@ -49,7 +58,7 @@ import { POST } from '@/app/api/payments/deposits/route';
 //      (membership/role check)
 // It also calls resolveIsGlobalAdmin which checks the 'admins' table.
 function adminMock() {
-  const chain = (final: any): any => ({
+  const chain = (final: QueryResult): QueryChain => ({
     select: () => chain(final),
     eq: () => chain(final),
     maybeSingle: async () => final,
@@ -80,7 +89,7 @@ function adminMock() {
 //   from('transactions').select().eq().eq().eq().in().single() → existing deposit or null
 //   from('tenants').select().eq('id').single()                 → { metadata }
 function bearerMock(o: { reservationStatus?: string; existingDeposit?: object | null } = {}) {
-  const chain = (final: any): any => ({
+  const chain = (final: QueryResult): QueryChain => ({
     select: () => chain(final),
     eq: () => chain(final),
     in: () => chain(final),

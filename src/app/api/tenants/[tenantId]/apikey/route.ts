@@ -3,6 +3,25 @@ import crypto from 'crypto';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
+type RevokedApiKey = { hash: string; salt: string; createdAt: string; revokedAt: string };
+type ApiKeySettings = Record<string, unknown> & {
+  apiKeyHash?: unknown;
+  apiKeySalt?: unknown;
+  apiKeyCreatedAt?: unknown;
+  revokedApiKeys?: unknown;
+};
+
+function asRevokedApiKey(value: unknown): RevokedApiKey | null {
+  if (!value || typeof value !== 'object') return null;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.hash === 'string'
+    && typeof entry.salt === 'string'
+    && typeof entry.createdAt === 'string'
+    && typeof entry.revokedAt === 'string'
+    ? { hash: entry.hash, salt: entry.salt, createdAt: entry.createdAt, revokedAt: entry.revokedAt }
+    : null;
+}
+
 /**
  * POST /api/tenants/:tenantId/apikey
  * Generates a new random API key and stores a hash in tenant settings.
@@ -31,7 +50,7 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.databaseError(fetchError);
     }
 
-    const settings = (current?.settings || {}) as Record<string, unknown>;
+    const settings = (current?.settings || {}) as ApiKeySettings;
 
     // Generate secure API key
     const apiKey = crypto.randomBytes(24).toString('hex');
@@ -39,13 +58,14 @@ export const POST = createHttpHandler(
     const hash = crypto.createHash('sha256').update(salt + apiKey).digest('hex');
 
     // Revoke previous key by recording its revocation timestamp before overwriting
-    const previousKeyCreatedAt = (settings as any).apiKeyCreatedAt || null;
-    const revokedKeys: Array<{ hash: string; salt: string; createdAt: string; revokedAt: string }> =
-      Array.isArray((settings as any).revokedApiKeys) ? (settings as any).revokedApiKeys : [];
-    if ((settings as any).apiKeyHash && previousKeyCreatedAt) {
+    const previousKeyCreatedAt = typeof settings.apiKeyCreatedAt === 'string' ? settings.apiKeyCreatedAt : null;
+    const revokedKeys = Array.isArray(settings.revokedApiKeys)
+      ? settings.revokedApiKeys.map(asRevokedApiKey).filter((entry): entry is RevokedApiKey => entry !== null)
+      : [];
+    if (typeof settings.apiKeyHash === 'string' && previousKeyCreatedAt) {
       revokedKeys.push({
-        hash: (settings as any).apiKeyHash,
-        salt: (settings as any).apiKeySalt || '',
+        hash: settings.apiKeyHash,
+        salt: typeof settings.apiKeySalt === 'string' ? settings.apiKeySalt : '',
         createdAt: previousKeyCreatedAt,
         revokedAt: new Date().toISOString(),
       });

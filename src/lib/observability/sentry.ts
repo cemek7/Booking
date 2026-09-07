@@ -4,7 +4,7 @@ export type BookaSentryContext = {
   tenantId?: string | null;
   channel?: 'whatsapp' | 'instagram' | 'web' | 'system' | null;
   flow?: 'activation' | 'booking' | 'cancellation' | 'reschedule' | 'owner_command' | 'payment' | 'support' | 'retention' | null;
-  provider?: 'meta' | 'waha' | 'evolution' | 'openrouter' | 'gemini' | 'paystack' | 'stripe' | 'supabase' | 'system' | null;
+  provider?: 'meta' | 'waha' | 'evolution' | 'cloudflare' | 'openrouter' | 'gemini' | 'paystack' | 'stripe' | 'supabase' | 'system' | null;
   release?: string | null;
   tags?: Record<string, string | number | boolean | null | undefined>;
   extra?: Record<string, unknown>;

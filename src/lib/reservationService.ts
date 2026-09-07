@@ -8,6 +8,7 @@ import { trace } from '@opentelemetry/api';
 import { reservationCreationDuration, bookingCreated } from './metrics';
 import DoubleBookingPrevention from './doubleBookingPrevention';
 import { notifyBookingEvent } from '@/lib/integrations/notification-aggregator';
+import { resolveCustomer } from '@/lib/customers/identity';
  
 type ReservationActor = { id: string | null; role?: Role | null };
 type ReservationConflict = { conflict_type: string };
@@ -383,34 +384,15 @@ async function resolveCustomerId(
   payload: CreateReservationPayload
 ): Promise<string | null> {
   if (payload.customer_id) return payload.customer_id;
-  if (!payload.phone) return null;
-
-  const { data: existing } = await supabase
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', payload.tenant_id)
-    .eq('phone', payload.phone)
-    .maybeSingle();
-
-  if (typeof existing?.id === 'string') return existing.id;
-
-  const { data: inserted, error } = await supabase
-    .from('customers')
-    .insert({
-      tenant_id: payload.tenant_id,
-      name: payload.customer_name ?? payload.phone,
-      phone: payload.phone,
+  try {
+    return await resolveCustomer(supabase, payload.tenant_id, payload.phone, {
+      name: payload.customer_name ?? payload.phone ?? null,
       source: 'reservation_service',
-    })
-    .select('id')
-    .maybeSingle();
-
-  if (error) {
-    defaultLogger.warn('reservationService: failed to create customer link', error);
+    });
+  } catch (error) {
+    defaultLogger.warn('reservationService: failed to resolve customer link', error);
     return null;
   }
-
-  return typeof inserted?.id === 'string' ? inserted.id : null;
 }
 
 const serviceExports = { createReservation, cancelReservation, rescheduleReservation };

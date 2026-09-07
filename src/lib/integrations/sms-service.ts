@@ -13,6 +13,8 @@ interface SMSOptions {
   body: string;
 }
 
+export type SMSResult = { success: true; sid: string } | { success: false; error: string };
+
 /** Mask phone number for safe logging */
 function maskPhone(phone: string): string {
   return phone.length > 4 ? `***${phone.slice(-4)}` : '****';
@@ -34,7 +36,7 @@ function getTwilioClient(accountSid?: string, authToken?: string) {
 /**
  * Send SMS message
  */
-export async function sendSMS(options: SMSOptions): Promise<any> {
+export async function sendSMS(options: SMSOptions): Promise<SMSResult> {
   try {
     if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
       defaultLogger.warn('Twilio credentials not configured');
@@ -251,7 +253,8 @@ export async function getTwilioBalance(): Promise<number | null> {
   try {
     const client = getTwilioClient();
     const balance = await client.api.accounts(process.env.TWILIO_ACCOUNT_SID || '').fetch();
-    return (balance as any).balance ? parseFloat((balance as any).balance) : null;
+    const value = (balance as unknown as { balance?: string | number | null }).balance;
+    return typeof value === 'string' || typeof value === 'number' ? parseFloat(String(value)) : null;
   } catch (error) {
     defaultLogger.error('❌ Error getting Twilio balance:', error);
     return null;

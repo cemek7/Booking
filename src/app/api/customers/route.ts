@@ -4,6 +4,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { NextResponse } from 'next/server';
 import { defaultLogger } from '@/lib/logger';
 import { z } from 'zod';
+import { normalizePhone } from '@/lib/customers/identity';
 
 const CreateCustomerSchema = z.object({
   name: z.string().min(1).max(200).optional(),
@@ -36,8 +37,9 @@ export const GET = createHttpHandler(
 
     const { data, error } = await ctx.supabase
       .from('customers')
-      .select('id,customer_name,phone_number,notes,created_at')
+      .select('id,name,customer_name,phone,phone_number,normalized_phone,tags,created_at,merged_into')
       .eq('tenant_id', tenantId)
+      .is('merged_into', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + pageLimit - 1);
 
@@ -69,8 +71,11 @@ export const POST = createHttpHandler(
 
     const payload = {
       tenant_id: tenantId,
+      name: body.name || body.customer_name || null,
       customer_name: body.name || body.customer_name || null,
-      phone_number: body.phone || body.phone_number || null,
+      phone: normalizePhone(body.phone || body.phone_number) || body.phone || body.phone_number || null,
+      phone_number: normalizePhone(body.phone || body.phone_number) || body.phone || body.phone_number || null,
+      normalized_phone: normalizePhone(body.phone || body.phone_number),
       notes: body.notes || null,
     };
 
@@ -114,7 +119,9 @@ export const PATCH = createHttpHandler(
 
     const update = {
       name: body.name,
-      phone: body.phone,
+      phone: body.phone ? normalizePhone(body.phone) || body.phone : undefined,
+      phone_number: body.phone ? normalizePhone(body.phone) || body.phone : undefined,
+      normalized_phone: body.phone ? normalizePhone(body.phone) : undefined,
       email: body.email,
       notes: body.notes,
     } as Record<string, unknown>;

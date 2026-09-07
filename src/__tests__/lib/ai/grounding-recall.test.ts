@@ -24,13 +24,13 @@ const from = jest.fn((table: string) => {
     tenant_users: [],
   };
 
-  const chain: any = {
+  const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
     in: () => chain,
     order: () => chain,
     maybeSingle: async () => ({ data: rowsByTable[table] ?? null, error: null }),
-    then: (resolve: any, reject: any) =>
+    then: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) =>
       Promise.resolve({ data: rowsByTable[table] ?? [], error: null }).then(resolve, reject),
   };
 

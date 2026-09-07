@@ -7,7 +7,7 @@ import { z } from 'zod';
 // Zod schema for POST request body
 const ScheduleJobBodySchema = z.object({
   name: z.string().min(1, 'Job name is required'),
-  payload: z.record(z.string(), z.any()),
+  payload: z.record(z.string(), z.unknown()),
   priority: z.number().int().min(1).max(10).default(5).optional(),
   scheduled_at: z.string().datetime().optional(),
   retry_policy: z.object({

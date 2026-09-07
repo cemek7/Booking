@@ -15,7 +15,7 @@ export interface ComponentTestConfig {
   user?: TestUser;
   props?: Record<string, unknown>;
   queries?: Record<string, unknown>;
-  mocks?: Record<string, jest.MockedFunction<any>>;
+  mocks?: Record<string, jest.MockedFunction<(...args: never[]) => unknown>>;
 }
 
 // Form testing utilities
@@ -67,11 +67,11 @@ export class FormTestUtils {
    * Test complete form workflow
    */
   static async testFormWorkflow<T>(config: {
-    component: React.ComponentType<any>;
+    component: React.ComponentType<Record<string, unknown>>;
     props?: Record<string, unknown>;
     formData: Record<string, string | number | boolean>;
     submitButtonText?: string | RegExp;
-    onSubmit?: jest.MockedFunction<any>;
+    onSubmit?: jest.MockedFunction<(...args: never[]) => unknown>;
     expectedErrors?: string[];
     validationFn?: (result: T) => void;
   }): Promise<void> {

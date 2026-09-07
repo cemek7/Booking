@@ -16,13 +16,13 @@ const SettingsSchemaBase = z.object({
   businessNickname: z.string().min(1).optional(),
   tone: z.string().min(1).optional(),
   styleGuidelines: z.string().min(1).optional(),
-  voiceParameters: z.record(z.string(), z.any()).optional(),
+  voiceParameters: z.record(z.string(), z.unknown()).optional(),
   samplePhrases: z.array(z.string().min(1)).optional(),
   brandTagline: z.string().optional(),
   greeting: z.string().optional(),
   signature: z.string().optional(),
   preferred_language: z.string().min(1).optional(),
-  tone_config: z.record(z.string(), z.any()).optional(),
+  tone_config: z.record(z.string(), z.unknown()).optional(),
   requireDeposit: z.boolean().optional(),
   // Booking defaults
   bookingBufferMinutes: z.number().int().min(0).optional(),
@@ -95,6 +95,7 @@ const SettingsSchemaBase = z.object({
   outcomeTargets: z.array(z.string().min(1)).optional(),
   escalationRules: z.array(z.string().min(1)).optional(),
   bookingSources: z.array(z.string().min(1)).optional(),
+  commercialMotion: z.enum(['booking', 'sales', 'hybrid', 'enquiry']).optional(),
   notificationPreferences: z.object({
     newBookings: z.boolean().optional(),
     cancellations: z.boolean().optional(),
@@ -110,17 +111,32 @@ const SettingsSchemaBase = z.object({
       sendDailySummary: z.boolean().optional(),
       sendWeeklySummary: z.boolean().optional(),
       sendCancellationAlerts: z.boolean().optional(),
+      templateMessagingEnabled: z.boolean().optional(),
+      monthlyMetaSpendCap: z.number().min(0).optional(),
+      paidTemplateConsent: z.boolean().optional(),
     }).optional(),
     instagram: z.object({
       handle: z.string().optional(),
       profileUrl: z.string().optional(),
-      dmGoal: z.enum(['bookings', 'lead_capture', 'support']).optional(),
+      dmGoal: z.enum(['bookings', 'sales', 'lead_capture', 'support']).optional(),
       useDmReplies: z.boolean().optional(),
     }).optional(),
   }).optional(),
-  operationalMemory: z.record(z.string(), z.any()).optional(),
-  campaignDefaults: z.record(z.string(), z.any()).optional(),
+  // Controlled public-storefront composition. The renderer validates block IDs
+  // and ignores unknown values, so this is not an arbitrary page-builder blob.
+  operationalMemory: z.record(z.string(), z.unknown()).optional(),
+  campaignDefaults: z.record(z.string(), z.unknown()).optional(),
+  storefront: z.record(z.string(), z.unknown()).optional(),
   positioning: z.string().min(1).optional(),
+  // Which Booka workflows this tenant runs (gates the dashboard nav). All-on
+  // by default; owners trim what they don't use.
+  capabilities: z.object({
+    bookings: z.boolean().optional(),
+    sales: z.boolean().optional(),
+    inventory: z.boolean().optional(),
+    crm: z.boolean().optional(),
+    support: z.boolean().optional(),
+  }).optional(),
 }).partial();
 
 const SettingsSchema = SettingsSchemaBase.superRefine((val, ctx) => {

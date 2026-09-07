@@ -161,7 +161,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
     deleteProductMutation.mutate();
   };
 
-  const handleInputChange = (key: keyof UpdateProductRequest, value: any) => {
+  const handleInputChange = (key: keyof UpdateProductRequest, value: UpdateProductRequest[keyof UpdateProductRequest]) => {
     setEditData(prev => ({ ...prev, [key]: value }));
   };
 

@@ -18,7 +18,7 @@ import {
 import type { UnifiedPermissionContext } from '@/types/unified-permissions';
 
 describe('Permission System - Security Tests', () => {
-  let testEnv: any;
+  let testEnv: ReturnType<typeof getTestEnvironment>;
 
   beforeEach(() => {
     testEnv = getTestEnvironment();
@@ -26,7 +26,7 @@ describe('Permission System - Security Tests', () => {
 
   describe('Injection Attack Prevention', () => {
     it('should prevent SQL injection in permission checks', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'staff');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'staff');
       expect(testUser).toBeDefined();
 
       // Attempt SQL injection through permission parameter
@@ -57,7 +57,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should prevent NoSQL injection attempts', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'manager');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'manager');
       expect(testUser).toBeDefined();
 
       // Attempt NoSQL injection through context parameters
@@ -87,7 +87,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should sanitize user input in permission context', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'staff');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'staff');
       expect(testUser).toBeDefined();
 
       const maliciousInput = {
@@ -143,7 +143,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should prevent token replay attacks', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'staff');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'staff');
       expect(testUser).toBeDefined();
 
       // Simulate an old/expired token
@@ -166,7 +166,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should handle concurrent session attacks', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'manager');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'manager');
       expect(testUser).toBeDefined();
 
       // Simulate multiple concurrent requests with same token
@@ -195,7 +195,7 @@ describe('Permission System - Security Tests', () => {
 
   describe('Authorization Bypass Attempts', () => {
     it('should prevent role escalation through header manipulation', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'staff');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'staff');
       expect(testUser).toBeDefined();
 
       const bypassHeaders = [
@@ -229,7 +229,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should prevent permission escalation through parameter injection', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'staff');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'staff');
       expect(testUser).toBeDefined();
 
       const maliciousUrls = [
@@ -260,7 +260,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should prevent cross-tenant access through path manipulation', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'manager' && u.tenantId === 'test-tenant-1');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'manager' && u.tenantId === 'test-tenant-1');
       expect(testUser).toBeDefined();
 
       const maliciousPaths = [
@@ -360,7 +360,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should sanitize sensitive data in audit logs', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'owner');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'owner');
       expect(testUser).toBeDefined();
 
       const sensitiveContext = {
@@ -398,7 +398,7 @@ describe('Permission System - Security Tests', () => {
 
   describe('Rate Limiting and DoS Protection', () => {
     it('should handle rapid permission check requests', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'staff');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'staff');
       expect(testUser).toBeDefined();
 
       const startTime = Date.now();
@@ -430,7 +430,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should resist memory exhaustion attacks', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'manager');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'manager');
       expect(testUser).toBeDefined();
 
       // Create requests with large context objects
@@ -494,11 +494,11 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should handle concurrent access to same resources', async () => {
-      const testUsers = testEnv.testUsers.filter((u: any) => u.role === 'staff');
+      const testUsers = testEnv.testUsers.filter((u) => u.role === 'staff');
       expect(testUsers.length).toBeGreaterThan(1);
 
       // Multiple users trying to access same resource simultaneously
-      const concurrentRequests = testUsers.map((user: any) => {
+      const concurrentRequests = testUsers.map((user) => {
         const request = mockRequest('http://localhost:3000/api/bookings/shared-resource', {
           headers: {
             'authorization': `Bearer mock-token-${user.id}`,
@@ -519,7 +519,7 @@ describe('Permission System - Security Tests', () => {
     });
 
     it('should maintain security under database errors', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.role === 'owner');
+      const testUser = testEnv.testUsers.find((u) => u.role === 'owner');
       expect(testUser).toBeDefined();
 
       // Simulate database error scenario (in real test, mock would fail)
@@ -548,7 +548,7 @@ describe('Permission System - Security Tests', () => {
 
   describe('Cryptographic Security', () => {
     it('should not expose sensitive cryptographic material', async () => {
-      const testUser = testEnv.testUsers.find((u: any) => u.isSuperAdmin);
+      const testUser = testEnv.testUsers.find((u) => u.isSuperAdmin);
       expect(testUser).toBeDefined();
 
       const request = mockRequest('http://localhost:3000/api/system/config', {

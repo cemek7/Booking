@@ -247,8 +247,9 @@ export default function ProductsList() {
     return { text: 'In stock', color: 'text-green-600' };
   }, []);
 
-  const products: Product[] = (productsData as any)?.products || [];
-  const pagination = (productsData as any)?.pagination || { total: 0, page: 1, totalPages: 1 };
+  const productsResult = productsData as { products?: Product[]; pagination?: { total: number; page: number; totalPages: number } } | undefined;
+  const products: Product[] = productsResult?.products || [];
+  const pagination = productsResult?.pagination || { total: 0, page: 1, totalPages: 1 };
 
   if (isLoading) {
     return (

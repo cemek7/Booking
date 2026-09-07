@@ -1,10 +1,14 @@
 'use client';
 
+import { useContext } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Role } from '@/types/roles';
 import { canAccessRoute, getRoleDashboardPath } from '@/types/unified-permissions';
+import { TenantContext } from '@/lib/supabase/tenant-context';
+import { isRouteEnabled, DEFAULT_CAPABILITIES } from '@/lib/capabilities';
+import { toBookaDashboardPath } from '@/lib/navigation/dashboard-path';
 
 interface UnifiedDashboardNavProps {
   userRole: Role;
@@ -186,11 +190,14 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/reports', label: 'Reports', icon: Icons.reports, roles: ['owner', 'manager'] },
   // Orders
   { href: '/dashboard/orders', label: 'Orders', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
+  // Point of sale (in-store walk-in sales)
+  { href: '/dashboard/pos', label: 'POS', icon: Icons.orders, roles: ['owner', 'manager', 'staff'] },
   // Commerce: Booka handles sales + inventory, not just bookings.
   { href: '/dashboard/products', label: 'Products', icon: Icons.products, roles: ['owner', 'manager'] },
   { href: '/dashboard/products/inventory', label: 'Inventory', icon: Icons.inventory, roles: ['owner', 'manager'] },
   // Showcase packs
   { href: '/dashboard/showcase', label: 'Showcase', icon: Icons.showcase, roles: ['owner', 'manager'] },
+  { href: '/dashboard/owner/capture', label: 'Capture Review', icon: Icons.showcase, roles: ['owner', 'manager'] },
   // Chats
   { href: '/dashboard/chats', label: 'Chats', icon: Icons.chats, roles: ['owner', 'manager', 'staff'] },
   // Support
@@ -203,6 +210,8 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/settings', label: 'Settings', icon: Icons.settings, roles: ['owner'] },
   // Billing
   { href: '/dashboard/billing', label: 'Billing', icon: Icons.billing, roles: ['owner'] },
+  // Payment links (ad-hoc invoicing — useful for booking-only and sales tenants)
+  { href: '/dashboard/payment-links', label: 'Payment Links', icon: Icons.billing, roles: ['owner', 'manager'] },
   // FAQs (middleware allows owner + manager; both feed the assistant's answers)
   { href: '/dashboard/faqs', label: 'FAQs', icon: Icons.faqs, roles: ['owner', 'manager'] },
   // Tasks (middleware allows all tenant roles)
@@ -213,6 +222,7 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/superadmin/analytics', label: 'Analytics', icon: Icons.analytics, roles: ['superadmin'] },
   { href: '/dashboard/superadmin/reservations', label: 'Reservations', icon: Icons.bookings, roles: ['superadmin'] },
   { href: '/dashboard/superadmin/reservation-logs', label: 'Reservation Logs', icon: Icons.reports, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/staff', label: 'Tenant Staff', icon: Icons.staff, roles: ['superadmin'] },
 ];
 
 const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
@@ -230,6 +240,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/pos' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/leads' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('owner'))!,
@@ -243,6 +254,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/llm-metrics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/showcase' && i.roles.includes('owner'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/capture' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('owner'))!,
       ],
@@ -252,6 +264,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/settings')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/billing')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/payment-links' && i.roles.includes('owner'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/usage')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs' && i.roles.includes('owner'))!,
       ],
@@ -270,6 +283,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/products/inventory' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/pos' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/services' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/staff' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/customers' && i.roles.includes('manager'))!,
@@ -281,6 +295,8 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/manager/analytics')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/reports' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/payment-links' && i.roles.includes('manager'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/owner/capture' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('manager'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/faqs' && i.roles.includes('manager'))!,
@@ -305,6 +321,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       title: 'Communication',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/orders' && i.roles.includes('staff'))!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/pos' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/chats' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/support' && i.roles.includes('staff'))!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/tasks' && i.roles.includes('staff'))!,
@@ -313,14 +330,25 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
   ],
   superadmin: [
     {
-      title: 'System',
+      title: 'Overview',
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin')!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/tenants')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/analytics')!,
+      ],
+    },
+    {
+      title: 'Tenants',
+      items: [
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/tenants')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/staff')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
+      ],
+    },
+    {
+      title: 'Operations & audit',
+      items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservations')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservation-logs')!,
-        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/support')!,
       ],
     },
   ],
@@ -339,6 +367,11 @@ const ROLE_LABELS: Record<Role, string> = {
 
 export default function UnifiedDashboardNav({ userRole, onNavigate }: UnifiedDashboardNavProps) {
   const pathname = usePathname();
+
+  // Tenant capabilities gate which workflows appear. Read defensively — some
+  // layouts render this nav outside TenantProvider; default is all-on.
+  const tenantCtx = useContext(TenantContext);
+  const capabilities = tenantCtx?.capabilities ?? DEFAULT_CAPABILITIES;
 
   const dashboardHref = getRoleDashboardPath(userRole);
 
@@ -363,8 +396,12 @@ export default function UnifiedDashboardNav({ userRole, onNavigate }: UnifiedDas
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) => item && item.roles.includes(userRole) && canAccessRoute(userRole, item.href)
-      ),
+        (item) =>
+          item &&
+          item.roles.includes(userRole) &&
+          canAccessRoute(userRole, item.href) &&
+          isRouteEnabled(item.href, capabilities)
+      ).map((item) => ({ ...item, href: toBookaDashboardPath(item.href) })),
     }))
     .filter((group) => group.items.length > 0);
 

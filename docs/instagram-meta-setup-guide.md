@@ -4,14 +4,16 @@
 > (the newer path) — does **not** require a Facebook Page linked per tenant the way
 > WhatsApp Cloud API does. Reuse the existing WhatsApp Meta app or create a new one.
 >
-> **Canonical base URL:** `https://techclave.cloud` (apex — the Next.js app is served at
-> the root of the domain on the Hostinger VPS). Marketing homepage at `/`, Booka landing at
-> `/booka`, IG endpoints at `techclave.cloud/api/...`. No subdomain and no `basePath` needed.
-> (Do NOT serve the app under a subpath like `techclave.cloud/booka` — it would 404 without
-> a `basePath: '/booka'` in `next.config.ts`.)
+> **Canonical production app URL:** `https://app.techclave.cloud`. The marketing site stays
+> at `https://techclave.cloud`; Booka's dashboard and integration endpoints are on the app
+> subdomain. Do not register the marketing apex or a `/booka` subpath as a Meta callback.
 >
 > ⚠️ Meta renames menus and bumps the Graph API version often. Treat labels as
 > "find the thing that does X". Adapter targets Graph API `v25.0`.
+>
+> For the full controlled-pilot launch gate, WhatsApp setup, revenue-flow test
+> matrix, and App Review evidence checklist, use
+> `docs/runbooks/meta-controlled-pilot.md`.
 
 ## THE TWO URLs — do not mix them up
 
@@ -20,11 +22,27 @@ in Booka (committed, tested).
 
 | Meta field | URL to paste | Booka route | Handles |
 |---|---|---|---|
-| **Business login → Redirect URI** | `https://techclave.cloud/api/auth/instagram/callback` | `/api/auth/instagram/callback` | the connect flow: receives `?code&state`, stores the token |
-| **Webhooks → Callback URL** | `https://techclave.cloud/api/webhooks/instagram` | `/api/webhooks/instagram` | receives DMs **and** the `hub.challenge` verification |
+| **Business login → Redirect URI** | `https://app.techclave.cloud/api/auth/instagram/callback` | `/api/auth/instagram/callback` | the connect flow: receives `?code&state`, stores the token |
+| **Webhooks → Callback URL** | `https://app.techclave.cloud/api/webhooks/instagram` | `/api/webhooks/instagram` | receives DMs **and** the `hub.challenge` verification |
 
 The `hub.verify_token` / `hub.challenge` handshake hits the **webhook** URL only. The OAuth
 callback never sees it — don't cross them.
+
+## Staging first
+
+Use the same routes with the staging hostname while the Meta app is in Development
+mode. The repository's staging template uses `https://staging.app.techclave.cloud`:
+
+| Meta field | Staging URL |
+|---|---|
+| Instagram Login redirect URI | `https://staging.app.techclave.cloud/api/auth/instagram/callback` |
+| Instagram webhook callback | `https://staging.app.techclave.cloud/api/webhooks/instagram` |
+| WhatsApp Cloud API webhook callback | `https://staging.app.techclave.cloud/api/webhooks/whatsapp/meta` |
+
+Set these same values in `deployment/env/.env.staging`. Do not use the OAuth callback
+as a webhook callback, and do not use `/api/integrations/...` or `/api/webhooks/meta/...`:
+those routes are not implemented by Booka. Once staging tests pass, register the equivalent
+production URLs and update the production environment independently.
 
 ## The verify token
 
@@ -39,18 +57,18 @@ so deploying to the VPS once is less painful.
 ## Server env vars (VPS production .env read by docker-compose)
 
 ```
-APP_URL=https://techclave.cloud
+APP_URL=https://app.techclave.cloud
 INSTAGRAM_APP_ID=<Instagram app id>            # Instagram-scoped, not the WhatsApp app id
 INSTAGRAM_APP_SECRET=<Instagram app secret>    # Instagram-scoped
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN=booka_ig_verify_2026
-INSTAGRAM_OAUTH_REDIRECT_URI=https://techclave.cloud/api/auth/instagram/callback
+INSTAGRAM_OAUTH_REDIRECT_URI=https://app.techclave.cloud/api/auth/instagram/callback
 INSTAGRAM_OAUTH_STATE_SECRET=<openssl rand -hex 32>
 ```
 
 ## Exact sequence
 
-1. **DNS + nginx:** point `techclave.cloud` at the Booka app; issue a TLS cert.
-   Verify with `https://techclave.cloud/api/health` — Booka's backend should answer.
+1. **DNS + nginx:** point `app.techclave.cloud` at the Booka app; issue a TLS cert.
+   Verify with `https://app.techclave.cloud/api/health` — Booka's backend should answer.
 2. **Set the env vars** above.
 3. **Apply migrations** (Supabase SQL editor): `079_whatsapp_message_queue_channel.sql`
    and `082_instagram_provider_secrets.sql`.
@@ -58,11 +76,11 @@ INSTAGRAM_OAUTH_STATE_SECRET=<openssl rand -hex 32>
 5. **Meta dashboard — app + product:** My Apps → your app → Add Product → Instagram →
    Set up → **Instagram API with Instagram Login**. Note the **Instagram App ID** and
    **Instagram App Secret** (Instagram-scoped — different from the WhatsApp ones).
-6. **Meta — Webhooks:** Callback URL = `https://techclave.cloud/api/webhooks/instagram`,
+6. **Meta — Webhooks:** Callback URL = `https://app.techclave.cloud/api/webhooks/instagram`,
    Verify token = `booka_ig_verify_2026`, subscribe to **`messages`** (+ `messaging_postbacks`
    if offered). Click **Verify and Save** → Meta GETs the webhook → it echoes the challenge → ✅.
 7. **Meta — Business login → Redirect URIs:** add
-   `https://techclave.cloud/api/auth/instagram/callback`.
+   `https://app.techclave.cloud/api/auth/instagram/callback`.
    Request scopes **`instagram_business_basic`** + **`instagram_business_manage_messages`**.
 8. **Test connect:** log into Booka as owner → Settings → Channels → **Connect Instagram**
    → authorize → you land back on `…/settings?instagram=connected`; the token is stored.
@@ -76,10 +94,13 @@ professional). In Development mode, only app roles/testers can message it — up
 test users before App Review. Add the test IG account under **App Roles → Roles →
 Instagram Testers** and accept the invite from inside that IG account.
 
-## App Review (later — only to go public)
+## App Review (later — only to serve accounts Booka does not own or manage)
 
-To message real customers beyond testers, submit `instagram_business_manage_messages` for
-**App Review** with a screencast of the booking flow. Not needed for the ≤25-user pilot.
+Standard Access is limited to professional accounts Booka owns or manages and has added
+in the App Dashboard. To serve professional accounts Booka does not own or manage, request
+Advanced Access for `instagram_business_basic` and
+`instagram_business_manage_messages` with a screencast of the complete customer-initiated
+booking flow. The controlled managed-account pilot does not prove public onboarding approval.
 
 ## Architecture notes (already built, WhatsApp-safe)
 

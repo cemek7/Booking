@@ -37,7 +37,7 @@ export interface AreaChartProps {
  * Custom tooltip for area chart
  */
 const CustomTooltip: React.FC<
-  TooltipProps<number, string> & { formatValue?: (value: number) => string; payload?: any[]; label?: string }
+  TooltipProps<number, string> & { formatValue?: (value: number) => string; payload?: Array<{ name?: string; value?: number; color?: string }>; label?: string }
 > = ({ active, payload, label, formatValue }) => {
   if (!active || !payload || !payload.length) {
     return null;
@@ -46,7 +46,7 @@ const CustomTooltip: React.FC<
   return (
     <div className="rounded-lg border bg-background p-3 shadow-lg">
       <p className="text-sm font-medium mb-2">{label}</p>
-      {payload!.map((entry: any, index: number) => (
+      {payload!.map((entry, index: number) => (
         <div key={index} className="flex items-center gap-2 text-sm">
           <div
             className="w-3 h-3 rounded"

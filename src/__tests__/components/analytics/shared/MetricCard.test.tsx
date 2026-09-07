@@ -264,7 +264,7 @@ describe('MetricCard', () => {
     });
 
     it('should handle null trend as undefined', () => {
-      render(<MetricCard label="Test" value={100} trend={null as any} />);
+      render(<MetricCard label="Test" value={100} trend={null} />);
       expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     });
   });

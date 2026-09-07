@@ -8,7 +8,7 @@ import BarChart from './charts/BarChart';
 import PieChart from './charts/PieChart';
 import PerformanceTable from './shared/PerformanceTable';
 import DataUnavailableState from './shared/DataUnavailableState';
-import { Building2, Users, DollarSign, Activity, Calendar, UserCheck } from 'lucide-react';
+import { Building2, Users, Activity, Calendar, UserCheck } from 'lucide-react';
 import { authFetch } from '@/lib/auth/auth-api-client';
 import { PERIOD_DAYS } from './shared/analytics-constants';
 import type { AdminTenantMetric } from '@/types/analytics-api';
@@ -45,7 +45,6 @@ export default function SuperAdminMetrics() {
     const totalCalls = tenantMetrics.reduce((sum, row) => sum + row.call_count, 0);
     const totalTokens = tenantMetrics.reduce((sum, row) => sum + row.total_tokens, 0);
     const totalUsersEstimate = tenantMetrics.reduce((sum, row) => sum + (row.user_count || 0), 0);
-    const totalRevenueEstimate = tenantMetrics.reduce((sum, row) => sum + (row.revenue_estimate || 0), 0);
     const totalReservations = tenantMetrics.reduce((sum, row) => sum + (row.reservation_count || 0), 0);
     const totalActiveStaff = tenantMetrics.reduce((sum, row) => sum + (row.active_staff_count || 0), 0);
     return {
@@ -53,7 +52,6 @@ export default function SuperAdminMetrics() {
       totalCalls,
       totalTokens,
       totalUsersEstimate,
-      totalRevenueEstimate,
       totalReservations,
       totalActiveStaff,
     };
@@ -78,14 +76,14 @@ export default function SuperAdminMetrics() {
       <StatsGrid columns={4}>
         <MetricCard label="Total Tenants" value={totals.totalTenants} icon={Building2} colorScheme="info" loading={loading} />
         <MetricCard label="Total Users (Estimate)" value={totals.totalUsersEstimate} icon={Users} colorScheme="success" loading={loading} />
-        <MetricCard label="Total Revenue (Estimate)" value={totals.totalRevenueEstimate} icon={DollarSign} colorScheme="success" loading={loading} formatValue={(v) => `$${Number(v).toLocaleString()}`} />
+        <MetricCard label="Active Staff" value={totals.totalActiveStaff} icon={UserCheck} colorScheme="success" loading={loading} />
         <MetricCard label="Data Freshness" value="30d window" icon={Activity} colorScheme="default" loading={loading} />
       </StatsGrid>
 
       {/* Second KPI row: bookings & staff */}
       <StatsGrid columns={3}>
         <MetricCard label="Total Reservations (30d)" value={totals.totalReservations} icon={Calendar} colorScheme="info" loading={loading} />
-        <MetricCard label="Active Staff (Platform)" value={totals.totalActiveStaff} icon={UserCheck} colorScheme="default" loading={loading} />
+        <MetricCard label="Tenant Workspaces" value={totals.totalTenants} icon={Building2} colorScheme="default" loading={loading} />
         <MetricCard label="Total API Calls (30d)" value={totals.totalCalls} icon={Activity} colorScheme="default" loading={loading} />
       </StatsGrid>
 
@@ -106,10 +104,10 @@ export default function SuperAdminMetrics() {
         <PieChart
           data={tenantMetrics.map((row) => ({
             name: row.tenant_name || row.tenant_id.slice(0, 16),
-            value: row.revenue_estimate || 0,
+            value: row.call_count || 0,
           }))}
-          title="Revenue Distribution by Tenant"
-          description="Revenue estimate share per tenant"
+          title="AI Activity Distribution"
+          description="Share of tracked AI calls by tenant. Financial reporting remains currency-specific."
           showPercentage
           innerRadius={60}
         />
@@ -150,7 +148,6 @@ export default function SuperAdminMetrics() {
           { key: 'active_staff_count', label: 'Staff', sortable: true, align: 'right' },
           { key: 'reservation_count', label: 'Reservations', sortable: true, align: 'right' },
           { key: 'completed_reservations', label: 'Completed', sortable: true, align: 'right' },
-          { key: 'revenue_estimate', label: 'Revenue', sortable: true, align: 'right', formatValue: (value) => `$${Number(value || 0).toLocaleString()}` },
           { key: 'call_count', label: 'API Calls', sortable: true, align: 'right' },
         ]}
       />

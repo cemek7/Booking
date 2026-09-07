@@ -20,7 +20,7 @@ describe('Super-Admin hooks', () => {
   beforeEach(() => {
     fetchMock.mockReset();
     // Point API base for tests
-    (process as any).env.NEXT_PUBLIC_API_BASE = 'http://api.test';
+    process.env.NEXT_PUBLIC_API_BASE = 'http://api.test';
   });
 
   it('lists tenants via useSuperadminTenants', async () => {

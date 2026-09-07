@@ -26,7 +26,15 @@ export const POST = createHttpHandler(
       return NextResponse.json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' }, { status: 400 });
     }
 
-    let payload: any;
+    interface PaystackChargeData {
+      reference?: string;
+      amount?: number;
+      currency?: string;
+      gateway_response?: string;
+      status?: string;
+      metadata?: { reservation_id?: string | null } | null;
+    }
+    let payload: { event?: string; data?: PaystackChargeData } | undefined;
     try {
       payload = JSON.parse(rawBody);
     } catch {
@@ -35,7 +43,7 @@ export const POST = createHttpHandler(
     }
 
     const event: string = payload?.event ?? '';
-    const data = payload?.data ?? {};
+    const data: PaystackChargeData = payload?.data ?? {};
 
     switch (event) {
       case 'charge.success': {

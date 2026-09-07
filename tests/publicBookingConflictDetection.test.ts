@@ -3,8 +3,6 @@
  * Validates the race condition fixes and proper overlap detection
  */
 
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-
 // Mock the dependencies
 jest.mock('@/lib/supabase/server', () => ({
   getSupabaseRouteHandlerClient: jest.fn(),
@@ -21,13 +19,18 @@ import { getSupabaseRouteHandlerClient, createSupabaseAdminClient } from '@/lib/
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 
 describe('publicBookingService - createPublicBooking conflict detection', () => {
-  let mockSupabase: any;
-  let mockBookingPrevention: any;
+  let mockSupabase: { from: jest.Mock };
+  let mockBookingPrevention: {
+    acquireSlotLock: jest.Mock;
+    releaseSlotLock: jest.Mock;
+    checkBookingConflicts: jest.Mock;
+  };
 
   // Helper to create database chain mocks
-  const createMockChain = (resolvedValue: any) => ({
+  const createMockChain = (resolvedValue: { data: unknown; error: unknown }) => ({
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
+    is: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue(resolvedValue),
     insert: jest.fn().mockReturnThis(),
     single: jest.fn().mockResolvedValue(resolvedValue),

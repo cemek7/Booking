@@ -5,14 +5,27 @@ import AreaChart, {
   AreaDataPoint,
 } from '@/components/analytics/charts/AreaChart';
 
+type RechartsMockProps = {
+  children?: React.ReactNode;
+  data?: unknown[];
+  dataKey?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  stackId?: string;
+  fill?: string;
+  tickFormatter?: unknown;
+  content?: React.ReactNode;
+  height?: number;
+};
+
 // Mock recharts components
 jest.mock('recharts', () => ({
-  AreaChart: ({ children, data }: any) => (
+  AreaChart: ({ children, data }: RechartsMockProps) => (
     <div data-testid="area-chart" data-points={data?.length}>
       {children}
     </div>
   ),
-  Area: ({ dataKey, stroke, strokeWidth, stackId, fill }: any) => (
+  Area: ({ dataKey, stroke, strokeWidth, stackId, fill }: RechartsMockProps) => (
     <div
       data-testid={`area-${dataKey}`}
       data-key={dataKey}
@@ -22,13 +35,13 @@ jest.mock('recharts', () => ({
       data-fill={fill}
     />
   ),
-  XAxis: ({ dataKey }: any) => <div data-testid="x-axis" data-key={dataKey} />,
-  YAxis: ({ tickFormatter }: any) => (
+  XAxis: ({ dataKey }: RechartsMockProps) => <div data-testid="x-axis" data-key={dataKey} />,
+  YAxis: ({ tickFormatter }: RechartsMockProps) => (
     <div data-testid="y-axis" data-formatter={!!tickFormatter} />
   ),
   CartesianGrid: () => <div data-testid="grid" />,
-  Tooltip: ({ content }: any) => <div data-testid="tooltip">{content}</div>,
-  ResponsiveContainer: ({ children, height }: any) => (
+  Tooltip: ({ content }: RechartsMockProps) => <div data-testid="tooltip">{content}</div>,
+  ResponsiveContainer: ({ children, height }: RechartsMockProps) => (
     <div data-testid="responsive-container" data-height={height}>
       {children}
     </div>
@@ -185,13 +198,13 @@ describe('AreaChart', () => {
 
     it('should use custom xAxisKey when provided', () => {
       const customData = [
-        { month: 'Jan', value: 100 },
-        { month: 'Feb', value: 150 },
+        { date: '2024-01', month: 'Jan', value: 100 },
+        { date: '2024-02', month: 'Feb', value: 150 },
       ];
 
       render(
         <AreaChart
-          data={customData as any}
+          data={customData}
           dataKeys={['value']}
           xAxisKey="month"
         />
@@ -726,14 +739,14 @@ describe('AreaChart', () => {
       ];
 
       const { rerender } = render(
-        <AreaChart data={multiKeyData as any} dataKeys={['value']} xAxisKey="date" />
+        <AreaChart data={multiKeyData} dataKeys={['value']} xAxisKey="date" />
       );
 
       let xAxis = screen.getByTestId('x-axis');
       expect(xAxis).toHaveAttribute('data-key', 'date');
 
       rerender(
-        <AreaChart data={multiKeyData as any} dataKeys={['value']} xAxisKey="month" />
+        <AreaChart data={multiKeyData} dataKeys={['value']} xAxisKey="month" />
       );
 
       xAxis = screen.getByTestId('x-axis');

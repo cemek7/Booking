@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { normalizeRole, type Role } from '@/types';
 
 const AddStaffBodySchema = z.object({
@@ -31,11 +32,12 @@ export const GET = createHttpHandler(
     }
 
     // Verify the caller has access to this tenant
-    if (ctx.user?.tenantId && ctx.user.tenantId !== tenantId) {
+    if (ctx.user?.role !== 'superadmin' && ctx.user?.tenantId !== tenantId) {
       throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
-    const { data, error } = await ctx.supabase
+    const client = ctx.user?.role === 'superadmin' ? createSupabaseAdminClient() : ctx.supabase;
+    const { data, error } = await client
       .from('tenant_users')
       .select('user_id, role, email, name')
       .eq('tenant_id', tenantId);
@@ -47,7 +49,7 @@ export const GET = createHttpHandler(
     return data ?? [];
   },
   'GET',
-  { auth: true, roles: ['owner', 'manager', 'staff'] }
+  { auth: true, roles: ['owner', 'manager', 'staff', 'superadmin'] }
 );
 
 /**

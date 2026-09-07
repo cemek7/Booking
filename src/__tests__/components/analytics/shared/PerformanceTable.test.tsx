@@ -8,7 +8,7 @@ import PerformanceTable, {
 interface TestData {
   id: number;
   name: string;
-  bookings: number;
+  bookings: number | null | undefined;
   revenue: number;
   rating: number;
 }
@@ -610,7 +610,7 @@ describe('PerformanceTable', () => {
     it('should handle null values in data', () => {
       const nullData = [
         { id: 1, name: 'Alice', bookings: null, revenue: 4500, rating: 4.8 },
-      ] as any;
+      ];
 
       render(
         <PerformanceTable data={nullData} columns={basicColumns} />
@@ -622,7 +622,7 @@ describe('PerformanceTable', () => {
     it('should handle undefined values in data', () => {
       const undefinedData = [
         { id: 1, name: 'Alice', bookings: undefined, revenue: 4500, rating: 4.8 },
-      ] as any;
+      ];
 
       render(
         <PerformanceTable data={undefinedData} columns={basicColumns} />

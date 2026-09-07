@@ -4,7 +4,9 @@ import { NextRequest } from 'next/server';
 // ─── Module mocks (must be declared before imports) ───────────────────────────
 
 jest.mock('next/server', () => {
-  const g = globalThis as any;
+  type HeaderStore = { get(key: string): string | null; set(key: string, value: string): void };
+  type HeadersConstructor = new () => HeaderStore;
+  const g = globalThis as typeof globalThis & { Headers?: HeadersConstructor };
   const HeadersCtor = g.Headers || class {
     map: Record<string, string> = {};
     get(k: string) { return this.map[k.toLowerCase()] ?? null; }
@@ -14,7 +16,7 @@ jest.mock('next/server', () => {
   class MockNextResponse {
     ok: boolean;
     status: number;
-    headers: any;
+    headers: HeaderStore;
     private _data: unknown;
 
     constructor(data: unknown, init?: { status?: number }) {
@@ -34,7 +36,7 @@ jest.mock('next/server', () => {
   class MockNextRequest {
     url: string;
     method: string;
-    headers: any;
+    headers: HeaderStore;
     private _body: string | undefined;
 
     constructor(url: string, init?: RequestInit & { body?: string }) {
@@ -91,15 +93,30 @@ jest.mock('@/lib/billing/ai-wallet', () => ({
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
+import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { enterOffboarding } from '@/lib/offboarding/offboardService';
 import { DELETE } from '@/app/api/tenants/[tenantId]/route';
 import { PATCH } from '@/app/api/superadmin/tenants/[tenantId]/route';
 
 // ─── Generic chain helper ─────────────────────────────────────────────────────
-function chain(final: any): any {
+type MockQueryResult = { data: unknown; error: null };
+type MockQueryBuilder = {
+  select: () => MockQueryBuilder;
+  eq: () => MockQueryBuilder;
+  ilike: () => MockQueryBuilder;
+  in: () => MockQueryBuilder;
+  update: () => MockQueryBuilder;
+  upsert: () => Promise<{ error: null }>;
+  insert: () => Promise<MockQueryResult>;
+  single: () => Promise<MockQueryResult>;
+  maybeSingle: () => Promise<MockQueryResult>;
+};
+
+function chain(final: MockQueryResult): MockQueryBuilder {
   return {
     select: () => chain(final),
     eq: () => chain(final),
+    ilike: () => chain(final),
     in: () => chain(final),
     update: () => chain(final),
     upsert: async () => ({ error: null }),
@@ -110,7 +127,7 @@ function chain(final: any): any {
 }
 
 // ─── Admin client mock ────────────────────────────────────────────────────────
-function adminMock({ isGlobalAdmin = false }: { isGlobalAdmin?: boolean } = {}) {
+function adminMock({ isGlobalAdmin = false, hasTenantMembership = true }: { isGlobalAdmin?: boolean; hasTenantMembership?: boolean } = {}) {
   return {
     auth: {
       getUser: jest.fn().mockResolvedValue({
@@ -126,7 +143,7 @@ function adminMock({ isGlobalAdmin = false }: { isGlobalAdmin?: boolean } = {}) 
         });
       }
       if (t === 'tenant_users') {
-        return chain({ data: { tenant_id: 'ten_1', role: 'owner' }, error: null });
+        return chain({ data: hasTenantMembership ? { tenant_id: 'ten_1', role: 'owner' } : null, error: null });
       }
       if (t === 'admins') {
         // resolveIsGlobalAdmin: superadmin routes need this to return a row so the
@@ -196,7 +213,7 @@ describe('offboarding modify routes', () => {
     it('returns 200 and schedules off-boarding instead of hard-deleting', async () => {
       const res = await DELETE(
         deleteReq() as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof DELETE>[1],
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -220,7 +237,7 @@ describe('offboarding modify routes', () => {
     it('triggers off-boarding when offboard.reason is provided', async () => {
       const res = await PATCH(
         superadminPatchReq({ offboard: { reason: 'gdpr_erasure' } }) as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof PATCH>[1],
       );
       expect(res.status).toBe(200);
       expect(enterOffboarding).toHaveBeenCalledWith(
@@ -232,7 +249,7 @@ describe('offboarding modify routes', () => {
     it('does NOT call enterOffboarding when no offboard key in body', async () => {
       const res = await PATCH(
         superadminPatchReq({ status: 'suspended' }) as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof PATCH>[1],
       );
       expect(res.status).toBe(200);
       expect(enterOffboarding).not.toHaveBeenCalled();
@@ -244,11 +261,43 @@ describe('offboarding modify routes', () => {
 
       const res = await PATCH(
         superadminPatchReq({ velocity_credits_override: 450 }) as unknown as NextRequest,
-        { params: { tenantId: 'ten_1' } } as any,
+        { params: { tenantId: 'ten_1' } } as unknown as Parameters<typeof PATCH>[1],
       );
 
       expect(res.status).toBe(200);
       expect(admin.from).toHaveBeenCalledWith('ai_wallets');
     });
+  });
+
+  it('allows a global superadmin to scope a tenant route without a tenant_users row', async () => {
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(
+      adminMock({ isGlobalAdmin: true, hasTenantMembership: false }),
+    );
+    const handler = createHttpHandler(
+      async (ctx) => ({
+        role: ctx.user?.role,
+        tenantId: ctx.user?.tenantId,
+        tenantUserId: ctx.user?.tenantUserId,
+      }),
+      'POST',
+      { auth: true, roles: ['superadmin'] },
+    );
+    const request = new NextRequest('http://localhost:3000/api/tenants/ten_target/whatsapp/meta/embedded-signup', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-token' },
+    });
+
+    const response = await handler(
+      request as unknown as NextRequest,
+      { params: { tenantId: 'ten_target' } } as never,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      role: 'superadmin',
+      tenantId: 'ten_target',
+    });
+    const body = await response.json();
+    expect(body.tenantUserId).toBeUndefined();
   });
 });

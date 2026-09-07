@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { hasInstalledRedisClient, isRedisConfigured, isRedisFeatureEnabled, pingRedis } from '@/lib/redis';
 import { runAllHealthChecks, type HealthSummary } from '@/lib/healthChecks';
 import { getFreeModelCount, isModelFree } from '@/lib/openrouter-models';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 // --- Configuration ---
 const {
@@ -22,7 +23,6 @@ const {
   WAHA_API_BASE,
   WAHA_API_KEY,
   WHATSAPP_BASE_URL,
-  WHATSAPP_API_VERSION,
   WHATSAPP_ACCESS_TOKEN,
   WHATSAPP_PHONE_NUMBER_ID,
   NEXT_PUBLIC_SUPABASE_URL,
@@ -162,7 +162,7 @@ async function checkWhatsAppHealth(): Promise<HealthStatus> {
     const accessToken = WHATSAPP_ACCESS_TOKEN || '';
     const phoneNumberId = WHATSAPP_PHONE_NUMBER_ID || '';
     const baseUrl = trimTrailingSlash(WHATSAPP_BASE_URL || 'https://graph.facebook.com');
-    const apiVersion = WHATSAPP_API_VERSION || 'v18.0';
+    const apiVersion = getWhatsAppGraphApiVersion();
 
     if (!accessToken || !phoneNumberId) {
       return {

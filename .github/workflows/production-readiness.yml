@@ -1,0 +1,59 @@
+name: Production Readiness
+
+# A deterministic, non-deploy release gate. Database migrations remain an
+# operator-controlled action and are never started, reset, or applied here.
+on:
+  workflow_dispatch:
+    inputs:
+      migrations_verified:
+        description: "I have reviewed and will run any required migrations separately"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-readiness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    name: Production code, tests, and image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Excludes test-only Jest/Vitest global conflicts and mirrors the
+      # production module graph used by the deploy workflow.
+      - name: Production TypeScript check
+        run: npm run typecheck:ci
+
+      # These unit tests use mocks; no Supabase service or migration is needed.
+      - name: Deterministic Jest suite
+        run: npm test -- --ci --runInBand
+
+      # Builds exactly the VPS runtime image without pushing or deploying it.
+      - name: Build production image
+        run: docker build --file deployment/Dockerfile.vps --tag booka-readiness:${{ github.sha }} .
+
+  migration-attestation:
+    name: Operator migration attestation
+    runs-on: ubuntu-latest
+    needs: release-gate
+    steps:
+      - name: Record migration ownership
+        run: |
+          test "${{ inputs.migrations_verified }}" = "true"
+          echo "Migrations are operator-controlled and were not run by this workflow."
+          echo "Apply and verify them separately before production deployment."

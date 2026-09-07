@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { defaultLogger } from '@/lib/logger';
 import { trace } from '@opentelemetry/api';
 import { publishEvent } from './eventBus';
@@ -536,10 +535,11 @@ export class PaymentService {
     userAgent?: string;
     subaccountCode?: string;
     bearer?: 'account' | 'subaccount';
-  }): Promise<{ 
-    success: boolean; 
-    transactionId?: string; 
-    authorizationUrl?: string; 
+    callbackUrl?: string;
+  }): Promise<{
+    success: boolean;
+    transactionId?: string;
+    authorizationUrl?: string;
     error?: string;
     requiresReview?: boolean;
     riskScore?: number;
@@ -571,8 +571,8 @@ export class PaymentService {
         depositIdempotencyHit(params.tenantId);
         return {
           success: true,
-          transactionId: securityCheck.existingTransaction.transaction_id,
-          authorizationUrl: securityCheck.existingTransaction.authorization_url,
+          transactionId: typeof securityCheck.existingTransaction.transaction_id === 'string' ? securityCheck.existingTransaction.transaction_id : undefined,
+          authorizationUrl: typeof securityCheck.existingTransaction.authorization_url === 'string' ? securityCheck.existingTransaction.authorization_url : undefined,
         };
       }
 
@@ -617,12 +617,16 @@ export class PaymentService {
           currency: params.currency,
           type: 'deposit',
           status: 'pending',
-          provider: provider.id,
           provider_reference: reference,
+          // reservations is the payment subject; the webhook confirms via subject_id.
+          subject_type: params.reservationId ? 'reservation' : null,
+          subject_id: params.reservationId ?? null,
+          // transactions has no `provider` column — provider/email live in raw.
           raw: {
             ref: reference,
             email: params.email,
             reservation_id: params.reservationId,
+            provider: provider.id,
           },
         })
         .select('id')
@@ -645,6 +649,7 @@ export class PaymentService {
         },
         subaccountCode: params.subaccountCode,
         bearer: params.bearer,
+        callbackUrl: params.callbackUrl,
       });
 
       // Update the record with provider response (non-fatal if this fails — record is reconcilable)
@@ -656,6 +661,7 @@ export class PaymentService {
             ref: reference,
             email: params.email,
             reservation_id: params.reservationId,
+            provider: provider.id,
             provider_response: response,
           },
         })
@@ -727,7 +733,8 @@ export class PaymentService {
         return { success: false, error: 'Transaction not found' };
       }
 
-      const provider = this.getProvider(transaction.provider);
+      const providerId = (transaction.raw as { provider?: string } | null)?.provider;
+      const provider = this.getProvider(providerId);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
       }
@@ -746,10 +753,12 @@ export class PaymentService {
           currency: transaction.currency,
           type: 'refund',
           status: 'pending',
-          provider: transaction.provider,
+          subject_type: transaction.subject_type ?? null,
+          subject_id: transaction.subject_id ?? null,
           refund_amount: refundAmount,
           refund_reason: params.reason,
-          raw: { original_reference: transaction.provider_reference },
+          // transactions has no `provider` column — it lives in raw.
+          raw: { original_reference: transaction.provider_reference, provider: (transaction.raw as { provider?: string } | null)?.provider ?? null },
         })
         .select('id')
         .single();
@@ -769,7 +778,14 @@ export class PaymentService {
         // Mark the pre-inserted record as failed
         await this.supabase
           .from('transactions')
-          .update({ status: 'failed', raw: { original_reference: transaction.provider_reference, refund_response: refundResponse } })
+          .update({
+            status: 'failed',
+            raw: {
+              original_reference: transaction.provider_reference,
+              provider: provider.id,
+              refund_response: refundResponse,
+            },
+          })
           .eq('id', pendingRefund.id);
         refundProcessed(params.tenantId, 'failed');
         return { success: false, error: refundResponse.error };
@@ -785,6 +801,7 @@ export class PaymentService {
           provider_reference: refundResponse.refundReference,
           raw: {
             original_reference: transaction.provider_reference,
+            provider: provider.id,
             refund_response: refundResponse,
           },
         })
@@ -855,7 +872,7 @@ export class PaymentService {
         return { success: false, error: 'Maximum retry attempts exceeded' };
       }
 
-      const provider = this.getProvider(transaction.provider);
+      const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
       }
@@ -937,7 +954,7 @@ export class PaymentService {
       for (const transaction of transactions || []) {
         if (!transaction.provider_reference) continue;
 
-        const provider = this.getProvider(transaction.provider);
+        const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
         if (!provider) continue;
 
         try {
@@ -1016,8 +1033,8 @@ export class PaymentService {
     });
   }
 
-  private getProvider(providerId: string): PaymentProvider | undefined {
-    return this.providers.get(providerId);
+  private getProvider(providerId?: string): PaymentProvider | undefined {
+    return providerId ? this.providers.get(providerId) : undefined;
   }
 
   private generateReference(): string {

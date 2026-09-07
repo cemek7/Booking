@@ -354,7 +354,7 @@ class RiskManagementWorker {
     return activities?.length || 0;
   }
 
-  async findConflictsForReservation(reservation: any): Promise<any[]> {
+  async findConflictsForReservation(reservation: Record<string, unknown>): Promise<Record<string, unknown>[]> {
     const { data: conflicts } = await supabase
       .from('reservations')
       .select('id, start_at, end_at, staff_id')
@@ -372,7 +372,7 @@ class RiskManagementWorker {
     return staffConflicts;
   }
 
-  async checkSecurityThresholds(tenantId: string, tenantName: string, metrics: any) {
+  async checkSecurityThresholds(tenantId: string, tenantName: string, metrics: Record<string, number>) {
     const alerts = [];
 
     if (metrics.chargeback_rate > 0.005) { // 0.5%
@@ -412,7 +412,7 @@ class RiskManagementWorker {
     }
   }
 
-  async logConflictAlert(reservation: any, conflicts: any[]) {
+  async logConflictAlert(reservation: Record<string, unknown>, conflicts: Record<string, unknown>[]) {
     await supabase.from('suspicious_activities').insert({
       tenant_id: reservation.tenant_id,
       activity_type: 'booking_conflict_detected',
@@ -429,7 +429,7 @@ class RiskManagementWorker {
     });
   }
 
-  async logReconciliationAlert(transaction: any) {
+  async logReconciliationAlert(transaction: Record<string, unknown>) {
     await supabase.from('suspicious_activities').insert({
       tenant_id: transaction.tenant_id,
       activity_type: 'reconciliation_delay',

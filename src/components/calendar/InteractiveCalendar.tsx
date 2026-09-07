@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Calendar, momentLocalizer } from 'react-big-calendar';
+import { Calendar, momentLocalizer, type Event as BigCalendarEvent } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import StaffSidebar from './StaffSidebar';
@@ -134,6 +134,10 @@ const InteractiveCalendar: React.FC = () => {
     const localIds = new Set(builtEvents.map(e => e.id));
     return [...builtEvents, ...events.filter(e => !localIds.has(e.id))];
   }, [builtEvents, events]);
+  const calendarEvents = useMemo<BigCalendarEvent[]>(
+    () => allEvents.map((event) => ({ ...event })),
+    [allEvents]
+  );
 
   const loading = staffLoading || reservationsLoading;
 
@@ -191,7 +195,7 @@ const InteractiveCalendar: React.FC = () => {
       <div className="flex-grow">
         <Calendar
           localizer={localizer}
-          events={allEvents}
+          events={calendarEvents}
           resources={view === 'day' ? filteredResources : undefined}
           startAccessor="start"
           endAccessor="end"
@@ -202,10 +206,10 @@ const InteractiveCalendar: React.FC = () => {
           style={{ height: '100%' }}
           resourceIdAccessor="resourceId"
           resourceTitleAccessor="resourceTitle"
-          eventPropGetter={eventPropGetter as any}
+          eventPropGetter={(event) => eventPropGetter(event as unknown as CalendarEvent)}
           selectable
-          onSelectSlot={handleSelectSlot}
-          onSelectEvent={handleSelectEvent as any}
+          onSelectSlot={(slot) => handleSelectSlot(slot as SlotInfo)}
+          onSelectEvent={(event) => handleSelectEvent(event as unknown as CalendarEvent)}
           components={{
             toolbar: CustomToolbar,
           }}

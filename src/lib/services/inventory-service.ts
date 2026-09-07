@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 /**
  * Inventory Service
@@ -194,7 +193,16 @@ export class InventoryService {
         return { success: false, error: 'Failed to fetch low stock alerts' };
       }
 
-      const alerts: any[] = [];
+      interface LowStockAlert {
+        product_id: string;
+        product_name: string;
+        variant_id?: string;
+        variant_name?: string;
+        current_stock: number;
+        threshold: number;
+        urgency: 'critical' | 'warning' | 'low';
+      }
+      const alerts: LowStockAlert[] = [];
 
       (products || []).forEach(product => {
         // Check base product stock
@@ -437,15 +445,23 @@ export class InventoryService {
         threshold: number;
       }>();
 
-      (movements || []).forEach(movement => {
-        const key = movement.variant_id ? 
-          `${movement.product_id}_${movement.variant_id}` : 
+      const movementRows = (movements ?? []) as unknown as Array<{
+        product_id: string;
+        variant_id: string | null;
+        quantity_change: number;
+        movement_type: string;
+        product: { id: string; name: string; stock_quantity: number; low_stock_threshold: number };
+      }>;
+
+      movementRows.forEach(movement => {
+        const key = movement.variant_id ?
+          `${movement.product_id}_${movement.variant_id}` :
           movement.product_id;
 
         if (!usageMap.has(key)) {
           usageMap.set(key, {
             productId: movement.product_id,
-            variantId: movement.variant_id,
+            variantId: movement.variant_id ?? undefined,
             totalUsage: 0,
             currentStock: movement.product.stock_quantity,
             threshold: movement.product.low_stock_threshold,

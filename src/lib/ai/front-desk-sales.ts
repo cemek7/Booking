@@ -1,13 +1,8 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { normalizePhone } from '@/lib/customers/identity';
 import { siasOperations } from '@/lib/sias-operations';
 
 const supabaseAdmin = createSupabaseAdminClient();
-
-function normalizePhone(phone: string | null | undefined): string | null {
-  if (!phone) return null;
-  const trimmed = phone.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 export async function upsertLeadRecord(input: {
   tenantId: string;

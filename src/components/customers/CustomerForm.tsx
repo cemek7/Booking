@@ -48,8 +48,8 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ initialData, onSuccess }) =
       }
       if (response.error) throw new Error(initialData ? "Failed to update customer" : "Failed to create customer");
       if (onSuccess) onSuccess();
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
     }

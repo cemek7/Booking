@@ -36,7 +36,9 @@ jobs:
         run: npm ci
 
       - name: Type checking
-        run: npx tsc --noEmit
+        # Match the production build graph. Test-only mocks use Jest/Vitest
+        # globals and are intentionally excluded by tsconfig.ci.json.
+        run: npm run typecheck:ci
 
       - name: Lint code
         run: npm run lint
@@ -81,11 +83,6 @@ jobs:
           echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/booking_test" >> .env.test
           echo "SUPABASE_URL=https://test.supabase.co" >> .env.test
           echo "SUPABASE_ANON_KEY=test-key" >> .env.test
-
-      - name: Run database migrations
-        run: |
-          npm install -g supabase
-          supabase db reset --local
 
       - name: Run unit tests
         run: npm test -- --coverage --watchAll=false --testTimeout=30000

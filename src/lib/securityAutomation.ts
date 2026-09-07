@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace } from '@opentelemetry/api';
@@ -20,7 +19,7 @@ export interface SecurityViolation {
   id: string;
   rule_id: string;
   tenant_id?: string;
-  violation_details: Record<string, any>;
+  violation_details: Record<string, unknown>;
   severity: string;
   status: 'open' | 'investigating' | 'resolved' | 'false_positive';
   detected_at: string;
@@ -47,6 +46,9 @@ export interface SecurityAuditEvent {
   failure_reason?: string;
   sensitive_data_accessed?: boolean;
 }
+
+type PiiRegistryRow = { table_name?: string; column_name?: string; data_type?: string; encryption_method?: string | null };
+type FailedLoginRow = { user_id?: string; ip_address?: string };
 
 export class SecurityAutomationService {
   private supabase: SupabaseClient;
@@ -85,7 +87,7 @@ export class SecurityAutomationService {
           success: event.success,
           sensitive_data: event.sensitive_data_accessed || false,
         },
-        tenant_id: event.tenant_id || null,
+        tenantId: event.tenant_id || undefined,
       });
 
       span.setAttribute('audit.success', true);
@@ -271,7 +273,7 @@ export class SecurityAutomationService {
           rules_evaluated: rulesEvaluated,
           violations_found: violationsFound,
         },
-        tenant_id: null,
+        tenantId: undefined,
       });
 
       return { success: true, rulesEvaluated, violationsFound };
@@ -294,7 +296,7 @@ export class SecurityAutomationService {
    */
   private async createSecurityViolations(
     rule: SecurityRule, 
-    violationData: Array<Record<string, any>>
+    violationData: Array<Record<string, unknown>>
   ): Promise<void> {
     for (const data of violationData) {
       try {
@@ -320,7 +322,7 @@ export class SecurityAutomationService {
             severity: rule.severity,
             violation_id: violation.rule_id,
           },
-          tenant_id: data.tenant_id || null,
+          tenantId: typeof data.tenant_id === 'string' ? data.tenant_id : undefined,
         });
 
       } catch (error) {
@@ -332,7 +334,7 @@ export class SecurityAutomationService {
   /**
    * Simulate rule evaluation (replace with actual SQL execution in production)
    */
-  private async simulateRuleEvaluation(rule: SecurityRule): Promise<Array<Record<string, any>>> {
+  private async simulateRuleEvaluation(rule: SecurityRule): Promise<Array<Record<string, unknown>>> {
     // This is a simplified simulation - in production you'd execute the actual SQL
     // against your database with proper sanitization and security
     
@@ -345,7 +347,7 @@ export class SecurityAutomationService {
           .in('data_type', ['email', 'phone', 'financial'])
           .or('encryption_method.is.null,encryption_method.eq.');
         
-        return (piiData || []).map((row: any) => ({
+        return ((piiData || []) as PiiRegistryRow[]).map((row) => ({
           table_name: row.table_name,
           column_name: row.column_name,
           data_type: row.data_type,
@@ -361,7 +363,7 @@ export class SecurityAutomationService {
           .gte('created_at', new Date(Date.now() - 15 * 60 * 1000).toISOString());
         
         // Group by user_id and ip_address, count failures
-        const loginGroups = (failedLogins || []).reduce((acc: Record<string, number>, login: any) => {
+        const loginGroups = ((failedLogins || []) as FailedLoginRow[]).reduce((acc: Record<string, number>, login) => {
           const key = `${login.user_id}-${login.ip_address}`;
           acc[key] = (acc[key] || 0) + 1;
           return acc;
@@ -529,7 +531,8 @@ export class SecurityAutomationService {
         .from('pii_data_registry')
         .select('data_type');
       
-      const piiGrouped = (piiSummary || []).reduce((acc: Record<string, number>, item: any) => {
+      const piiGrouped = ((piiSummary || []) as PiiRegistryRow[]).reduce((acc: Record<string, number>, item) => {
+        if (!item.data_type) return acc;
         acc[item.data_type] = (acc[item.data_type] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
@@ -558,8 +561,8 @@ export class SecurityAutomationService {
         .from('pii_data_registry')
         .select('encryption_method');
       
-      const encryptedCount = (piiData || []).filter(
-        (item: any) => item.encryption_method && item.encryption_method !== ''
+      const encryptedCount = ((piiData || []) as PiiRegistryRow[]).filter(
+        (item) => item.encryption_method && item.encryption_method !== ''
       ).length;
       
       const encryptionCoverage = piiData?.length 

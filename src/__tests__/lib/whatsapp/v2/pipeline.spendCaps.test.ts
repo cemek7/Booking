@@ -4,6 +4,7 @@ const mockClaimBatch = jest.fn();
 const mockGetConversation = jest.fn();
 const mockEnsureConversation = jest.fn();
 const mockGetTenantWhatsAppConfig = jest.fn();
+const mockIsTenantWhatsAppAgentEnabled = jest.fn();
 const mockGetProviderClient = jest.fn();
 const mockCheckCaps = jest.fn();
 const mockMaybeAlertCap = jest.fn();
@@ -23,6 +24,7 @@ jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
 
 jest.mock('@/lib/whatsapp/evolutionClient', () => ({
   getTenantWhatsAppConfig: mockGetTenantWhatsAppConfig,
+  isTenantWhatsAppAgentEnabled: mockIsTenantWhatsAppAgentEnabled,
 }));
 
 jest.mock('@/lib/whatsapp/providers', () => ({
@@ -148,6 +150,7 @@ describe('pipeline spend-cap gate', () => {
     mockGetConversation.mockResolvedValue(makeConv());
     mockEnsureConversation.mockResolvedValue(makeConv());
     mockGetTenantWhatsAppConfig.mockResolvedValue({ provider: 'evolution', instanceName: 'inst' });
+    mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(true);
     mockGetProviderClient.mockReturnValue({
       sendTextMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'out-1' }),
     });

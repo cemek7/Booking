@@ -40,6 +40,23 @@ interface ModuleManagerProps {
   vertical: 'beauty' | 'hospitality' | 'medicine' | 'general';
 }
 
+type ModuleConfig = Record<string, unknown>;
+type ConfigField = { title?: string; type?: string; description?: string };
+
+function configFields(schema: Record<string, unknown>): Array<[string, ConfigField]> {
+  const properties = schema.properties;
+  if (!properties || typeof properties !== 'object') return [];
+  return Object.entries(properties).flatMap(([key, value]) => {
+    if (!value || typeof value !== 'object') return [];
+    const field = value as Record<string, unknown>;
+    return [[key, {
+      title: typeof field.title === 'string' ? field.title : undefined,
+      type: typeof field.type === 'string' ? field.type : undefined,
+      description: typeof field.description === 'string' ? field.description : undefined,
+    }]];
+  });
+}
+
 export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps) {
   const [availableModules, setAvailableModules] = useState<VerticalModule[]>([]);
   const [installedModules, setInstalledModules] = useState<TenantModuleConfig[]>([]);
@@ -48,7 +65,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
   const [selectedModule, setSelectedModule] = useState<VerticalModule | null>(null);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
-  const [moduleConfig, setModuleConfig] = useState<Record<string, any>>({});
+  const [moduleConfig, setModuleConfig] = useState<ModuleConfig>({});
   const { toast } = useToast();
 
   useEffect(() => {
@@ -79,7 +96,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
     }
   };
 
-  const handleInstallModule = async (module: VerticalModule, config: Record<string, any>) => {
+  const handleInstallModule = async (module: VerticalModule, config: ModuleConfig) => {
     setInstalling(module.id);
     
     try {
@@ -147,7 +164,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
     }
   };
 
-  const handleUpdateConfig = async (moduleName: string, newConfig: Record<string, any>) => {
+  const handleUpdateConfig = async (moduleName: string, newConfig: ModuleConfig) => {
     try {
       const result = await verticalModuleRuntime.updateModuleConfig(
         tenantId,
@@ -430,13 +447,13 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                                   <div className="space-y-4">
                                     {selectedModule?.config_schema && (
                                       <div className="space-y-3">
-                                        {Object.entries(selectedModule.config_schema.properties || {}).map(([key, schema]: [string, any]) => (
+                                        {configFields(selectedModule.config_schema).map(([key, schema]) => (
                                           <div key={key}>
                                             <Label htmlFor={key}>{schema.title || key}</Label>
                                             {schema.type === 'string' && (
                                               <Input
                                                 id={key}
-                                                value={moduleConfig[key] || ''}
+                                                value={typeof moduleConfig[key] === 'string' ? moduleConfig[key] : ''}
                                                 onChange={(e) => setModuleConfig({
                                                   ...moduleConfig,
                                                   [key]: e.target.value
@@ -446,7 +463,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                                             )}
                                             {schema.type === 'boolean' && (
                                               <Switch
-                                                checked={moduleConfig[key] || false}
+                                                checked={typeof moduleConfig[key] === 'boolean' ? moduleConfig[key] : false}
                                                 onCheckedChange={(checked) => setModuleConfig({
                                                   ...moduleConfig,
                                                   [key]: checked
@@ -511,13 +528,13 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
           <div className="space-y-4">
             {selectedModule?.config_schema && (
               <div className="space-y-3">
-                {Object.entries(selectedModule.config_schema.properties || {}).map(([key, schema]: [string, any]) => (
+                {configFields(selectedModule.config_schema).map(([key, schema]) => (
                   <div key={key}>
                     <Label htmlFor={key}>{schema.title || key}</Label>
                     {schema.type === 'string' && (
                       <Input
                         id={key}
-                        value={moduleConfig[key] || ''}
+                        value={typeof moduleConfig[key] === 'string' ? moduleConfig[key] : ''}
                         onChange={(e) => setModuleConfig({
                           ...moduleConfig,
                           [key]: e.target.value
@@ -527,7 +544,7 @@ export default function ModuleManager({ tenantId, vertical }: ModuleManagerProps
                     )}
                     {schema.type === 'boolean' && (
                       <Switch
-                        checked={moduleConfig[key] || false}
+                        checked={typeof moduleConfig[key] === 'boolean' ? moduleConfig[key] : false}
                         onCheckedChange={(checked) => setModuleConfig({
                           ...moduleConfig,
                           [key]: checked

@@ -1,9 +1,9 @@
-# Deploying Booka to a VPS (apex `techclave.cloud`)
+# Deploying Booka to a VPS (`app.techclave.cloud`)
 
-The whole Next.js app (Techclave marketing at `/`, Booka landing at `/booka`, product +
-`/api/*`) is **one deployment**. Serve it at the domain apex on the Hostinger VPS — no
-subdomain, no `basePath`. Once it's live, the Instagram endpoints (`/api/webhooks/instagram`,
-`/api/auth/instagram/callback`) come up with everything else.
+Booka's product and `/api/*` are served at `app.techclave.cloud`. The marketing site remains
+at `techclave.cloud`; it is not a Meta callback origin. Once the Booka app is live, the
+Instagram endpoints (`/api/webhooks/instagram`, `/api/auth/instagram/callback`) come up with
+everything else.
 
 ## Architecture (dockerized)
 
@@ -52,8 +52,8 @@ working deploy + Instagram:
 
 ```
 NODE_ENV=production
-APP_URL=https://techclave.cloud
-NEXT_PUBLIC_BASE_URL=https://techclave.cloud
+APP_URL=https://app.techclave.cloud
+NEXT_PUBLIC_BASE_URL=https://app.techclave.cloud
 
 # Supabase (cloud DB + auth)
 NEXT_PUBLIC_SUPABASE_URL=...
@@ -67,7 +67,7 @@ CRON_SECRET=<openssl rand -hex 32>
 INSTAGRAM_APP_ID=...
 INSTAGRAM_APP_SECRET=...
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN=booka_ig_verify_2026
-INSTAGRAM_OAUTH_REDIRECT_URI=https://techclave.cloud/api/auth/instagram/callback
+INSTAGRAM_OAUTH_REDIRECT_URI=https://app.techclave.cloud/api/auth/instagram/callback
 INSTAGRAM_OAUTH_STATE_SECRET=<openssl rand -hex 32>
 ```
 
@@ -107,17 +107,17 @@ Run pending migrations against the Supabase DB (SQL editor or psql with the Supa
 ## 7. Verify
 
 ```bash
-curl -fsS https://techclave.cloud/api/health     # should return OK from the app
+curl -fsS https://app.techclave.cloud/api/health     # should return OK from the app
 ```
 
-Open `https://techclave.cloud/` (marketing) and `https://techclave.cloud/booka` (Booka).
+Open `https://techclave.cloud/` (marketing) and `https://app.techclave.cloud/` (Booka).
 
 ## 8. Instagram / Meta
 
 Now follow **`docs/instagram-meta-setup-guide.md`** — paste:
 
-- Webhook callback `https://techclave.cloud/api/webhooks/instagram` + the verify token.
-- Business-login redirect `https://techclave.cloud/api/auth/instagram/callback`.
+- Webhook callback `https://app.techclave.cloud/api/webhooks/instagram` + the verify token.
+- Business-login redirect `https://app.techclave.cloud/api/auth/instagram/callback`.
 
 ## Operational notes
 

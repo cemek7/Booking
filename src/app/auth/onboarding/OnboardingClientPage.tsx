@@ -12,8 +12,12 @@ import { getStoredIsAdmin } from '@/lib/auth/token-storage';
 import { setStoredRole, setStoredTenantId } from '@/lib/auth/token-storage';
 import { sessionVerifiesEmail } from '@/lib/auth/onboarding-verification';
 import BrandMark from '@/components/brand/BrandMark';
+import OperatingDraftInterview, { type OperatingDraftInterviewAction } from '@/components/onboarding/OperatingDraftInterview';
+import { COMMERCIAL_MOTION_DETAILS, capabilitiesForCommercialMotion, resolveCommercialMotion, type CommercialMotion } from '@/lib/business-model';
+import type { OperatingDraftView } from '@/lib/onboarding/operating-draft';
 
 interface ServiceDraft { name: string; duration: string; price: string }
+interface ProductDraft { name: string; price: string; stock: string }
 interface StaffDraft { name: string; email: string; phone: string; role: 'manager' | 'staff' }
 interface FaqDraft { question: string; answer: string; category: string }
 
@@ -27,6 +31,7 @@ type OnboardingDraft = {
   ownerPhone: string;
   businessNickname: string;
   bookingSources: string[];
+  commercialMotion: CommercialMotion;
 };
 
 const ONBOARDING_DRAFT_KEY = 'booka_onboarding_draft';
@@ -52,7 +57,7 @@ const ONBOARDING_TONES = [
   'Playful & energetic',
 ];
 
-const BOOKING_SOURCES = [
+const CUSTOMER_CHANNELS = [
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'instagram', label: 'Instagram DM' },
   { value: 'phone', label: 'Phone call' },
@@ -61,18 +66,19 @@ const BOOKING_SOURCES = [
   { value: 'website', label: 'Website' },
 ];
 
-type Step = 'basics' | 'services' | 'staff' | 'faqs' | 'agent' | 'whatsapp' | 'done';
-const STEPS: Step[] = ['basics', 'services', 'staff', 'faqs', 'agent', 'whatsapp', 'done'];
+type Step = 'basics' | 'services' | 'staff' | 'faqs' | 'agent' | 'whatsapp' | 'operating' | 'done';
+const STEPS: Step[] = ['basics', 'services', 'staff', 'faqs', 'agent', 'whatsapp', 'operating', 'done'];
 const STEP_LABELS: Record<Step, string> = {
   basics: 'Business',
-  services: 'Services',
+  services: 'Offerings',
   staff: 'Team',
   faqs: 'FAQs',
   agent: 'Agent',
   whatsapp: 'Channels',
+  operating: 'Front desk',
   done: 'Done',
 };
-const BUSINESS_VERTICALS: Record<string, 'beauty' | 'hospitality' | 'medicine'> = {
+const BUSINESS_VERTICALS: Record<string, 'beauty' | 'hospitality' | 'medicine' | 'retail' | 'home_services' | 'professional' | 'general'> = {
   salon: 'beauty',
   beauty: 'beauty',
   spa: 'beauty',
@@ -85,10 +91,13 @@ const BUSINESS_VERTICALS: Record<string, 'beauty' | 'hospitality' | 'medicine'> 
   hotel: 'hospitality',
   lounge: 'hospitality',
   event: 'hospitality',
+  retail: 'retail', shop: 'retail', ecommerce: 'retail',
+  cleaning: 'home_services', repairs: 'home_services', automotive: 'home_services',
+  consulting: 'professional', legal: 'professional', accounting: 'professional', photography: 'professional',
 };
 
 function resolveVertical(businessType: string) {
-  return BUSINESS_VERTICALS[businessType.trim().toLowerCase()] ?? 'beauty';
+  return BUSINESS_VERTICALS[businessType.trim().toLowerCase()] ?? 'general';
 }
 
 function StepIndicator({ current }: { current: Step }) {
@@ -181,7 +190,10 @@ export default function OnboardingPage({
   const [ownerPhone, setOwnerPhone] = useState('');
   const [businessNickname, setBusinessNickname] = useState('');
   const [bookingSources, setBookingSources] = useState<string[]>(['whatsapp']);
+  const [commercialMotion, setCommercialMotion] = useState<CommercialMotion>('hybrid');
   const [services, setServices] = useState<ServiceDraft[]>([{ name: '', duration: '', price: '' }]);
+  // Optional: things the business sells (Booka does sales + inventory, not just bookings).
+  const [products, setProducts] = useState<ProductDraft[]>([{ name: '', price: '', stock: '' }]);
   const [staffList, setStaffList] = useState<StaffDraft[]>([{ name: '', email: '', phone: '', role: 'staff' }]);
   const [faqs, setFaqs] = useState<FaqDraft[]>([{ question: '', answer: '', category: '' }]);
   const [loading, setLoading] = useState(false);
@@ -195,14 +207,17 @@ export default function OnboardingPage({
   const [agentScraping, setAgentScraping] = useState(false);
   const [instagramHandle, setInstagramHandle] = useState('');
   const [instagramProfileUrl, setInstagramProfileUrl] = useState('');
-  const [instagramDmGoal, setInstagramDmGoal] = useState<'bookings' | 'lead_capture' | 'support'>('bookings');
+  const [instagramDmGoal, setInstagramDmGoal] = useState<'bookings' | 'sales' | 'lead_capture' | 'support'>('bookings');
   const [instagramUseDmReplies, setInstagramUseDmReplies] = useState(true);
   const [notifyNewBookings, setNotifyNewBookings] = useState(true);
   const [notifyCancellations, setNotifyCancellations] = useState(true);
   const [notifyDailySummary, setNotifyDailySummary] = useState(true);
   const [notifyWeeklySummary, setNotifyWeeklySummary] = useState(false);
   const [authEmailSent, setAuthEmailSent] = useState(false);
-  const selectedPackage = getVerticalPackage(resolveVertical(businessType || 'salon'));
+  const [operatingDraft, setOperatingDraft] = useState<OperatingDraftView | null>(null);
+  const [operatingDraftLoading, setOperatingDraftLoading] = useState(false);
+  const [operatingDraftError, setOperatingDraftError] = useState<string | null>(null);
+  const selectedPackage = getVerticalPackage(resolveVertical(businessType));
 
   const baseHeaders = useCallback((extra: Record<string, string> = {}): Record<string, string> => {
     return {
@@ -221,6 +236,39 @@ export default function OnboardingPage({
   const tenantHeaders = useCallback((extra: Record<string, string> = {}): Record<string, string> => {
     return tenantId ? baseHeaders({ 'X-Tenant-ID': tenantId, ...extra }) : baseHeaders(extra);
   }, [baseHeaders, tenantId]);
+
+  const loadOperatingDraft = useCallback(async () => {
+    if (!tenantId) return;
+    setOperatingDraftLoading(true);
+    setOperatingDraftError(null);
+    try {
+      const response = await fetch('/api/onboarding/operating-draft', {
+        headers: tenantHeaders(),
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error(`operating-draft:${response.status}`);
+      setOperatingDraft(await response.json() as OperatingDraftView);
+    } catch (error) {
+      setOperatingDraftError(error instanceof Error ? error.message : 'Unable to load front-desk setup');
+      throw error;
+    } finally {
+      setOperatingDraftLoading(false);
+    }
+  }, [tenantHeaders, tenantId]);
+
+  const submitOperatingDraftAction = useCallback(async (action: OperatingDraftInterviewAction) => {
+    if (!tenantId) throw new Error('Workspace setup is not ready');
+    const response = await fetch('/api/onboarding/operating-draft', {
+      method: 'POST',
+      headers: jsonHeaders(tenantHeaders()),
+      body: JSON.stringify(action),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { message?: string; error?: string };
+      throw new Error(body.message || body.error || 'Unable to save your front-desk setup');
+    }
+    setOperatingDraft(await response.json() as OperatingDraftView);
+  }, [jsonHeaders, tenantHeaders, tenantId]);
 
   // Get session token on mount; refresh if needed before API calls
   useEffect(() => {
@@ -265,6 +313,7 @@ export default function OnboardingPage({
       if (Array.isArray(draft.bookingSources) && draft.bookingSources.length > 0) {
         setBookingSources(draft.bookingSources);
       }
+      if (draft.commercialMotion) setCommercialMotion(resolveCommercialMotion(draft.commercialMotion));
     } catch {
       // Ignore malformed draft data.
     }
@@ -311,6 +360,7 @@ export default function OnboardingPage({
         ownerPhone,
         businessNickname,
         bookingSources,
+        commercialMotion,
       };
       sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
       localStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
@@ -365,7 +415,7 @@ export default function OnboardingPage({
         setTenantId(json.tenantId);
         if (json.tenantSlug) setTenantSlug(json.tenantSlug);
         persistTenantSession(json.tenantId);
-        const vertical = resolveVertical(businessType || 'salon');
+        const vertical = resolveVertical(businessType);
         const pkg = getVerticalPackage(vertical);
         await fetch(`/api/tenants/${json.tenantId}/settings`, {
           method: 'PATCH',
@@ -386,9 +436,11 @@ export default function OnboardingPage({
               outcomeAttribution: ['no_show_reduction', 'revenue_recovery', 'repeat_booking_lift', 'reactivation_lift'],
             },
             campaignDefaults: {
-              reminders: ['24h', '2h'],
+              reminders: commercialMotion === 'booking' || commercialMotion === 'hybrid' ? ['24h', '2h'] : [],
               reactivation: true,
               reviewRequests: true,
+              orderFollowUp: commercialMotion === 'sales' || commercialMotion === 'hybrid',
+              quoteFollowUp: commercialMotion === 'enquiry',
               escalation: 'human-first',
             },
             displayName: name.trim(),
@@ -397,6 +449,8 @@ export default function OnboardingPage({
             ownerPhone: ownerPhone.trim(),
             businessNickname: (businessNickname.trim() || name.trim()),
             bookingSources,
+            commercialMotion,
+            capabilities: capabilitiesForCommercialMotion(commercialMotion),
             tone: agentTone || undefined,
             preferred_language: agentLanguage || undefined,
             greeting: agentGreeting || undefined,
@@ -469,6 +523,13 @@ export default function OnboardingPage({
     void maybeResumeAfterAuth();
   }, [name, ownerName, ownerEmail, ownerPhone, tenantId, step, searchParams]);
 
+  useEffect(() => {
+    if (step !== 'operating' || !tenantId) return;
+    void loadOperatingDraft().catch(() => {
+      toast.error('Your front-desk setup could not be loaded. Please try again.');
+    });
+  }, [loadOperatingDraft, step, tenantId]);
+
   async function submitBasics() {
     if (!name.trim()) { toast.error('Business name is required'); return; }
     if (!ownerName.trim()) { toast.error('Owner name is required'); return; }
@@ -513,6 +574,50 @@ export default function OnboardingPage({
       } catch {
         toast.error('Some services could not be saved — you can add them from the dashboard.');
       } finally { setLoading(false); }
+    }
+    // Optional catalogue: seed anything the business sells. Booka handles sales +
+    // inventory, so a tenant who sells products gets their catalogue started here.
+    const validProducts = products.filter((p) => p.name.trim());
+    if (validProducts.length > 0 && tenantId) {
+      setLoading(true);
+      try {
+        await Promise.all(
+          validProducts.map(async (p) => {
+            const priceMajor = p.price ? Number(p.price) : undefined;
+            const priceCents = Number.isFinite(priceMajor) && (priceMajor ?? -1) >= 0
+              ? Math.round((priceMajor as number) * 100)
+              : 0;
+            const stockQty = p.stock ? Number(p.stock) : undefined;
+            const hasStock = Number.isFinite(stockQty) && (stockQty ?? -1) >= 0;
+            const res = await fetch('/api/products', {
+              method: 'POST',
+              headers: jsonHeaders(tenantHeaders()),
+              body: JSON.stringify({
+                name: p.name.trim(),
+                price_cents: priceCents,
+                ...(hasStock ? { stock_quantity: stockQty, track_inventory: true } : {}),
+              }),
+            });
+            if (!res.ok) throw new Error(`product:${res.status}`);
+          })
+        );
+      } catch {
+        toast.error('Some products could not be saved — you can add them from the dashboard.');
+      } finally { setLoading(false); }
+    }
+    // The commercial motion selected on the first step is authoritative. Do
+    // not turn sales off just because a hybrid owner adds their catalogue later.
+    if (tenantId) {
+      const anyStock = validProducts.some((p) => p.stock && Number.isFinite(Number(p.stock)) && Number(p.stock) >= 0);
+      try {
+        await fetch(`/api/tenants/${tenantId}/settings`, {
+          method: 'PATCH',
+          headers: jsonHeaders(tenantHeaders()),
+          body: JSON.stringify({
+            capabilities: capabilitiesForCommercialMotion(commercialMotion, { hasInventory: anyStock }),
+          }),
+        });
+      } catch { /* non-blocking: capabilities stay all-on by default */ }
     }
     if (tenantId) {
       persistTenantSession(tenantId);
@@ -573,7 +678,7 @@ export default function OnboardingPage({
     if (!tenantId) { next(); return; }
     setLoading(true);
     try {
-      const vertical = resolveVertical(businessType || 'salon');
+      const vertical = resolveVertical(businessType);
       const pkg = getVerticalPackage(vertical);
       const agentMeta: Record<string, unknown> = {
         managedOnboarding: true,
@@ -589,9 +694,11 @@ export default function OnboardingPage({
           operationalNotes: agentWebsiteUrl.trim() ? ['website_scraped_faqs'] : ['manual_setup'],
         },
         campaignDefaults: {
-          reminders: ['24h', '2h'],
+          reminders: commercialMotion === 'booking' || commercialMotion === 'hybrid' ? ['24h', '2h'] : [],
           reactivation: true,
           reviewRequests: true,
+          orderFollowUp: commercialMotion === 'sales' || commercialMotion === 'hybrid',
+          quoteFollowUp: commercialMotion === 'enquiry',
           retryPolicy: 'three_attempts',
         },
       };
@@ -670,6 +777,9 @@ export default function OnboardingPage({
   function updateService(i: number, k: keyof ServiceDraft, v: string) {
     setServices((p) => p.map((s, idx) => (idx === i ? { ...s, [k]: v } : s)));
   }
+  function updateProduct(i: number, k: keyof ProductDraft, v: string) {
+    setProducts((p) => p.map((s, idx) => (idx === i ? { ...s, [k]: v } : s)));
+  }
   function updateStaff<K extends keyof StaffDraft>(i: number, k: K, v: StaffDraft[K]) {
     setStaffList((p) => p.map((s, idx) => (idx === i ? { ...s, [k]: v } : s)));
   }
@@ -707,7 +817,7 @@ export default function OnboardingPage({
             {[
               'Sales conversations, booking intake, and reminders',
               'WhatsApp operations and Instagram lead capture',
-              'Vertical-aware setup for beauty, clinics, and hospitality',
+              'A storefront, sales, bookings, and customer conversations in one system',
             ].map((item) => (
               <div key={item} className="rounded-2xl border border-white/8 bg-white/6 px-4 py-3 text-sm text-[#f5f2e8]">
                 {item}
@@ -718,7 +828,7 @@ export default function OnboardingPage({
           <div className="mt-8 rounded-[1.5rem] border border-emerald-300/20 bg-emerald-400/8 p-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-300/70">Flow</div>
             <p className="mt-3 text-sm leading-7 text-[#d6ddd9]">
-              Business setup, services, team, FAQ knowledge, agent behaviour, then channel setup.
+              Business setup, offerings, team, FAQ knowledge, agent behaviour, then channel setup.
             </p>
           </div>
         </aside>
@@ -731,7 +841,7 @@ export default function OnboardingPage({
             <div className="space-y-5">
               <div>
                 <h1 className={sectionTitleCls}>Welcome to Booka</h1>
-                <p className={sectionCopyCls}>Let&apos;s set up your business in a few quick steps.</p>
+                <p className={sectionCopyCls}>Your AI front desk for bookings <em>and</em> sales — over WhatsApp &amp; Instagram. Let&apos;s set up your business in a few quick steps.</p>
               </div>
               <div className="space-y-3">
                 <div>
@@ -798,6 +908,8 @@ export default function OnboardingPage({
                       <option value="lab">Lab / Diagnostics</option>
                       <option value="hotel">Hotel / Hospitality</option>
                       <option value="restaurant">Restaurant / Dining</option>
+                      <option value="retail">Retail / Shop</option>
+                      <option value="cleaning">Home / Local Services</option>
                       <option value="fitness">Fitness / Wellness</option>
                       <option value="consulting">Consulting</option>
                       <option value="photography">Photography</option>
@@ -820,7 +932,7 @@ export default function OnboardingPage({
                 <div>
                   <label className={labelCls}>Short Description</label>
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-                    rows={2} className={textareaCls} placeholder="What do you do? Shown on your booking page." />
+                    rows={2} className={textareaCls} placeholder="What do you do? Shown on your public storefront." />
                 </div>
                 <div>
                   <label className={labelCls}>Timezone</label>
@@ -828,9 +940,9 @@ export default function OnboardingPage({
                     className={inputCls} placeholder="e.g. Africa/Lagos" />
                 </div>
                 <div>
-                  <label className={labelCls}>Where do most customers currently book?</label>
+                  <label className={labelCls}>How do customers usually reach you?</label>
                   <div className="flex flex-wrap gap-2">
-                    {BOOKING_SOURCES.map((source) => {
+                    {CUSTOMER_CHANNELS.map((source) => {
                       const active = bookingSources.includes(source.value);
                       return (
                         <button
@@ -846,6 +958,16 @@ export default function OnboardingPage({
                           {source.label}
                         </button>
                       );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>What should Booka help customers do?</label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(Object.keys(COMMERCIAL_MOTION_DETAILS) as CommercialMotion[]).map((motion) => {
+                      const detail = COMMERCIAL_MOTION_DETAILS[motion];
+                      const active = commercialMotion === motion;
+                      return <button key={motion} type="button" onClick={() => setCommercialMotion(motion)} className={`rounded-2xl border p-3 text-left transition ${active ? 'border-emerald-600 bg-emerald-50 text-[#123525]' : 'border-[var(--brand-line)] bg-white text-slate-600 hover:border-emerald-200'}`}><span className="block text-sm font-semibold">{detail.label}</span><span className="mt-1 block text-xs leading-5">{detail.description}</span></button>;
                     })}
                   </div>
                 </div>
@@ -884,9 +1006,10 @@ export default function OnboardingPage({
           {step === 'services' && (
             <div className="space-y-5">
               <div>
-                <h2 className={sectionTitleCls}>Your services</h2>
-                <p className={sectionCopyCls}>Add the services clients can book. You can always add more later.</p>
+                <h2 className={sectionTitleCls}>What you offer</h2>
+                <p className={sectionCopyCls}>Add services, reservations, products, or catalogue items. You can start with one side of the business and complete it later.</p>
               </div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Services or reservations (bookable)</p>
               <div className="space-y-3 max-h-72 overflow-y-auto pr-0.5">
                 {services.map((s, i) => (
                   <div key={i} className={cardCls}>
@@ -912,6 +1035,38 @@ export default function OnboardingPage({
                 className="text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800">
                 + Add another service
               </button>
+
+              {/* Optional catalogue — Booka also handles sales + inventory */}
+              <div className="mt-4 border-t border-[var(--brand-line)] pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Products (sellable)</p>
+                <p className="mt-1 text-xs text-gray-500">Selling physical products too? Add them so your AI agent can take orders and track stock.</p>
+                <div className="mt-3 space-y-3 max-h-60 overflow-y-auto pr-0.5">
+                  {products.map((p, i) => (
+                    <div key={i} className={cardCls}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Product {i + 1}</span>
+                        {products.length > 1 && (
+                          <button onClick={() => setProducts((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="text-xs text-red-400 hover:text-red-600 font-medium transition-colors">Remove</button>
+                        )}
+                      </div>
+                      <input value={p.name} onChange={(e) => updateProduct(i, 'name', e.target.value)}
+                        className={inputCls} placeholder="Product name (e.g. Shea butter 250g)" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input value={p.price} onChange={(e) => updateProduct(i, 'price', e.target.value)}
+                          className={inputCls} placeholder="Price" inputMode="decimal" />
+                        <input value={p.stock} onChange={(e) => updateProduct(i, 'stock', e.target.value)}
+                          className={inputCls} placeholder="In stock (optional)" inputMode="numeric" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setProducts((prev) => [...prev, { name: '', price: '', stock: '' }])}
+                  className="mt-2 text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800">
+                  + Add another product
+                </button>
+              </div>
+
               <div className="flex gap-3">
                 <button onClick={back} className={secondaryBtn}>← Back</button>
                 <button onClick={submitServices} disabled={loading} className={primaryBtn}>
@@ -927,7 +1082,7 @@ export default function OnboardingPage({
             <div className="space-y-5">
               <div>
                 <h2 className={sectionTitleCls}>Invite your team</h2>
-                <p className={sectionCopyCls}>Add staff who provide services. They&apos;ll get an invite email.</p>
+                <p className={sectionCopyCls}>Add people who deliver services, take orders, fulfil products, or support customers. They&apos;ll get an invite email.</p>
               </div>
               <div className="space-y-3 max-h-72 overflow-y-auto pr-0.5">
                 {staffList.map((s, i) => (
@@ -1017,7 +1172,7 @@ export default function OnboardingPage({
             <div className="space-y-5">
               <div>
                 <h2 className={sectionTitleCls}>AI agent setup</h2>
-                <p className={sectionCopyCls}>Personalise how your agent talks to customers. All settings are editable later.</p>
+                <p className={sectionCopyCls}>Personalise how your agent handles bookings, product enquiries &amp; orders. All settings are editable later.</p>
               </div>
               <div className="space-y-3">
                 <div>
@@ -1143,8 +1298,9 @@ export default function OnboardingPage({
                     <div>
                       <label className={labelCls}>Primary DM goal</label>
                       <div className="relative">
-                        <select value={instagramDmGoal} onChange={(e) => setInstagramDmGoal(e.target.value as 'bookings' | 'lead_capture' | 'support')} className={selectCls}>
+                        <select value={instagramDmGoal} onChange={(e) => setInstagramDmGoal(e.target.value as 'bookings' | 'sales' | 'lead_capture' | 'support')} className={selectCls}>
                           <option value="bookings">Drive bookings</option>
+                          <option value="sales">Drive sales</option>
                           <option value="lead_capture">Capture leads</option>
                           <option value="support">Handle support questions</option>
                         </select>
@@ -1159,7 +1315,7 @@ export default function OnboardingPage({
                       className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${instagramUseDmReplies ? 'border-emerald-200 bg-white text-[var(--brand-ink)]' : 'border-[var(--brand-line)] bg-[#fcfbf7] text-slate-500'}`}
                     >
                       <div className="font-medium">Use Booka for Instagram DM replies</div>
-                      <div className="mt-1 text-xs text-slate-500">Best for enquiry handling before routing into booking or handoff.</div>
+                      <div className="mt-1 text-xs text-slate-500">Best for enquiry handling before routing into booking, order, quote, or handoff.</div>
                     </button>
                   </div>
                 </div>
@@ -1170,6 +1326,33 @@ export default function OnboardingPage({
               </div>
               <button onClick={finalizeChannels} className={ghostBtn}>Skip for now</button>
             </div>
+          )}
+
+          {/* ── Conversational front-desk setup ── */}
+          {step === 'operating' && (
+            operatingDraftLoading ? (
+              <div className="rounded-[1.6rem] border border-[var(--brand-line)] bg-[#fcfbf7] p-6 text-sm text-slate-600">
+                Preparing your front-desk interview…
+              </div>
+            ) : operatingDraftError ? (
+              <div className="space-y-3 rounded-[1.6rem] border border-rose-100 bg-rose-50 p-6 text-sm text-rose-800">
+                <p>Your front-desk interview could not be loaded. Nothing has been changed.</p>
+                <button type="button" onClick={() => void loadOperatingDraft().catch(() => undefined)} className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-800 transition hover:bg-rose-100">
+                  Try again
+                </button>
+              </div>
+            ) : !operatingDraft ? (
+              <div className="rounded-[1.6rem] border border-[var(--brand-line)] bg-[#fcfbf7] p-6 text-sm text-slate-600">
+                Preparing your front-desk interview…
+              </div>
+            ) : (
+              <OperatingDraftInterview
+                enabled={Boolean(tenantId)}
+                draft={operatingDraft}
+                onAction={submitOperatingDraftAction}
+                onContinue={next}
+              />
+            )
           )}
 
           {/* ── Done ── */}
@@ -1190,10 +1373,10 @@ export default function OnboardingPage({
                 </button>
                 {tenantSlug && (
                   <button
-                    onClick={() => window.open(`/book/${tenantSlug}`, '_blank', 'noopener,noreferrer')}
+                    onClick={() => window.open(`/${tenantSlug}`, '_blank', 'noopener,noreferrer')}
                     className="w-full rounded-full border border-emerald-200 py-3 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-50"
                   >
-                    Preview booking page ↗
+                    Preview public storefront ↗
                   </button>
                 )}
               </div>

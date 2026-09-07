@@ -3,6 +3,7 @@ import { createHttpHandler, parseJsonBody, getVerifiedTenantId } from '@/lib/err
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { z } from 'zod';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const StaffSeedSchema = z.object({
   name: z.string().optional(),
@@ -40,7 +41,7 @@ export const GET = createHttpHandler(
     return { staff };
   },
   'GET',
-  { auth: true }
+  { auth: true, permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );
 
 /**
@@ -128,5 +129,5 @@ export const POST = createHttpHandler(
     return { success: true, count: rows.length };
   },
   'POST',
-  { auth: true, roles: ['owner', 'manager'] }
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );

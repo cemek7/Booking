@@ -4,6 +4,21 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { generateCalendarLinks, bookingToCalendarEvent } from '@/lib/integrations/universalCalendar';
 import { z } from 'zod';
 
+// Supabase infers relational joins (tenant/staff/service) as arrays, but with
+// `.single()` on a to-one relation they are singular objects. This describes the
+// actual runtime shape used to build the calendar event.
+interface CalendarBookingRow {
+  id: string;
+  start_at: string;
+  end_at: string;
+  notes?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  tenant?: { business_name?: string | null; contact_email?: string | null } | null;
+  staff?: { name?: string | null; email?: string | null } | null;
+  service?: { name?: string | null; duration_minutes?: number | null } | null;
+}
+
 const CustomEventSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
@@ -72,8 +87,7 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.notFound('Booking not found or access denied');
       }
 
-      // Cast to any because Supabase infers relational joins as arrays; they are singular here.
-      const b = booking as any;
+      const b = booking as unknown as CalendarBookingRow;
       calendarEvent = bookingToCalendarEvent({
         id: b.id,
         service_name: b.service?.name || 'Appointment',
@@ -90,7 +104,7 @@ export const POST = createHttpHandler(
           business_name: b.tenant?.business_name,
           contact_email: b.tenant?.contact_email,
         },
-      });
+      } as Parameters<typeof bookingToCalendarEvent>[0]);
     } else if (customEvent) {
       calendarEvent = {
         title: customEvent.title,
@@ -162,7 +176,7 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.notFound('Booking not found or access denied');
     }
 
-    const b = booking as any;
+    const b = booking as unknown as CalendarBookingRow;
     const calendarEvent = bookingToCalendarEvent({
       id: b.id,
       service_name: b.service?.name || 'Appointment',
@@ -179,7 +193,7 @@ export const GET = createHttpHandler(
         business_name: b.tenant?.business_name,
         contact_email: b.tenant?.contact_email,
       },
-    });
+    } as Parameters<typeof bookingToCalendarEvent>[0]);
 
     const calendarLinks = generateCalendarLinks(calendarEvent);
 

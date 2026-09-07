@@ -1,4 +1,4 @@
-// @ts-nocheck
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { redactAndTruncate } from './pii';
@@ -70,7 +70,7 @@ export class EmailProvider implements MessagingProvider {
   async send(out: OutboundMessage): Promise<SendResult> {
     // Placeholder: integrate actual email provider later
     try {
-      defaultLogger.info('[email] send', out.to, out.body.slice(0, 80));
+      defaultLogger.info('[email] send', { to: out.to, body: out.body.slice(0, 80) });
       await metrics.incr('msg_out_email');
       return { id: null, status: 'queued', provider: this.name };
     } catch (e) {

@@ -27,14 +27,15 @@ export const POST = createHttpHandler(
     // Fetch reservation details scoped to the user's tenant
     const { data: reservation, error: reservationError } = await ctx.supabase
       .from('reservations')
-      .select('id,start_at,phone,customer_name')
+      // reservations has no phone/customer_name — the number is customer_number.
+      .select('id,start_at,customer_number')
       .eq('id', reservation_id)
       .eq('tenant_id', tenantId)
       .maybeSingle();
 
     if (reservationError) throw ApiErrorFactory.internalServerError(new Error('Failed to fetch reservation'));
     if (!reservation) throw ApiErrorFactory.notFound('Reservation not found');
-    if (!reservation.phone) throw ApiErrorFactory.badRequest('Reservation missing phone number for reminder');
+    if (!reservation.customer_number) throw ApiErrorFactory.badRequest('Reservation missing phone number for reminder');
     if (typeof reservation.start_at !== 'string') {
       throw ApiErrorFactory.internalServerError(new Error('Invalid reservation start time'));
     }
@@ -52,7 +53,7 @@ export const POST = createHttpHandler(
         method: 'whatsapp',
         status: 'pending',
         raw: {
-          to: reservation.phone,
+          to: reservation.customer_number,
           message: `Reminder: your booking is scheduled for ${reservation.start_at}`,
         },
       },
@@ -63,7 +64,7 @@ export const POST = createHttpHandler(
         method: 'whatsapp',
         status: 'pending',
         raw: {
-          to: reservation.phone,
+          to: reservation.customer_number,
           message: `Reminder: your booking is coming up at ${reservation.start_at}`,
         },
       },

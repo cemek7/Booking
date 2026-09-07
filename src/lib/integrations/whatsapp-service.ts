@@ -110,6 +110,27 @@ export async function sendBookingConfirmationWhatsApp(
     calendarEvent?: BookingEvent;
   }
 ) {
+  return sendWhatsApp({
+    number: phoneNumber,
+    text: buildBookingConfirmationWhatsAppText(customerName, bookingDetails),
+  });
+}
+
+/**
+ * Kept separate from the transport so governed callers can use the exact same
+ * confirmation copy without bypassing their provider/template policy.
+ */
+export function buildBookingConfirmationWhatsAppText(
+  customerName: string,
+  bookingDetails: {
+    serviceName: string;
+    date: string;
+    time: string;
+    location?: string;
+    notes?: string;
+    calendarEvent?: BookingEvent;
+  }
+): string {
   let calendarLine = '';
   if (bookingDetails.calendarEvent) {
     try {
@@ -130,10 +151,7 @@ export async function sendBookingConfirmationWhatsApp(
     calendarLine +
     `\n\nIf you need to cancel or reschedule, please let us know at least 24 hours in advance.\n\nSee you soon! 👋`;
 
-  return sendWhatsApp({
-    number: phoneNumber,
-    text: message,
-  });
+  return message;
 }
 
 /**

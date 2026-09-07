@@ -42,13 +42,21 @@ interface CalendarSettingsProps {
   currentUserId?: string;
 }
 
+interface CalendarStaffMember { id: string; name?: string | null; email?: string | null; }
+const syncDirections = ['bidirectional', 'to_google', 'from_google'] as const;
+const conflictResolutions = ['block', 'override', 'notify'] as const;
+
+function isOneOf<T extends readonly string[]>(value: string, choices: T): value is T[number] {
+  return choices.includes(value);
+}
+
 const CalendarSettings: React.FC<CalendarSettingsProps> = ({
   tenantId,
   userRole,
   currentUserId
 }) => {
   const [integrations, setIntegrations] = useState<CalendarIntegration[]>([]);
-  const [staffMembers, setStaffMembers] = useState<any[]>([]);
+  const [staffMembers, setStaffMembers] = useState<CalendarStaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -74,7 +82,7 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
 
   const loadStaffMembers = async () => {
     try {
-      const response = await authFetch<{ staff?: any[] }>(`/api/staff?tenant_id=${tenantId}`);
+      const response = await authFetch<{ staff?: CalendarStaffMember[] }>(`/api/staff?tenant_id=${tenantId}`);
       if (!response.error) {
         setStaffMembers(response.data?.staff || []);
       }
@@ -296,9 +304,11 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <label className="text-sm font-medium">Sync Direction</label>
                     <Select
                       value={integration.sync_direction}
-                      onValueChange={(value: any) =>
-                        updateIntegrationSettings(integration.id, { sync_direction: value })
-                      }
+                      onValueChange={(value) => {
+                        if (isOneOf(value, syncDirections)) {
+                          updateIntegrationSettings(integration.id, { sync_direction: value });
+                        }
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -330,9 +340,11 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <label className="text-sm font-medium">Conflict Resolution</label>
                     <Select
                       value={integration.conflict_resolution}
-                      onValueChange={(value: any) =>
-                        updateIntegrationSettings(integration.id, { conflict_resolution: value })
-                      }
+                      onValueChange={(value) => {
+                        if (isOneOf(value, conflictResolutions)) {
+                          updateIntegrationSettings(integration.id, { conflict_resolution: value });
+                        }
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -407,7 +419,7 @@ const CalendarSettings: React.FC<CalendarSettingsProps> = ({
                     <div className="flex items-center space-x-3">
                       <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
                         <span className="font-medium text-purple-600">
-                          {staff.name.charAt(0).toUpperCase()}
+                          {(staff.name?.charAt(0) ?? '?').toUpperCase()}
                         </span>
                       </div>
                       <div>

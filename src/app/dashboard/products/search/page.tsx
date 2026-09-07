@@ -17,11 +17,11 @@ function ProductSearchPageInner() {
   const initialQuery: Partial<ProductListQuery> = {
     search: searchParams.get('search') || undefined,
     category: searchParams.get('category') || searchParams.get('category_id') || undefined,
-    status: (searchParams.get('status') as any) || 'all',
+    status: (searchParams.get('status') as ProductListQuery['status']) || 'all',
     tags: searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
     price_min: searchParams.get('price_min') ? parseFloat(searchParams.get('price_min')!) : undefined,
     price_max: searchParams.get('price_max') ? parseFloat(searchParams.get('price_max')!) : undefined,
-    sort: (searchParams.get('sort') as any) || 'created_at',
+    sort: (searchParams.get('sort') as ProductListQuery['sort']) || 'created_at',
     order: (searchParams.get('order') as 'asc' | 'desc') || 'desc',
     page: parseInt(searchParams.get('page') || '1'),
     limit: parseInt(searchParams.get('limit') || '20'),
@@ -73,7 +73,7 @@ function ProductSearchPageInner() {
     router.push('/dashboard/products/search');
   };
 
-  const handleProductSelect = (product: any) => {
+  const handleProductSelect = (product: { id: string }) => {
     router.push(`/dashboard/products/${product.id}`);
   };
 

@@ -2,7 +2,12 @@
 // Uses NEXT_PUBLIC_WS_BASE or falls back to Supabase realtime (not implemented here).
 
 export type RealtimeStatus = 'connecting' | 'open' | 'closed' | 'error';
-export type RealtimeEventHandler = (event: any) => void;
+export type RealtimeEvent = { type?: string; event?: string; [key: string]: unknown };
+export type RealtimeEventHandler = (event: RealtimeEvent) => void;
+
+function isRealtimeEvent(value: unknown): value is RealtimeEvent {
+  return typeof value === 'object' && value !== null;
+}
 
 interface HandlerEntry { type: string; handler: RealtimeEventHandler }
 
@@ -51,9 +56,9 @@ export class RealtimeClient {
         if (this.shouldRun) this.scheduleReconnect();
       };
       this.ws.onmessage = (msg) => {
-        let payload: any;
+        let payload: unknown;
         try { payload = JSON.parse(msg.data); } catch { payload = { type: 'raw', data: msg.data }; }
-        if (!payload || typeof payload !== 'object') return;
+        if (!isRealtimeEvent(payload)) return;
         const type = payload.type || payload.event || 'unknown';
         this.handlers.filter(h=>h.type===type).forEach(h=>h.handler(payload));
         // Fan-out for generic handlers listening on '*'

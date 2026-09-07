@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 jest.mock('@/lib/monitoring/telegramAlert', () => ({
   sendTelegramInfo: jest.fn().mockResolvedValue(undefined),
@@ -9,21 +10,21 @@ import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 
 type Resp = { data: unknown; error: unknown };
 const responses: Resp[] = [];
-const inserted: any[] = [];
-const updates: any[] = [];
+const inserted: unknown[] = [];
+const updates: Array<Record<string, unknown>> = [];
 function pushDb(data: unknown) { responses.push({ data, error: null }); }
 function consume(): Resp { return responses.shift() ?? { data: null, error: null }; }
-function makeChain(): any {
-  const chain: any = {};
+function makeChain(): Record<string, unknown> {
+  const chain: Record<string, unknown> = {};
   ['select', 'eq'].forEach((m) => { chain[m] = () => chain; });
   chain.maybeSingle = async () => consume();
-  chain.insert = async (row: any) => { inserted.push(Array.isArray(row) ? row[0] : row); return { data: null, error: null }; };
-  chain.update = (payload: any) => { updates.push(payload); return chain; };
-  chain.upsert = async (payload: any) => { updates.push(payload); return { data: null, error: null }; };
-  chain.then = (f: any, r: any) => Promise.resolve({ data: null, error: null }).then(f, r);
+  chain.insert = async (row: unknown) => { inserted.push(Array.isArray(row) ? row[0] : row); return { data: null, error: null }; };
+  chain.update = (payload: Record<string, unknown>) => { updates.push(payload); return chain; };
+  chain.upsert = async (payload: Record<string, unknown>) => { updates.push(payload); return { data: null, error: null }; };
+  chain.then = (f: (value: Resp) => unknown, r: (reason?: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(f, r);
   return chain;
 }
-const admin: any = { from: jest.fn(() => makeChain()) };
+const admin = { from: jest.fn(() => makeChain()) } as unknown as SupabaseClient;
 const today = () => new Date().toISOString().slice(0, 10);
 
 describe('maybeAlertCap', () => {

@@ -1,0 +1,1 @@
+import type { MetadataRoute } from 'next'; export default function sitemap(): MetadataRoute.Sitemap { const paths=['','/work','/services','/methodology','/capabilities','/contact','/capability-deck']; return paths.map(path=>({url:`/showcase${path}`,changeFrequency:'monthly',priority:path===''?1:.7})); }

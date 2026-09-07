@@ -1,6 +1,5 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
 
@@ -17,7 +16,7 @@ export interface MediaFile {
   thumbnail_url?: string;
   caption?: string;
   duration?: number; // For audio/video
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   processed: boolean;
   created_at: string;
 }
@@ -28,11 +27,39 @@ export interface MediaProcessingResult {
   url?: string;
   thumbnailUrl?: string;
   error?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
+type IncomingMediaMessage = {
+  type: MediaFile['file_type'];
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+  // Carried in via the provider's `media_info` payload (spread by the webhook
+  // route). Untyped at the source, so declared optional here.
+  mediaUrl?: string;
+  url?: string;
+  mimeType?: string;
+  filename?: string;
+};
+
+type DownloadedMedia =
+  | { success: false; error: string }
+  | {
+      success: true;
+      buffer: Buffer | null;
+      mimeType: string;
+      fileName: string;
+      size: number;
+      originalUrl: string;
+    };
+
 class WhatsAppMediaHandler {
-  private supabase = createServerSupabaseClient();
+  // Media processing runs from the WhatsApp webhook (no request/cookie scope),
+  // so it needs the service-role admin client — the cookie-based
+  // createServerSupabaseClient() would run storage/DB writes as anon and fail
+  // RLS. Matches the sibling connectionManager service.
+  private supabase = createSupabaseAdminClient();
   private readonly MAX_FILE_SIZE = 64 * 1024 * 1024; // 64MB
   private readonly SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   private readonly SUPPORTED_DOCUMENT_TYPES = [
@@ -53,7 +80,7 @@ class WhatsAppMediaHandler {
   async processIncomingMedia(
     tenantId: string,
     phoneNumber: string,
-    message: any
+    message: IncomingMediaMessage
   ): Promise<MediaProcessingResult> {
     try {
       defaultLogger.info(`Processing incoming media from ${phoneNumber}:`, message.type);
@@ -88,6 +115,10 @@ class WhatsAppMediaHandler {
         };
       }
 
+      if (!mediaData.buffer) {
+        return { success: false, error: 'Downloaded media had no buffer' };
+      }
+
       // Upload to Supabase Storage
       const uploadResult = await this.uploadToStorage(
         tenantId,
@@ -105,7 +136,7 @@ class WhatsAppMediaHandler {
 
       // Release the buffer immediately after upload — it can be up to 64 MB
       const mediaSize = mediaData.size;
-      (mediaData as any).buffer = null;
+      mediaData.buffer = null;
 
       // Generate thumbnail if needed
       let thumbnailUrl;
@@ -130,7 +161,7 @@ class WhatsAppMediaHandler {
       const mediaRecord: Omit<MediaFile, 'id' | 'created_at'> = {
         tenant_id: tenantId,
         phone_number: phoneNumber,
-        message_id: message.id,
+        message_id: message.id ?? `in-${Date.now()}`,
         file_type: message.type,
         mime_type: mediaData.mimeType,
         file_name: mediaData.fileName,
@@ -138,7 +169,7 @@ class WhatsAppMediaHandler {
         file_url: uploadResult.url!,
         thumbnail_url: thumbnailUrl,
         caption: message.caption,
-        duration: metadata.duration,
+        duration: typeof metadata.duration === 'number' ? metadata.duration : undefined,
         metadata: {
           ...metadata,
           original_url: mediaData.originalUrl
@@ -245,45 +276,24 @@ class WhatsAppMediaHandler {
         };
       }
 
-      // Send via WhatsApp Evolution
-      let sendResult;
-      switch (type) {
-        case 'image':
-          sendResult = await evolutionClient.sendImageMessage(
-            phoneNumber,
-            uploadResult.url!,
-            options.caption
-          );
-          break;
-        case 'document':
-          sendResult = await evolutionClient.sendDocumentMessage(
-            phoneNumber,
-            uploadResult.url!,
-            fileName,
-            options.caption
-          );
-          break;
-        case 'audio':
-          sendResult = await evolutionClient.sendAudioMessage(
-            phoneNumber,
-            uploadResult.url!
-          );
-          break;
-        case 'video':
-          sendResult = await evolutionClient.sendVideoMessage(
-            phoneNumber,
-            uploadResult.url!,
-            options.caption
-          );
-          break;
-        default:
-          throw new Error(`Unsupported media type: ${type}`);
+      // Send via the WhatsApp provider client. The provider exposes a single
+      // sendMediaMessage(to, media, caption?, type?) — the previous per-type
+      // methods (sendImageMessage/sendDocumentMessage/…) do not exist on
+      // WhatsAppProviderClient and threw TypeError at runtime for every send.
+      if (!['image', 'document', 'audio', 'video'].includes(type)) {
+        throw new Error(`Unsupported media type: ${type}`);
       }
+      const sendResult = await evolutionClient.sendMediaMessage(
+        phoneNumber,
+        { url: uploadResult.url!, mimetype: mimeType, filename: fileName },
+        options.caption,
+        type as 'image' | 'document' | 'audio' | 'video'
+      );
 
       if (!sendResult.success) {
         return {
           success: false,
-          error: `Failed to send media: ${sendResult.error}`
+          error: `Failed to send media: ${sendResult.reason}`
         };
       }
 
@@ -334,17 +344,9 @@ class WhatsAppMediaHandler {
    * Download media from WhatsApp
    */
   private async downloadMediaFromWhatsApp(
-    evolutionClient: any,
-    message: any
-  ): Promise<{
-    success: boolean;
-    buffer?: Buffer;
-    mimeType?: string;
-    fileName?: string;
-    size?: number;
-    originalUrl?: string;
-    error?: string;
-  }> {
+    evolutionClient: unknown,
+    message: IncomingMediaMessage
+  ): Promise<DownloadedMedia> {
     try {
       // This would use the Evolution API to download media
       // For now, simulating the process
@@ -461,9 +463,9 @@ class WhatsAppMediaHandler {
     size: number,
     mediaType: string,
     mimeType: string
-  ): Promise<Record<string, any>> {
+  ): Promise<Record<string, unknown>> {
     try {
-      const metadata: Record<string, any> = {
+      const metadata: Record<string, unknown> = {
         size,
         mimeType,
         processedAt: new Date().toISOString()

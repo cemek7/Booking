@@ -24,7 +24,8 @@ import {
   AuditLogger,
   initializeAuditLogger,
   getAuditLogger,
-  type AuditEvent
+  type AuditEvent,
+  type SecurityAnalytics
 } from './audit-logging';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
@@ -284,7 +285,7 @@ export async function auditedRequireAuth(request: NextRequest): Promise<UnifiedA
 export async function auditedRequirePermission(
   request: NextRequest,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<UnifiedAuthResult> {
   return auditedUnifiedAuth(request, {
     requiredPermissions: [permission],
@@ -401,7 +402,7 @@ export async function generateTenantAuditReport(
     format?: 'json' | 'csv' | 'pdf';
   } = {}
 ): Promise<{
-  summary: any;
+  summary: Record<string, unknown>;
   details: AuditEvent[];
   exportUrl?: string;
 }> {
@@ -475,9 +476,9 @@ export async function generateTenantAuditReport(
 export async function getSecurityDashboard(tenantId: string): Promise<{
   alerts: AuditEvent[];
   metrics: {
-    last24Hours: any;
-    last7Days: any;
-    trends: any;
+    last24Hours: SecurityAnalytics['metrics'];
+    last7Days: SecurityAnalytics;
+    trends: SecurityAnalytics['trends'];
   };
   recommendations: string[];
 }> {
@@ -583,4 +584,3 @@ async function setupRealTimeAlerts(supabase: SupabaseClient): Promise<void> {
     )
     .subscribe();
 }
-

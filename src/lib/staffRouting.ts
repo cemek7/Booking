@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import scheduler from './scheduler';

@@ -12,6 +12,14 @@ import Button from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 
+interface RecommendationRow {
+  product_id: string;
+  product: Product;
+  score: number;
+  confidence: number;
+  reasons: string[];
+}
+
 export default function RecommendationsPage() {
   const { tenant } = useTenant();
   const { format: formatMoney } = useTenantCurrency();
@@ -52,7 +60,12 @@ export default function RecommendationsPage() {
     queryFn: async () => {
       if (!tenant?.id) throw new Error('No tenant');
       
-      const requestBody: any = {
+      const requestBody: {
+        context: typeof selectedContext;
+        max_recommendations: number;
+        product_ids?: string[];
+        customer_id?: string;
+      } = {
         context: selectedContext,
         max_recommendations: maxRecommendations,
       };
@@ -153,7 +166,7 @@ export default function RecommendationsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Context</label>
                   <select
                     value={selectedContext}
-                    onChange={(e) => setSelectedContext(e.target.value as any)}
+                    onChange={(e) => setSelectedContext(e.target.value as typeof selectedContext)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                   >
                     <option value="general">General Browsing</option>
@@ -260,7 +273,7 @@ export default function RecommendationsPage() {
                     </TR>
                   </THead>
                   <TBody>
-                    {recommendations.map((rec: any, index: number) => (
+                    {recommendations.map((rec: RecommendationRow, index: number) => (
                       <TR key={rec.product_id}>
                         <TD>
                           <div>

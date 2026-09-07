@@ -16,6 +16,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { getEventBus } from '../eventbus/eventBus';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
+import { siasOperations } from '@/lib/sias-operations';
 
 // ===============================
 // PAYMENT SCHEMAS & TYPES
@@ -57,7 +58,7 @@ const CreatePaymentSchema = z.object({
   provider: z.enum(PaymentProviders),
   method: z.enum(PaymentMethods),
   customerId: z.string().optional(),
-  metadata: z.record(z.string(), z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   description: z.string().optional()
 });
 
@@ -65,7 +66,7 @@ const RefundRequestSchema = z.object({
   transactionId: z.string().uuid(),
   amount: z.number().positive().optional(), // If not provided, full refund
   reason: z.string().min(5),
-  metadata: z.record(z.string(), z.any()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export type CreatePaymentRequest = z.infer<typeof CreatePaymentSchema>;
@@ -196,7 +197,7 @@ export class PaymentLifecycleService {
   async processPaymentCompleted(
     providerPaymentId: string,
     provider: PaymentProvider,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     try {
       // Find transaction by provider payment ID
@@ -225,8 +226,8 @@ export class PaymentLifecycleService {
       await this.supabase
         .from('reservations')
         .update({
-          status: 'confirmed',
-          updated_at: new Date().toISOString()
+          // reservations has no updated_at column.
+          status: 'confirmed'
         })
         .eq('id', transaction.subject_id);
 
@@ -250,7 +251,7 @@ export class PaymentLifecycleService {
           paymentId: transaction.id,
           amount: transaction.amount,
           currency: transaction.currency,
-          provider: (transaction.raw as any)?.provider ?? provider,
+          provider: (transaction.raw as { provider?: PaymentProvider } | null)?.provider ?? provider,
           providerPaymentId
         },
         { tenantId: transaction.tenant_id }
@@ -271,7 +272,7 @@ export class PaymentLifecycleService {
     providerPaymentId: string,
     provider: PaymentProvider,
     failureReason: string,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     try {
       const { data: transaction, error } = await this.supabase
@@ -296,8 +297,7 @@ export class PaymentLifecycleService {
         .from('reservations')
         .update({
           status: 'payment_failed',
-          notes: (transaction.reservation?.notes || '') + `\nPayment failed: ${failureReason}`,
-          updated_at: new Date().toISOString()
+          notes: (transaction.reservation?.notes || '') + `\nPayment failed: ${failureReason}`
         })
         .eq('id', transaction.subject_id);
 
@@ -392,8 +392,8 @@ export class PaymentLifecycleService {
         await this.supabase
           .from('reservations')
           .update({
-            status: 'refunded',
-            updated_at: new Date().toISOString()
+            // reservations has no updated_at column.
+            status: 'refunded'
           })
           .eq('id', originalTransaction.subject_id);
       }
@@ -431,7 +431,7 @@ export class PaymentLifecycleService {
   async processRefundCompleted(
     providerRefundId: string,
     provider: PaymentProvider,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     try {
       const { data: refundTransaction, error } = await this.supabase
@@ -497,7 +497,7 @@ export class PaymentLifecycleService {
     amount: number;
     currency: string;
     description: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }): Promise<void> {
     try {
       const { error } = await this.supabase
@@ -902,7 +902,7 @@ export class PaymentLifecycleService {
     providerTransactionId: string;
     paymentMethod: PaymentMethod;
     parentTransactionId?: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }) {
     // Map to the real transactions schema: the reservation id is subject_id
     // (+ subject_type), the provider ref is provider_reference, refund parent is
@@ -939,7 +939,7 @@ export class PaymentLifecycleService {
   private async updateTransactionStatus(
     transactionId: string,
     status: PaymentStatus,
-    extra?: Record<string, any>
+    extra?: Record<string, unknown>
   ) {
     // Merge status detail into `raw` (there is no `metadata` column) rather
     // than clobbering it.
@@ -949,7 +949,7 @@ export class PaymentLifecycleService {
       .eq('id', transactionId)
       .maybeSingle();
     const currentRaw = (current?.raw && typeof current.raw === 'object')
-      ? (current.raw as Record<string, any>)
+      ? (current.raw as Record<string, unknown>)
       : {};
 
     const { error } = await this.supabase
@@ -1105,12 +1105,9 @@ export class PaymentLifecycleService {
     await this.supabase
       .from('transactions')
       .update({
-        metadata: {
-          ...transaction.metadata,
-          retry_count: retryCount + 1,
-          retry_at: retryAt,
-          retry_scheduled: true,
-        },
+        // transactions has real retry columns — no `metadata` column exists.
+        retry_count: retryCount + 1,
+        next_retry_at: retryAt,
         updated_at: new Date().toISOString(),
       })
       .eq('id', transaction.id);
@@ -1432,8 +1429,19 @@ async function sendRetailPaymentMessage(input: {
   externalCustomerRef: string;
   channel: 'whatsapp' | 'instagram';
   text: string;
+  messageType?: 'payment_receipt';
 }) {
   try {
+    if (input.channel === 'whatsapp' && input.messageType) {
+      await sendGovernedWhatsAppPaymentMessage({
+        tenantId: input.tenantId,
+        recipient: input.externalCustomerRef,
+        messageType: input.messageType,
+        text: input.text,
+      });
+      return;
+    }
+
     const { getTenantChannelProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
     const provider = await getTenantChannelProviderClient(input.tenantId, input.channel);
     if (!provider) return;
@@ -1441,6 +1449,73 @@ async function sendRetailPaymentMessage(input: {
   } catch (error) {
     defaultLogger.warn('[lifecycle] retail payment message send failed', error);
   }
+}
+
+function toTemplateParameters(paramMapping: unknown[]): Array<{ default: string }> {
+  return paramMapping.map((entry) => {
+    if (entry && typeof entry === 'object' && 'default' in entry) {
+      return { default: String((entry as { default?: unknown }).default ?? '') };
+    }
+    return { default: String(entry ?? '') };
+  });
+}
+
+/**
+ * Paid confirmations are business-initiated WhatsApp sends. They must pass the
+ * shared-number governor and the 24-hour/template gate. A missing conversation
+ * or approved payment_receipt template therefore safely results in no send.
+ */
+async function sendGovernedWhatsAppPaymentMessage(input: {
+  tenantId: string;
+  recipient: string;
+  messageType: 'payment_receipt';
+  text: string;
+}): Promise<boolean> {
+  const { getConversation } = await import('@/lib/whatsapp/v2/conversationState');
+  const { brandCustomerText } = await import('@/lib/whatsapp/v2/outboundBranding');
+  const { sendGovernedInitiated } = await import('@/lib/whatsapp/v2/deliverability/governedSend');
+  const { getTenantWhatsAppProviderClient } = await import('@/lib/whatsapp/providers/providerSelection');
+
+  const [conversation, client] = await Promise.all([
+    getConversation(input.recipient, input.tenantId, 'whatsapp'),
+    getTenantWhatsAppProviderClient(input.tenantId),
+  ]);
+  if (!client) return false;
+
+  const result = await sendGovernedInitiated(createServerSupabaseClient() as never, {
+    tenantId: input.tenantId,
+    recipient: input.recipient,
+    messageType: input.messageType,
+    lastInboundAt: conversation?.last_inbound_at ?? null,
+    optedOutAt: conversation?.opted_out_at ?? null,
+    buildFreeform: () => input.text,
+    sendFreeform: async (text) => {
+      const branded = await brandCustomerText(input.tenantId, input.recipient, text, {
+        initiated: true,
+        conv: conversation
+          ? {
+              last_inbound_at: conversation.last_inbound_at,
+              opted_out_at: conversation.opted_out_at,
+            }
+          : undefined,
+      });
+      if (!branded) return false;
+      return (await client.sendTextMessage(input.recipient, branded)).success;
+    },
+    sendTemplate: async (name, language, paramMapping) => {
+      if (!client.sendTemplateMessage) return false;
+      return (
+        await client.sendTemplateMessage(
+          input.recipient,
+          name,
+          toTemplateParameters(paramMapping),
+          language,
+        )
+      ).success;
+    },
+  });
+
+  return result.sent;
 }
 
 async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
@@ -1489,6 +1564,7 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
       externalCustomerRef: input.externalCustomerRef,
       channel: input.channel,
       text: `Payment received ✅ Your order is now confirmed. Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. We’ll keep you posted on fulfillment here.`,
+      messageType: 'payment_receipt',
     });
   }
 
@@ -1756,7 +1832,9 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
     // (prevents reactivating cancelled reservations when a late payment arrives)
     const { data: reservation, error: resError } = await supabase
       .from('reservations')
-      .update({ status: 'confirmed', updated_at: new Date().toISOString() })
+      // reservations has no updated_at column — writing it errors the whole
+      // update, so a paid booking would never flip to confirmed.
+      .update({ status: 'confirmed' })
       .eq('id', bookingId)
       .eq('tenant_id', tenantId)
       .not('status', 'in', '("cancelled","completed","refunded")')
@@ -1790,6 +1868,32 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
         source: 'handlePaymentSuccess',
       },
     });
+
+    const normalizedCurrency = typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
+      ? currency.toUpperCase()
+      : null;
+    const hasReportableAmount = Number.isSafeInteger(amountMinor)
+      && Number(amountMinor) >= 0
+      && normalizedCurrency !== null;
+
+    await siasOperations.recordOutcomeAttribution({
+      tenantId,
+      reservationId: bookingId,
+      signal: 'payment_completed',
+      sourceEvent: `payment.${provider}.completed`,
+      attributedTo: provider,
+      value: 1,
+      attributionType: 'processed',
+      verificationStatus: 'system_verified',
+      amountCents: hasReportableAmount ? amountMinor : null,
+      currency: hasReportableAmount ? normalizedCurrency : null,
+      evidenceType: 'payment_completed',
+      verifiedAt: new Date().toISOString(),
+      metadata: {
+        provider,
+        provider_reference: reference,
+      },
+    }).catch(() => undefined);
 
     if (!reservation) return;
 
@@ -1834,19 +1938,23 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
       endTime: endAt,
     };
 
-      // 4. WhatsApp confirmation
+    // 4. WhatsApp confirmation. Successful-payment confirmations are governed
+    // business-initiated sends; outside the service window an approved template
+    // is required or this intentionally holds.
     if (customerPhone) {
       try {
-        const { getTenantWhatsAppConfig } = await import('@/lib/whatsapp/evolutionClient');
-        const waConfig = await getTenantWhatsAppConfig(tenantId);
-        if (waConfig) {
-          const { sendBookingConfirmationWhatsApp } = await import('@/lib/integrations/whatsapp-service');
-          await sendBookingConfirmationWhatsApp(
-            customerPhone,
-            customerName || 'there',
-            { serviceName, date: dateStr, time: timeStr, calendarEvent }
-          );
-        }
+        const { buildBookingConfirmationWhatsAppText } = await import('@/lib/integrations/whatsapp-service');
+        await sendGovernedWhatsAppPaymentMessage({
+          tenantId,
+          recipient: customerPhone,
+          messageType: 'payment_receipt',
+          text: buildBookingConfirmationWhatsAppText(customerName || 'there', {
+            serviceName,
+            date: dateStr,
+            time: timeStr,
+            calendarEvent,
+          }),
+        });
       } catch (waErr) {
         defaultLogger.warn('[lifecycle] WhatsApp confirmation failed', waErr);
       }

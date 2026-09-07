@@ -252,7 +252,7 @@ export default function CustomersList({ tenantId, filter }: { tenantId?: string;
         <div className="w-[420px] max-w-[95vw]">
           <h3 className="text-base font-semibold mb-3">New Booking</h3>
           <ReservationForm
-            initialData={{ customer_id: selected?.id, date: '', services: [] }}
+            initialData={{ customer_id: selected ? String(selected.id) : '', date: '', services: [] }}
             onSuccess={() => {
               setOpenBooking(false);
               qc.invalidateQueries({ queryKey: ['bookings-list', effectiveTenantId] });

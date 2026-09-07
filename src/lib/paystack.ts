@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Paystack Extended Service
  *
@@ -20,7 +19,61 @@ function secretKey(): string {
   return key;
 }
 
-async function paystackFetch(path: string, init: RequestInit = {}): Promise<any> {
+interface PaystackResponse<T = unknown> {
+  status: boolean;
+  message?: string;
+  data: T;
+  meta?: { total?: number };
+  [key: string]: unknown;
+}
+
+// Raw Paystack payload shapes. Fields are declared as the calling code already
+// assumes them present on a successful response (status === true) — the same
+// assumption the previous `@ts-nocheck` made implicitly, so restoring
+// typechecking changes types only, never runtime behaviour.
+interface PaystackAccountData { account_name: string; account_number: string }
+interface PaystackBankItem { name: string; code: string; slug: string }
+interface PaystackRecipientData {
+  recipient_code: string;
+  name: string;
+  details: { account_number: string; bank_code: string };
+  currency: string;
+}
+interface PaystackTransferData {
+  transfer_code: string;
+  status: string;
+  amount: number;
+  currency: string;
+  reference: string;
+  reason?: string;
+  recipient: { recipient_code: string };
+  createdAt: string;
+}
+interface PaystackSubaccountData {
+  subaccount_code: string;
+  business_name: string;
+  settlement_bank: string;
+  account_number: string;
+  percentage_charge: number;
+  primary_contact_email: string;
+}
+interface PaystackPlanData {
+  plan_code: string;
+  name: string;
+  interval: string;
+  amount: number;
+  currency: string;
+}
+interface PaystackSubscriptionData {
+  subscription_code: string;
+  email_token: string;
+  status: string;
+  plan: { plan_code: string };
+  customer: { email: string };
+  next_payment_date?: string;
+}
+
+async function paystackFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<PaystackResponse<T>> {
   const res = await fetchWithTimeout(`https://api.paystack.co${path}`, {
     ...init,
     headers: {
@@ -31,7 +84,7 @@ async function paystackFetch(path: string, init: RequestInit = {}): Promise<any>
     timeoutMs: 15_000,
   });
   const data = await res.json();
-  return data;
+  return data as PaystackResponse<T>;
 }
 
 // ─── Bank Resolution ──────────────────────────────────────────────────────────
@@ -46,7 +99,7 @@ export async function resolveBankAccount(
   accountNumber: string,
   bankCode: string
 ): Promise<{ success: boolean; account?: BankAccount; error?: string }> {
-  const data = await paystackFetch(
+  const data = await paystackFetch<PaystackAccountData>(
     `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`
   );
   if (!data.status) {
@@ -63,9 +116,9 @@ export async function resolveBankAccount(
 
 /** List supported banks (Nigeria by default). */
 export async function listBanks(country = 'nigeria'): Promise<{ success: boolean; banks?: Array<{ name: string; code: string; slug: string }>; error?: string }> {
-  const data = await paystackFetch(`/bank?country=${country}&perPage=100`);
+  const data = await paystackFetch<PaystackBankItem[]>(`/bank?country=${country}&perPage=100`);
   if (!data.status) return { success: false, error: data.message };
-  const banks = (data.data || []).map((b: any) => ({
+  const banks = (data.data || []).map((b) => ({
     name: b.name,
     code: b.code,
     slug: b.slug,
@@ -91,7 +144,7 @@ export async function createTransferRecipient(params: {
   currency?: string;
   description?: string;
 }): Promise<{ success: boolean; recipient?: TransferRecipient; error?: string }> {
-  const data = await paystackFetch('/transferrecipient', {
+  const data = await paystackFetch<PaystackRecipientData>('/transferrecipient', {
     method: 'POST',
     body: JSON.stringify({
       type: 'nuban',
@@ -119,7 +172,7 @@ export async function createTransferRecipient(params: {
 export async function fetchTransferRecipient(
   recipientCode: string
 ): Promise<{ success: boolean; recipient?: TransferRecipient; error?: string }> {
-  const data = await paystackFetch(`/transferrecipient/${recipientCode}`);
+  const data = await paystackFetch<PaystackRecipientData>(`/transferrecipient/${recipientCode}`);
   if (!data.status) return { success: false, error: data.message };
   return {
     success: true,
@@ -155,7 +208,7 @@ export async function initiateTransfer(params: {
   currency?: string;
 }): Promise<{ success: boolean; transfer?: Transfer; error?: string }> {
   const reference = params.reference ?? `boka_transfer_${Date.now()}`;
-  const data = await paystackFetch('/transfer', {
+  const data = await paystackFetch<PaystackTransferData>('/transfer', {
     method: 'POST',
     body: JSON.stringify({
       source: 'balance',
@@ -187,7 +240,7 @@ export async function initiateTransfer(params: {
 export async function fetchTransfer(
   transferCode: string
 ): Promise<{ success: boolean; transfer?: Transfer; error?: string }> {
-  const data = await paystackFetch(`/transfer/${transferCode}`);
+  const data = await paystackFetch<PaystackTransferData>(`/transfer/${transferCode}`);
   if (!data.status) return { success: false, error: data.message };
   const tx = data.data;
   return {
@@ -215,9 +268,9 @@ export async function listTransfers(params: {
   if (params.status) qs.set('status', params.status);
   qs.set('perPage', String(params.perPage ?? 50));
   qs.set('page', String(params.page ?? 1));
-  const data = await paystackFetch(`/transfer?${qs}`);
+  const data = await paystackFetch<PaystackTransferData[]>(`/transfer?${qs}`);
   if (!data.status) return { success: false, error: data.message };
-  const transfers: Transfer[] = (data.data || []).map((tx: any) => ({
+  const transfers: Transfer[] = (data.data || []).map((tx) => ({
     transferCode: tx.transfer_code,
     status: tx.status,
     amount: tx.amount / 100,
@@ -252,7 +305,7 @@ export async function createSubaccount(params: {
   primaryContactPhone?: string;
   metadata?: Record<string, unknown>;
 }): Promise<{ success: boolean; subaccount?: Subaccount; error?: string }> {
-  const data = await paystackFetch('/subaccount', {
+  const data = await paystackFetch<PaystackSubaccountData>('/subaccount', {
     method: 'POST',
     body: JSON.stringify({
       business_name: params.businessName,
@@ -302,7 +355,7 @@ export async function updateSubaccount(
   if (params.primaryContactName) body.primary_contact_name = params.primaryContactName;
   if (params.primaryContactPhone) body.primary_contact_phone = params.primaryContactPhone;
 
-  const data = await paystackFetch(`/subaccount/${idOrCode}`, {
+  const data = await paystackFetch<PaystackSubaccountData>(`/subaccount/${idOrCode}`, {
     method: 'PUT',
     body: JSON.stringify(body),
   });
@@ -325,7 +378,7 @@ export async function updateSubaccount(
 export async function fetchSubaccount(
   idOrCode: string
 ): Promise<{ success: boolean; subaccount?: Subaccount; error?: string }> {
-  const data = await paystackFetch(`/subaccount/${idOrCode}`);
+  const data = await paystackFetch<PaystackSubaccountData>(`/subaccount/${idOrCode}`);
   if (!data.status) return { success: false, error: data.message };
   const sub = data.data;
   return {
@@ -350,9 +403,9 @@ export async function listSubaccounts(params: {
     perPage: String(params.perPage ?? 50),
     page: String(params.page ?? 1),
   });
-  const data = await paystackFetch(`/subaccount?${qs}`);
+  const data = await paystackFetch<PaystackSubaccountData[]>(`/subaccount?${qs}`);
   if (!data.status) return { success: false, error: data.message };
-  const subaccounts: Subaccount[] = (data.data || []).map((sub: any) => ({
+  const subaccounts: Subaccount[] = (data.data || []).map((sub) => ({
     subaccountCode: sub.subaccount_code,
     businessName: sub.business_name,
     settlementBank: sub.settlement_bank,
@@ -390,7 +443,7 @@ export async function createPlan(params: {
   currency?: string;
   description?: string;
 }): Promise<{ success: boolean; plan?: Plan; error?: string }> {
-  const data = await paystackFetch('/plan', {
+  const data = await paystackFetch<PaystackPlanData>('/plan', {
     method: 'POST',
     body: JSON.stringify({
       name: params.name,
@@ -420,7 +473,7 @@ export async function createSubscription(params: {
   planCode: string;
   startDate?: string; // ISO date
 }): Promise<{ success: boolean; subscription?: Subscription; error?: string }> {
-  const data = await paystackFetch('/subscription', {
+  const data = await paystackFetch<PaystackSubscriptionData>('/subscription', {
     method: 'POST',
     body: JSON.stringify({
       customer: params.customerEmail,
@@ -462,7 +515,7 @@ export async function cancelSubscription(params: {
 export async function fetchSubscription(
   subscriptionCode: string
 ): Promise<{ success: boolean; subscription?: Subscription; error?: string }> {
-  const data = await paystackFetch(`/subscription/${subscriptionCode}`);
+  const data = await paystackFetch<PaystackSubscriptionData>(`/subscription/${subscriptionCode}`);
   if (!data.status) return { success: false, error: data.message };
   const sub = data.data;
   return {
@@ -475,5 +528,102 @@ export async function fetchSubscription(
       customerEmail: sub.customer?.email,
       nextPaymentDate: sub.next_payment_date,
     },
+  };
+}
+
+// ─── Transactions ─────────────────────────────────────────────────────────────
+
+interface PaystackInitData {
+  authorization_url: string;
+  access_code: string;
+  reference: string;
+}
+
+/**
+ * Starts a checkout the customer completes in their browser.
+ *
+ * `amountMinor` is in the currency's smallest unit — kobo for NGN — and is
+ * passed through untouched. Callers do the conversion so the unit is explicit
+ * at the point where the money is decided, not buried here.
+ */
+export async function initializeTransaction(params: {
+  email: string;
+  amountMinor: number;
+  reference: string;
+  currency?: string;
+  callbackUrl?: string;
+  channels?: string[];
+  metadata?: Record<string, unknown>;
+}): Promise<{ success: boolean; authorizationUrl?: string; accessCode?: string; error?: string }> {
+  const data = await paystackFetch<PaystackInitData>('/transaction/initialize', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: params.email,
+      amount: params.amountMinor,
+      reference: params.reference,
+      currency: params.currency ?? 'NGN',
+      callback_url: params.callbackUrl,
+      channels: params.channels,
+      metadata: params.metadata ?? {},
+    }),
+  });
+  if (!data.status) return { success: false, error: data.message };
+  return {
+    success: true,
+    authorizationUrl: data.data?.authorization_url,
+    accessCode: data.data?.access_code,
+  };
+}
+
+interface PaystackChargeData {
+  status: string;
+  reference: string;
+  amount: number;
+  gateway_response?: string;
+}
+
+/**
+ * Charges a saved card without the customer present.
+ *
+ * Paystack only honours this for authorizations whose `reusable` flag is true,
+ * and only with the email the authorization was created with — sending any
+ * other email is rejected, so the email must be stored alongside the code
+ * rather than re-derived from the tenant later.
+ *
+ * A `success: true` here means the API call succeeded, NOT that money moved:
+ * a declined card returns HTTP 200 with data.status 'failed'. Callers must
+ * check `chargeStatus`.
+ */
+export async function chargeAuthorization(params: {
+  authorizationCode: string;
+  email: string;
+  amountMinor: number;
+  reference: string;
+  currency?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{
+  success: boolean;
+  chargeStatus?: string;
+  reference?: string;
+  gatewayResponse?: string;
+  error?: string;
+}> {
+  const data = await paystackFetch<PaystackChargeData>('/transaction/charge_authorization', {
+    method: 'POST',
+    body: JSON.stringify({
+      authorization_code: params.authorizationCode,
+      email: params.email,
+      amount: params.amountMinor,
+      reference: params.reference,
+      currency: params.currency ?? 'NGN',
+      metadata: params.metadata ?? {},
+    }),
+  });
+  if (!data.status) return { success: false, error: data.message };
+  return {
+    success: true,
+    chargeStatus: data.data?.status,
+    reference: data.data?.reference,
+    gatewayResponse: data.data?.gateway_response,
   };
 }

@@ -7,6 +7,12 @@ export interface CapDecision {
   softWarn: boolean;
   spentTodayCredits: number;
   dailyBudgetCredits: number;
+  /**
+   * True when the cap check itself failed and the result is a fail-open guess.
+   * LLM spend ignores this; message spend routes it into the grace overdraft so
+   * fail-open stays bounded.
+   */
+  degraded: boolean;
 }
 
 type WalletCapRow = {
@@ -133,6 +139,7 @@ export async function checkCaps(admin: SupabaseClient, tenantId: string): Promis
         softWarn: false,
         spentTodayCredits: todaySpend,
         dailyBudgetCredits: dailyBudget,
+        degraded: false,
       };
     }
 
@@ -143,6 +150,7 @@ export async function checkCaps(admin: SupabaseClient, tenantId: string): Promis
         softWarn: false,
         spentTodayCredits: todaySpend,
         dailyBudgetCredits: dailyBudget,
+        degraded: false,
       };
     }
 
@@ -152,6 +160,7 @@ export async function checkCaps(admin: SupabaseClient, tenantId: string): Promis
       softWarn: dailyBudget > 0 && todaySpend >= CAPS.softWarnPct() * dailyBudget,
       spentTodayCredits: todaySpend,
       dailyBudgetCredits: dailyBudget,
+      degraded: false,
     };
   } catch (error) {
     console.warn('[spendGuard] checkCaps failed open', error);
@@ -161,6 +170,7 @@ export async function checkCaps(admin: SupabaseClient, tenantId: string): Promis
       softWarn: false,
       spentTodayCredits: 0,
       dailyBudgetCredits: 0,
+      degraded: true,
     };
   }
 }

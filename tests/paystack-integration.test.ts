@@ -191,7 +191,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 describe('POST /api/payments/webhook — signature verification', () => {
-  const maybeIt = (integrationEnabled ? it : ((name: string, fn: any, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
+  const maybeIt = (integrationEnabled ? it : ((name: string, fn: () => void | Promise<unknown>, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
 
   maybeIt('rejects requests with no signature header (422)', async () => {
     const body = JSON.stringify(buildChargeSuccess('no-sig-ref', TEST_TENANT_ID));
@@ -240,7 +240,7 @@ describe('POST /api/payments/webhook — signature verification', () => {
 // ---------------------------------------------------------------------------
 
 describe('POST /api/payments/webhook — charge.success', () => {
-  const maybeIt = (integrationEnabled ? it : ((name: string, fn: any, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
+  const maybeIt = (integrationEnabled ? it : ((name: string, fn: () => void | Promise<unknown>, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
 
   maybeIt('updates transaction status to success', async () => {
     const payload = buildChargeSuccess(TEST_REF_SUCCESS, TEST_TENANT_ID, TEST_RESERVATION_ID);
@@ -293,7 +293,7 @@ describe('POST /api/payments/webhook — charge.success', () => {
 // ---------------------------------------------------------------------------
 
 describe('POST /api/payments/webhook — charge.refunded', () => {
-  const maybeIt = (integrationEnabled ? it : ((name: string, fn: any, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
+  const maybeIt = (integrationEnabled ? it : ((name: string, fn: () => void | Promise<unknown>, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
 
   maybeIt('updates transaction + reservation status to refunded', async () => {
     const payload = buildChargeRefunded(TEST_REF_REFUND, TEST_TENANT_ID, TEST_RESERVATION_ID);
@@ -364,7 +364,7 @@ describe('POST /api/payments/webhook — charge.refunded', () => {
 // ---------------------------------------------------------------------------
 
 describe('POST /api/payments/webhook — stale webhook', () => {
-  const maybeIt = (integrationEnabled ? it : ((name: string, fn: any, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
+  const maybeIt = (integrationEnabled ? it : ((name: string, fn: () => void | Promise<unknown>, timeout?: number) => it.skip(name, fn, timeout))) as typeof it;
 
   maybeIt('silently accepts but does not update transaction when webhook is >72 h old', async () => {
     const staleTimestamp = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();

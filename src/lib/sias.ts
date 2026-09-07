@@ -1,4 +1,10 @@
-export type SIASVertical = 'beauty' | 'hospitality' | 'medicine';
+export type SIASVertical = 'beauty' | 'hospitality' | 'medicine' | 'retail' | 'home_services' | 'professional' | 'general';
+
+export const BOOKA_POSITIONING = {
+  category: 'AI Revenue Front Desk',
+  headline: 'Turn your WhatsApp and Instagram enquiries into booked and paying customers.',
+  campaignLine: 'Turn conversations into customers.',
+} as const;
 
 export type SIASOutcomeSignal = {
   id: string;
@@ -175,6 +181,26 @@ export const SIAS_VERTICAL_PACKAGES: SIASVerticalPackage[] = [
       description: 'Conscious communication, scheduling, and follow-up with escalation controls.',
     },
   },
+  ...([
+    ['retail', 'Commerce Desk', 'Retailers, shops, and product-led brands', 'AI sales and customer operations for businesses that turn messages into product orders.', 'We answer product questions, guide purchases, recover carts, and keep customers returning.', ['Increase order conversion', 'Recover abandoned baskets', 'Improve repeat purchases', 'Keep stock conversations accurate'], ['product discovery', 'order intake', 'cart recovery', 'delivery follow-up', 'review request']],
+    ['home_services', 'Local Service Desk', 'Home, repair, automotive, and field-service teams', 'AI intake and dispatch support for local businesses that quote, schedule, and deliver work.', 'We qualify requests, capture job details, arrange visits, and follow up on quotes.', ['Respond faster', 'Convert more quotes', 'Fill field capacity', 'Reduce missed follow-up'], ['quote intake', 'service-area check', 'visit scheduling', 'quote follow-up', 'review request']],
+    ['professional', 'Client Intake Desk', 'Consultants, agencies, legal, and professional services', 'A conversational front desk for businesses that need to qualify enquiries before a consultation or proposal.', 'We gather context, route qualified leads, schedule consultations, and protect follow-up.', ['Qualify leads earlier', 'Increase consultation conversion', 'Shorten response time', 'Protect pipeline follow-up'], ['consultation intake', 'lead qualification', 'consultation scheduling', 'proposal follow-up', 'review request']],
+    ['general', 'Business Front Desk', 'Growing businesses with bookings, sales, or enquiries', 'One conversational front desk for customer questions, sales, bookings, and follow-up.', 'We help customers find the next best action, then keep the conversation moving.', ['Respond faster', 'Capture demand', 'Improve conversion', 'Retain customer context'], ['customer intake', 'booking or order routing', 'follow-up', 'review request']],
+  ] as const).map(([id, name, subtitle, positioning, managedPromise, outcomes, defaultFlows]) => ({
+    id: id as SIASVertical,
+    name,
+    subtitle,
+    positioning,
+    managedPromise,
+    outcomes: [...outcomes],
+    defaultFlows: [...defaultFlows],
+    metrics: [{ id: 'conversion', label: 'Conversion', description: 'Qualified conversations that become customer outcomes', benchmark: '+10%' }],
+    templates: ['customer follow-up', 'conversion nudge', 'review request'],
+    escalationRules: ['Customer complaint', 'Refund request', 'Manual approval required'],
+    memorySignals: ['Customer intent', 'Past conversations', 'Preferred channel'],
+    billingModel: 'Subscription + usage + managed operations add-on',
+    starterPlan: { label: 'AI Front Desk', price: '₦45k/mo', description: 'Customer conversations, conversion, and follow-up.' },
+  })),
 ];
 
 export const SIAS_POSITIONING = [
@@ -228,34 +254,38 @@ export const SIAS_CAMPAIGN_ACTIONS = [
 export const SIAS_BILLING_PLANS = [
   {
     id: 'core',
-    name: 'Core',
+    name: 'Booka Core',
     price: '₦15k/mo',
     description: 'Booking core, reminders, and tenant workspace.',
     included: ['Booking intake', 'WhatsApp confirmations', 'Basic analytics'],
+    usagePolicy: 'Includes a limited automation allowance with usage alerts before any overage.',
   },
   {
     id: 'front-desk',
-    name: 'AI Front Desk',
+    name: 'Booka Revenue Front Desk',
     price: '₦45k/mo',
     description: 'Managed conversational front desk with automated follow-up.',
     included: ['Always-on WhatsApp assistant', 'Reminder automation', 'Escalation queue'],
+    usagePolicy: 'Includes standard AI and messaging usage with transparent, opt-in overages.',
   },
   {
     id: 'growth-ops',
-    name: 'Growth Ops',
+    name: 'Booka Growth',
     price: '₦85k/mo',
     description: 'Campaigns, reactivation, revenue recovery, and richer analytics.',
     included: ['Reactivation engine', 'Outcome attribution', 'Campaign retries'],
+    usagePolicy: 'Includes higher AI, follow-up, and campaign usage with approval for large sends.',
   },
   {
     id: 'managed-ops',
-    name: 'Managed Operations',
+    name: 'Managed Revenue Operations',
     price: '₦250k+',
     description: 'Human + AI hybrid operations layer with ongoing service support.',
     included: ['Human escalation', 'Managed onboarding', 'Operational memory'],
+    usagePolicy: 'Custom usage, service levels, and campaign controls are agreed before launch.',
   },
 ] as const;
 
 export function getVerticalPackage(vertical: string | undefined | null) {
-  return SIAS_VERTICAL_PACKAGES.find((pkg) => pkg.id === vertical) ?? SIAS_VERTICAL_PACKAGES[0];
+  return SIAS_VERTICAL_PACKAGES.find((pkg) => pkg.id === vertical) ?? SIAS_VERTICAL_PACKAGES.find((pkg) => pkg.id === 'general')!;
 }

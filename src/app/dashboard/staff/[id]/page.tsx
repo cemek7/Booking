@@ -21,7 +21,7 @@ export default function StaffDetailPage() {
       const res = await fetch(`/api/staff/metrics?tenant_id=${tenant.id}`);
       if (!res.ok) return;
       const json = await res.json().catch(()=>({ metrics: [] }));
-      const m = (json.metrics || []).find((x: any) => x.user_id === staffId);
+      const m = (json.metrics || []).find((x: { user_id: string; rating: number | null; completed: number; revenue: number }) => x.user_id === staffId);
       if (!cancel && m) setMetrics({ rating: m.rating, completed: m.completed, revenue: m.revenue });
     }
     load();
@@ -31,7 +31,8 @@ export default function StaffDetailPage() {
   const id = staffId || '';
   const name = person?.name || person?.email || id;
   const role = person?.role || 'staff';
-  const type = (person as any)?.type || (person as any)?.staff_type || '—';
+  const personExtra = person as { type?: string; staff_type?: string } | null | undefined;
+  const type = personExtra?.type || personExtra?.staff_type || '—';
 
   return (
       <div className="space-y-4">

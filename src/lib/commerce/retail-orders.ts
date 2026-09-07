@@ -4,6 +4,7 @@ import { PaymentsAdapter } from '@/lib/paymentsAdapter';
 import { siasOperations } from '@/lib/sias-operations';
 import { defaultLogger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
+import { resolveCustomer } from '@/lib/customers/identity';
 
 type ProductSnapshot = {
   id: string;
@@ -70,24 +71,9 @@ async function resolveCustomerId(
   tenantId: string,
   externalId: string
 ): Promise<string | null> {
-  // Two value-bound .eq() lookups instead of an interpolated .or() filter — an
-  // external-provided identifier must never be spliced into a PostgREST filter
-  // expression (injection risk). `phone` first, then the legacy `phone_number`.
-  const byPhone = await admin
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('phone', externalId)
-    .maybeSingle();
-  if (typeof byPhone.data?.id === 'string') return byPhone.data.id;
-
-  const byPhoneNumber = await admin
-    .from('customers')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('phone_number', externalId)
-    .maybeSingle();
-  return typeof byPhoneNumber.data?.id === 'string' ? byPhoneNumber.data.id : null;
+  return resolveCustomer(admin, tenantId, externalId, {
+    source: 'retail_chat_sales',
+  });
 }
 
 async function resolveCustomerAndChat(tenantId: string, externalId: string) {
@@ -429,6 +415,14 @@ export async function createRetailOrderPaymentLink(input: {
   const existingReference = typeof paymentMetadata?.reference === 'string' ? paymentMetadata.reference : null;
   const referenceKey = existingReference || `retail_${order.id.replace(/-/g, '').slice(0, 24)}_${randomUUID().slice(0, 8)}`;
 
+  // Split settlement to the tenant's bank (Paystack subaccount), not the platform.
+  const { data: tenantRow } = await admin
+    .from('tenants')
+    .select('metadata')
+    .eq('id', order.tenant_id)
+    .maybeSingle();
+  const subaccountCode = (tenantRow?.metadata as { paystack_subaccount_code?: string } | null)?.paystack_subaccount_code;
+
   const adapter = new PaymentsAdapter();
   const result = await adapter.createStandalonePaymentLink({
     tenant_id: order.tenant_id,
@@ -439,6 +433,7 @@ export async function createRetailOrderPaymentLink(input: {
     customer_phone: order.customer?.phone ?? order.external_customer_ref ?? null,
     description: `Retail order ${order.id}`,
     callback_url: input.callbackUrl ?? null,
+    subaccountCode: subaccountCode ?? null,
     metadata: {
       tenant_id: order.tenant_id,
       retail_order_id: order.id,
@@ -485,6 +480,8 @@ export async function createRetailOrderPaymentLink(input: {
     currency: order.currency || 'NGN',
     type: 'retail_order',
     status: 'initiated',
+    subject_type: 'retail_order',
+    subject_id: order.id,
     provider_reference: result.id,
     raw: {
       provider: result.provider || 'unknown',
@@ -587,6 +584,7 @@ export async function transitionRetailOrder(input: {
     payment_status: RetailPaymentStatus;
     fulfillment_status: RetailFulfillmentStatus;
     total_cents: number;
+    currency: string;
     metadata: Record<string, unknown> | null;
     items: Array<Record<string, unknown>>;
     cart_id: string | null;
@@ -736,7 +734,18 @@ export async function transitionRetailOrder(input: {
         customerPhone: order.external_customer_ref,
         signal: 'retail_sale',
         sourceEvent: 'frontdesk.retail.paid',
-        value: Number(order.total_cents ?? 0) > 0 ? Number(order.total_cents) / 100 : 1,
+        value: 1,
+        attributionType: 'processed',
+        verificationStatus: input.actorUserId === 'payment_webhook'
+          ? 'system_verified'
+          : 'merchant_confirmed',
+        amountCents: Number(order.total_cents),
+        currency: order.currency.toUpperCase(),
+        evidenceType: input.actorUserId === 'payment_webhook'
+          ? 'payment_completed'
+          : 'retail_order_marked_paid',
+        verifiedAt: now,
+        verifiedBy: input.actorUserId === 'payment_webhook' ? null : input.actorUserId,
         metadata: {
           retail_order_id: order.id,
           cart_id: order.cart_id,

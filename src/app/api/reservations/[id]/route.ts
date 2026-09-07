@@ -6,6 +6,8 @@ import { auditSuperadminAction } from '@/types/unified-permissions';
 import { parseIso } from '@/lib/utils';
 import { defaultLogger } from '@/lib/logger';
 import { siasOperations } from '@/lib/sias-operations';
+import { markReservationCompleted } from '@/lib/reconciliation/reservationSnapshot';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 /**
  * GET,PATCH,DELETE /api/reservations/[id]
@@ -26,6 +28,7 @@ interface ReservationUpdatePayload {
   customer_name?: string;
   phone?: string;
   service?: unknown;
+  service_id?: string;
   status?: 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
   start_at?: string;
   duration_minutes?: number;
@@ -39,9 +42,10 @@ export const PATCH = createHttpHandler(
     }
 
     // Fetch existing reservation
-    const { data: existing, error: existErr } = await ctx.supabase
+    const db = ctx.user!.role === 'superadmin' ? createSupabaseAdminClient() : ctx.supabase;
+    const { data: existing, error: existErr } = await db
       .from('reservations')
-      .select('tenant_id, start_at, end_at, status')
+      .select('tenant_id, start_at, end_at, status, metadata')
       .eq('id', reservationId)
       .maybeSingle();
 
@@ -58,7 +62,7 @@ export const PATCH = createHttpHandler(
     // Audit superadmin actions
     if (ctx.user!.role === 'superadmin') {
       await auditSuperadminAction(
-        ctx.supabase,
+        db,
         ctx.user!.id,
         'reservation_patch',
         tenantId,
@@ -76,14 +80,27 @@ export const PATCH = createHttpHandler(
 
     // Parse update payload
     const body = await parseJsonBody<ReservationUpdatePayload>(ctx.request);
-    const updates: Record<string, any> = {};
+    const updates: Record<string, unknown> = {};
 
     // Copy allowed fields
-    const allowedFields: (keyof ReservationUpdatePayload)[] = ['customer_name', 'phone', 'service', 'status'];
-    for (const field of allowedFields) {
-      if (field in body) {
-        updates[field] = body[field];
-      }
+    if (body.status) updates.status = body.status;
+    if (body.customer_name) {
+      const metadata = existing.metadata && typeof existing.metadata === 'object' ? existing.metadata as Record<string, unknown> : {};
+      updates.metadata = {
+        ...metadata,
+        customer_name: body.customer_name,
+      };
+    }
+    // `customer_number` is the canonical reservation phone column.  Keep the
+    // customer name in JSON metadata, but never create a ghost phone field
+    // there: downstream booking and CRM queries read this top-level column.
+    if (body.phone) updates.customer_number = body.phone;
+    const serviceId = body.service_id || (typeof body.service === 'string' ? body.service : undefined);
+    if (serviceId) {
+      const { data: service, error: serviceError } = await db.from('services').select('id').eq('id', serviceId).eq('tenant_id', tenantId).maybeSingle();
+      if (serviceError) throw ApiErrorFactory.databaseError(serviceError);
+      if (!service) throw ApiErrorFactory.validationError({ service_id: 'Not found in this tenant' });
+      updates.service_id = serviceId;
     }
 
     // Handle time rescheduling with conflict detection
@@ -110,7 +127,7 @@ export const PATCH = createHttpHandler(
       updates.end_at = newEndIso;
 
       // Check for conflicts
-      const { data: conflicts, error: confErr } = await ctx.supabase
+      const { data: conflicts, error: confErr } = await db
         .from('reservations')
         .select('id', { count: 'exact' })
         .eq('tenant_id', tenantId)
@@ -131,15 +148,45 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.validationError({ _: 'No update fields provided' });
     }
 
-    // Apply updates
-    const { data: updated, error: upErr } = await ctx.supabase
-      .from('reservations')
-      .update(updates)
-      .eq('id', reservationId)
-      .select('*')
-      .single();
+    let updated: Record<string, unknown> | null = null;
+    const isCompletionTransition = updates.status === 'completed' && existing.status !== 'completed';
 
-    if (upErr) throw ApiErrorFactory.databaseError(upErr);
+    if (isCompletionTransition) {
+      const nonStatusUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([key]) => key !== 'status')
+      );
+
+      if (Object.keys(nonStatusUpdates).length > 0) {
+        const { error: preUpdateError } = await db
+          .from('reservations')
+          .update(nonStatusUpdates)
+          .eq('id', reservationId);
+
+        if (preUpdateError) throw ApiErrorFactory.databaseError(preUpdateError);
+      }
+
+      // price_cents_snapshot frozen here — do not read live services.price for revenue (spec 1 §4.2)
+      await markReservationCompleted(createSupabaseAdminClient(), tenantId, reservationId, ctx.user!.id);
+
+      const { data: refreshed, error: refreshedError } = await db
+        .from('reservations')
+        .select('*')
+        .eq('id', reservationId)
+        .single();
+
+      if (refreshedError) throw ApiErrorFactory.databaseError(refreshedError);
+      updated = refreshed as Record<string, unknown>;
+    } else {
+      const { data: refreshed, error: upErr } = await db
+        .from('reservations')
+        .update(updates)
+        .eq('id', reservationId)
+        .select('*')
+        .single();
+
+      if (upErr) throw ApiErrorFactory.databaseError(upErr);
+      updated = refreshed as Record<string, unknown>;
+    }
 
     // Audit log
     try {
@@ -147,7 +194,7 @@ export const PATCH = createHttpHandler(
         updates,
         previous: { start_at: existing.start_at, end_at: existing.end_at, status: existing.status },
       });
-      await ctx.supabase
+      await db
         .from('reservation_logs')
         .insert({ reservation_id: reservationId, tenant_id: tenantId, action: 'update', actor, notes })
         .then(({ error: logErr }: { error: unknown }) => {
@@ -184,7 +231,7 @@ export const PATCH = createHttpHandler(
     return updated;
   },
   'PATCH',
-  { auth: true, roles: ['staff', 'manager', 'owner'] }
+  { auth: true, roles: ['staff', 'manager', 'owner', 'superadmin'] }
 );
 
 export const DELETE = createHttpHandler(
@@ -195,7 +242,8 @@ export const DELETE = createHttpHandler(
     }
 
     // Fetch existing reservation
-    const { data: existing, error: existErr } = await ctx.supabase
+    const db = ctx.user!.role === 'superadmin' ? createSupabaseAdminClient() : ctx.supabase;
+    const { data: existing, error: existErr } = await db
       .from('reservations')
       .select('tenant_id, start_at, end_at, status')
       .eq('id', reservationId)
@@ -214,7 +262,7 @@ export const DELETE = createHttpHandler(
     // Audit superadmin actions
     if (ctx.user!.role === 'superadmin') {
       await auditSuperadminAction(
-        ctx.supabase,
+        db,
         ctx.user!.id,
         'reservation_delete',
         tenantId,
@@ -231,7 +279,7 @@ export const DELETE = createHttpHandler(
     const actor = { id: ctx.user!.id, role: ctx.user!.role };
 
     // Cancel reservation (soft delete)
-    const { data, error } = await ctx.supabase
+    const { data, error } = await db
       .from('reservations')
       .update({ status: 'cancelled' })
       .eq('id', reservationId)
@@ -251,7 +299,7 @@ export const DELETE = createHttpHandler(
     // Audit log
     try {
       const notes = `Cancelled by ${actor.role} (${ctx.user!.id})`;
-      await ctx.supabase.from('reservation_logs').insert({
+      await db.from('reservation_logs').insert({
         reservation_id: reservationId,
         tenant_id: tenantId,
         action: 'cancel',
@@ -284,5 +332,5 @@ export const DELETE = createHttpHandler(
     return data;
   },
   'DELETE',
-  { auth: true, roles: ['staff', 'manager', 'owner'] }
+  { auth: true, roles: ['staff', 'manager', 'owner', 'superadmin'] }
 );

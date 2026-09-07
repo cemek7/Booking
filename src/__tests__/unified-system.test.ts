@@ -478,7 +478,7 @@ describe('Unified Middleware & Error Handling System', () => {
 export function createMockMiddleware(name: string, priority: number, handler?: () => void) {
   return {
     config: { name, enabled: true, priority },
-    handler: async (ctx: any) => {
+    handler: async (ctx: unknown) => {
       handler?.();
       return ctx;
     },

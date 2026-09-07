@@ -23,7 +23,7 @@ export function useCreateBooking() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: BookingCreate & { tenant_id: string }) => {
-      const { tenant_id, ...payload } = body as any;
+      const { tenant_id, ...payload } = body;
       const parsed = bookingCreateSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error(parsed.error.issues[0]?.message || 'Invalid booking payload');

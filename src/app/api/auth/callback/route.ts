@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
+import { resolveActiveGlobalAdmin } from '@/lib/auth/global-admin';
 
 type TenantMembership = {
   tenant_id: string;
@@ -115,17 +116,7 @@ async function classifyUser(userId: string | null, email: string | null): Promis
   }
 
   const admin = createSupabaseAdminClient();
-  const normalizedEmail = email?.trim().toLowerCase() ?? '';
-
-  const { data: adminByEmail } = normalizedEmail
-    ? await admin
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle()
-    : { data: null };
-
-  const adminRow = adminByEmail;
+  const adminRow = await resolveActiveGlobalAdmin(admin, email);
 
   if (adminRow) {
     return {

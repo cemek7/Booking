@@ -1,10 +1,11 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const id = (ctx as any).params?.id;
+    const id = ctx.params?.id;
     if (!id) throw ApiErrorFactory.badRequest('User ID required');
 
     const tenantId = ctx.user!.tenantId;
@@ -32,5 +33,5 @@ export const PATCH = createHttpHandler(
     return { ok: true, user_id: data?.user_id, status: data?.status };
   },
   'PATCH',
-  { auth: true }
+  { auth: true, permissions: [BOOKA_PERMISSIONS.MANAGE_STAFF] }
 );

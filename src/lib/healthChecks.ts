@@ -2,6 +2,7 @@ import { getAppConfig, isIntegrationEnabled } from './configManager';
 import { checkFeatureRequirements } from './featureFlags';
 import { createSupabaseAdminClient } from './supabase/server';
 import { pingRedis } from './redis';
+import { getWhatsAppGraphApiVersion } from './whatsapp/metaApiConfig';
 
 export interface HealthCheck {
   name: string;
@@ -148,7 +149,7 @@ export async function checkEvolutionAPI(): Promise<HealthCheck> {
     
     if (hasMeta) {
       const apiUrl = process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com';
-      const apiVersion = process.env.WHATSAPP_API_VERSION || 'v18.0';
+      const apiVersion = getWhatsAppGraphApiVersion();
       const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID!;
       const accessToken = process.env.WHATSAPP_ACCESS_TOKEN!;
       try {

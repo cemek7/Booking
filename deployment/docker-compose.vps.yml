@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+      # This file is deliberately gitignored and installed with mode 600.
+      # It overrides only secret values from .env at runtime.
+      - ${BOOKA_RUNTIME_SECRETS_FILE:-.secrets.env}
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -28,6 +31,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+      - ${BOOKA_RUNTIME_SECRETS_FILE:-.secrets.env}
     command: /bin/sh -c 'redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"'
     volumes:
       - redis-data:/data

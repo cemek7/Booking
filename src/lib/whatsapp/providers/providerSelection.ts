@@ -1,9 +1,10 @@
 import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { getInstagramSecret } from '@/lib/instagram/secrets';
 import { EvolutionAdapter } from './evolution';
-import { InstagramAdapter } from './instagram';
 import { MetaAdapter } from './meta';
 import { WahaAdapter } from './waha';
+import { getProviderClient } from './factory';
 import type { ProviderConfig, WhatsAppProviderClient } from './types';
 
 function trimTrailingSlash(value: string): string {
@@ -73,32 +74,36 @@ export function getDefaultWhatsAppProviderClient(): WhatsAppProviderClient | nul
   return new EvolutionAdapter(config);
 }
 
+// Re-exported from its own leaf module. It must NOT be defined here: the
+// wallet-exhausted handoff imports it, and this module imports the metering
+// factory, so defining it here would close the cycle
+// providerSelection -> factory -> metered -> messageHandoff -> providerSelection.
+export { getTenantWhatsAppProviderClientUnmetered } from './unmetered';
+
+/**
+ * Metered tenant WhatsApp client. Goes through getProviderClient, whose gate is
+ * `config.tenantId` — populated by getTenantWhatsAppConfig — so this is metered
+ * without needing to know anything about metering itself.
+ */
 export async function getTenantWhatsAppProviderClient(tenantId: string): Promise<WhatsAppProviderClient | null> {
   const config = await getTenantWhatsAppConfig(tenantId);
   if (!config) return null;
-  if (config.provider === 'waha') return new WahaAdapter(config);
-  if (config.provider === 'meta') return new MetaAdapter(config);
-  return new EvolutionAdapter(config);
+  return getProviderClient(config);
 }
 
 async function getTenantInstagramProviderConfig(tenantId: string): Promise<ProviderConfig | null> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('whatsapp_provider_secrets')
-    .select('api_key, base_url, instance_name')
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'instagram')
-    .maybeSingle();
-
-  if (error || !data?.api_key || !data?.base_url || !data?.instance_name) {
+  const secret = await getInstagramSecret(supabase, tenantId);
+  if (!secret) {
     return null;
   }
 
   return {
     provider: 'instagram',
-    baseUrl: trimTrailingSlash(data.base_url),
-    apiKey: data.api_key,
-    instanceName: data.instance_name,
+    baseUrl: trimTrailingSlash(process.env.INSTAGRAM_GRAPH_BASE_URL || 'https://graph.instagram.com/v25.0'),
+    apiKey: secret.accessToken,
+    instanceName: secret.igId,
+    tenantId,
   };
 }
 
@@ -108,7 +113,7 @@ export async function getTenantChannelProviderClient(
 ): Promise<WhatsAppProviderClient | null> {
   if (channel === 'instagram') {
     const config = await getTenantInstagramProviderConfig(tenantId);
-    return config ? new InstagramAdapter(config) : null;
+    return config ? getProviderClient(config) : null;
   }
 
   return getTenantWhatsAppProviderClient(tenantId);

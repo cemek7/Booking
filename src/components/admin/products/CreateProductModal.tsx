@@ -15,6 +15,8 @@ interface CreateProductModalProps {
   onSuccess: () => void;
 }
 
+interface CategoriesResponse { categories?: Array<{ name: string }>; }
+
 export default function CreateProductModal({ isOpen, onClose, onSuccess }: CreateProductModalProps) {
   const { tenant } = useTenant();
   const { currency: tenantCurrency } = useTenantCurrency();
@@ -52,7 +54,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     queryFn: async () => {
       if (!tenant?.id) return { categories: [] };
       
-      const response = await authFetch('/api/categories?is_active=true');
+      const response = await authFetch<CategoriesResponse>('/api/categories?is_active=true');
       
       if (response.error) throw new Error('Failed to fetch categories');
       return response.data;
@@ -60,7 +62,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     enabled: !!tenant?.id && isOpen,
   });
 
-  const categories = ((categoriesData as any)?.categories || []).map((category: any) => category.name);
+  const categories = categoriesData?.categories?.map(category => category.name) ?? [];
 
   // Create product mutation
   const createProductMutation = useMutation({
@@ -118,7 +120,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleInputChange = (key: keyof CreateProductRequest, value: any) => {
+  const handleInputChange = <Key extends keyof CreateProductRequest>(key: Key, value: CreateProductRequest[Key]) => {
     setFormData(prev => ({ ...prev, [key]: value }));
     // Clear error for this field
     if (errors[key]) {

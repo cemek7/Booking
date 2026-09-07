@@ -5,7 +5,16 @@ import Button from "../ui/button";
 import { useTenant } from "@/lib/supabase/tenant-context";
 import { authPost, authPatch } from "@/lib/auth/auth-api-client";
 
-export default function ServiceForm({ onSuccess, initialData }: { onSuccess?: () => void; initialData?: any }) {
+interface ServiceFormData {
+  id?: string;
+  name?: string;
+  description?: string;
+  price?: string | number;
+  duration?: string | number;
+  category?: string;
+}
+
+export default function ServiceForm({ onSuccess, initialData }: { onSuccess?: () => void; initialData?: ServiceFormData }) {
   const { tenant } = useTenant();
   const [name, setName] = useState(initialData?.name || "");
   const [description, setDescription] = useState(initialData?.description || "");
@@ -46,8 +55,8 @@ export default function ServiceForm({ onSuccess, initialData }: { onSuccess?: ()
         setCategory("");
       }
       if (typeof onSuccess === "function") onSuccess();
-    } catch (err: any) {
-      setError(err.message || "Error");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
     } finally {
       setLoading(false);
     }

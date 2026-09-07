@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { getTenantWhatsAppProviderClient } from '@/lib/whatsapp/providers/providerSelection';
@@ -106,6 +107,8 @@ async function executeCampaignRow(campaign: CampaignRow, tenantId: string) {
     customerPhone: campaign.target_phone ?? null,
     attributedTo: campaign.action,
     value: 1,
+    attributionType: signal === 'revenue_recovery' ? 'recovered' : 'influenced',
+    verificationStatus: 'unverified',
     campaignRunId: campaign.id,
     metadata: {
       campaign_type: campaign.campaign_type,
@@ -133,7 +136,7 @@ async function executeCampaignRow(campaign: CampaignRow, tenantId: string) {
 }
 
 export async function runDueSiasCampaigns(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   limit = 25,
   options: SiasCampaignRunOptions = {}

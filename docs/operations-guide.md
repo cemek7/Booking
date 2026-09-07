@@ -5,11 +5,13 @@
 1. [System Overview](#system-overview)
 2. [Deployment Guide](#deployment-guide)
 3. [Monitoring & Observability](#monitoring--observability)
-4. [Backup & Recovery](#backup--recovery)
-5. [Troubleshooting Guide](#troubleshooting-guide)
-6. [Security Procedures](#security-procedures)
-7. [Maintenance Tasks](#maintenance-tasks)
-8. [Emergency Procedures](#emergency-procedures)
+4. [Scheduled Workers](#scheduled-workers)
+5. [WhatsApp Message Metering](#whatsapp-message-metering)
+6. [Backup & Recovery](#backup--recovery)
+7. [Troubleshooting Guide](#troubleshooting-guide)
+8. [Security Procedures](#security-procedures)
+9. [Maintenance Tasks](#maintenance-tasks)
+10. [Emergency Procedures](#emergency-procedures)
 
 ## System Overview
 
@@ -318,6 +320,292 @@ smtp:
   password: your-app-password
   from_address: alerts@your-domain.com
 ```
+
+## Scheduled Workers
+
+Scheduling lives in `deployment/vps-crontab.txt`, installed with
+`crontab deployment/vps-crontab.txt`. This project does **not** use Vercel Cron — a worker
+documented here but missing from that file simply never runs.
+
+| Endpoint | Schedule | Auth header |
+|---|---|---|
+| `POST /api/jobs/process` | every minute | `x-cron-secret` |
+| `POST /api/jobs/auto-cancel-unconfirmed` | every 15 min | `x-cron-secret` |
+| `GET /api/worker/whatsapp` | every minute | `Authorization: Bearer` |
+| `GET /api/worker/operating-loop` | every minute | `Authorization: Bearer` |
+| `GET /api/cron/reminders` | every 10 min | `Authorization: Bearer` |
+| `GET /api/cron/nightly` | 22:00 daily | `Authorization: Bearer` |
+| `GET /api/worker/message-charges` | every 15 min | `Authorization: Bearer` |
+
+### `GET /api/worker/message-charges` — stale message-charge sweeper
+
+Releases WhatsApp message-charge reservations that never received a delivery status from Meta,
+returning `{ "released": n }`. Reservations older than 24 hours are released at zero cost.
+
+**`released` is a health signal, not just a counter.** It should normally be 0. A sustained
+non-zero value means Meta has stopped delivering status webhooks, and every message sent in the
+meantime is holding a tenant's credit hostage until this sweep frees it. Investigate the webhook
+subscription before assuming the sweeper is the problem — the sweeper working hard is the symptom.
+
+```bash
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/message-charges"
+```
+
+Rows the sweeper deliberately does **not** touch: those with no `wallet_reservation_id`
+(free-provider and shadow-mode rows, which hold no money) and those with a NULL `wamid`. The
+second exclusion is deliberate and load-bearing — `settle_ai_wallet_spend` is not idempotent, so
+sweeping a row whose reservation was already settled would refund the tenant twice. See the
+WhatsApp message metering section for how those rows are found and resolved by hand.
+
+## WhatsApp Message Metering
+
+From **2026-10-01** Meta bills every delivered WhatsApp service message. Before that date Booka
+absorbed them. This section is the cutover runbook.
+
+### Migrations — apply before deploying this code
+
+Apply in order. **Run these yourself on the VPS**; they are not applied automatically.
+
+```bash
+psql $DATABASE_URL -f db/migrations/139_whatsapp_metering_wallet.sql
+psql $DATABASE_URL -f db/migrations/140_whatsapp_message_charges.sql
+psql $DATABASE_URL -f db/migrations/141_overdraft_reservation.sql
+psql $DATABASE_URL -f db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
+psql $DATABASE_URL -f db/migrations/143_message_handoff_warned_on.sql
+psql $DATABASE_URL -f db/migrations/144_low_balance_alerts.sql
+psql $DATABASE_URL -f db/migrations/145_wallet_paid_topup.sql
+```
+
+Each has a matching `*_rollback.sql`.
+
+**145 is what makes top-up a payment.** It adds `wallet_topup_intents` (the row that ties a
+Paystack reference to a tenant and an amount before the customer pays), the stored card
+authorization columns on `ai_wallets`, and `credit_wallet_topup` — the idempotent claim-and-credit
+function the webhook calls. Without it, `POST /api/billing/wallet/checkout` returns an error and
+no owner can pay for credits.
+
+**142 is not optional.** It fixes `topup_ai_wallet`, which has never worked: the function
+declares `RETURNS TABLE (… balance_credits …)`, which collides with the column of the same name
+and makes `SET balance_credits = balance_credits + x` ambiguous under plpgsql's default
+`variable_conflict = error`. Without it the wallet cannot be credited at all, so metering would
+go live on a wallet nobody can top up.
+
+### Cutover timeline
+
+| When | Action |
+|---|---|
+| At deploy | Ship with `BOOKA_MESSAGE_METERING_MODE=shadow`. Verify rows appear in `whatsapp_message_charges` with `mode = 'shadow'` and that **no wallet balance moves**. |
+| 2026-09-01 | Meta publishes confirmed Nigeria rates. Update `BOOKA_MESSAGE_RATE_CREDITS` from the provisional 14. |
+| 2026-10-01 | Set `BOOKA_MESSAGE_METERING_MODE=live` and restart. This is a config change, **not a deploy**. |
+| Rollback | Same flag back to `shadow`, restart. Migrations do not need reverting. |
+
+Sizing tier allowances from shadow data:
+
+```sql
+SELECT tenant_id,
+       date_trunc('month', sent_at) AS month,
+       count(*) AS messages
+FROM public.whatsapp_message_charges
+WHERE mode = 'shadow' AND provider = 'meta'
+GROUP BY 1, 2
+ORDER BY 3 DESC;
+```
+
+### Paying for credits
+
+**1 credit = NGN 1.** Two ways credits enter a wallet, and only two:
+
+| Path | Route | Who | Payment |
+|---|---|---|---|
+| Owner tops up | `POST /api/billing/wallet/checkout` | owner | Paystack card checkout; credited by the webhook |
+| Booka credits a tenant by hand | `POST /api/billing/wallet` | **superadmin** | none — use for refunds, goodwill, migration |
+
+`POST /api/billing/wallet` used to be `roles: ['owner']` and credited the wallet with no payment
+at all, which let any owner mint themselves credits *and* book them as revenue. It is superadmin
+only now, and runs on the service-role client because migration 142 revoked `topup_ai_wallet` to
+`service_role`.
+
+The owner path never credits directly. It writes a `wallet_topup_intents` row **before** the
+customer pays, sends them to Paystack, and the signed `charge.success` webhook calls
+`credit_wallet_topup`, which claims the intent and credits the wallet in one transaction. That
+claim is what makes Paystack's routine webhook retries safe: a second delivery finds no pending
+intent and credits nothing. A payment short of the intent amount is refused and the intent marked
+`failed`.
+
+To see top-ups that never completed:
+
+```sql
+SELECT reference, tenant_id, amount_credits, origin, status, created_at
+FROM public.wallet_topup_intents
+WHERE status <> 'paid'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+A `pending` row older than an hour means the owner opened checkout and did not pay, or the webhook
+never arrived — check Paystack's dashboard for that reference before crediting anything by hand.
+
+### Auto-recharge
+
+**Auto-recharge is now implemented, and still off for every tenant.**
+`ai_wallets.auto_recharge_enabled` defaults to `false` and must stay there until you deliberately
+turn it on per tenant. Turning it on does nothing by itself: it also needs
+`auto_recharge_amount_credits` and a **saved card**.
+
+Booka can only save a card that Paystack marks `reusable`, which is why the checkout requests
+`channels: ['card']` — a bank-transfer or USSD authorization is never reusable. The card is stored
+only from a verified `charge.success`, together with the email that created it, because Paystack
+rejects a recurring charge sent with any other address.
+
+```sql
+-- Which tenants could actually auto-recharge today
+SELECT tenant_id,
+       auto_recharge_enabled,
+       auto_recharge_amount_credits,
+       paystack_card_brand, paystack_card_last4,
+       auto_recharge_failed_at, auto_recharge_failure_reason
+FROM public.ai_wallets
+WHERE paystack_authorization_code IS NOT NULL;
+```
+
+Owners turn it on themselves, under **Billing → Top Up → Auto top-up**
+(`GET`/`PATCH /api/billing/wallet/auto-recharge`). The toggle is disabled until a card is saved,
+and the route refuses to enable without both a card and an amount — arming something that cannot
+fire would leave an owner believing they are covered until their bot goes quiet. The authorization
+code is never returned to the browser; the page shows only the card brand and last four.
+
+When the balance cannot fund a send, the reserve path charges the saved card and re-reserves. A
+decline — or an unreachable Paystack — stamps `auto_recharge_failed_at` and backs off for 24 hours — without that, a dead card is
+re-charged on every single send, which is a stream of failed charges against the tenant's bank and
+a full network timeout on Booka's inbound path — and that path is a shared worker, so the stall is
+paid by every other tenant in the batch. Saving a new card clears the stamp, and the owner sees the
+decline on the billing page. A tenant whose
+recharge fails falls through to the bounded grace overdraft and then the handoff, exactly as
+before.
+
+**2. Some stranded reservations need manual reconciliation.** Two error logs mean credits are
+debited with no automatic recovery, because the sweeper deliberately cannot see these rows —
+`settle_ai_wallet_spend` is not idempotent, so sweeping them risks a double refund:
+
+- `attachWamid: settle failed after orphan delete — reservation left open`
+- `reserveOutboundMessage: release-after-insert-failure also failed`
+
+The 15-minute sweeper reports them: a non-zero `stranded` count in its response, and an error
+log naming each `chargeId`. To list them directly:
+
+```sql
+SELECT id, tenant_id, wallet_reservation_id, reserved_credits, sent_at
+FROM public.whatsapp_message_charges
+WHERE status = 'reserved'
+  AND wamid IS NULL
+  AND wallet_reservation_id IS NOT NULL
+  AND sent_at < now() - interval '1 hour'
+ORDER BY sent_at;
+```
+
+For each row, check `ai_wallet_ledger` for a settlement referencing that `wallet_reservation_id`.
+The two are distinguishable: the **reservation** is the ledger row whose `id` *is* the
+reservation id (`kind = 'reservation'`, written with a NULL `reference`), while a **settlement**
+is a later row whose `reference` *equals* that id (`kind = 'refund'` or `'usage'`). So a hit on
+the query below means the money already moved — the reservation row itself will never match it.
+
+```sql
+SELECT id, kind, amount_credits, created_at
+FROM public.ai_wallet_ledger
+WHERE reference = '<wallet_reservation_id>';
+```
+
+- **No settlement row** → the reservation is genuinely open. Release it with the RPC, so the
+  release lands in the ledger like any other movement. Do **not** patch
+  `ai_wallets.balance_credits` directly — that leaves no ledger row, and the next reconciliation
+  reads the credit as phantom.
+
+  ```sql
+  SELECT * FROM public.settle_ai_wallet_spend(
+    '<tenant_id>'::uuid,
+    '<wallet_reservation_id>'::uuid,
+    <reserved_credits>,   -- from the row above
+    0,                    -- actual: nothing was delivered
+    NULL, 'meta', NULL, NULL, '{"reason":"manual_reconciliation"}'::jsonb, 'whatsapp'
+  );
+
+  UPDATE public.whatsapp_message_charges
+     SET status = 'released', settled_credits = 0, settled_at = now()
+   WHERE id = '<charge_id>';
+  ```
+- **A settlement row already exists** → **do nothing.** The money already moved; releasing again
+  refunds the tenant twice. Only the charge row's bookkeeping is stale.
+
+### Owner notification
+
+Two alerts, different urgency. Both are capped at one per tenant per day, so an owner with 200
+live conversations still gets one message.
+
+| Trigger | Goes to | Capped by |
+|---|---|---|
+| Balance falls to `ai_wallets.low_balance_threshold_credits` (default 25) | in-app + owner email | `low_balance_warned_on` |
+| Wallet exhausted, handoff issued | in-app + owner email + **owner WhatsApp** | `message_handoff_warned_on` |
+
+The low-balance warning is the one that matters operationally: it fires while the tenant can
+still act, rather than after the bot has already gone quiet. A top-up re-arms it automatically by
+lifting the balance back over the threshold.
+
+The owner's WhatsApp alert is sent through the **unmetered** client and is platform-funded. It has
+to be: a metered send would reserve credit against the very wallet the alert is about, be refused,
+and fire another customer-facing handoff — so the alert would fail at exactly the moment it is
+needed, and would recurse.
+
+Owner contact details come from `tenant_users` where `role = 'owner'`. Staff and managers are
+deliberately not alerted — they cannot top up a wallet.
+
+**Not every owner has an email.** WhatsApp-native tenants are onboarded phone-first: the
+onboarding flow creates the owner's `tenant_users` row with `user_id` and `email` both NULL, so
+they never touch the dashboard and never use a magic link. Those owners are alerted over WhatsApp
+instead — including the low-balance warning, which would otherwise reach them not at all. An
+owner with an email does **not** also get a WhatsApp for the low-balance warning; there is no
+point spending a platform-funded message on a tenant who will see the email.
+
+Onboarding now *asks* for an email in chat (steps 6 and 7 of `ownerOnboarding.ts`) and verifies it
+with a six-digit code mailed to the address, so newly onboarded tenants should have one on file.
+It is asked **after** activation and can be skipped, so it is a coverage improvement, not a
+guarantee — the WhatsApp fallback above remains the thing that makes the alert reliable. To see
+how much of the base is reachable by email before the cutover:
+
+```sql
+SELECT count(*) FILTER (WHERE email IS NOT NULL) AS with_email,
+       count(*) FILTER (WHERE email IS NULL AND phone IS NOT NULL) AS phone_only,
+       count(*) FILTER (WHERE email IS NULL AND phone IS NULL) AS unreachable
+FROM public.tenant_users
+WHERE role = 'owner';
+```
+
+The verification code lives only in `whatsapp_conversations.flow_data`, salted-hashed per tenant
+and never stored in the clear, and is cleared when onboarding completes. No migration backs it.
+
+On wallet exhaustion the conversation is also **reserved for a human**: `human_handling_until` is
+set (default 60 minutes, `BOOKA_HANDOFF_HUMAN_MINUTES`) so the assistant stays out, and the chat is
+flipped to `pending` so it surfaces in the dashboard inbox. That is what makes the handoff copy —
+"a member of our team will reply to you here shortly" — a promise Booka can keep: staff reply from
+the inbox over WhatsApp and hand the thread back with `POST /api/chats/[id]/release`. The window is
+deliberately far shorter than the 24-hour handoff re-arm so the assistant resumes promptly once the
+wallet is topped up. An **owner or staff** thread is never reserved this way — silencing it would
+cut off the one person who can fix the wallet.
+
+`tenant_users` has no unique constraint on `(tenant_id, role)`, so a tenant can have more than one
+owner row. The lookup takes the most contactable one rather than erroring, which would otherwise
+turn "this tenant has two owners" into "this tenant gets no alert at all".
+
+**Only a tenant with neither an email nor a phone on any owner row gets the dashboard row alone.**
+That case is logged. Check for it before the cutover on any tenant you expect to run close to
+their balance.
+
+Booka's own ops Telegram channel still receives a line on exhaustion. That is telemetry for us,
+not a tenant notification.
+
+`public.notifications` has no severity column, and none was added: nothing reads one today, so it
+would be an unused schema change. The discriminator is `meta->>'kind'`
+(`wallet_low_balance` / `wallet_handoff`), which a future dashboard can filter or sort on without
+a migration.
 
 ## Backup & Recovery
 

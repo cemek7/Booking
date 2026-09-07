@@ -7,15 +7,32 @@ import Stripe from 'stripe';
 import crypto from 'crypto';
 import { defaultLogger } from '@/lib/logger';
 import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { creditVerifiedTopup } from '@/lib/billing/walletTopup';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 interface PaymentWebhookPayload {
   provider?: string;
   source?: string;
   reference?: string;
   id?: string;
-  data?: { reference?: string; status?: string; metadata?: Record<string, unknown> | null };
+  data?: {
+    reference?: string;
+    status?: string;
+    created_at?: string;
+    amount?: number;
+    metadata?: Record<string, unknown> | null;
+    customer?: { email?: string } | null;
+    authorization?: {
+      authorization_code?: string;
+      reusable?: boolean;
+      last4?: string;
+      card_type?: string;
+      channel?: string;
+    } | null;
+  };
   status?: string;
   event?: string;
+  created_at?: string;
   metadata?: { reservation_id?: string; tenant_id?: string } | null;
 }
 
@@ -43,7 +60,6 @@ export const POST = createHttpHandler(
     const ref = parsed?.reference || parsed?.id || parsed?.data?.reference || null;
     const status = parsed?.status || parsed?.data?.status || parsed?.event || 'unknown';
     const reservationId = parsed?.metadata?.reservation_id || parsed?.data?.metadata?.reservation_id || null;
-    const _payloadTenantId = parsed?.metadata?.tenant_id || parsed?.data?.metadata?.tenant_id || null;
 
     // Signature verification (Paystack, Stripe, Flutterwave)
     // At least one recognised signature header must be present and verified.
@@ -78,9 +94,11 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.externalServiceError('Stripe secret not configured');
       }
       try {
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || stripeSecret, { apiVersion: '2024-11-20' as any });
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || stripeSecret, {
+          apiVersion: '2024-11-20' as Stripe.LatestApiVersion,
+        });
         stripe.webhooks.constructEvent(rawText, stripeSigHeader, stripeSecret);
-      } catch (e) {
+      } catch {
         throw ApiErrorFactory.validationError({ signature: 'Invalid Stripe signature' });
       }
       signatureVerified = true;
@@ -110,7 +128,7 @@ export const POST = createHttpHandler(
     }
 
     // Reject webhooks with a timestamp older than 72 hours
-    const webhookTimestamp = (parsed as any)?.data?.created_at || (parsed as any)?.created_at || null;
+    const webhookTimestamp = parsed.data?.created_at || parsed.created_at || null;
     if (webhookTimestamp) {
       const webhookAge = Date.now() - new Date(webhookTimestamp).getTime();
       const seventyTwoHoursMs = 72 * 60 * 60 * 1000;
@@ -145,6 +163,47 @@ export const POST = createHttpHandler(
       defaultLogger.warn('payment webhook: webhook_events handling failed', e);
     }
 
+    // ── Wallet top-up ────────────────────────────────────────────────────────
+    // Runs before the transactions lookup because a wallet top-up has no
+    // `transactions` row — its reference is tied to a `wallet_topup_intents`
+    // row this server wrote before the customer paid. The tenant and the
+    // amount are read from that row, never from this payload.
+    //
+    // Reached only after the signature check above, and the replay guard
+    // already ran; `credit_wallet_topup` is idempotent on top of that, because
+    // Paystack retries are routine and webhook_events is best-effort.
+    if (/^bokawallet_/.test(String(ref)) && /success/i.test(String(status))) {
+      const chargedMinor = Number(parsed.data?.amount ?? 0);
+      if (!Number.isFinite(chargedMinor) || chargedMinor <= 0) {
+        defaultLogger.warn('[api/payments/webhook] wallet top-up with no amount', { ref });
+        return { ok: true, wallet_topup: false, reason: 'no_amount' };
+      }
+
+      // Admin client: credit_wallet_topup is granted to service_role only, and
+      // ctx.supabase here is an unauthenticated anon client (auth: false).
+      // A throw is deliberate — it makes Paystack retry rather than silently
+      // dropping a payment the customer already made.
+      const credit = await creditVerifiedTopup({
+        admin: createSupabaseAdminClient(),
+        reference: String(ref),
+        amountMinor: chargedMinor,
+        customerEmail: parsed.data?.customer?.email ?? null,
+        authorization: parsed.data?.authorization ?? null,
+      });
+
+      if (credit.credited) {
+        defaultLogger.info('[api/payments/webhook] wallet topped up', {
+          ref, tenantId: credit.tenantId, amountCredits: credit.amountCredits,
+        });
+      } else {
+        // 'no_pending_intent' is the ordinary replay case, not a failure.
+        defaultLogger.warn('[api/payments/webhook] wallet top-up not credited', {
+          ref, reason: credit.reason,
+        });
+      }
+      return { ok: true, wallet_topup: credit.credited };
+    }
+
     // Update transaction status using provider verification if needed
     // IMPORTANT: derive tenantId from the found transaction record, never trust payload metadata
     // DB failures are NOT swallowed here — they propagate as 500 so the provider retries delivery.
@@ -152,7 +211,7 @@ export const POST = createHttpHandler(
       // Find transaction by provider reference alone — never use payload-supplied tenant_id
       const { data: transaction } = await ctx.supabase
         .from('transactions')
-        .select('id, status, provider, tenant_id')
+        .select('id, status, raw, tenant_id')
         .eq('provider_reference', ref)
         .maybeSingle();
 
@@ -169,7 +228,9 @@ export const POST = createHttpHandler(
         if (transaction.status !== status && /success|paid|completed/i.test(status)) {
           // Verify with provider for high-value status changes
           try {
-            const txProvider = paymentService['getProvider'](transaction.provider);
+            const txProvider = paymentService['getProvider'](
+              (transaction.raw as { provider?: string } | null)?.provider,
+            );
             if (txProvider) {
               const verification = await txProvider.verifyPayment(ref);
               finalStatus = verification.status;

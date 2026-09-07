@@ -1,28 +1,31 @@
 import type { Metadata } from "next";
-import { Mulish, Fraunces } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
-import AuthHashRedirect from "@/components/AuthHashRedirect";
-import { ToastContainer } from "@/components/ui/toast";
-import AnalyticsProvider from "@/components/analytics/AnalyticsProvider";
-import ConsentBanner from "@/components/consent/ConsentBanner";
+import RootChrome from "@/components/system/RootChrome";
 
-const brandSans = Mulish({
-  subsets: ["latin"],
+// Self-hosted (latin subset, variable-weight woff2) so production builds do not
+// depend on fetching from Google Fonts at build time. Source files live in
+// ./fonts and are committed to the repo. See src/app/fonts/README.md.
+const brandSans = localFont({
+  src: "./fonts/Mulish-latin-var.woff2",
   display: "swap",
+  weight: "200 1000",
+  style: "normal",
   variable: "--font-booka-sans-loaded",
 });
 
-const brandDisplay = Fraunces({
-  subsets: ["latin"],
+const brandDisplay = localFont({
+  src: "./fonts/Fraunces-latin-var.woff2",
   display: "swap",
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
+  style: "normal",
   variable: "--font-booka-display-loaded",
 });
 
 export const metadata: Metadata = {
   title: "Techclave | AI Operating Systems for African Businesses",
   description:
-    "Techclave builds AI products for customer operations. Booka is the first product: an AI front desk for beauty, hospitality, and clinic teams that handles sales, bookings, and follow-up on WhatsApp and Instagram.",
+    "Techclave builds AI products for customer operations. Booka is the first product: an AI Revenue Front Desk that turns WhatsApp and Instagram enquiries into booked and paying customers.",
 };
 
 export default function RootLayout({
@@ -36,12 +39,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${brandSans.variable} ${brandDisplay.variable}`}>
       <body className="brand-theme antialiased">
-        <AnalyticsProvider posthogKey={posthogKey} posthogHost={posthogHost}>
-          <AuthHashRedirect />
-          <ToastContainer />
+        <RootChrome posthogKey={posthogKey} posthogHost={posthogHost}>
           {children}
-          <ConsentBanner />
-        </AnalyticsProvider>
+        </RootChrome>
       </body>
     </html>
   );

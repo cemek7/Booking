@@ -12,47 +12,40 @@ type DemoMessage = {
 
 const steps = [
   {
-    key: 'need',
-    prompt: 'What can I help you with today?',
-    options: ['I want a silk press for Saturday', 'I need a skin consultation this week', 'I want dinner for two tonight'],
+    key: 'price',
+    customer: 'How much are knotless braids?',
+    booka:
+      'Knotless braids start at ₦35,000. Medium waist-length is ₦42,000 and is the most-booked option in this example. Would you like me to check tomorrow?',
+    options: ['Check tomorrow', 'Show shorter options', 'Ask about colour'],
   },
   {
     key: 'recommendation',
-    prompt: 'Based on that, here is the best fit.',
-    options: ['Silk press + treatment', 'Consultation + facial plan', 'Window table + birthday add-on'],
+    customer: 'Yes, medium waist-length. Do you have 4pm?',
+    booka:
+      '4pm is taken, but Amaka is available at 3:30pm and Zara at 4:30pm. I can reserve either now.',
+    options: ['3:30pm with Amaka', '4:30pm with Zara', 'Check another day'],
   },
   {
-    key: 'date',
-    prompt: 'Which day works best for you?',
-    options: ['Friday', 'Saturday', 'Monday'],
+    key: 'deposit',
+    customer: '4:30pm with Zara works.',
+    booka:
+      'Great. The configured deposit is ₦10,000. I can send the payment link now and hold the slot while you complete it.',
+    options: ['Send payment link', 'Ask a question', 'Choose 3:30pm'],
   },
   {
-    key: 'time',
-    prompt: 'Pick a time slot.',
-    options: ['9:00am', '10:30am', '1:00pm'],
-  },
-  {
-    key: 'details',
-    prompt: 'Who should I confirm this for?',
-    options: ['Amina • +234 801 234 5678', 'Tunde • +234 803 111 2244', 'Blessing • +234 812 900 4455'],
+    key: 'booking',
+    customer: 'Paid.',
+    booka:
+      'Payment confirmed. You are booked for medium waist-length knotless braids with Zara at 4:30pm tomorrow. I will send your reminder on WhatsApp.',
+    options: ['View booking', 'Add an extra service', 'Talk to the salon'],
   },
 ] as const;
 
 const greeting = {
   id: 'welcome',
   speaker: 'booka' as const,
-  text: 'Hi, welcome to Booka. I can recommend the right option, answer quick questions, and confirm your booking here. What are you looking for today?',
+  text: 'Hi, welcome to the salon. I can answer questions, recommend the right service and help you book. What would you like to know?',
 };
-
-function bookingSummary(selection: Record<string, string>) {
-  return [
-    `Need: ${selection.need}`,
-    `Recommended: ${selection.recommendation}`,
-    `Date: ${selection.date}`,
-    `Time: ${selection.time}`,
-    `Customer: ${selection.details}`,
-  ].join('\n');
-}
 
 export default function DemoConversation() {
   const [messages, setMessages] = useState<DemoMessage[]>([greeting]);
@@ -63,7 +56,6 @@ export default function DemoConversation() {
 
   useEffect(() => {
     let cancelled = false;
-    const selection: Record<string, string> = {};
 
     const clearTimers = () => {
       timersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -86,39 +78,25 @@ export default function DemoConversation() {
 
       for (let index = 0; index < steps.length; index += 1) {
         const step = steps[index];
-        const choice = step.options[index % step.options.length];
-        const nextStep = steps[index + 1];
 
         setActiveStep(index);
+        setMessages((current) => [
+          ...current,
+          { id: `${Date.now()}-${step.key}-user`, speaker: 'user', text: step.customer },
+        ]);
+
+        await delay(500);
+        if (cancelled) return;
+
         setTyping(true);
         await delay(700);
         if (cancelled) return;
 
-        selection[step.key] = choice;
         setMessages((current) => [
           ...current,
-          { id: `${Date.now()}-${step.key}-user`, speaker: 'user', text: choice },
+          { id: `${Date.now()}-${step.key}-booka`, speaker: 'booka', text: step.booka },
         ]);
-
         setTyping(false);
-        await delay(500);
-        if (cancelled) return;
-
-        if (nextStep) {
-          setMessages((current) => [
-            ...current,
-            { id: `${Date.now()}-${step.key}-booka`, speaker: 'booka', text: nextStep.prompt },
-          ]);
-        } else {
-          setMessages((current) => [
-            ...current,
-            {
-              id: `${Date.now()}-${step.key}-booka`,
-              speaker: 'booka',
-              text: `Done. Here’s the confirmed summary:\n${bookingSummary(selection)}\n\nI’ve reserved the slot, logged the recommendation, and scheduled the reminder.`,
-            },
-          ]);
-        }
 
         await delay(700);
         if (cancelled) return;
@@ -158,7 +136,11 @@ export default function DemoConversation() {
   const currentOptions = steps[Math.min(activeStep, steps.length - 1)]?.options ?? [];
 
   return (
-    <div className="relative overflow-hidden rounded-[2rem] border border-emerald-100 bg-white p-5 shadow-[0_25px_80px_rgba(16,33,26,0.08)]">
+    <div
+      data-testid="vertical-demo"
+      data-default-vertical="beauty"
+      className="relative overflow-hidden rounded-[2rem] border border-emerald-100 bg-white p-5 shadow-[0_25px_80px_rgba(16,33,26,0.08)]"
+    >
       <div className="flex items-center justify-between border-b border-emerald-100 pb-4">
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-emerald-700/45">Live demo</p>
@@ -227,7 +209,8 @@ export default function DemoConversation() {
         <div className="rounded-3xl border border-emerald-100 bg-white p-4">
           <div className="text-xs uppercase tracking-[0.22em] text-emerald-700/45">What gets measured</div>
           <p className="mt-3 text-sm leading-6 text-slate-700">
-            No-shows, repeat bookings, recovered revenue, and the results of every campaign.
+            Enquiries, recommendations, bookings, payments, follow-ups and human handoffs—with attribution labels
+            kept separate until outcomes are verified.
           </p>
         </div>
       </div>

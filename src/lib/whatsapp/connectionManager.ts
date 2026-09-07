@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createEvolutionClient, getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
@@ -13,13 +12,13 @@ export interface ConnectionStatus {
   signal_strength?: number;
   last_seen: string;
   connection_time?: string;
-  error_message?: string;
+  error_message?: string | null;
   qr_code?: string;
   webhook_url?: string;
   is_business: boolean;
   profile_name?: string;
   profile_picture?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -30,12 +29,17 @@ export interface ConnectionMetrics {
   messages_sent_today: number;
   messages_received_today: number;
   uptime_percentage: number;
-  average_response_time: number;
+  average_response_time: number | null;
   error_count_24h: number;
   last_message_timestamp?: string;
   total_conversations: number;
   active_conversations: number;
 }
+
+type MonitoredInstanceConfig = {
+  tenant_id: string;
+  instance_name: string;
+};
 
 class WhatsAppConnectionManager {
   private supabase = createSupabaseAdminClient();
@@ -96,7 +100,7 @@ class WhatsAppConnectionManager {
   /**
    * Start monitoring a specific instance
    */
-  private async startInstanceMonitoring(config: any): Promise<void> {
+  private async startInstanceMonitoring(config: MonitoredInstanceConfig): Promise<void> {
     const instanceName = config.instance_name;
     
     // Stop existing monitoring if any
@@ -120,7 +124,7 @@ class WhatsAppConnectionManager {
   /**
    * Check connection status for a specific instance
    */
-  private async checkInstanceConnection(config: any): Promise<void> {
+  private async checkInstanceConnection(config: MonitoredInstanceConfig): Promise<void> {
     const tenantId = config.tenant_id;
 
     try {
@@ -137,12 +141,14 @@ class WhatsAppConnectionManager {
       const statusResult = await this.getInstanceStatus(evolutionClient, instanceName);
       
       if (statusResult.success) {
-        await this.updateConnectionStatus(tenantId, instanceName, statusResult.status);
-        
+        if (statusResult.status) {
+          await this.updateConnectionStatus(tenantId, instanceName, statusResult.status);
+        }
+
         // Update metrics
         await this.updateConnectionMetrics(tenantId, instanceName);
       } else {
-        await this.handleConnectionError(tenantId, instanceName, statusResult.error);
+        await this.handleConnectionError(tenantId, instanceName, statusResult.error ?? 'Unknown error');
       }
 
     } catch (error) {
@@ -160,7 +166,7 @@ class WhatsAppConnectionManager {
    * Get instance status from Evolution API
    */
   private async getInstanceStatus(
-    evolutionClient: any,
+    evolutionClient: { baseUrl: string; apiKey: string },
     instanceName: string
   ): Promise<{
     success: boolean;
@@ -324,7 +330,7 @@ class WhatsAppConnectionManager {
         .select('id, last_activity')
         .eq('tenant_id', tenantId);
 
-      const activeConversations = conversations?.filter(conv => {
+      const activeConversations = conversations?.filter((conv: { last_activity: string }) => {
         const lastActivity = new Date(conv.last_activity);
         const hoursSinceActivity = (Date.now() - lastActivity.getTime()) / (1000 * 60 * 60);
         return hoursSinceActivity < 24; // Active if activity within 24 hours

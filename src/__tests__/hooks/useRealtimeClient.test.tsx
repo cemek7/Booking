@@ -35,7 +35,7 @@ describe('useRealtimeClient', () => {
     jest.clearAllMocks();
     mockUseTenant.mockReturnValue({ token: null });
     mockRealtimeClient.getStatus.mockReturnValue('connecting');
-    mockGetRealtimeClient.mockReturnValue(mockRealtimeClient as any);
+    mockGetRealtimeClient.mockReturnValue(mockRealtimeClient as unknown as RealtimeClient);
 
     // Reset localStorage
     if (typeof window !== 'undefined') {
@@ -124,7 +124,7 @@ describe('useRealtimeClient', () => {
   describe('Status Updates', () => {
     it('should update status when client status changes', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
       mockRealtimeClient.getStatus.mockReturnValue('connecting');
@@ -143,7 +143,7 @@ describe('useRealtimeClient', () => {
 
     it('should handle transition from connecting to open', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
       mockRealtimeClient.getStatus.mockReturnValue('connecting');
@@ -159,7 +159,7 @@ describe('useRealtimeClient', () => {
 
     it('should handle transition to error state', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
       mockRealtimeClient.getStatus.mockReturnValue('connecting');
@@ -175,7 +175,7 @@ describe('useRealtimeClient', () => {
 
     it('should handle transition to closed state', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
       mockRealtimeClient.getStatus.mockReturnValue('open');
@@ -191,7 +191,7 @@ describe('useRealtimeClient', () => {
 
     it('should handle multiple status changes', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
       mockRealtimeClient.getStatus.mockReturnValue('connecting');
@@ -400,7 +400,7 @@ describe('useRealtimeClient', () => {
   describe('Status Return Value', () => {
     it('should return initial status from client', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
       mockRealtimeClient.getStatus.mockReturnValue('open');
@@ -413,7 +413,7 @@ describe('useRealtimeClient', () => {
 
     it('should update status reactively', () => {
       let statusListener: (s: RealtimeStatus) => void = () => {};
-      mockRealtimeClient.onStatus.mockImplementation((listener: any) => {
+      mockRealtimeClient.onStatus.mockImplementation((listener: (status: RealtimeStatus) => void) => {
         statusListener = listener;
       });
 

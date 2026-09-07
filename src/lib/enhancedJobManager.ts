@@ -537,7 +537,7 @@ export class EnhancedJobManager {
     this.registerHandler('outbox_dispatch', async (_payload, _context) => {
       try {
         const { getEventBus } = await import('./eventbus/eventBus');
-        const bus = getEventBus() as any;
+        const bus = getEventBus() as unknown as { processPendingEvents?: () => Promise<void> };
         await bus.processPendingEvents?.();
         return { success: true };
       } catch (error) {
@@ -686,7 +686,7 @@ export class EnhancedJobManager {
           }
 
           // Only reply if tenant has enabled the AI agent
-          if (!(waConfig as any)?.agent_enabled) {
+          if (!(waConfig as { agent_enabled?: boolean } | null | undefined)?.agent_enabled) {
             defaultLogger.info(`[JOBS] Agent disabled for tenant ${tenant_id}, skipping reply`);
             return { success: true, result: { skipped: true } };
           }

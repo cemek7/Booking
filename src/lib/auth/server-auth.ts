@@ -13,6 +13,8 @@ import { redirect } from 'next/navigation';
 import type { Role } from '@/types/roles';
 import { getInheritedRoles, ROLE_PERMISSION_MAP, isValidRole } from '@/types/index';
 import { defaultLogger } from '@/lib/logger';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { isActiveGlobalAdmin, normalizeAdminEmail } from '@/lib/auth/global-admin';
 
 import type { AuthenticatedUser } from '@/types/auth';
 
@@ -36,23 +38,16 @@ export async function requireAuth(
   const requestedTenantId = headersList.get('x-tenant-id');
 
   const adminSupabase = createSupabaseAdminClient();
-  const normalizedEmail = user.email?.trim().toLowerCase() ?? '';
-  const { data: adminByEmail, error: adminByEmailError } = normalizedEmail
-    ? await adminSupabase
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle()
-    : { data: null, error: null };
-  const isSuperadmin = !!adminByEmail;
+  const normalizedEmail = normalizeAdminEmail(user.email) ?? '';
+  const isSuperadmin = await isActiveGlobalAdmin(adminSupabase, user.email);
 
   defaultLogger.info('[requireAuth] Admin lookup result', {
     userId: user.id,
     email: normalizedEmail || null,
     requestedTenantId,
-    adminByEmail: !!adminByEmail,
+    adminByEmail: isSuperadmin,
     adminByUserId: false,
-    adminByEmailError: adminByEmailError?.message,
+    adminByEmailError: null,
     adminByUserIdError: null,
   });
 
@@ -90,7 +85,7 @@ export async function requireAuth(
 
   const { data: memberships, error: roleError } = await supabase
     .from('tenant_users')
-    .select('user_id, role, tenant_id')
+    .select('id, user_id, role, tenant_id')
     .eq('user_id', user.id)
     .order('tenant_id', { ascending: true });
 
@@ -139,6 +134,9 @@ export async function requireAuth(
 
   const role = tenantUserData.role as Role;
   const effectiveRoles: Role[] = [role, ...getInheritedRoles(role)];
+  const effectivePermissions = Array.from(
+    await getEffectivePermissions(adminSupabase, tenantUserData.tenant_id, tenantUserData.id)
+  );
 
   if (allowedRoles?.length) {
     const hasAccess = requireExact
@@ -152,7 +150,8 @@ export async function requireAuth(
     email: user.email || '',
     role,
     tenantId: tenantUserData.tenant_id,
-    permissions: ROLE_PERMISSION_MAP[role] || [],
+    tenantUserId: tenantUserData.id,
+    permissions: effectivePermissions,
     effectiveRoles,
     is_active: true,
     created_at: user.created_at,

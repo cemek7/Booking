@@ -1,0 +1,10 @@
+export type Service = { name: string; problemSolved: string; deliverables: string; suitableBuyer: string; engagementShape: string; cta: string };
+export const SERVICES: Service[] = [
+  ['Business websites & landing pages','Turn an unclear offer into a credible, conversion-ready web presence.','Positioning, UX, responsive build, analytics-ready structure.','Teams launching or refreshing a service.','Focused project.','Discuss your website'],
+  ['Redesign & CRO','Make a dated or confusing experience easier to understand and act on.','UX audit, page strategy, interface redesign, experiment-ready patterns.','Teams with an existing site.','Audit then delivery.','Review your experience'],
+  ['Full-stack web apps','Move a valuable workflow from manual effort into a reliable product.','Product UX, application build, integrations, operations handover.','Businesses with a defined workflow problem.','Discovery through delivery.','Explore an app build'],
+  ['API & integration','Connect tools so data and handoffs do less manual work.','Integration map, API implementation, observability, documentation.','Teams using multiple operational systems.','Scoped integration.','Map an integration'],
+  ['Workflow automation','Reduce repetitive operational work with careful, reviewable automation.','Workflow mapping, automation build, exception paths, handover.','Operations-heavy teams.','Pilot then expand.','Explore automation'],
+  ['AI-assisted features','Add bounded AI assistance where it improves a real user task.','Use-case design, UI, evaluation approach, guardrails.','Teams with a validated assistance opportunity.','Prototype to product.','Discuss an AI feature'],
+  ['Technical audits','Find practical risks and improvement opportunities in a product.','Performance, accessibility, security, UX, and codebase review.','Teams planning a next release.','Fixed-scope assessment.','Request an audit'],
+].map(([name,problemSolved,deliverables,suitableBuyer,engagementShape,cta]) => ({ name,problemSolved,deliverables,suitableBuyer,engagementShape,cta }));

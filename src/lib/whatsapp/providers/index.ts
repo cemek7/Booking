@@ -1,15 +1,9 @@
-import { EvolutionAdapter } from './evolution';
-import { InstagramAdapter } from './instagram';
-import { MetaAdapter } from './meta';
-import { WahaAdapter } from './waha';
-import type { ProviderConfig, WhatsAppProviderClient } from './types';
-
-export function getProviderClient(config: ProviderConfig): WhatsAppProviderClient {
-  if (config.provider === 'waha') return new WahaAdapter(config);
-  if (config.provider === 'meta') return new MetaAdapter(config);
-  if (config.provider === 'instagram') return new InstagramAdapter(config);
-  return new EvolutionAdapter(config);
-}
+// getProviderClient lives in ./factory so that providerSelection can import it
+// without closing the cycle index -> providerSelection -> index. Every existing
+// `from '@/lib/whatsapp/providers'` import keeps working through this re-export.
+export { getProviderClient } from './factory';
+export { getTenantWhatsAppProviderClientUnmetered } from './unmetered';
+export { withMetering } from './metered';
 
 export {
   buildDefaultWhatsAppProviderConfig,

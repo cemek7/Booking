@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 import { POST as invitesPOST } from '@/app/api/tenants/[tenantId]/invites/route';
 
-const inserted: any[] = [];
+const inserted: Array<Record<string, unknown>> = [];
 
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: jest.fn(() => ({
@@ -61,7 +61,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
             data: { tenant_id: 't1', role: 'manager' },
             error: null,
           }),
-          then: (resolve: any) =>
+          then: (resolve: (value: unknown) => void) =>
             resolve({ data: [{ tenant_id: 't1', role: 'manager' }], error: null }),
         };
       }
@@ -77,7 +77,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
       }
       if (table === 'invites') {
         return {
-          insert: jest.fn().mockImplementation((row: any) => {
+          insert: jest.fn().mockImplementation((row: Record<string, unknown>) => {
             inserted.push(row);
             return Promise.resolve({ error: null });
           }),
@@ -97,7 +97,7 @@ describe('Invites API auth path', () => {
       headers: { 'x-test-bypass-skip': '1' },
       body: JSON.stringify({ email: 'a@b.com' })
     });
-    const res: any = await invitesPOST(req, { params: { tenantId: 't1' } });
+    const res: Response = await invitesPOST(req, { params: { tenantId: 't1' } });
     expect(res.status).toBe(401);
   });
 
@@ -107,7 +107,7 @@ describe('Invites API auth path', () => {
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'staff@example.com' })
     });
-    const res: any = await invitesPOST(req, { params: { tenantId: 't1' } });
+    const res: Response = await invitesPOST(req, { params: { tenantId: 't1' } });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('ok', true);

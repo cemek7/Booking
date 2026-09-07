@@ -9,6 +9,12 @@ import { createApiHandler } from '@/lib/error-handling/route-handler';
 import { NextRequest } from 'next/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { BOOKA_PERMISSIONS } from '@/types/permissions';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+
+jest.mock('@/lib/permissions/effectivePermissions', () => ({
+  getEffectivePermissions: jest.fn(),
+}));
 
 // Simple echo handler used in tests
 const echoHandler = createApiHandler(
@@ -26,6 +32,11 @@ const managerOrOwnerHandler = createApiHandler(
   { auth: true, roles: ['owner', 'manager'] }
 );
 
+const approveAnomalyHandler = createApiHandler(
+  async () => ({ ok: true }),
+  { auth: true, roles: ['owner', 'manager'], permissions: [BOOKA_PERMISSIONS.APPROVE_ANOMALIES] }
+);
+
 /** Helper: build a bearer client mock returning a specific role and tenantId */
 function makeBearerClient(role: string, tenantId = 'test-tenant-id', userId = 'test-user-id') {
   return {
@@ -41,11 +52,27 @@ function makeBearerClient(role: string, tenantId = 'test-tenant-id', userId = 't
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
           maybeSingle: jest.fn().mockResolvedValue({
-            data: { tenant_id: tenantId, role },
+            data: { id: 'tenant-user-1', tenant_id: tenantId, role },
             error: null,
           }),
-          then: (resolve: any) =>
-            resolve({ data: [{ tenant_id: tenantId, role }], error: null }),
+          then: (resolve: (value: unknown) => void) =>
+            resolve({ data: [{ id: 'tenant-user-1', tenant_id: tenantId, role }], error: null }),
+        };
+      }
+      if (table === 'business_events') {
+        return {
+          insert: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          single: jest.fn().mockResolvedValue({
+            data: {
+              tenant_id: tenantId,
+              action: 'access.denied',
+              entity_type: 'api_route',
+              entity_id: '/api/test',
+              created_at: new Date().toISOString(),
+            },
+            error: null,
+          }),
         };
       }
       return {
@@ -63,13 +90,14 @@ describe('Unified Authentication System - Integration Tests', () => {
   beforeEach(() => {
     (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeBearerClient('owner'));
     (createSupabaseBearerClient as jest.Mock).mockReturnValue(makeBearerClient('owner'));
+    (getEffectivePermissions as jest.Mock).mockResolvedValue([BOOKA_PERMISSIONS.APPROVE_ANOMALIES]);
   });
 
   describe('Basic Authentication Flow', () => {
     it('should authenticate valid users (global bearer mock defaults to owner)', async () => {
       // TestRequest wrapper injects Bearer test-token + x-tenant-id: test-tenant-id
       const req = new NextRequest('http://localhost:3000/api/test');
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.userId).toBe('test-user-id');
@@ -81,7 +109,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://localhost:3000/api/test', {
         headers: { 'x-test-bypass-skip': '1' }
       });
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(401);
       const json = await res.json();
       expect(json.error).toBeDefined();
@@ -89,7 +117,7 @@ describe('Unified Authentication System - Integration Tests', () => {
 
     it('should inject auth headers automatically (TestRequest wrapper)', async () => {
       const req = new NextRequest('http://localhost:3000/api/test');
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(200);
     });
   });
@@ -98,7 +126,7 @@ describe('Unified Authentication System - Integration Tests', () => {
     it('should allow owner to access owner-only routes', async () => {
       // Global mock returns 'owner' — no override needed
       const req = new NextRequest('http://x/api/test');
-      const res: any = await ownerOnlyHandler(req);
+      const res: Response = await ownerOnlyHandler(req);
       expect(res.status).toBe(200);
     });
 
@@ -113,7 +141,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await ownerOnlyHandler(req);
+      const res: Response = await ownerOnlyHandler(req);
       expect(res.status).toBe(403);
     });
 
@@ -124,7 +152,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await managerOrOwnerHandler(req);
+      const res: Response = await managerOrOwnerHandler(req);
       expect(res.status).toBe(200);
     });
 
@@ -139,7 +167,39 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await managerOrOwnerHandler(req);
+      const res: Response = await managerOrOwnerHandler(req);
+      expect(res.status).toBe(403);
+    });
+
+    it('should allow a manager with the required effective permission', async () => {
+      (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
+        makeBearerClient('manager')
+      );
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(
+        makeBearerClient('manager')
+      );
+      (getEffectivePermissions as jest.Mock).mockResolvedValueOnce([BOOKA_PERMISSIONS.APPROVE_ANOMALIES]);
+
+      const req = new NextRequest('http://x/api/test', {
+        headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
+      });
+      const res: Response = await approveAnomalyHandler(req);
+      expect(res.status).toBe(200);
+    });
+
+    it('should deny a manager missing the required effective permission', async () => {
+      (createSupabaseBearerClient as jest.Mock).mockReturnValueOnce(
+        makeBearerClient('manager')
+      );
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(
+        makeBearerClient('manager')
+      );
+      (getEffectivePermissions as jest.Mock).mockResolvedValueOnce([]);
+
+      const req = new NextRequest('http://x/api/test', {
+        headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
+      });
+      const res: Response = await approveAnomalyHandler(req);
       expect(res.status).toBe(403);
     });
   });
@@ -155,7 +215,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'my-tenant' }
       });
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       const json = await res.json();
       expect(json.tenantId).toBe('my-tenant');
     });
@@ -166,7 +226,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'x-test-bypass-skip': '1' }
       });
-      const res: any = await echoHandler(req);
+      const res: Response = await echoHandler(req);
       expect(res.status).toBe(401);
       const json = await res.json();
       expect(json).toHaveProperty('error');
@@ -183,7 +243,7 @@ describe('Unified Authentication System - Integration Tests', () => {
       const req = new NextRequest('http://x/api/test', {
         headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 'test-tenant-id' }
       });
-      const res: any = await ownerOnlyHandler(req);
+      const res: Response = await ownerOnlyHandler(req);
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json).toHaveProperty('error');

@@ -27,7 +27,7 @@ export const PATCH = createHttpHandler(
   async (ctx) => {
     const params = ctx.request.nextUrl.searchParams;
     // Extract params from route - this is passed via context in the handler
-    const bookingId = (ctx as any).params?.id;
+    const bookingId = (ctx as { params?: { id?: string } }).params?.id;
     
     if (!bookingId) {
       throw ApiErrorFactory.badRequest('Booking ID is required');

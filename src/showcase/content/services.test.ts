@@ -1,0 +1,1 @@
+import { describe, expect, it } from '@jest/globals'; import { SERVICES } from './services'; describe('SERVICES', () => { it('has seven complete service records', () => { expect(SERVICES).toHaveLength(7); for (const service of SERVICES) for (const value of Object.values(service)) expect(value.trim()).not.toHaveLength(0); }); });

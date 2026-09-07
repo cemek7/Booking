@@ -1,6 +1,9 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler, getVerifiedTenantId } from '@/lib/error-handling/route-handler';
 import { PredictiveAnalyticsEngine } from '@/lib/ai/predictiveAnalytics';
+import { z } from 'zod';
+
+const TimeRangeSchema = z.enum(['monthly', 'quarterly', 'yearly']);
 
 /**
  * GET /api/ai/predictions
@@ -10,12 +13,12 @@ import { PredictiveAnalyticsEngine } from '@/lib/ai/predictiveAnalytics';
 export const GET = createHttpHandler(
   async (ctx) => {
     const tenantId = getVerifiedTenantId(ctx);
-    const timeRange = ctx.request.nextUrl?.searchParams.get('timeRange') || 'monthly';
+    const timeRange = TimeRangeSchema.catch('monthly').parse(ctx.request.nextUrl?.searchParams.get('timeRange'));
 
     const engine = new PredictiveAnalyticsEngine();
 
     const [revenue, customers, benchmark, insights] = await Promise.all([
-      engine.generateRevenueForecast(tenantId, timeRange as any),
+      engine.generateRevenueForecast(tenantId, timeRange),
       engine.analyzeCustomerLifetimeValue(tenantId),
       engine.generatePerformanceBenchmarks(tenantId),
       engine.generatePredictiveInsights(tenantId),

@@ -3,6 +3,7 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { Product, ProductListQuery, CreateProductRequest, PRODUCT_ROLE_PERMISSIONS } from '@/types/product-catalogue';
 import { getUserRole } from '@/lib/auth/role-utils';
+import { getTenantCurrency } from '@/lib/tenant-currency';
 
 /** Columns that may be used for ORDER BY on the products table */
 const ALLOWED_SORT_COLUMNS = new Set([
@@ -218,6 +219,7 @@ export const POST = createHttpHandler(
       : null;
 
     // Prepare product data
+    const currency = body.currency || await getTenantCurrency(ctx.supabase, tenantUsers.tenant_id, 'NGN');
     const productData = {
       tenant_id: tenantUsers.tenant_id,
       name: body.name.trim(),
@@ -226,7 +228,7 @@ export const POST = createHttpHandler(
       sku: body.sku?.trim().toUpperCase(),
       category: normalizedCategory,
       price_cents: body.price_cents,
-      currency: body.currency || 'USD',
+      currency,
       cost_price_cents: body.cost_price_cents || 0,
       track_inventory: body.track_inventory || false,
       stock_quantity: body.stock_quantity || 0,

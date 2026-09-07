@@ -196,7 +196,7 @@ describe('MFAService - Schema Validation', () => {
     it('should reject invalid method', () => {
       const data = {
         user_id: '123e4567-e89b-12d3-a456-426614174000',
-        method: 'invalid' as any,
+        method: 'invalid' as never,
         code: '123456',
       };
 

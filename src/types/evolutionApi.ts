@@ -6,7 +6,7 @@
  */
 
 // Base Evolution API response structure
-export interface EvolutionApiResponse<T = any> {
+export interface EvolutionApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
@@ -418,7 +418,7 @@ export interface BookingContext {
 export interface EvolutionApiError {
   code: string;
   message: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
   statusCode: number;
 }
 

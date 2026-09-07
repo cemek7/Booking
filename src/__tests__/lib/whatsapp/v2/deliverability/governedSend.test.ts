@@ -11,18 +11,23 @@ jest.mock('@/lib/whatsapp/v2/deliverability/templateRegistry', () => ({
 jest.mock('@/lib/whatsapp/v2/deliverability/metaSendGate', () => ({
   decideSend: jest.fn(),
 }));
+jest.mock('@/lib/whatsapp/v2/deliverability/tenantMessagingPolicy', () => ({
+  loadTenantMessagingPolicy: jest.fn(),
+}));
 
 import { sendGovernedInitiated } from '@/lib/whatsapp/v2/deliverability/governedSend';
 import { decideSend } from '@/lib/whatsapp/v2/deliverability/metaSendGate';
 import { loadNumberQuality } from '@/lib/whatsapp/v2/deliverability/numberQuality';
 import { evaluateSend, recordSend } from '@/lib/whatsapp/v2/deliverability/sendGovernor';
 import { resolveTemplate } from '@/lib/whatsapp/v2/deliverability/templateRegistry';
+import { loadTenantMessagingPolicy } from '@/lib/whatsapp/v2/deliverability/tenantMessagingPolicy';
 
 const mockedLoadNumberQuality = loadNumberQuality as jest.MockedFunction<typeof loadNumberQuality>;
 const mockedEvaluateSend = evaluateSend as jest.MockedFunction<typeof evaluateSend>;
 const mockedRecordSend = recordSend as jest.MockedFunction<typeof recordSend>;
 const mockedResolveTemplate = resolveTemplate as jest.MockedFunction<typeof resolveTemplate>;
 const mockedDecideSend = decideSend as jest.MockedFunction<typeof decideSend>;
+const mockedLoadTenantMessagingPolicy = loadTenantMessagingPolicy as jest.MockedFunction<typeof loadTenantMessagingPolicy>;
 
 describe('sendGovernedInitiated', () => {
   beforeEach(() => {
@@ -36,6 +41,10 @@ describe('sendGovernedInitiated', () => {
       name: 'tpl_name',
       language: 'en_US',
       paramMapping: [],
+    });
+    mockedLoadTenantMessagingPolicy.mockResolvedValue({
+      templateMessagingEnabled: false,
+      paidTemplateConsent: false,
     });
   });
 
@@ -112,6 +121,10 @@ describe('sendGovernedInitiated', () => {
       language: 'en_US',
       reason: 'template_out_of_window',
     });
+    mockedLoadTenantMessagingPolicy.mockResolvedValue({
+      templateMessagingEnabled: true,
+      paidTemplateConsent: true,
+    });
 
     const sendTemplate = jest.fn().mockResolvedValue(true);
     const result = await sendGovernedInitiated({} as never, {
@@ -132,5 +145,61 @@ describe('sendGovernedInitiated', () => {
       expect.objectContaining({ initiated: true, cold: true, failed: false }),
     );
     expect(result).toEqual({ sent: true, mode: 'template', reason: 'sent' });
+  });
+
+  it('does not send a chargeable template until the tenant enables template messaging', async () => {
+    mockedEvaluateSend.mockResolvedValue({ allow: true, reason: 'ok' });
+    mockedDecideSend.mockReturnValue({
+      mode: 'template',
+      templateName: 'tpl_name',
+      language: 'en_US',
+      reason: 'template_out_of_window',
+    });
+
+    const sendTemplate = jest.fn();
+    const result = await sendGovernedInitiated({} as never, {
+      tenantId: 't1',
+      recipient: 'cust1',
+      messageType: 'rebooking_followup',
+      lastInboundAt: '2026-06-20T12:00:00Z',
+      optedOutAt: null,
+      buildFreeform: () => 'hello',
+      sendFreeform: jest.fn(),
+      sendTemplate,
+    });
+
+    expect(result).toEqual({ sent: false, reason: 'template_messaging_not_enabled' });
+    expect(sendTemplate).not.toHaveBeenCalled();
+    expect(mockedRecordSend).not.toHaveBeenCalled();
+  });
+
+  it('does not send a chargeable template without the tenant charge acknowledgement', async () => {
+    mockedEvaluateSend.mockResolvedValue({ allow: true, reason: 'ok' });
+    mockedDecideSend.mockReturnValue({
+      mode: 'template',
+      templateName: 'tpl_name',
+      language: 'en_US',
+      reason: 'template_out_of_window',
+    });
+    mockedLoadTenantMessagingPolicy.mockResolvedValue({
+      templateMessagingEnabled: true,
+      paidTemplateConsent: false,
+    });
+
+    const sendTemplate = jest.fn();
+    const result = await sendGovernedInitiated({} as never, {
+      tenantId: 't1',
+      recipient: 'cust1',
+      messageType: 'rebooking_followup',
+      lastInboundAt: '2026-06-20T12:00:00Z',
+      optedOutAt: null,
+      buildFreeform: () => 'hello',
+      sendFreeform: jest.fn(),
+      sendTemplate,
+    });
+
+    expect(result).toEqual({ sent: false, reason: 'paid_template_consent_required' });
+    expect(sendTemplate).not.toHaveBeenCalled();
+    expect(mockedRecordSend).not.toHaveBeenCalled();
   });
 });

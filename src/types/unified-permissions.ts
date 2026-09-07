@@ -12,7 +12,9 @@
  */
 
 import { defaultLogger } from '@/lib/logger';
+import { toBookaDashboardPath } from '@/lib/navigation/dashboard-path';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isActiveGlobalAdmin } from '@/lib/auth/global-admin';
 import { Role, normalizeRole, isValidRole } from './roles';
 import { PERMISSIONS, ROLE_PERMISSION_MAP, PermissionCheckResult } from './permissions';
 import { 
@@ -131,7 +133,7 @@ export class UnifiedPermissionChecker {
     userId: string,
     tenantId: string,
     permission: string,
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<boolean> {
     const result = await this.checkAccess(userId, permission, {
       userId,
@@ -148,7 +150,7 @@ export class UnifiedPermissionChecker {
     userId: string,
     tenantId: string,
     permissions: string[],
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<boolean> {
     const results = await Promise.all(
       permissions.map(permission => 
@@ -165,7 +167,7 @@ export class UnifiedPermissionChecker {
     userId: string,
     tenantId: string,
     permissions: string[],
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<boolean> {
     const results = await Promise.all(
       permissions.map(permission => 
@@ -461,7 +463,7 @@ export async function hasUnifiedPermission(
   userId: string,
   tenantId: string,
   permission: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<boolean> {
   return getUnifiedChecker().hasPermission(userId, tenantId, permission, context);
 }
@@ -545,25 +547,10 @@ export async function ensureOwnerForTenant(
 
 export async function isGlobalAdmin(
   supabase: SupabaseClient,
-  userId?: string | null,
+  _userId?: string | null,
   email?: string | null
 ): Promise<boolean> {
-  try {
-    if (email) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const { data: byEmail } = await supabase
-        .from('admins')
-        .select('email, status')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-      if (byEmail) return true;
-    }
-
-    return false;
-  } catch (e) {
-    defaultLogger.warn('unified-permissions: isGlobalAdmin lookup failed', e);
-    return false;
-  }
+  return isActiveGlobalAdmin(supabase, email);
 }
 
 // ============================================================================
@@ -586,7 +573,7 @@ export function hasPermission(
     resourceId: resource,
     operationType: action === 'admin' ? 'manage' : action,
     resourceType: resource,
-    scope: scope as any
+    scope
   };
 
   const enhancedResult = hasEnhancedPermission(role, `${resource}:${action}`, context);
@@ -655,8 +642,8 @@ const ROLE_DASHBOARD_PATHS: Record<string, string> = {
 };
 
 export function getRoleDashboardPath(role: Role | string | undefined | null): string {
-  if (!role) return '/dashboard/staff-dashboard';
-  return ROLE_DASHBOARD_PATHS[role as string] || '/dashboard/staff-dashboard';
+  if (!role) return toBookaDashboardPath('/dashboard/staff-dashboard');
+  return toBookaDashboardPath(ROLE_DASHBOARD_PATHS[role as string] || '/dashboard/staff-dashboard');
 }
 
 export function canAccessRoute(userRole: Role, route: string): boolean {
@@ -667,6 +654,7 @@ export function canAccessRoute(userRole: Role, route: string): boolean {
     '/dashboard/superadmin/analytics': ['superadmin'],
     '/dashboard/superadmin/reservations': ['superadmin'],
     '/dashboard/superadmin/reservation-logs': ['superadmin'],
+    '/dashboard/superadmin/staff': ['superadmin'],
     '/dashboard/calendar': ['owner', 'manager', 'staff'],
     '/dashboard/bookings': ['owner', 'manager', 'staff'],
     '/dashboard/schedule': ['owner', 'manager', 'staff'],

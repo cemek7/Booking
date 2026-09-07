@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { z } from 'zod';
@@ -15,7 +14,7 @@ const CreateBookingSchema = z.object({
   start_time: z.string().datetime(),
   end_time: z.string().datetime(),
   notes: z.string().max(1000).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   special_requests: z.string().max(500).optional()
 });
 
@@ -53,8 +52,47 @@ interface BookingValidation {
   warnings: string[];
 }
 
+interface BookingRecord {
+  id: string;
+  tenant_id: string;
+  service_id: string;
+  provider_id: string | null;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  start_time: string;
+  end_time: string;
+  status: string;
+  modification_count: number;
+  payment_status: string;
+  payment_id: string | null;
+  price_cents: number;
+  currency: string;
+  notes?: string | null;
+  special_requests?: string | null;
+  cancellation_reason?: string | null;
+  metadata?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+type BookingInput = z.infer<typeof CreateBookingSchema> | z.infer<typeof ModifyBookingSchema> | BookingRecord;
+type TraceContext = ReturnType<typeof observability.startTrace>;
+
+interface ServiceDetails {
+  id: string;
+  name: string;
+  duration_minutes: number;
+  price_cents: number;
+  currency: string;
+  requires_payment: boolean;
+  max_advance_booking_days: number;
+  min_advance_booking_minutes: number;
+  buffer_time_minutes: number;
+  max_concurrent_bookings?: number;
+}
+
 interface BookingCreationResult {
-  booking: any;
+  booking: BookingRecord;
   conflicts_resolved: boolean;
   payment_required: boolean;
   confirmation_sent: boolean;
@@ -70,7 +108,7 @@ interface BookingCreationResult {
  * orchestration and should converge onto the same write path over time.
  */
 export class BookingEngine {
-  private supabase: any;
+  private supabase: ReturnType<typeof createServerSupabaseClient>;
   private eventBus: ReturnType<typeof getEventBus>;
   private isInitialized = false;
 
@@ -245,7 +283,7 @@ export class BookingEngine {
 
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', 'Booking creation failed', {
-        error_message: error.message
+        error_message: error instanceof Error ? error.message : String(error)
       });
       observability.finishTrace(traceContext, 'error');
 
@@ -253,7 +291,7 @@ export class BookingEngine {
         throw error;
       }
 
-      throw new BookingCreationError('Failed to create booking', error);
+      throw new BookingCreationError('Failed to create booking', error instanceof Error ? error : undefined);
     }
   }
 
@@ -268,7 +306,7 @@ export class BookingEngine {
       notifyCustomer?: boolean;
     } = {}
   ): Promise<{
-    booking: any;
+    booking: BookingRecord;
     conflicts_resolved: boolean;
     notification_sent: boolean;
   }> {
@@ -318,15 +356,14 @@ export class BookingEngine {
         // Update booking
         const { data: updatedReservation, error } = await this.supabase
           .from('reservations')
+          // reservations has no customer_name/phone/updated_at columns — the
+          // customer name/email live in metadata (via buildReservationMetadata).
           .update({
             service_id: resolvedData.service_id ?? existingBooking.service_id,
             staff_id: resolvedData.provider_id ?? existingBooking.provider_id,
-            customer_name: existingBooking.customer_name,
-            phone: existingBooking.customer_phone,
             start_at: resolvedData.start_time ?? existingBooking.start_time,
             end_at: resolvedData.end_time ?? existingBooking.end_time,
             notes: resolvedData.notes ?? existingBooking.notes ?? null,
-            updated_at: new Date().toISOString(),
             metadata: this.buildReservationMetadata(existingBooking, {
               customer_email: existingBooking.customer_email,
               special_requests: resolvedData.special_requests ?? existingBooking.special_requests ?? null,
@@ -345,6 +382,9 @@ export class BookingEngine {
 
         if (error) throw error;
         const updatedBooking = this.normalizeBookingRecord(updatedReservation);
+        if (!updatedBooking) {
+          throw new Error('Failed to load updated booking after modification');
+        }
 
         // Log modification history
         await this.logBookingModification(existingBooking, updatedBooking, data.reason, traceContext);
@@ -394,7 +434,7 @@ export class BookingEngine {
 
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', 'Booking modification failed', {
-        error_message: error.message
+        error_message: error instanceof Error ? error.message : String(error)
       });
       observability.finishTrace(traceContext, 'error');
       throw error;
@@ -412,7 +452,7 @@ export class BookingEngine {
       notifyCustomer?: boolean;
     } = {}
   ): Promise<{
-    booking: any;
+    booking: BookingRecord;
     refund_initiated: boolean;
     notification_sent: boolean;
   }> {
@@ -443,11 +483,10 @@ export class BookingEngine {
         // Update booking status
         const { data: cancelledReservation, error } = await this.supabase
           .from('reservations')
+          // reservations has no cancelled_at/cancellation_reason/updated_at columns —
+          // cancellation details go into metadata.
           .update({
             status: 'cancelled',
-            cancelled_at: new Date().toISOString(),
-            cancellation_reason: validatedData.reason,
-            updated_at: new Date().toISOString(),
             metadata: this.buildReservationMetadata(booking, {
               customer_email: booking.customer_email,
               special_requests: booking.special_requests ?? null,
@@ -457,7 +496,9 @@ export class BookingEngine {
               modification_count: booking.modification_count,
               payment_id: booking.payment_id,
               provider_id: booking.provider_id,
-              cancellation_notes: validatedData.notes ?? null
+              cancellation_notes: validatedData.notes ?? null,
+              cancelled_at: new Date().toISOString(),
+              cancellation_reason: validatedData.reason
             })
           })
           .eq('id', data.booking_id)
@@ -467,6 +508,9 @@ export class BookingEngine {
 
         if (error) throw error;
         const cancelledBooking = this.normalizeBookingRecord(cancelledReservation);
+        if (!cancelledBooking) {
+          throw new Error('Failed to load cancelled booking');
+        }
 
         // Handle refund if requested
         let refundInitiated = false;
@@ -526,7 +570,7 @@ export class BookingEngine {
 
     } catch (error) {
       observability.addTraceLog(traceContext, 'error', 'Booking cancellation failed', {
-        error_message: error.message
+        error_message: error instanceof Error ? error.message : String(error)
       });
       observability.finishTrace(traceContext, 'error');
       throw error;
@@ -705,8 +749,8 @@ export class BookingEngine {
    */
   private async validateBookingModification(
     tenantId: string,
-    existing: any,
-    modified: any
+    existing: BookingRecord,
+    modified: BookingInput
   ): Promise<BookingValidation> {
     const conflicts: BookingConflict[] = [];
     const warnings: string[] = [];
@@ -721,8 +765,8 @@ export class BookingEngine {
 
     // If time is being modified, check for conflicts
       if (modified.start_time !== existing.start_time || modified.end_time !== existing.end_time) {
-        const startTime = new Date(modified.start_time);
-        const endTime = new Date(modified.end_time);
+        const startTime = new Date(modified.start_time ?? existing.start_time);
+        const endTime = new Date(modified.end_time ?? existing.end_time);
 
         // Check provider availability (excluding current reservation)
         const { data: overlappingReservations, error } = await this.supabase
@@ -741,7 +785,7 @@ export class BookingEngine {
           conflicts.push({
             type: 'time_overlap',
             message: 'New time slot is not available',
-            suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id, startTime, endTime)
+            suggested_times: await this.getSuggestedTimes(tenantId, modified.provider_id ?? existing.provider_id ?? '', startTime, endTime)
           });
         }
       }
@@ -756,11 +800,11 @@ export class BookingEngine {
   /**
    * Attempt to resolve booking conflicts by finding alternative times
    */
-  private async resolveBookingConflicts(
+  private async resolveBookingConflicts<T extends BookingInput>(
     tenantId: string,
-    data: any,
+    data: T,
     conflicts: BookingConflict[]
-  ): Promise<{ resolvedData: any; conflictsResolved: boolean }> {
+  ): Promise<{ resolvedData: T; conflictsResolved: boolean }> {
     // Only attempt auto-resolution for time conflicts
     const timeConflicts = conflicts.filter(c => c.type === 'time_overlap');
 
@@ -777,7 +821,7 @@ export class BookingEngine {
             ...data,
             start_time: suggestion.start_time,
             end_time: suggestion.end_time
-          },
+          } as T,
           conflictsResolved: true
         };
       }
@@ -792,8 +836,8 @@ export class BookingEngine {
   private async createBookingRecord(
     tenantId: string,
     data: z.infer<typeof CreateBookingSchema>,
-    traceContext: any
-  ): Promise<any> {
+    traceContext: TraceContext
+  ): Promise<BookingRecord> {
     observability.addTraceLog(traceContext, 'info', 'Creating booking record');
 
     // Get service for price information
@@ -854,23 +898,17 @@ export class BookingEngine {
     }
 
     observability.addTraceLog(traceContext, 'info', 'Booking created successfully', { booking_id: booking.id });
-    return this.normalizeBookingRecord(booking);
+    const record = this.normalizeBookingRecord(booking);
+    if (!record) {
+      throw new Error('Failed to normalize created booking record');
+    }
+    return record;
   }
 
   /**
    * Fetch service details by ID
    */
-  private async getService(serviceId: string): Promise<{
-    id: string;
-    name: string;
-    duration_minutes: number;
-    price_cents: number;
-    currency: string;
-    requires_payment: boolean;
-    max_advance_booking_days: number;
-    min_advance_booking_minutes: number;
-    buffer_time_minutes: number;
-  } | null> {
+  private async getService(serviceId: string): Promise<ServiceDetails | null> {
     const { data, error } = await this.supabase
       .from('services')
       .select('id, name, duration_minutes, price_cents, currency, requires_payment, max_advance_booking_days, min_advance_booking_minutes, buffer_time_minutes')
@@ -890,8 +928,8 @@ export class BookingEngine {
    */
   private async initiatePaymentProcess(
     bookingId: string,
-    service: any,
-    traceContext: any
+    service: ServiceDetails,
+    traceContext: TraceContext
   ): Promise<void> {
     observability.addTraceLog(traceContext, 'info', 'Initiating payment process', {
       booking_id: bookingId,
@@ -915,7 +953,7 @@ export class BookingEngine {
   /**
    * Send booking confirmation notification
    */
-  private async sendBookingConfirmation(booking: any, traceContext: any): Promise<void> {
+  private async sendBookingConfirmation(booking: BookingRecord, traceContext: TraceContext): Promise<void> {
     observability.addTraceLog(traceContext, 'info', 'Sending booking confirmation', { booking_id: booking.id });
 
     // Publish event for notification service to handle
@@ -940,7 +978,7 @@ export class BookingEngine {
   /**
    * Fetch booking by ID and tenant
    */
-  private async getBookingById(bookingId: string, tenantId: string): Promise<any> {
+  private async getBookingById(bookingId: string, tenantId: string): Promise<BookingRecord | null> {
     const { data, error } = await this.supabase
       .from('reservations')
       .select('*')
@@ -958,7 +996,7 @@ export class BookingEngine {
   /**
    * Check if booking can be modified based on status and timing
    */
-  private canModifyBooking(booking: any): boolean {
+  private canModifyBooking(booking: BookingRecord): boolean {
     // Cannot modify cancelled or completed bookings
     if (['cancelled', 'completed', 'no_show'].includes(booking.status)) {
       return false;
@@ -982,7 +1020,7 @@ export class BookingEngine {
   /**
    * Check if booking can be cancelled based on status and cancellation window
    */
-  private canCancelBooking(booking: any): boolean {
+  private canCancelBooking(booking: BookingRecord): boolean {
     // Cannot cancel already cancelled or completed bookings
     if (['cancelled', 'completed', 'no_show'].includes(booking.status)) {
       return false;
@@ -1001,10 +1039,10 @@ export class BookingEngine {
    * Log booking modification for audit trail
    */
   private async logBookingModification(
-    existing: any,
-    updated: any,
+    existing: BookingRecord,
+    updated: BookingRecord,
     reason: string,
-    traceContext: any
+    traceContext: TraceContext
   ): Promise<void> {
     observability.addTraceLog(traceContext, 'info', 'Logging booking modification');
 
@@ -1029,9 +1067,9 @@ export class BookingEngine {
    * Send modification notification to customer
    */
   private async sendModificationNotification(
-    booking: any,
-    previous: any,
-    traceContext: any
+    booking: BookingRecord,
+    previous: BookingRecord,
+    traceContext: TraceContext
   ): Promise<void> {
     observability.addTraceLog(traceContext, 'info', 'Sending modification notification', { booking_id: booking.id });
 
@@ -1056,7 +1094,7 @@ export class BookingEngine {
   /**
    * Initiate refund process for cancelled booking
    */
-  private async initiateRefundProcess(booking: any, traceContext: any): Promise<boolean> {
+  private async initiateRefundProcess(booking: BookingRecord, traceContext: TraceContext): Promise<boolean> {
     observability.addTraceLog(traceContext, 'info', 'Initiating refund process', { booking_id: booking.id });
 
     // Only process refund if payment was made
@@ -1107,7 +1145,7 @@ export class BookingEngine {
   /**
    * Release time slot when booking is cancelled
    */
-  private async releaseTimeSlot(booking: any, traceContext: any): Promise<void> {
+  private async releaseTimeSlot(booking: BookingRecord, traceContext: TraceContext): Promise<void> {
     observability.addTraceLog(traceContext, 'info', 'Releasing time slot', { booking_id: booking.id });
 
     // The time slot is automatically released when status becomes 'cancelled'
@@ -1132,7 +1170,7 @@ export class BookingEngine {
   /**
    * Send cancellation notification to customer
    */
-  private async sendCancellationNotification(booking: any, traceContext: any): Promise<void> {
+  private async sendCancellationNotification(booking: BookingRecord, traceContext: TraceContext): Promise<void> {
     observability.addTraceLog(traceContext, 'info', 'Sending cancellation notification', { booking_id: booking.id });
 
     await this.eventBus.publishEvent(
@@ -1184,7 +1222,7 @@ export class BookingEngine {
       .lt('start_at', endTime.toISOString())
       .gt('end_at', startTime.toISOString());
 
-    if (!error && count !== null && count >= (service as any).max_concurrent_bookings) {
+    if (!error && count !== null && count >= (service.max_concurrent_bookings ?? this.config.maxConcurrentBookings)) {
       conflicts.push({
         type: 'service_unavailable',
         message: 'Service is at maximum capacity for this time slot'
@@ -1209,25 +1247,25 @@ export class BookingEngine {
       return 0;
     }
 
-    return (data || []).filter((reservation: any) => this.getReservationMetadata(reservation).customer_email === customerEmail).length;
+    return (data || []).filter((reservation) => this.getReservationMetadata(reservation as BookingRecord).customer_email === customerEmail).length;
   }
 
-  private getReservationMetadata(reservation: any): Record<string, any> {
+  private getReservationMetadata(reservation: BookingRecord): Record<string, unknown> {
     if (!reservation?.metadata || typeof reservation.metadata !== 'object' || Array.isArray(reservation.metadata)) {
       return {};
     }
 
-    return reservation.metadata as Record<string, any>;
+    return reservation.metadata as Record<string, unknown>;
   }
 
-  private buildReservationMetadata(reservation: any, updates: Record<string, any>): Record<string, any> {
+  private buildReservationMetadata(reservation: BookingRecord, updates: Record<string, unknown>): Record<string, unknown> {
     return {
       ...this.getReservationMetadata(reservation),
       ...updates
     };
   }
 
-  private normalizeBookingRecord(reservation: any): any {
+  private normalizeBookingRecord(reservation: BookingRecord | null): BookingRecord | null {
     if (!reservation) return null;
 
     const metadata = this.getReservationMetadata(reservation);
@@ -1246,7 +1284,7 @@ export class BookingEngine {
       payment_id: metadata.payment_id ?? null,
       special_requests: metadata.special_requests ?? null,
       cancellation_notes: metadata.cancellation_notes ?? null
-    };
+    } as unknown as BookingRecord;
   }
 
   /**
@@ -1287,7 +1325,7 @@ export class BookingEngine {
       return [];
     }
 
-    return suggestions.map((s: any) => ({
+    return suggestions.map((s: { suggested_start_time: string; suggested_end_time: string }) => ({
       start_time: s.suggested_start_time,
       end_time: s.suggested_end_time
     }));

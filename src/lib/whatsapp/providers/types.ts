@@ -101,4 +101,10 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   instanceName: string;
+  /**
+   * Whose wallet pays for sends made with this config. Set by the tenant config
+   * loaders; absent on platform-level configs, which have nobody to bill.
+   * getProviderClient meters a client if and only if this is present.
+   */
+  tenantId?: string;
 }

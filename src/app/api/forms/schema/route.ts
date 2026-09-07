@@ -13,14 +13,16 @@ export const GET = createHttpHandler(
   async (ctx) => {
     const url = new URL(ctx.request.url);
     const vertical = url.searchParams.get('vertical') || 'general';
-    const serviceType = url.searchParams.get('serviceType') || undefined;
-    const includePayment = url.searchParams.get('includePayment') === 'true';
+    const serviceType = url.searchParams.get('serviceType') || '';
     const requireDeposit = url.searchParams.get('requireDeposit') === 'true';
 
-    const schema = FormSchemaGenerator.forBooking(vertical as any, serviceType as any, {
-      includePayment,
+    if (vertical !== 'beauty' && vertical !== 'hospitality' && vertical !== 'medicine') {
+      throw ApiErrorFactory.validationError({ vertical: 'beauty, hospitality, or medicine is required' });
+    }
+
+    const schema = FormSchemaGenerator.forBooking(vertical, serviceType, {
       requireDeposit,
-    } as any);
+    });
 
     return { schema };
   },

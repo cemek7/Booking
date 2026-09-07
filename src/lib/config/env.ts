@@ -52,6 +52,10 @@ const LLMSchema = z.object({
   openrouterReferer: z.string().optional().default('https://chat.openrouter.ai'),
   openrouterUrl: z.string().url().optional().default('https://api.openrouter.ai/v1'),
   openrouterModel: z.string().optional().default('gpt-4o-mini'),
+  cloudflareAccountId: z.string().optional().default(''),
+  cloudflareAiApiToken: z.string().optional().default(''),
+  cloudflareAiBaseUrl: z.string().url().optional().default('https://api.cloudflare.com/client/v4'),
+  cloudflareAiModel: z.string().optional().default('@cf/meta/llama-3.1-8b-instruct'),
   openaiApiKey: z.string().optional().default(''),
   openaiModel: z.string().optional().default('gpt-4o-mini'),
   localLlmModel: z.string().optional().default('./models/distilgpt2')
@@ -202,6 +206,10 @@ function parseEnvironment(): EnvironmentConfig {
       openrouterBaseUrl: process.env.OPENROUTER_BASE_URL,
       openrouterReferer: process.env.OPENROUTER_REFERER,
       openrouterModel: process.env.OPENROUTER_MODEL,
+      cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+      cloudflareAiApiToken: process.env.CLOUDFLARE_AI_API_TOKEN,
+      cloudflareAiBaseUrl: process.env.CLOUDFLARE_AI_BASE_URL,
+      cloudflareAiModel: process.env.CLOUDFLARE_AI_DEFAULT_MODEL,
       openaiApiKey: process.env.OPENAI_API_KEY,
       openaiModel: process.env.OPENAI_MODEL,
       localLlmModel: process.env.LOCAL_LLM_MODEL
@@ -283,9 +291,9 @@ function parseEnvironment(): EnvironmentConfig {
     );
   }
   const hasGoogleAI = Boolean(process.env.GOOGLE_AI_API_KEY);
-  if (!hasGoogleAI && !parsed.llm.openrouterApiKey) {
+  if (!hasGoogleAI && !parsed.llm.openrouterApiKey && !(parsed.llm.cloudflareAccountId && parsed.llm.cloudflareAiApiToken)) {
     console.warn(
-      '[env] No LLM provider configured (GOOGLE_AI_API_KEY and OPENROUTER_API_KEY are both unset) — ' +
+      '[env] No LLM provider configured (CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_AI_API_TOKEN, GOOGLE_AI_API_KEY, and OPENROUTER_API_KEY are all unset) — ' +
       'AI features will fail at runtime'
     );
   }

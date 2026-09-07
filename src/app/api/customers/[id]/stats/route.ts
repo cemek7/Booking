@@ -1,10 +1,6 @@
 export const dynamic = 'force-dynamic';
-import { createHttpHandler } from '@/lib/error-handling/route-handler';
+import { createHttpHandler, getRouteParam } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-
-interface RouteParams {
-  params: { id: string };
-}
 
 /**
  * GET /api/customers/{id}/stats
@@ -13,63 +9,46 @@ interface RouteParams {
  */
 export const GET = createHttpHandler(
   async (ctx) => {
-    // Extract customer ID from route params
-    const customerId = (ctx as any).params?.id;
-    
+    const customerId = getRouteParam(ctx.params, 'id');
     if (!customerId) {
       throw ApiErrorFactory.badRequest('Customer ID is required');
     }
 
-    // Fetch the customer to get their tenant_id and other details
     const { data: customer, error: customerError } = await ctx.supabase
-      .from('customers')
-      .select('id, tenant_id, notes')
-      .eq('id', customerId)
-      .single();
+      .from('customer_profile_summary')
+      .select('tenant_id, customer_id, lifetime_bookings, last_visit, no_show_count')
+      .eq('customer_id', customerId)
+      .maybeSingle();
 
-    if (customerError || !customer) {
+    const fallbackCustomer = !customer
+      ? await ctx.supabase
+          .from('customers')
+          .select('id, tenant_id')
+          .eq('id', customerId)
+          .maybeSingle()
+      : null;
+
+    const tenantId = customer?.tenant_id ?? fallbackCustomer?.data?.tenant_id;
+    if (customerError || !tenantId) {
       throw ApiErrorFactory.notFound('Customer not found');
     }
 
-    // Verify tenant access
-    if (customer.tenant_id !== ctx.user!.tenantId) {
+    if (tenantId !== ctx.user!.tenantId) {
       throw ApiErrorFactory.forbidden('Access denied to this customer');
     }
 
-    // Get total number of bookings
-    const { count: totalBookings, error: countError } = await ctx.supabase
-      .from('reservations')
-      .select('*', { count: 'exact', head: true })
-      .eq('tenant_id', customer.tenant_id)
-      .eq('customer_id', customer.id);
-
-    if (countError) throw countError;
-
-    // Get the last booking date
-    const { data: lastBooking, error: lastBookingError } = await ctx.supabase
-      .from('reservations')
-      .select('start_at')
-      .eq('tenant_id', customer.tenant_id)
-      .eq('customer_id', customer.id)
-      .order('start_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (lastBookingError) throw lastBookingError;
-    const lastBookingAt = lastBooking?.start_at ?? null;
-
-    // Determine customer status (e.g., 'vip', 'regular')
+    const totalBookings = Number(customer?.lifetime_bookings ?? 0);
+    const lastBookingAt = customer?.last_visit ?? null;
     let status = 'regular';
-    if ((totalBookings ?? 0) >= 10) {
+    if (totalBookings >= 10) {
       status = 'vip';
     }
-    // Allow manual override via notes
-    if (customer.notes && customer.notes.toLowerCase().includes('vip')) {
-      status = 'vip';
+    if (Number(customer?.no_show_count ?? 0) >= 3) {
+      status = 'at_risk';
     }
 
     return {
-      totalBookings: totalBookings ?? 0,
+      totalBookings,
       lastBookingAt,
       status,
     };

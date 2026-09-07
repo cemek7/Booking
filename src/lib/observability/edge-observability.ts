@@ -28,12 +28,21 @@ interface TraceContext {
     timestamp: Date;
     level: 'info' | 'warn' | 'error' | 'debug';
     message: string;
-    fields?: Record<string, any>;
+    fields?: Record<string, unknown>;
   }>;
 }
 
+interface EdgeTrace extends TraceContext {
+  end: () => void;
+  recordException: (error: Error) => void;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class EdgeObservabilityService {
-  private supabase: any;
+  private supabase: ReturnType<typeof createSupabaseAdminClient>;
 
   constructor() {
     // Using the admin client is safe here as it only performs fetch requests.
@@ -44,7 +53,7 @@ export class EdgeObservabilityService {
    * Create and start a trace span.
    * This is a simplified version for the edge.
    */
-  startTrace(operationName: string, parentContext?: any): any {
+  startTrace(operationName: string, parentContext?: Pick<TraceContext, 'span_id'>): EdgeTrace {
     const traceId = this.generateId(16);
     const spanId = this.generateId(8);
 
@@ -88,7 +97,7 @@ export class EdgeObservabilityService {
     //   status: context.status,
     //   tags: context.tags,
     //   logs: context.logs,
-    // }).catch((error: any) => {
+    // }).catch((error: unknown) => {
     //   defaultLogger.error('EdgeObservability: Failed to store trace:', error.message);
     // });
   }
@@ -100,7 +109,7 @@ export class EdgeObservabilityService {
     context: TraceContext,
     level: 'info' | 'warn' | 'error' | 'debug',
     message: string,
-    fields?: Record<string, any>
+    fields?: Record<string, unknown>
   ): void {
     context.logs.push({
       timestamp: new Date(),
@@ -125,11 +134,11 @@ export class EdgeObservabilityService {
         metric_value: value,
         labels,
         recorded_at: new Date().toISOString(),
-      }).catch((error: any) => {
-        defaultLogger.error(`EdgeObservability: Failed to record business metric ${name}:`, error.message);
+      }).catch((error: unknown) => {
+        defaultLogger.error(`EdgeObservability: Failed to record business metric ${name}:`, errorMessage(error));
       });
-    } catch (error: any) {
-      defaultLogger.error(`EdgeObservability: Failed to record business metric ${name}:`, error.message);
+    } catch (error: unknown) {
+      defaultLogger.error(`EdgeObservability: Failed to record business metric ${name}:`, errorMessage(error));
     }
   }
 

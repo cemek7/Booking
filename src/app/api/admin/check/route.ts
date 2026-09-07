@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { resolveActiveGlobalAdmin } from '@/lib/auth/global-admin';
 
 /**
  * POST /api/admin/check
@@ -18,20 +19,18 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.badRequest('email is required');
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
     const userId = ctx.user!.id;
 
     // Query admin by email, and tenant membership by authenticated user ID.
     const [adminByEmail, tu] = await Promise.all([
-      ctx.supabase.from('admins').select('email,status').eq('email', normalizedEmail).maybeSingle(),
+      resolveActiveGlobalAdmin(ctx.supabase, email),
       ctx.supabase.from('tenant_users').select('tenant_id,role,user_id').eq('user_id', userId).limit(1).maybeSingle(),
     ]);
 
-    if (adminByEmail.error) throw ApiErrorFactory.internalServerError(new Error('Failed to check admin status'));
     if (tu.error) throw ApiErrorFactory.internalServerError(new Error('Failed to check tenant membership'));
 
-    if (adminByEmail.data && adminByEmail.data.status !== false) {
-      return { found: { admin: true, email: adminByEmail.data.email, user_id: userId } };
+    if (adminByEmail) {
+      return { found: { admin: true, email: adminByEmail.email, user_id: userId } };
     }
 
     if (tu.data) {

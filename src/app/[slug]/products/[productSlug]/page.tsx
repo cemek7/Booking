@@ -1,0 +1,18 @@
+/* eslint-disable @next/next/no-img-element -- tenant media hosts are runtime-configured. */
+import { notFound } from 'next/navigation';
+import type { Metadata } from 'next';
+import { idFromPublicItemSlug, publicItemSlug } from '@/lib/storefront/config';
+import { getPublicProduct } from '@/lib/storefront/public-storefront';
+import { AskBookaButton, ConversionLink, StickyConversionBar } from '@/components/storefront/StorefrontConversion';
+import StorefrontPageView from '@/components/storefront/StorefrontPageView';
+
+type Props = { params: Promise<{ slug: string; productSlug: string }> }; export const dynamic = 'force-dynamic';
+async function load(params: Props['params']) { const { slug, productSlug } = await params; const id = idFromPublicItemSlug(productSlug); return id ? getPublicProduct(slug, id) : null; }
+export async function generateMetadata({ params }: Props): Promise<Metadata> { const result = await load(params); return result ? { title: `${result.product.name} | ${result.storefront.tenant.name}`, description: result.product.description || `Buy ${result.product.name} from ${result.storefront.tenant.name}`, alternates: { canonical: `/${result.storefront.tenant.slug}/products/${publicItemSlug(result.product.name, result.product.id)}` } } : {}; }
+export default async function ProductPage({ params }: Props) {
+  const result = await load(params); if (!result) notFound(); const { storefront, product } = result;
+  const price = new Intl.NumberFormat('en-NG', { style: 'currency', currency: storefront.currency, maximumFractionDigits: 0 }).format(product.price_cents / 100);
+  const href = `/store/${storefront.tenant.slug}?add=${product.id}`;
+  const jsonLd = { '@context': 'https://schema.org', '@type': 'Product', name: product.name, description: product.description || undefined, image: product.image || undefined, offers: { '@type': 'Offer', price: product.price_cents / 100, priceCurrency: storefront.currency, availability: product.in_stock ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock' } };
+  return <main className="min-h-screen bg-[#fbfcf9] pb-24"><StorefrontPageView slug={storefront.tenant.slug} tenantId={storefront.tenant.id} pageType="product" productId={product.id} /><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} /><article className="mx-auto grid max-w-5xl gap-9 px-5 py-12 sm:px-8 lg:grid-cols-2"><div className="aspect-square overflow-hidden rounded-[2rem] bg-[#eaf2e9]">{product.image && <img src={product.image} alt={product.name} className="h-full w-full object-cover" />}</div><div><a href={`/${storefront.tenant.slug}`} className="text-sm font-bold text-[#254b37]">← {storefront.tenant.name}</a><h1 className="mt-6 font-[family-name:var(--font-booka-display-loaded)] text-5xl leading-none text-[#12261c]">{product.name}</h1><p className="mt-5 text-lg leading-8 text-[#526356]">{product.description || 'Order directly from this business.'}</p><p className="mt-7 text-2xl font-bold text-[#173423]">{price}</p><div className="mt-8 flex flex-wrap gap-3">{product.in_stock ? <ConversionLink slug={storefront.tenant.slug} tenantId={storefront.tenant.id} label="Add to cart" href={href} pageType="product" productId={product.id} priceLabel={price} /> : <span className="rounded-full bg-[#f4e4df] px-5 py-3 text-sm font-bold text-[#8a3a24]">Out of stock</span>}<AskBookaButton slug={storefront.tenant.slug} tenantId={storefront.tenant.id} pageType="product" productId={product.id} /></div></div></article><StickyConversionBar slug={storefront.tenant.slug} tenantId={storefront.tenant.id} label="Add to cart" href={href} pageType="product" productId={product.id} priceLabel={price} /></main>;
+}

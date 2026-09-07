@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 /**
  * Enhanced Encryption Module for HIPAA Compliance
@@ -266,7 +265,7 @@ export class EnterpriseEncryptionManager {
     // Check key age
     const activeKey = this.activeKeyId ? this.keys.get(this.activeKeyId) : null;
     if (activeKey) {
-      const keyAge = Date.now() - activeKey.created_at.getTime();
+      const keyAge = Date.now() - activeKey.createdAt.getTime();
       if (keyAge > this.keyRotationIntervalMs) {
         issues.push('Active encryption key is beyond rotation interval');
         recommendations.push('Perform key rotation immediately');
@@ -333,7 +332,7 @@ export class EnterpriseEncryptionManager {
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     
     for (const [keyId, key] of this.keys.entries()) {
-      if (key.status === 'deprecated' && key.created_at < ninetyDaysAgo) {
+      if (key.status === 'deprecated' && key.createdAt < ninetyDaysAgo) {
         key.status = 'revoked';
         this.keys.set(keyId, key);
         await this.logEncryptionEvent('key_revoked', keyId, key.purpose);

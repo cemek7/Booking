@@ -1,8 +1,7 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { google, calendar_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 export interface GoogleCalendarConfig {
   calendar_id: string;
@@ -36,6 +35,29 @@ export interface SyncResult {
   sync_timestamp: Date;
 }
 
+export interface GoogleCalendarBooking {
+  id: string;
+  tenant_id: string;
+  staff_id?: string | null;
+  service_name?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  start_at: string | Date;
+  end_at: string | Date;
+  timezone?: string | null;
+  location?: string | null;
+  notes?: string | null;
+  google_event_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface CalendarConflict {
+  google_event: calendar_v3.Schema$Event;
+  local_booking: GoogleCalendarBooking;
+  conflict_type: 'time_overlap';
+}
+
 export class GoogleCalendarIntegration {
   private oauth2Client: OAuth2Client;
   private calendar: calendar_v3.Calendar;
@@ -50,10 +72,12 @@ export class GoogleCalendarIntegration {
 
     this.calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
     
-    this.supabase = createServerSupabaseClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // Background calendar sync runs outside a request context, so it needs the
+    // service-role admin client (no cookies/session). The previous call passed
+    // (url, key) to the cookie-based factory whose signature is
+    // (accessToken?, options?) — the key was silently ignored and cookies()
+    // would throw at runtime outside a request scope.
+    this.supabase = createSupabaseAdminClient();
   }
 
   /**
@@ -96,7 +120,7 @@ export class GoogleCalendarIntegration {
    * Synchronize booking with Google Calendar
    */
   async syncBookingToGoogle(
-    booking: any,
+    booking: GoogleCalendarBooking,
     config: GoogleCalendarConfig
   ): Promise<{ success: boolean; google_event_id?: string; error?: string }> {
     try {
@@ -126,7 +150,7 @@ export class GoogleCalendarIntegration {
           private: {
             booking_id: booking.id,
             tenant_id: booking.tenant_id,
-            staff_id: booking.staff_id,
+            staff_id: booking.staff_id ?? '',
             booka_managed: 'true'
           }
         }
@@ -149,12 +173,18 @@ export class GoogleCalendarIntegration {
         });
       }
 
-      // Update booking with Google event ID
+      // Update booking with Google event ID. reservations has no
+      // google_event_id/last_synced columns — store them in metadata (merged)
+      // and set the real calendar_sent flag.
       await this.supabase
         .from('reservations')
         .update({
-          google_event_id: googleEvent.data.id,
-          last_synced: new Date().toISOString()
+          calendar_sent: true,
+          metadata: {
+            ...(booking.metadata && typeof booking.metadata === 'object' ? booking.metadata : {}),
+            google_event_id: googleEvent.data.id,
+            google_last_synced: new Date().toISOString(),
+          },
         })
         .eq('id', booking.id);
 
@@ -263,8 +293,8 @@ export class GoogleCalendarIntegration {
     staffId: string,
     config: GoogleCalendarConfig,
     timeRange: { start: Date; end: Date }
-  ): Promise<Array<{ google_event: any; local_booking: any; conflict_type: string }>> {
-    const conflicts: Array<{ google_event: any; local_booking: any; conflict_type: string }> = [];
+  ): Promise<CalendarConflict[]> {
+    const conflicts: CalendarConflict[] = [];
 
     try {
       await this.initializeCredentials(config);
@@ -297,7 +327,7 @@ export class GoogleCalendarIntegration {
         const googleStart = new Date(googleEvent.start.dateTime);
         const googleEnd = new Date(googleEvent.end.dateTime);
 
-        for (const localBooking of localBookings || []) {
+        for (const localBooking of (localBookings ?? []) as GoogleCalendarBooking[]) {
           const localStart = new Date(localBooking.start_at);
           const localEnd = new Date(localBooking.end_at);
 
@@ -438,7 +468,7 @@ export class GoogleCalendarIntegration {
     return availableSlots;
   }
 
-  private buildEventDescription(booking: any): string {
+  private buildEventDescription(booking: GoogleCalendarBooking): string {
     let description = `Service: ${booking.service_name}\n`;
     description += `Customer: ${booking.customer_name}\n`;
     if (booking.customer_email) description += `Email: ${booking.customer_email}\n`;
@@ -449,7 +479,7 @@ export class GoogleCalendarIntegration {
   }
 
   private async processGoogleEvent(
-    googleEvent: any,
+    googleEvent: calendar_v3.Schema$Event,
     tenantId: string,
     staffId: string,
     config: GoogleCalendarConfig
@@ -512,7 +542,7 @@ export class GoogleCalendarIntegration {
     accessToken: string,
     refreshToken?: string | null
   ): Promise<void> {
-    const updateData: any = {
+    const updateData: Record<string, string> = {
       access_token: accessToken,
       last_updated: new Date().toISOString()
     };

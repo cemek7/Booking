@@ -38,7 +38,7 @@ export interface TrendChartProps {
 /**
  * Custom tooltip for trend chart
  */
-const CustomTooltip: React.FC<TooltipProps<number, string> & { formatValue?: (value: number) => string; payload?: any[]; label?: string }> = ({
+const CustomTooltip: React.FC<TooltipProps<number, string> & { formatValue?: (value: number) => string; payload?: Array<{ value?: number; color?: string }>; label?: string }> = ({
   active,
   payload,
   label,

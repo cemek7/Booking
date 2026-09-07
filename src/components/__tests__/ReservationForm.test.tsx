@@ -13,12 +13,12 @@ jest.mock('@/lib/supabase/client', () => {
 
 describe('ReservationForm', () => {
   beforeEach(() => {
-    ;(global as any).fetch = jest.fn()
+    ;(global as unknown as Record<string, unknown>).fetch = jest.fn()
   })
 
   afterEach(() => {
     jest.resetAllMocks()
-    delete (global as any).fetch
+    delete (global as unknown as Record<string, unknown>).fetch
   })
 
   it('submits and calls onCreated with returned id', async () => {

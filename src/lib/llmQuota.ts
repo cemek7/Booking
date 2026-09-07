@@ -7,6 +7,15 @@ export interface QuotaCheckResult {
   quota?: number | null;
 }
 
+interface TenantQuotaRow {
+  feature_flags?: unknown;
+  llm_quota?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * ensureTenantHasQuota: runtime guard for premium LLM usage.
  * Strategy:
@@ -31,30 +40,32 @@ export async function ensureTenantHasQuota(supabase: SupabaseClient, tenantId: s
     // Feature flag check (object or JSON string tolerated)
     let flags: Record<string, unknown> | null = null;
     try {
-      const raw = (tenant as any).feature_flags;
-      if (raw && typeof raw === 'string') flags = JSON.parse(raw);
-      else if (raw && typeof raw === 'object') flags = raw as Record<string, unknown>;
+      const raw = (tenant as TenantQuotaRow).feature_flags;
+      if (typeof raw === 'string') {
+        const parsed: unknown = JSON.parse(raw);
+        flags = isRecord(parsed) ? parsed : null;
+      } else if (isRecord(raw)) {
+        flags = raw;
+      }
     } catch { flags = null; }
-    const premiumEnabled = !!(flags && (flags as any).premium_llm);
+    const premiumEnabled = Boolean(flags?.premium_llm);
     if (!premiumEnabled) return { allowed: false, reason: 'premium_llm_disabled' };
 
-    const quota = typeof (tenant as any).llm_quota === 'number' ? Number((tenant as any).llm_quota) : null;
+    const quotaValue = (tenant as TenantQuotaRow).llm_quota;
+    const quota = typeof quotaValue === 'number' ? quotaValue : null;
     if (!quota) return { allowed: true, reason: 'no_quota_configured', quota: null, remaining: null };
 
     // Count current month usage (cheap aggregation)
     const startOfMonth = new Date();
     startOfMonth.setUTCDate(1); startOfMonth.setUTCHours(0, 0, 0, 0);
     const monthIso = startOfMonth.toISOString();
-    const { data: calls, error: callsErr } = await supabase
+    const { count: usedCount, error: callsErr } = await supabase
       .from('llm_calls')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId)
       .gte('created_at', monthIso);
     if (callsErr) return { allowed: true, reason: 'usage_lookup_failed', quota, remaining: null };
-    const used = (calls as any)?.length ?? (callsErr ? 0 : (calls as any)); // head:true returns empty array; rely on count
-    // Supabase count is exposed via response.count
-    const usedCount = (calls as any)?.length === 0 && typeof (calls as any).count === 'number' ? (calls as any).count : used;
-    const remaining = quota - usedCount;
+    const remaining = quota - (usedCount ?? 0);
     if (remaining <= 0) return { allowed: false, reason: 'quota_exhausted', quota, remaining: 0 };
     return { allowed: true, reason: 'ok', quota, remaining };
   } catch (e) {

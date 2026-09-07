@@ -38,7 +38,7 @@ export interface AuditEvent {
   result: AuditResult;
   securityLevel: 'low' | 'medium' | 'high' | 'critical';
   complianceFlags: ComplianceFlag[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export type AuditEventType = 
@@ -93,6 +93,26 @@ export type ComplianceFlag =
   | 'iso27001_security'
   | 'regulatory_reporting';
 
+interface AuditDatabaseRow {
+  id?: string;
+  timestamp: string;
+  event_type: AuditEventType;
+  user_id: string;
+  user_role: Role;
+  tenant_id: string;
+  session_id?: string;
+  ip_address?: string;
+  user_agent?: string;
+  resource: string;
+  action: string;
+  permission: string;
+  context: AuditContext;
+  result: AuditResult;
+  security_level: AuditEvent['securityLevel'];
+  compliance_flags: ComplianceFlag[];
+  metadata: Record<string, unknown>;
+}
+
 // ============================================================================
 // AUDIT LOGGER CLASS
 // ============================================================================
@@ -125,7 +145,7 @@ export class AuditLogger {
     permission: string,
     context: UnifiedPermissionContext,
     result: UnifiedAccessResult,
-    additionalContext?: Record<string, any>
+    additionalContext?: Record<string, unknown>
   ): Promise<void> {
     const auditEvent: AuditEvent = {
       timestamp: new Date().toISOString(),
@@ -176,7 +196,7 @@ export class AuditLogger {
     newRole: Role,
     tenantId: string,
     justification?: string,
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<void> {
     const auditEvent: AuditEvent = {
       timestamp: new Date().toISOString(),
@@ -275,7 +295,7 @@ export class AuditLogger {
     action: string,
     target: string,
     result: 'success' | 'failure' | 'error',
-    details?: Record<string, any>
+    details?: Record<string, unknown>
   ): Promise<void> {
     const auditEvent: AuditEvent = {
       timestamp: new Date().toISOString(),
@@ -693,7 +713,7 @@ export class AuditLogger {
   }
 
   // Database mapping methods
-  private mapAuditEventToDatabase(event: AuditEvent): any {
+  private mapAuditEventToDatabase(event: AuditEvent): AuditDatabaseRow {
     return {
       timestamp: event.timestamp,
       event_type: event.eventType,
@@ -714,7 +734,7 @@ export class AuditLogger {
     };
   }
 
-  private mapDatabaseToAuditEvent(row: any): AuditEvent {
+  private mapDatabaseToAuditEvent(row: AuditDatabaseRow): AuditEvent {
     return {
       id: row.id,
       timestamp: row.timestamp,
@@ -846,4 +866,3 @@ export function getAuditLogger(): AuditLogger {
   }
   return globalAuditLogger;
 }
-

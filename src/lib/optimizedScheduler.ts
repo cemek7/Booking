@@ -1,7 +1,7 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { trace } from '@opentelemetry/api';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { publishEvent } from './eventBus';
 
 export interface StaffSchedule {
@@ -40,6 +40,15 @@ export interface OptimizedSlot {
   staff_name?: string;
   confidence: number; // 0-1 score based on availability density
 }
+
+type OptimizedSlotRow = {
+  id: string;
+  staff_id: string;
+  slot_date: string;
+  slot_time: string;
+  duration_minutes: number;
+  tenant_users?: unknown;
+};
 
 export class OptimizedScheduler {
   private supabase: SupabaseClient;
@@ -174,7 +183,7 @@ export class OptimizedScheduler {
 
       // Calculate confidence scores based on availability density
       const slotsWithConfidence = await Promise.all(
-        slots.map(async (slot) => {
+        (slots as OptimizedSlotRow[]).map(async (slot) => {
           const confidence = await this.calculateSlotConfidence(
             tenantId,
             slot.staff_id,
@@ -312,7 +321,7 @@ export class OptimizedScheduler {
           reservation_id: reservationId,
           tenant_id: tenantId,
         },
-        tenant_id: tenantId,
+        tenantId,
       });
 
       span.setAttribute('booking.success', true);
@@ -363,7 +372,7 @@ export class OptimizedScheduler {
           slots_released: count || 0,
           tenant_id: tenantId,
         },
-        tenant_id: tenantId,
+        tenantId,
       });
 
       span.setAttribute('release.slots_count', count || 0);
@@ -448,7 +457,7 @@ export default OptimizedScheduler;
 // ─── Functional adapters (replaces the deleted scheduler.ts stubs) ────────────
 
 export async function findFreeSlot(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   fromIso: string,
   toIso: string,
@@ -466,8 +475,15 @@ export async function findFreeSlot(
   return { start_at: slots[0].start_at, end_at: slots[0].end_at };
 }
 
+interface FreeStaffScheduleRow {
+  user_id: string;
+  start_time: string;
+  end_time: string;
+  tenant_users?: { users?: { name?: string | null } | null } | null;
+}
+
 export async function findFreeStaff(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   startAt: string,
   endAt: string
@@ -486,22 +502,22 @@ export async function findFreeStaff(
   if (!schedules) return [];
 
   // Filter staff whose schedule covers the requested window
-  return schedules
-    .filter((s: any) => {
+  return (schedules as FreeStaffScheduleRow[])
+    .filter((s) => {
       const schedStart = s.start_time;
       const schedEnd = s.end_time;
       const reqStart = start.toTimeString().substring(0, 5);
       const reqEnd = end.toTimeString().substring(0, 5);
       return schedStart <= reqStart && schedEnd >= reqEnd;
     })
-    .map((s: any) => ({
+    .map((s) => ({
       id: s.user_id,
       name: s.tenant_users?.users?.name || s.user_id,
     }));
 }
 
 export async function nextAvailableSlot(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   fromIso: string,
   durationMinutes = 60,

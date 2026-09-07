@@ -10,6 +10,7 @@ import { getStoredProviderApiKey, upsertStoredProviderApiKey } from '@/lib/whats
 import { suggestEmojiForVertical } from '@/lib/whatsapp/v2/tenantBrand';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 import {
   buildProviderWebhookUrl,
   ensureTenantWahaProvisioning,
@@ -148,7 +149,7 @@ export const POST = createHttpHandler(
     const WAHA_BASE_URL      = process.env.WAHA_API_BASE      || 'http://localhost:3100';
     const WAHA_API_KEY       = process.env.WAHA_API_KEY       || '';
     const META_BASE_URL_RAW  = process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com';
-    const META_API_VERSION   = process.env.WHATSAPP_API_VERSION || 'v18.0';
+    const META_API_VERSION   = getWhatsAppGraphApiVersion();
     const META_BASE_URL      = resolveMetaGraphBase(META_BASE_URL_RAW, META_API_VERSION);
     const META_ACCESS_TOKEN  = process.env.WHATSAPP_ACCESS_TOKEN || '';
     const metaPhoneNumberId =

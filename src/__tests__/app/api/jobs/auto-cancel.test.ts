@@ -198,11 +198,15 @@ describe('auto-cancel-unconfirmed job (auth:false, cron-secret)', () => {
 
     // The first argument must contain `status: 'cancelled'`
     const updateArg = (sb._updateFn as jest.Mock).mock.calls[0][0] as Record<string, unknown>;
+    // reservations has no cancelled_at/cancellation_reason columns — the reason
+    // and timestamp are recorded in metadata (merged).
     expect(updateArg).toMatchObject({
       status: 'cancelled',
-      cancellation_reason: expect.stringContaining('Auto-cancelled'),
+      metadata: expect.objectContaining({
+        cancellation_reason: expect.stringContaining('Auto-cancelled'),
+      }),
     });
-    expect(updateArg).toHaveProperty('cancelled_at');
+    expect(updateArg.metadata as Record<string, unknown>).toHaveProperty('cancelled_at');
   });
 
   it('sweeps reservations with status in [pending, pending_approval, unconfirmed]', async () => {

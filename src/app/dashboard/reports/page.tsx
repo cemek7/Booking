@@ -3,6 +3,7 @@ import RoleBasedReports from '@/components/reports/RoleBasedReports';
 import { requireAuth } from '@/lib/auth/server-auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import RevenueFrontDeskReport from '@/components/reports/RevenueFrontDeskReport';
 
 export default async function ReportsPage() {
   await requireAuth(['owner', 'manager']);
@@ -20,6 +21,7 @@ export default async function ReportsPage() {
           </p>
         </div>
       </div>
+      <RevenueFrontDeskReport />
       <Card className="p-0">
         <CardContent className="p-5">
           <RoleBasedReports />

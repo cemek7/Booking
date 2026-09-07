@@ -2,6 +2,7 @@ import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { getStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 export interface EvolutionAPIConfig {
   provider?: 'evolution' | 'waha' | 'meta';
@@ -9,6 +10,12 @@ export interface EvolutionAPIConfig {
   apiKey: string;
   instanceName: string;
   webhookUrl?: string;
+  /**
+   * Whose wallet pays for sends made with this config. pipeline.ts types its
+   * config as `EvolutionAPIConfig | ProviderConfig`, so the field has to exist
+   * on both or the metering gate is unreachable from the AI reply path.
+   */
+  tenantId?: string;
 }
 
 export interface WhatsAppMessage {
@@ -638,6 +645,19 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       .single();
 
     if (error || !data) {
+      const sharedGatewayId = process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID || '';
+      const sharedGatewayToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
+      if (sharedGatewayId && sharedGatewayToken) {
+        const baseUrl = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
+        const apiVersion = getWhatsAppGraphApiVersion();
+        return {
+          provider: 'meta',
+          baseUrl: `${baseUrl}/${apiVersion}`,
+          apiKey: sharedGatewayToken,
+          instanceName: sharedGatewayId,
+          tenantId,
+        };
+      }
       return null;
     }
 
@@ -648,10 +668,19 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       provider,
       (data.provider_api_key ?? data.evolution_api_key) as string | null
     );
+    // Tenant-scoped credentials (including Embedded Signup credentials) take
+    // precedence. The deployment-wide token is retained only as a backwards-
+    // compatible fallback for a single legacy Meta connection.
     const resolvedApiKey =
-      provider === 'meta' && process.env.WHATSAPP_ACCESS_TOKEN
-        ? process.env.WHATSAPP_ACCESS_TOKEN
-        : dbApiKey;
+      dbApiKey ||
+      (provider === 'meta' ? (process.env.WHATSAPP_ACCESS_TOKEN || '') : '');
+
+    // Tenant-owned Meta connections must never inherit a deployment-wide token
+    // after their own credential has expired, been revoked, or failed to decrypt.
+    // That could send a tenant's message through the wrong business account.
+    if (provider === 'meta' && data.meta_connection_source && !dbApiKey) {
+      return null;
+    }
 
     return {
       provider,
@@ -659,11 +688,35 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<Evoluti
       apiKey:   resolvedApiKey,
       instanceName: data.instance_name,
       webhookUrl: data.webhook_url,
+      tenantId,
     };
 
   } catch (error) {
     defaultLogger.error('Failed to get WhatsApp config:', error);
     return null;
+  }
+}
+
+/**
+ * Whether customer-facing AI replies are enabled for a tenant's active
+ * WhatsApp connection. This is intentionally fail-closed: if the connection
+ * cannot be read, automated replies must not be sent.
+ */
+export async function isTenantWhatsAppAgentEnabled(tenantId: string): Promise<boolean> {
+  try {
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from('whatsapp_configurations')
+      .select('agent_enabled')
+      .eq('tenant_id', tenantId)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (error || !data) return false;
+    return data.agent_enabled === true;
+  } catch (error) {
+    defaultLogger.error('Failed to resolve WhatsApp agent status:', error);
+    return false;
   }
 }
 

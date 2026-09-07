@@ -20,14 +20,15 @@ import { isHumanHandling } from './humanTakeover';
 import { buildOptInProofPatch } from './optInProof';
 import { claimBatch } from './messageBatcher';
 import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
-import { getTenantWhatsAppConfig } from '@/lib/whatsapp/evolutionClient';
+import { getTenantWhatsAppConfig, isTenantWhatsAppAgentEnabled } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
+import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/providers/unmetered';
 import type { EvolutionAPIConfig } from '@/lib/whatsapp/evolutionClient';
 import type { ProviderConfig } from '@/lib/whatsapp/providers';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
 import { looksLikeShowcaseRequest, sendShowcasePack } from '@/lib/whatsapp/showcasePackService';
 import { handleOwnerCommand } from './flows/ownerCommands';
-import { handleOnboarding } from './flows/ownerOnboarding';
+import { handleOnboarding, handleOwnerEmailUpdate } from './flows/ownerOnboarding';
 import { handleCustomerBooking } from './flows/customerBooking';
 import { detectOptOutKeyword, type OptOutSignal } from './optOut';
 import { brandCustomerText } from './outboundBranding';
@@ -42,6 +43,8 @@ import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { maybeAlertCap } from '@/lib/billing/spendCaps/spendAlerts';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { getInstagramSecret } from '@/lib/instagram/secrets';
+import { consumeStorefrontContextMarker } from '@/lib/storefront/context';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -56,8 +59,26 @@ const OPENROUTER_V2_FALLBACK_MODELS = (process.env.OPENROUTER_V2_FALLBACK_MODELS
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
+const CLOUDFLARE_V2_MODEL = process.env.CLOUDFLARE_AI_DEFAULT_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+const CLOUDFLARE_V2_FALLBACK_MODELS = (process.env.CLOUDFLARE_AI_FALLBACK_MODELS || '')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
 const V2_AI_PROVIDER = (process.env.WHATSAPP_V2_AI_PROVIDER || 'auto').toLowerCase();
 const V2_DISABLE_GOOGLE = process.env.WHATSAPP_V2_DISABLE_GOOGLE === 'true';
+
+function walletProvider(): 'cloudflare' | 'openrouter' | 'google_ai' | 'auto' {
+  if (V2_AI_PROVIDER === 'cloudflare') return 'cloudflare';
+  if (V2_AI_PROVIDER === 'openrouter') return 'openrouter';
+  if (V2_AI_PROVIDER === 'google') return 'google_ai';
+  return 'auto';
+}
+
+function walletModel(googleModel: string): string {
+  if (V2_AI_PROVIDER === 'cloudflare') return CLOUDFLARE_V2_MODEL;
+  if (V2_AI_PROVIDER === 'openrouter') return OPENROUTER_V2_MODEL;
+  return googleModel;
+}
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
@@ -81,13 +102,34 @@ export async function processMessageV2(
   const batch = await claimBatch(externalId, tenantId, channel);
   if (!batch) return false; // Still accumulating — skip this cycle
 
-  const rawMessage = batch.combined;
-  const normalized = normalizePidgin(rawMessage);
+  let rawMessage = batch.combined;
 
   // ── 2. Load conversation state ─────────────────────────────────────────────
   let conv = await getConversation(externalId, tenantId, channel);
   if (!conv) {
     conv = await ensureConversation(externalId, tenantId, 'unknown', channel);
+  }
+  const storefrontHandoff = consumeStorefrontContextMarker(rawMessage, tenantId);
+  rawMessage = storefrontHandoff.message;
+  if (storefrontHandoff.context) {
+    const flow_data = { ...(conv.flow_data ?? {}), storefront_context: storefrontHandoff.context };
+    await updateConversation(externalId, tenantId, { flow_data }, channel);
+    conv.flow_data = flow_data;
+  }
+  const normalized = normalizePidgin(rawMessage);
+
+  // The queue worker is the canonical inbound path. Enforce the same
+  // tenant-level automation switch here as in the legacy processor so a
+  // disabled agent never sends disclosures, AI replies, or booking actions.
+  // Owner/staff commands remain available for operational recovery.
+  if (
+    channel === 'whatsapp' &&
+    conv.role !== 'owner' &&
+    conv.role !== 'staff' &&
+    !await isTenantWhatsAppAgentEnabled(tenantId)
+  ) {
+    await markMessagesProcessed(batch.messageIds);
+    return true;
   }
 
   // ── Opt-out keyword (customers only) ──────────────────────────────────────
@@ -110,7 +152,15 @@ export async function processMessageV2(
   // ── 3. Route to appropriate flow handler ──────────────────────────────────
   // Owner onboarding is handled separately from the main pipeline
   if (conv.current_flow === 'onboarding' || (conv.role === 'owner' && conv.current_flow === 'idle' && !await isTenantActivated(tenantId))) {
-    await handleOnboarding(externalId, tenantId, normalized, conv);
+    const onboardingReply = await handleOnboarding(externalId, tenantId, normalized, conv);
+    // handleOnboarding's return value used to be discarded here, which made the
+    // entire WhatsApp-native owner signup silent: every step computed its reply
+    // and threw it away, so an owner saying "hi" got nothing back.
+    if (onboardingReply) {
+      const onboardingConfig = await resolveProviderConfig(tenantId, channel);
+      await sendReplyByChannel(onboardingConfig, tenantId, externalId, onboardingReply, channel);
+    }
+    await markMessagesProcessed(batch.messageIds);
     return true;
   }
 
@@ -136,6 +186,17 @@ async function handleOwnerOrStaffMessage(
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const providerConfig = await resolveProviderConfig(tenantId, channel);
+
+  // "my email is ..." — handled ahead of L1 and L2 because it is mechanical,
+  // needs no model call, and is what the onboarding skip copy promises. It
+  // routes the conversation back into the onboarding flow at the verification
+  // step, so the code the owner types next lands in handleStep7.
+  const emailUpdateReply = await handleOwnerEmailUpdate(externalId, tenantId, message, conv!);
+  if (emailUpdateReply) {
+    await sendReplyByChannel(providerConfig, tenantId, externalId, emailUpdateReply, channel);
+    await markMessagesProcessed(allMessageIds);
+    return;
+  }
 
   // L1 check — yes/no/numbers for confirming AI-proposed actions
   const l1Match = matchRule(message, {
@@ -351,9 +412,16 @@ async function handleOptOutSignal(
   tenantId: string,
   signal: OptOutSignal
 ): Promise<void> {
-  const evolutionConfig = await getTenantWhatsAppConfig(tenantId);
-  if (!evolutionConfig) return;
-  const client = getProviderClient(evolutionConfig);
+  // COMPLIANCE: opt-out confirmations go through the UNMETERED client.
+  // getProviderClient meters any config carrying a tenantId, and a refused
+  // reservation makes withMetering send the wallet-exhausted handoff instead —
+  // so a customer who texted STOP would be told "a member of our team will
+  // reply to you here shortly", the opposite of what they asked for, and that
+  // handoff would itself be an unsolicited message to someone who just
+  // unsubscribed. These are regulatory messages, not commercial ones: Booka
+  // funds them, and they must send whatever the tenant's balance is.
+  const client = await getTenantWhatsAppProviderClientUnmetered(tenantId);
+  if (!client) return;
 
   if (signal === 'stop') {
     await supabaseAdmin
@@ -410,8 +478,8 @@ async function callAIWithRetry(
         tenantId,
         {
           estimatedTokens: estimatePromptTokens(prompt.length),
-          provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
-          model: FLASH_LITE_MODEL,
+          provider: walletProvider(),
+          model: walletModel(FLASH_LITE_MODEL),
           requestId: `${messageId}:lite:${attempt}`,
           description: 'WhatsApp v2 L2 AI call',
           metadata: {
@@ -524,8 +592,8 @@ async function callFlash(
       tenantId,
       {
         estimatedTokens: estimatePromptTokens(prompt.length),
-        provider: V2_AI_PROVIDER === 'openrouter' ? 'openrouter' : (V2_AI_PROVIDER === 'google' ? 'google_ai' : 'auto'),
-        model: FLASH_MODEL,
+        provider: walletProvider(),
+        model: walletModel(FLASH_MODEL),
         requestId: `${messageId}:flash`,
         description: 'WhatsApp v2 L3 AI call',
         metadata: {
@@ -578,6 +646,8 @@ async function callAIProviderWithFallback(
       'openai/gpt-4o-mini',
       ...OPENROUTER_V2_FALLBACK_MODELS,
     ],
+    cloudflareModel: CLOUDFLARE_V2_MODEL,
+    cloudflareFallbackModels: CLOUDFLARE_V2_FALLBACK_MODELS,
     disableGoogle: V2_DISABLE_GOOGLE,
   }).complete({
     messages: messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -679,26 +749,14 @@ async function markMessagesProcessed(messageIds: string[]): Promise<void> {
  * and the send is skipped gracefully (logged, not thrown).
  */
 export async function getTenantInstagramConfig(tenantId: string): Promise<ProviderConfig | null> {
-  const { data, error } = await supabaseAdmin
-    .from('whatsapp_provider_secrets')
-    .select('api_key, base_url, instance_name')
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'instagram')
-    .maybeSingle();
-
-  if (error) {
-    console.error('[pipeline] getTenantInstagramConfig error', error);
-    return null;
-  }
-  if (!data?.api_key || !data?.base_url || !data?.instance_name) {
-    return null;
-  }
+  const secret = await getInstagramSecret(supabaseAdmin, tenantId);
+  if (!secret) return null;
 
   return {
     provider: 'instagram',
-    baseUrl: data.base_url as string,
-    apiKey: data.api_key as string,
-    instanceName: data.instance_name as string,
+    baseUrl: process.env.INSTAGRAM_GRAPH_BASE_URL || 'https://graph.instagram.com/v25.0',
+    apiKey: secret.accessToken,
+    instanceName: secret.igId,
   };
 }
 
@@ -766,6 +824,21 @@ async function sendReplyByChannel(
   const sendResult = await client.sendTextMessage(externalId, finalText);
 
   if (!sendResult.success) {
+    if (sendResult.reason === 'wallet_exhausted') {
+      // A DESIGNED outcome, not a failure: the wallet could not fund this reply,
+      // so withMetering already sent the customer a handoff message instead.
+      // Throwing here would skip markMessagesProcessed, and the queue row's
+      // pending_messages have already been drained by claimBatch — so the retry
+      // finds nothing to do, returns false, and the worker resets it to
+      // 'pending' without incrementing retry_count. That row then cycles
+      // forever, and once ~20 accumulate they fill the LIMIT 20 claim batch and
+      // starve inbound messages for every other tenant.
+      console.warn('[pipeline] reply not sent: message wallet exhausted, handoff issued', {
+        tenantId,
+        channel,
+      });
+      return;
+    }
     if (channel === 'instagram') {
       // Instagram sends are best-effort for now — log and continue
       console.error(`[pipeline] Outbound Instagram send failed (tenant=${tenantId}, to=${externalId})`);

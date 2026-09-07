@@ -107,6 +107,7 @@ describe('getAuthenticatedUserRole', () => {
       from: jest.fn(() => mockAdminClient),
       select: jest.fn(() => mockAdminClient),
       eq: jest.fn(() => mockAdminClient),
+      ilike: jest.fn(() => mockAdminClient),
       maybeSingle: jest.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
         data: null,
         error: null,

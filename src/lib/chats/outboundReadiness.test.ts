@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import {
   computeOutboundReadiness,
-  instagramReplyWindowMs,
   isWindowOpen,
 } from '@/lib/chats/outboundReadiness';
 
 const hasMessagingConsent = jest.fn<(...args: unknown[]) => Promise<boolean>>();
+
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 jest.mock('@/lib/optin/messagingConsent', () => ({
   hasMessagingConsent: (...args: unknown[]) => hasMessagingConsent(...args),

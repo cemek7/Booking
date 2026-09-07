@@ -274,6 +274,7 @@ export interface LoginResult {
  */
 export interface AuthenticatedUser extends StrictUserWithRole {
   tenantId: string;
+  tenantUserId?: string;
   permissions: string[];
   effectiveRoles: Role[];
   is_active?: boolean;

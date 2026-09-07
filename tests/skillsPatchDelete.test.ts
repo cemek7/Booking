@@ -22,13 +22,13 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
             data: { tenant_id: 'test-tenant-id', role: 'owner' },
             error: null,
           }),
-          then: (resolve: any) =>
+          then: (resolve: (value: unknown) => void) =>
             resolve({ data: [{ tenant_id: 'test-tenant-id', role: 'owner' }], error: null }),
         };
       }
       if (table === 'skills') {
         return {
-          update(patch: any) { this._patch = patch; return this; },
+          update(patch: Record<string, unknown>) { this._patch = patch; return this; },
           delete() {
             return {
               eq: jest.fn().mockImplementation((_c: string, id: string) => {
@@ -65,7 +65,7 @@ describe('skills PATCH/DELETE API route', () => {
       method: 'PATCH',
       body: JSON.stringify({ name: 'Styled Cut' }),
     });
-    const res: any = await skillPATCH(req, { params: { id: 's1' } });
+    const res: Response = await skillPATCH(req, { params: { id: 's1' } });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.skill).toHaveProperty('name', 'Styled Cut');
@@ -73,7 +73,7 @@ describe('skills PATCH/DELETE API route', () => {
 
   it('DELETE removes skill', async () => {
     const req = new NextRequest('http://x/api/skills/s1', { method: 'DELETE' });
-    const res: any = await skillDELETE(req, { params: { id: 's1' } });
+    const res: Response = await skillDELETE(req, { params: { id: 's1' } });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('ok', true);

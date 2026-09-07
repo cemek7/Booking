@@ -1,14 +1,9 @@
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
-
-class HttpInstrumentation {
-  constructor(_options: { ignoreIncomingRequestHook?: (req: { url?: string }) => boolean }) {}
-}
 
 if (process.env.NODE_ENV !== 'production') {
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
@@ -35,11 +30,12 @@ export function initTelemetry() {
     sdk = new NodeSDK({
       resource,
       traceExporter,
-      instrumentations: [
-        new HttpInstrumentation({
-          ignoreIncomingRequestHook: (req) => req.url === '/api/metrics'
-        })
-      ]
+      // No auto-instrumentations registered: @opentelemetry/instrumentation-http
+      // is not a dependency. The previous local no-op stub did not implement the
+      // Instrumentation interface, so NodeSDK.start() threw and telemetry never
+      // initialized. Base tracing works with an empty list; add real
+      // instrumentation packages here if HTTP auto-instrumentation is needed.
+      instrumentations: []
     });
     sdk.start();
   } catch (e) {

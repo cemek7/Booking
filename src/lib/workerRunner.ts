@@ -2,6 +2,14 @@ import { defaultLogger } from '@/lib/logger';
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
 import type { JobRow, JobPayload } from '@/types/jobs';
 
+type WorkerHandler = (payload: JobPayload | null) => Promise<unknown>;
+type WorkerModule = { handler?: unknown; default?: { handler?: unknown } };
+type JobRunMetadata = JobRow & { run_count?: unknown };
+
+function asWorkerHandler(value: unknown): WorkerHandler | null {
+  return typeof value === 'function' ? value as WorkerHandler : null;
+}
+
 export async function processOnePendingJob() {
   const supabase = getSupabaseRouteHandlerClient();
 
@@ -17,7 +25,7 @@ export async function processOnePendingJob() {
 
   const rows = (list?.data ?? []) as JobRow[];
   if (!rows || rows.length === 0) return null;
-  const job = rows[0];
+  const job = rows[0] as JobRunMetadata;
 
   // Try to claim the job atomically by changing status to 'processing' if still pending
   const claim = await supabase
@@ -33,9 +41,9 @@ export async function processOnePendingJob() {
 
   // Load worker handler from dist/worker.js. This keeps the runner simple; a
   // production runner can replace this with tinypool or other worker runtimes.
-  let handler: ((payload: JobPayload | null) => Promise<unknown>) | null = null;
+  let handler: WorkerHandler | null = null;
   // In test environments, provide a no-op handler to avoid requiring a built worker artifact.
-  if (process.env.NODE_ENV === 'test' || (globalThis as any).vi) {
+  if (process.env.NODE_ENV === 'test' || (globalThis as typeof globalThis & { vi?: unknown }).vi) {
     handler = async () => undefined;
   }
   try {
@@ -46,7 +54,7 @@ export async function processOnePendingJob() {
     // Prefer the ESM build if present, fallback to the JS CJS build for compatibility.
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore -- dynamic import of JS runtime artifact
-    let imported: any;
+    let imported: unknown;
     try {
       const esmWorkerPath = '../../dist/worker.mjs';
       imported = await import(esmWorkerPath);
@@ -58,8 +66,8 @@ export async function processOnePendingJob() {
         throw e2;
       }
     }
-    const mod = imported as any;
-    handler = mod && (mod.handler || (mod.default && mod.default.handler)) ? (mod.handler || (mod.default && mod.default.handler)) : null;
+    const mod = imported as WorkerModule;
+    handler = asWorkerHandler(mod.handler) ?? asWorkerHandler(mod.default?.handler);
   } catch (e) {
     defaultLogger.warn('Failed to load worker module', e);
   }
@@ -77,13 +85,13 @@ export async function processOnePendingJob() {
     // next run instead of inserting a new row. This keeps one canonical DB row
     // for a recurring job (DB-trigger style) and avoids accumulating completed
     // rows for each occurrence.
-    const recurring = (job.payload as any)?._recurring;
+    const recurring = job.payload?._recurring;
     if (recurring && typeof recurring.interval_minutes === 'number' && Number(recurring.interval_minutes) > 0) {
       try {
         const nextAt = new Date(Date.now() + Number(recurring.interval_minutes) * 60 * 1000).toISOString();
         // Compute the incremented run_count in JS to avoid DB-side expressions that
         // may not be supported by all clients. Default to 1 if missing.
-        const currentRunCount = (job as any).run_count ?? 0;
+        const currentRunCount = job.run_count ?? 0;
         const newRunCount = Number(currentRunCount) + 1;
         // Update the same job to schedule the next run, reset attempts, record last_run_at and run_count.
         await supabase.from('jobs').update({
@@ -105,7 +113,7 @@ export async function processOnePendingJob() {
 
     // Non-recurring job: mark completed and record run metadata for observability.
     try {
-      const currentRunCount = (job as any).run_count ?? 0;
+      const currentRunCount = job.run_count ?? 0;
       await supabase.from('jobs').update({
         status: 'completed',
         last_error: null,

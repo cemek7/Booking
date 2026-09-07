@@ -23,7 +23,7 @@ function consume(): DbResponse {
 }
 
 function makeChain() {
-  const chain: any = {};
+  const chain: Record<string, unknown> = {};
   const filters = ['select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'contains', 'order', 'limit'];
   filters.forEach(m => {
     chain[m] = jest.fn().mockReturnValue(chain);

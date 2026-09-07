@@ -877,7 +877,7 @@ export async function saveDashboardConfig(
       type: string;
       position: { x: number; y: number };
       size: { width: number; height: number };
-      config: Record<string, any>;
+      config: Record<string, unknown>;
     }>;
     preferences: {
       defaultPeriod?: string;

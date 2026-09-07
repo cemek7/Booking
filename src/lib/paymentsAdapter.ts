@@ -1,6 +1,5 @@
-// @ts-nocheck
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createHash } from 'crypto';
 import metrics from './metrics';
 import { trace } from '@opentelemetry/api';
@@ -29,6 +28,13 @@ export interface DepositIntentResult {
   error?: string | null;
 }
 
+interface ExistingDepositTransaction {
+  raw?: {
+    ref?: string | null;
+    provider?: string | null;
+  } | null;
+}
+
 export interface StandalonePaymentLinkInput {
   tenant_id: string;
   reference_key: string;
@@ -40,6 +46,10 @@ export interface StandalonePaymentLinkInput {
   metadata?: Record<string, unknown> | null;
   callback_url?: string | null;
   tenantDefaultProvider?: string;
+  /** Tenant's Paystack subaccount — settles the split to their bank, not the platform. */
+  subaccountCode?: string | null;
+  /** Who bears the Paystack fee when a subaccount is used. Default 'account' (platform). */
+  bearer?: 'account' | 'subaccount';
 }
 
 export interface StandalonePaymentLinkResult {
@@ -197,6 +207,9 @@ async function createPaystackStandalonePaymentLink(
         reference: input.reference_key,
         callback_url: input.callback_url || undefined,
         metadata: input.metadata || {},
+        // Split settlement to the tenant's bank when a subaccount is configured.
+        subaccount: input.subaccountCode || undefined,
+        bearer: input.subaccountCode ? (input.bearer || 'account') : undefined,
       }),
       timeoutMs: 15_000,
     });
@@ -261,7 +274,16 @@ async function createStripeStandalonePaymentLink(
 // Persistence helper for transactions row (type=deposit)
 export async function recordDepositTransaction(supabase: SupabaseClient, tenantId: string, reservationId: string, minorAmount: number, currency: string, provider: string, ref: string | null) {
   try {
-    await supabase.from('transactions').insert({ tenant_id: tenantId, amount: minorAmount / 100, currency, type: 'deposit', status: 'initiated', raw: { provider, ref, reservation_id: reservationId } });
+    await supabase.from('transactions').insert({
+      tenant_id: tenantId,
+      amount: minorAmount / 100,
+      currency,
+      type: 'deposit',
+      status: 'initiated',
+      subject_type: 'reservation',
+      subject_id: reservationId,
+      raw: { provider, ref, reservation_id: reservationId },
+    });
   } catch (e) {
     defaultLogger.warn('recordDepositTransaction failed', e);
   }
@@ -292,7 +314,13 @@ export async function initiateDepositForReservation(
       .eq('type', 'deposit')
       .limit(1);
     if (existing && existing.length > 0) {
-      return { id: (existing[0] as any)?.raw?.ref || null, status: 'created', provider: (existing[0] as any)?.raw?.provider, payment_url: null };
+      const existingTx = existing[0] as ExistingDepositTransaction;
+      return {
+        id: existingTx.raw?.ref || null,
+        status: 'created',
+        provider: existingTx.raw?.provider || undefined,
+        payment_url: null,
+      };
     }
     const intent = await adapter.createDeposit({ tenant_id: tenantId, reservation_id: reservationId, amount_minor_units: depositMinor, currency });
     if (intent.status === 'created') {
@@ -305,4 +333,12 @@ export async function initiateDepositForReservation(
   }
 }
 
-export default { PaymentsAdapter, PaystackProvider, StripeProvider, recordDepositTransaction, initiateDepositForReservation };
+const paymentsAdapterExports = {
+  PaymentsAdapter,
+  PaystackProvider,
+  StripeProvider,
+  recordDepositTransaction,
+  initiateDepositForReservation,
+};
+
+export default paymentsAdapterExports;

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
-// @ts-nocheck
 import { defaultLogger } from '@/lib/logger';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
@@ -46,9 +44,20 @@ export interface ModuleInstallationResult {
   rollbackAvailable?: boolean;
 }
 
+/** Runtime instance stored per tenant/module (see loadModuleIntoRuntime). */
+export interface ModuleInstance {
+  schema: VerticalModule;
+  config: Record<string, unknown>;
+  templates: Record<string, unknown>;
+  workflows: Record<string, unknown>;
+  forms: Record<string, unknown>;
+  features: string[];
+  loadedAt: string;
+}
+
 class VerticalModuleRuntime {
   private supabase = createServerSupabaseClient();
-  private installedModules = new Map<string, Map<string, unknown>>(); // tenant_id -> module_name -> module_instance
+  private installedModules = new Map<string, Map<string, ModuleInstance>>(); // tenant_id -> module_name -> module_instance
   private moduleSchemas = new Map<string, VerticalModule>();
 
   /**
@@ -331,7 +340,7 @@ class VerticalModuleRuntime {
   /**
    * Get module instance for a tenant
    */
-  getModuleInstance(tenantId: string, moduleName: string): unknown | null {
+  getModuleInstance(tenantId: string, moduleName: string): ModuleInstance | null {
     const tenantModules = this.installedModules.get(tenantId);
     return tenantModules?.get(moduleName) || null;
   }
@@ -625,7 +634,9 @@ class VerticalModuleRuntime {
       // Basic JSON schema validation would go here
       // For now, just check required fields
       const schema = moduleSchema.config_schema;
-      const required = schema.required || [];
+      const required: string[] = Array.isArray(schema.required)
+        ? (schema.required as string[])
+        : [];
 
       for (const field of required) {
         if (!(field in config)) {
@@ -802,8 +813,15 @@ class VerticalModuleRuntime {
 
       const dependents: string[] = [];
 
-      for (const tm of tenantModules || []) {
-        const dependencies = tm.modules?.dependencies || [];
+      // PostgREST types the to-one `modules` join as an array; normalize to the
+      // single related row before reading dependencies.
+      const rows = (tenantModules ?? []) as unknown as Array<{
+        module_name: string;
+        modules?: { dependencies?: string[] } | Array<{ dependencies?: string[] }> | null;
+      }>;
+      for (const tm of rows) {
+        const mod = Array.isArray(tm.modules) ? tm.modules[0] : tm.modules;
+        const dependencies = mod?.dependencies ?? [];
         if (dependencies.includes(moduleName)) {
           dependents.push(tm.module_name);
         }
@@ -868,7 +886,7 @@ class VerticalModuleRuntime {
       // Remove from runtime
       const tenantModules = this.installedModules.get(tenantId);
       if (tenantModules?.has(moduleName)) {
-        const moduleSchema = tenantModules.get(moduleName).schema;
+        const moduleSchema = tenantModules.get(moduleName)!.schema;
         
         // Reload with new config
         await this.loadModuleIntoRuntime(tenantId, moduleSchema, newConfig);

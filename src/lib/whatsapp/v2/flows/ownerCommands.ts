@@ -10,10 +10,19 @@
 
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
+import { findByIdempotencyKey, logAiAction } from '@/lib/ai/aiActionLog';
+import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
+import { getPermissionForAction, hasPermissionInSet } from '@/lib/booking/capabilityMap';
+import { createHash } from 'crypto';
+import { parseNairaAmount } from '@/lib/ai/parseNairaAmount';
+import { getEffectivePermissions } from '@/lib/permissions/effectivePermissions';
+import { gateApprovalForAction } from '@/lib/approvals/requests';
+import type { Role } from '@/types/roles';
+import { answerQuestion, MetricPermissionError } from '@/lib/analytics/answer';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -28,10 +37,62 @@ type StaffListRow = {
   role: string | null;
 };
 
+type CommandActorContext = {
+  role: Role;
+  tenantUserId: string;
+  userId: string | null;
+  permissions: Set<string>;
+};
+
+type OwnerAIResponse = AIResponse & {
+  idempotency_key?: string;
+  requires_confirmation?: boolean;
+};
+
+function toInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  }
+  return null;
+}
+
+function actionRequiresDiscountPermission(aiResp: AIResponse): boolean {
+  if (aiResp.action !== 'create_order') return false;
+  const discountCents = Math.max(0, toInteger(aiResp.params.discount_cents ?? aiResp.params.discount) ?? 0);
+  const discountPercent = Math.max(0, toInteger(aiResp.params.discount_percent) ?? 0);
+  return discountCents > 0 || discountPercent > 0;
+}
+
 function getTenantSettings(row: { metadata?: unknown; tone_config?: unknown } | null): Record<string, unknown> {
   return {
     ...((row?.metadata as Record<string, unknown> | null) ?? {}),
     tone_config: row?.tone_config ?? null,
+  };
+}
+
+async function resolveCommandActor(
+  tenantId: string,
+  phone: string
+): Promise<CommandActorContext | null> {
+  const { data, error } = await supabaseAdmin
+    .from('tenant_users')
+    .select('id, user_id, role')
+    .eq('tenant_id', tenantId)
+    .eq('phone', phone)
+    .in('role', ['owner', 'manager', 'staff'])
+    .maybeSingle();
+
+  if (error) throw error;
+  const actorRow = data as { id: string; user_id: string | null; role: Role } | null;
+  if (!actorRow) return null;
+
+  return {
+    role: actorRow.role,
+    tenantUserId: actorRow.id,
+    userId: actorRow.user_id,
+    permissions: await getEffectivePermissions(supabaseAdmin, tenantId, actorRow.id),
   };
 }
 
@@ -59,7 +120,17 @@ export async function handleOwnerCommand(
   }
 
   // ── AI response ───────────────────────────────────────────────────────────
-  const aiResp = input as AIResponse;
+  const aiResp = normalizeMoneyParams(input as AIResponse);
+  const commandResponse = aiResp as OwnerAIResponse;
+  const role = conv.role ?? 'owner';
+  const requiredPermission = actionRequiresDiscountPermission(commandResponse)
+    ? 'ISSUE_DISCOUNTS'
+    : getPermissionForAction(commandResponse.action);
+  const writeAction = isWriteAction(commandResponse.action);
+  const idempotencyKey = getIdempotencyKey(tenantId, convExternalId, rawMessage, commandResponse, writeAction);
+  const actor = requiredPermission || writeAction
+    ? await resolveCommandActor(tenantId, convExternalId)
+    : null;
 
   await captureServerAnalyticsEvent({
     event: ANALYTICS_EVENTS.OWNER_COMMAND_USED,
@@ -78,34 +149,154 @@ export async function handleOwnerCommand(
 
   // Walk-in: execute immediately — no confirmation needed, customer is present
   if (aiResp.action === 'walk_in') {
-    const execResult = await executeAction(tenantId, aiResp, { customerPhone: convExternalId });
+    const execResult = await executeAction(tenantId, aiResp, {
+      customerPhone: convExternalId,
+      actorId: actor?.tenantUserId ?? null,
+      userRole: role === 'staff' ? 'staff' : 'owner',
+      channel: convChannel,
+    });
+    await logAiAction(supabaseAdmin, {
+      tenantId,
+      actorType: role,
+      channel: convChannel,
+      rawMessage,
+      action: aiResp.action,
+      params: aiResp.params,
+      idempotencyKey,
+      validationResult: { success: execResult.success },
+      outcome: execResult.success ? 'executed' : 'rejected',
+      model: 'owner-command',
+    });
     if (!execResult.success) {
       return execResult.error ?? 'Could not record the walk-in. Please try again.';
     }
     return aiResp.reply;
   }
 
+  if (writeAction) {
+    const existing = await findByIdempotencyKey(supabaseAdmin, tenantId, idempotencyKey).catch(() => null);
+    if (existing) {
+      return 'I already handled that command.';
+    }
+  }
+
+  if (requiredPermission) {
+    if (!actor || !hasPermissionInSet(actor.permissions, requiredPermission)) {
+    await recordBusinessEvent(supabaseAdmin, {
+      tenantId,
+      actorType: role === 'staff' ? 'staff' : 'user',
+      actorId: actor?.userId ?? null,
+      action: BUSINESS_EVENT_ACTIONS.COMMAND_DENIED,
+      entityType: 'ai_action',
+      entityId: commandResponse.action,
+      source: 'whatsapp',
+      metadata: { permission: requiredPermission, role, params: commandResponse.params },
+    });
+    await logAiAction(supabaseAdmin, {
+      tenantId,
+      actorType: role,
+      channel: convChannel,
+      rawMessage,
+      action: commandResponse.action,
+      params: commandResponse.params,
+      idempotencyKey,
+      validationResult: { denied_permission: requiredPermission },
+      outcome: 'denied',
+      model: 'owner-command',
+    });
+    return 'You are not permitted to run that command.';
+  }
+  }
+
   // If AI wants confirmation before executing a write action, store pending action
-  if (isWriteAction(aiResp.action) && conv.flow_data?.awaiting_confirmation !== true) {
+  if (writeAction && conv.flow_data?.awaiting_confirmation !== true) {
+    commandResponse.idempotency_key = idempotencyKey;
     await updateConversation(convExternalId, tenantId, {
       flow_data: {
         ...conv.flow_data,
-        pending_action: aiResp,
+        pending_action: commandResponse,
         awaiting_confirmation: true,
       },
     }, convChannel);
+    await logAiAction(supabaseAdmin, {
+      tenantId,
+      actorType: role,
+      channel: convChannel,
+      rawMessage,
+      action: commandResponse.action,
+      params: commandResponse.params,
+      idempotencyKey,
+      validationResult: { awaiting_confirmation: true },
+      outcome: 'needs_confirmation',
+      model: 'owner-command',
+    });
     // Return the AI's confirmation message
     return aiResp.reply;
   }
 
   // Execute immediately for read-only and message actions
-  if (!isWriteAction(aiResp.action)) {
-    const result = await executeReadAction(tenantId, aiResp);
+  if (!writeAction) {
+    const result = await executeReadAction(tenantId, aiResp, actor?.tenantUserId ?? null, actor?.permissions, rawMessage);
+    await logAiAction(supabaseAdmin, {
+      tenantId,
+      actorType: role,
+      channel: convChannel,
+      rawMessage,
+      action: commandResponse.action,
+      params: commandResponse.params,
+      idempotencyKey,
+      validationResult: { read: true },
+      outcome: 'executed',
+      model: 'owner-command',
+    });
     return result ?? aiResp.reply;
   }
 
   // Write confirmed (this path: awaiting_confirmation=true, AI response is confirming)
-  const execResult = await executeAction(tenantId, aiResp, { customerPhone: convExternalId });
+  if (actor?.role) {
+    try {
+      const approvalGate = await gateApprovalForAction(supabaseAdmin, {
+        tenantId,
+        actorId: actor.tenantUserId,
+        actorRole: actor.role,
+        aiResponse: aiResp,
+      });
+
+      if (approvalGate.status === 'pending') {
+        await updateConversation(convExternalId, tenantId, {
+          flow_data: {
+            ...conv.flow_data,
+            pending_action: null,
+            awaiting_confirmation: false,
+          },
+        }, convChannel);
+
+        await logAiAction(supabaseAdmin, {
+          tenantId,
+          actorType: role,
+          channel: convChannel,
+          rawMessage,
+          action: commandResponse.action,
+          params: commandResponse.params,
+          idempotencyKey,
+          validationResult: { approval_request_id: approvalGate.requestId ?? null },
+          outcome: 'pending_approval',
+          model: 'owner-command',
+        });
+
+        return approvalGate.reply ?? 'This request was sent for approval.';
+      }
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Approval checks failed. Please try again.';
+    }
+  }
+
+  const execResult = await executeAction(tenantId, aiResp, {
+    customerPhone: convExternalId,
+    actorId: actor?.tenantUserId ?? null,
+    userRole: role === 'staff' ? 'staff' : 'owner',
+    channel: convChannel,
+  });
   await updateConversation(convExternalId, tenantId, {
     flow_data: {
       ...conv.flow_data,
@@ -113,6 +304,19 @@ export async function handleOwnerCommand(
       awaiting_confirmation: false,
     },
   }, convChannel);
+
+  await logAiAction(supabaseAdmin, {
+    tenantId,
+    actorType: role,
+    channel: convChannel,
+    rawMessage,
+    action: commandResponse.action,
+    params: commandResponse.params,
+    idempotencyKey: `${idempotencyKey}:read`,
+    validationResult: { success: execResult.success },
+    outcome: execResult.success ? 'executed' : 'rejected',
+    model: 'owner-command',
+  });
 
   if (!execResult.success) {
     return `Something went wrong: ${execResult.error ?? 'unknown error'}. Please try again.`;
@@ -139,13 +343,41 @@ async function handleRuleMatch(
 
     case 'affirm': {
       // Confirm pending action
-      const pending = conv.flow_data?.pending_action as AIResponse | null;
+      const pending = conv.flow_data?.pending_action as OwnerAIResponse | null;
       if (!pending) return 'What would you like to do?';
 
-      const result = await executeAction(tenantId, pending, { customerPhone: externalId });
+      const pendingIdempotencyKey = pending.idempotency_key ?? getIdempotencyKey(tenantId, externalId, pending.reply, pending, true);
+      const existing = await findByIdempotencyKey(supabaseAdmin, tenantId, pendingIdempotencyKey).catch(() => null);
+      if (existing?.outcome === 'executed') {
+        await updateConversation(externalId, tenantId, {
+          flow_data: { ...conv.flow_data, pending_action: null, awaiting_confirmation: false },
+        }, channel);
+        return 'I already handled that command.';
+      }
+
+      const actor = await resolveCommandActor(tenantId, externalId);
+      const result = await executeAction(tenantId, pending, {
+        customerPhone: externalId,
+        actorId: actor?.tenantUserId ?? null,
+        userRole: conv.role === 'staff' ? 'staff' : 'owner',
+        channel,
+      });
       await updateConversation(externalId, tenantId, {
         flow_data: { ...conv.flow_data, pending_action: null, awaiting_confirmation: false },
       }, channel);
+
+      await logAiAction(supabaseAdmin, {
+        tenantId,
+        actorType: conv.role ?? 'owner',
+        channel,
+        rawMessage: null,
+        action: pending.action,
+        params: pending.params,
+        idempotencyKey: pendingIdempotencyKey,
+        validationResult: { confirmed: true, success: result.success },
+        outcome: result.success ? 'executed' : 'rejected',
+        model: 'owner-command',
+      });
 
       return result.success
         ? `Done! ${pending.reply}`
@@ -177,15 +409,34 @@ async function handleRuleMatch(
 
 async function executeReadAction(
   tenantId: string,
-  aiResp: AIResponse
+  aiResp: AIResponse,
+  actorId: string | null,
+  permissions?: Set<string>,
+  rawMessage?: string
 ): Promise<string | null> {
-  const { action, params } = aiResp;
+  const { action } = aiResp;
 
   switch (action) {
     case 'owner_query':
+    case 'owner_analytics_query':
     case 'get_insights': {
-      // Return the AI-formatted reply (the AI already composed the answer from the context)
-      return null; // use aiResp.reply
+      const question = typeof aiResp.params.question === 'string' && aiResp.params.question.trim()
+        ? aiResp.params.question.trim()
+        : rawMessage?.trim();
+      if (!question) return aiResp.reply;
+
+      try {
+        const answer = await answerQuestion(supabaseAdmin, tenantId, question, {
+          actorId,
+          permissions: permissions ?? new Set(),
+        });
+        return answer.text;
+      } catch (error) {
+        if (error instanceof MetricPermissionError) {
+          return error.message;
+        }
+        return 'I could not answer that analytics question yet. Please try rephrasing it.';
+      }
     }
 
     case 'list_services': {
@@ -227,7 +478,65 @@ function isWriteAction(action: string): boolean {
   return [
     'create_booking', 'cancel_booking', 'reschedule_booking', 'mark_no_show',
     'add_service', 'update_service', 'add_staff', 'update_schedule', 'block_slot',
+    'add_product', 'adjust_stock', 'set_price', 'set_availability',
+    'record_retail_sale', 'refund_sale', 'record_outstanding_balance',
+    'create_order', 'set_order_fulfillment', 'add_delivery_fee', 'cancel_order_restock',
+    'add_customer_note', 'set_customer_tag', 'set_staff_capability',
   ].includes(action);
+}
+
+function getIdempotencyKey(
+  tenantId: string,
+  externalId: string,
+  rawMessage: string,
+  aiResp: OwnerAIResponse,
+  deterministic: boolean
+): string {
+  if (typeof aiResp.idempotency_key === 'string' && aiResp.idempotency_key.trim()) {
+    return aiResp.idempotency_key.trim();
+  }
+
+  const base = createHash('sha256')
+    .update(JSON.stringify({
+      tenantId,
+      externalId,
+      action: aiResp.action,
+      params: aiResp.params,
+      rawMessage: rawMessage.trim().toLowerCase(),
+    }))
+    .digest('hex');
+
+  return deterministic ? base : `${base}:${Date.now()}`;
+}
+
+function normalizeMoneyParams(aiResp: AIResponse): AIResponse {
+  const keys = [
+    'price',
+    'price_cents',
+    'unit_price_cents',
+    'delivery_fee',
+    'delivery_fee_cents',
+    'discount',
+    'discount_cents',
+    'amount',
+    'amount_cents',
+  ];
+
+  const params = { ...aiResp.params };
+  for (const key of keys) {
+    const value = params[key];
+    if (typeof value === 'string') {
+      const parsed = parseNairaAmount(value);
+      if (parsed !== null) {
+        params[key.endsWith('_cents') ? key : `${key}_cents`] = parsed;
+      }
+    }
+  }
+
+  return {
+    ...aiResp,
+    params,
+  };
 }
 
 async function getOwnerGreeting(tenantId: string): Promise<string> {
@@ -250,5 +559,5 @@ async function getOwnerHelp(tenantId: string): Promise<string> {
   const bookingNoun = String(settings.booking_noun ?? 'booking');
   const staffTitle = String(settings.staff_title ?? 'staff');
 
-  return `Here's what you can ask me:\n\n*Schedule*\n  • "Who's booked today/tomorrow/this week?"\n  • "What's [${staffTitle}]'s schedule this week?"\n  • "Block [date/time] for [${staffTitle}]"\n  • "Walk-in [${staffTitle}] [service]"\n\n*${bookingNoun.charAt(0).toUpperCase() + bookingNoun.slice(1)}s*\n  • "Cancel [customer]'s ${bookingNoun}"\n  • "Move [customer] to [new time]"\n  • "Mark [customer] as no-show"\n\n*Services & ${staffTitle}s*\n  • "Change [service] price to [amount]"\n  • "Add [service] at [price]"\n  • "Add a new ${staffTitle} named [name]"\n\n*Reports*\n  • "How was today/this week?"\n  • "Who are my top customers?"`;
+  return `Here's what you can ask me:\n\n*Schedule*\n  • "Who's booked today/tomorrow/this week?"\n  • "What's [${staffTitle}]'s schedule this week?"\n  • "Block [date/time] for [${staffTitle}]"\n  • "Walk-in [${staffTitle}] [service]"\n\n*${bookingNoun.charAt(0).toUpperCase() + bookingNoun.slice(1)}s*\n  • "Cancel [customer]'s ${bookingNoun}"\n  • "Move [customer] to [new time]"\n  • "Mark [customer] as no-show"\n\n*Products & Orders*\n  • "Add [product] at ₦[price]"\n  • "Restock [product] by [qty]"\n  • "Record retail sale for ₦[amount]"\n  • "Refund retail order [id]"\n  • "Add delivery fee of ₦[amount] to order [id]"\n\n*Customers & Team*\n  • "Show lapsed customers"\n  • "Tag customer [name] as wholesale"\n  • "Add note for [customer]"\n  • "Show ${staffTitle} sales this week"\n\n*Reports*\n  • "How was today/this week?"\n  • "Who are my top customers?"`;
 }

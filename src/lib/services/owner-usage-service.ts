@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { SupabaseClient } from '@supabase/supabase-js';
 import { ApiError } from '@/lib/error-handling/api-error';
 import { z } from 'zod';

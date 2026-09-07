@@ -7,6 +7,9 @@ import { enqueueJob } from '@/lib/webhooks';
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQualityWebhook';
+import { MetaAdapter } from '@/lib/whatsapp/providers/meta';
+import { resolveChargeTenantByWamid, settleOutboundMessage } from '@/lib/billing/messageWallet';
+import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -39,6 +42,14 @@ interface MetaWebhookPayload {
           id?: string;
           status?: string;
           timestamp?: string;
+          recipient_id?: string;
+          conversation?: { id?: string; origin?: { type?: string } };
+          pricing?: {
+            billable?: boolean;
+            pricing_model?: string;
+            category?: string;
+            type?: string;
+          };
         }>;
       };
     }>;
@@ -79,6 +90,67 @@ function verifyMetaSignature(rawBody: string, incomingSignature: string | null, 
     expectedBuffer.length === incomingBuffer.length &&
     timingSafeEqual(expectedBuffer, incomingBuffer)
   );
+}
+
+export interface MetaStatusEvent {
+  id?: string;
+  status?: string;
+  timestamp?: string;
+  recipient_id?: string;
+  conversation?: { id?: string; origin?: { type?: string } };
+  pricing?: {
+    billable?: boolean;
+    pricing_model?: string;
+    category?: string;
+    type?: string;
+  };
+}
+
+const SETTLEABLE_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
+
+/**
+ * Settles one delivery status against the tenant's message wallet.
+ *
+ * Meta's own `pricing` object is forwarded verbatim rather than re-derived
+ * locally. That is what keeps this correct across the 2026-10-01 pricing change
+ * with no deploy: Booka charges what Meta says it billed, not what Booka
+ * believes Meta's rules to be.
+ *
+ * Never throws. A 500 out of this webhook makes Meta retry the whole payload,
+ * which re-runs message ingestion — a settlement bug must not become a
+ * duplicate-reply bug.
+ */
+export async function settleStatusEvent(
+  admin: SupabaseClient,
+  tenantId: string | null,
+  status: MetaStatusEvent,
+): Promise<void> {
+  if (!status.id || !status.status) return;
+  if (!SETTLEABLE_STATUSES.has(status.status)) return;
+  try {
+    // Shared-gateway traffic has no whatsapp_configurations row, so this webhook
+    // cannot map its phone_number_id to a tenant — but those sends are metered
+    // all the same. Fall back to the charge row, which the wamid identifies
+    // uniquely. Skipping instead would reserve credit that is never settled and
+    // leave the sweeper's `released` counter permanently non-zero, killing the
+    // one signal that says the webhook has broken.
+    const resolvedTenantId = tenantId ?? await resolveChargeTenantByWamid(admin, status.id);
+    if (!resolvedTenantId) return;
+
+    await settleOutboundMessage({
+      admin,
+      tenantId: resolvedTenantId,
+      wamid: status.id,
+      deliveryStatus: status.status as 'sent' | 'delivered' | 'read' | 'failed',
+      pricing: status.pricing,
+    });
+  } catch (error) {
+    defaultLogger.error('[WEBHOOK-META] Settlement failed', { wamid: status.id, error });
+  }
+}
+
+export function buildStatusIdempotencyKey(wamid: string, status?: string): string {
+  return `${wamid}:${status ?? 'unknown'}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -155,23 +227,34 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (!config?.tenant_id) {
+      const isSharedGateway =
+        !config?.tenant_id &&
+        process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID === metaPhoneNumberId;
+
+      if (!config?.tenant_id && !isSharedGateway) {
         defaultLogger.warn('[WEBHOOK-META] No active tenant mapped to phone_number_id', { metaPhoneNumberId });
         continue;
       }
 
-      const tenantId = config.tenant_id as string;
-      const instanceName = (config.instance_name as string) || metaPhoneNumberId;
+      const configuredTenantId = config?.tenant_id as string | undefined;
+      const instanceName = (config?.instance_name as string | undefined) || metaPhoneNumberId;
 
       for (const status of value.statuses ?? []) {
         if (!status.id) continue;
-        await handleIdempotency(
+        const isDuplicateStatus = await handleIdempotency(
           supabase,
           'meta',
           `${metaPhoneNumberId}:status`,
-          status.id,
+          buildStatusIdempotencyKey(status.id, status.status),
           { type: 'status', status, value }
         );
+        // Meta retries the whole payload on any non-200, so without this a
+        // single retry would settle the same delivery twice against a
+        // non-idempotent settle RPC.
+        if (isDuplicateStatus) continue;
+        // configuredTenantId is undefined for shared-gateway traffic;
+        // settleStatusEvent resolves it from the charge row in that case.
+        await settleStatusEvent(supabase, configuredTenantId ?? null, status);
       }
 
       for (const message of value.messages ?? []) {
@@ -186,8 +269,24 @@ export async function POST(request: NextRequest) {
         );
         if (isDuplicate) continue;
 
+        let tenantId = configuredTenantId;
+        let routedContent = extractMetaMessageContent(message);
+        if (!tenantId && isSharedGateway) {
+          const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
+          const identity = await resolveIncoming('whatsapp', message.from, routedContent);
+          tenantId = identity.tenantId ?? undefined;
+          routedContent = identity.strippedMessage || routedContent;
+
+          if (!tenantId) {
+            await sendSharedGatewayRoutingPrompt(message.from, metaPhoneNumberId);
+            continue;
+          }
+        }
+        if (!tenantId) continue;
+
         const parsed = parseMetaMessage(message, value.metadata?.display_phone_number ?? metaPhoneNumberId, tenantId);
         if (!parsed) continue;
+        parsed.content = routedContent;
 
         const chatId = await upsertChat(supabase, tenantId, parsed.from_number as string);
         if (chatId) parsed.chat_id = chatId;
@@ -201,13 +300,38 @@ export async function POST(request: NextRequest) {
           instanceName,
           parsed.from_number as string,
           parsed.content as string,
-          messageRowId
+          messageRowId,
+          isSharedGateway
         );
       }
     }
   }
 
   return NextResponse.json({ status: 'received' }, { status: 200 });
+}
+
+function extractMetaMessageContent(message: MetaIncomingMessage): string {
+  if (message.type === 'text') return message.text?.body ?? '';
+  if (message.type === 'interactive') {
+    return message.interactive?.button_reply?.title ?? message.interactive?.list_reply?.title ?? '';
+  }
+  if (message.type === 'image') return message.image?.caption ?? '[Image]';
+  if (message.type === 'video') return message.video?.caption ?? '[Video]';
+  if (message.type === 'document') return message.document?.caption ?? message.document?.filename ?? '[Document]';
+  if (message.type === 'audio') return '[Audio]';
+  return '';
+}
+
+async function sendSharedGatewayRoutingPrompt(to: string, phoneNumberId: string): Promise<void> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || '';
+  if (!token) return;
+  const base = (process.env.WHATSAPP_BASE_URL || 'https://graph.facebook.com').replace(/\/+$/, '');
+  const version = getWhatsAppGraphApiVersion();
+  const client = new MetaAdapter({ provider: 'meta', baseUrl: `${base}/${version}`, apiKey: token, instanceName: phoneNumberId });
+  await client.sendTextMessage(
+    to,
+    'Welcome to Booka. Please open your business\'s Booka WhatsApp link, or reply with its 6-character business code so we can connect you to the right business.'
+  );
 }
 
 function parseMetaMessage(message: MetaIncomingMessage, toNumber: string, tenantId: string): Record<string, unknown> | null {
@@ -332,7 +456,8 @@ async function routeMessage(
   instance: string,
   fromNumber: string,
   content: string,
-  messageRowId: string
+  messageRowId: string,
+  tenantAlreadyRouted = false
 ): Promise<void> {
   const { data: tenantRow } = await supabase
     .from('tenants')
@@ -345,7 +470,9 @@ async function routeMessage(
     const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
     const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
-    const identity = await resolveIncoming('whatsapp', fromNumber, content);
+    const identity = tenantAlreadyRouted
+      ? { tenantId, role: 'customer' as const, routingCodeFound: false, strippedMessage: content }
+      : await resolveIncoming('whatsapp', fromNumber, content);
     const resolvedTenantId = identity.tenantId ?? tenantId;
     const role = identity.role;
 

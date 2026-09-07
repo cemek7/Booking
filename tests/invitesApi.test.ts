@@ -66,7 +66,7 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
           maybeSingle: jest.fn().mockImplementation(() =>
             Promise.resolve({ data: { tenant_id: 't1', role: callerRole }, error: null })
           ),
-          then: (resolve: any) =>
+          then: (resolve: (value: unknown) => void) =>
             resolve({ data: [{ tenant_id: 't1', role: callerRole }], error: null }),
         };
       }
@@ -105,7 +105,7 @@ describe('Invites API', () => {
       headers: { 'x-test-bypass-skip': '1' },
       body: JSON.stringify({ email: 'a@b.com' })
     });
-    const res: any = await invitesPOST(req, { params: { tenantId: 't1' } });
+    const res: Response = await invitesPOST(req, { params: { tenantId: 't1' } });
     expect(res.status).toBe(401);
   });
 
@@ -115,7 +115,7 @@ describe('Invites API', () => {
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'user@example.com', role: 'staff' })
     });
-    const res: any = await invitesPOST(req, { params: { tenantId: 't1' } });
+    const res: Response = await invitesPOST(req, { params: { tenantId: 't1' } });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('ok', true);
@@ -130,7 +130,7 @@ describe('Invites API', () => {
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'user@example.com', role: 'staff' })
     });
-    const res: any = await invitesPOST(req, { params: { tenantId: 't1' } });
+    const res: Response = await invitesPOST(req, { params: { tenantId: 't1' } });
     expect(res.status).toBe(403);
     const json = await res.json();
     expect(json).toHaveProperty('error');

@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for production deployment
-FROM node:18-alpine AS dependencies
+FROM node:20-alpine AS dependencies
 
 # Set working directory
 WORKDIR /app
@@ -14,7 +14,7 @@ RUN npm ci --only=production && \
 # ===================================
 # Build stage
 # ===================================
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -27,25 +27,17 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build arguments
+# Only public values may be supplied at build time. Server secrets must be
+# injected at container runtime by the deployment environment; putting them in
+# build arguments or ENV here can preserve them in image layers and build cache.
 ARG NODE_ENV=production
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG SUPABASE_SERVICE_ROLE_KEY
-ARG ENCRYPTION_KEY
-ARG TOTP_SERVICE_NAME
-ARG NEXTAUTH_URL
-ARG NEXTAUTH_SECRET
 
-# Set environment variables
+# Public browser configuration is intentionally compiled into the client.
 ENV NODE_ENV=$NODE_ENV
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-ENV SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
-ENV ENCRYPTION_KEY=$ENCRYPTION_KEY
-ENV TOTP_SERVICE_NAME=$TOTP_SERVICE_NAME
-ENV NEXTAUTH_URL=$NEXTAUTH_URL
-ENV NEXTAUTH_SECRET=$NEXTAUTH_SECRET
 
 # Build the application
 RUN npm run build
@@ -53,7 +45,7 @@ RUN npm run build
 # ===================================
 # Production stage
 # ===================================
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Install security updates and utilities
 RUN apk update && apk upgrade && \
@@ -73,7 +65,7 @@ COPY --from=dependencies --chown=nextjs:nodejs /app/package.json ./package.json
 # Copy built application from builder stage
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/next.config.ts ./next.config.ts
+COPY --from=builder --chown=nextjs:nodejs /app/next.config.mjs ./next.config.mjs
 
 # Copy additional files needed at runtime
 COPY --from=builder --chown=nextjs:nodejs /app/supabase ./supabase

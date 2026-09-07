@@ -39,20 +39,22 @@ const CustomTooltip: React.FC<
     formatValue?: (value: number) => string;
     showPercentage?: boolean;
     total?: number;
-    payload?: any[];
+    payload?: Array<{ value?: number; name?: string; payload?: { fill?: string } }>;
   }
 > = ({ active, payload, formatValue, showPercentage, total }) => {
   if (!active || !payload || !payload.length) {
     return null;
   }
 
-  const value = payload[0].value as number;
+  const firstPayload = payload[0];
+  if (!firstPayload || typeof firstPayload.value !== 'number') return null;
+  const value = firstPayload.value;
   const percentage = total && total > 0 ? (value / total) * 100 : 0;
 
   return (
     <div className="rounded-lg border bg-background p-3 shadow-lg">
-      <p className="text-sm font-medium mb-1">{payload[0].name}</p>
-      <p className="text-lg font-bold" style={{ color: payload[0].payload.fill }}>
+      <p className="text-sm font-medium mb-1">{firstPayload.name}</p>
+      <p className="text-lg font-bold" style={{ color: firstPayload.payload?.fill }}>
         {formatValue ? formatValue(value) : value.toLocaleString()}
       </p>
       {showPercentage && (
@@ -173,7 +175,7 @@ export default function PieChart({
               cx="50%"
               cy="50%"
               labelLine={false}
-              label={showPercentage ? (renderCustomLabel as any) : false}
+              label={showPercentage ? renderCustomLabel : false}
               outerRadius={Math.min(height * 0.35, 120)}
               innerRadius={innerRadius}
               fill="#8884d8"

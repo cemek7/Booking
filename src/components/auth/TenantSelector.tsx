@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/button";
 
-export default function TenantSelector({ userTenants }: { userTenants: any[] }) {
+export default function TenantSelector({ userTenants }: { userTenants: Array<{ tenant_id: string; tenants?: { name?: string } | null }> }) {
   const [selectedTenant, setSelectedTenant] = useState<string>("");
   const router = useRouter();
 

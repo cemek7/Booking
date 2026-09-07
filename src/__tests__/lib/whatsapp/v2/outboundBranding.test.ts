@@ -10,6 +10,11 @@ const tenantRow = {
   renamed_at: null,
 };
 
+declare global {
+  var __tenantRow: typeof tenantRow;
+  var __convRow: { last_inbound_at: string | null; opted_out_at: string | null };
+}
+
 // outboundBranding.ts builds its client at module load via
 // createSupabaseAdminClient() from @/lib/supabase/server. Mocking only
 // @supabase/supabase-js leaves the real admin client in place, so the tenant
@@ -23,13 +28,13 @@ jest.mock('@/lib/supabase/server', () => {
             eq: () => ({
               maybeSingle: async () =>
                 table === 'tenants'
-                  ? { data: (global as any).__tenantRow }
-                  : { data: (global as any).__convRow },
+                  ? { data: global.__tenantRow }
+                  : { data: global.__convRow },
             }),
             maybeSingle: async () =>
               table === 'tenants'
-                ? { data: (global as any).__tenantRow }
-                : { data: (global as any).__convRow },
+                ? { data: global.__tenantRow }
+                : { data: global.__convRow },
           }),
         }),
       }),
@@ -46,13 +51,13 @@ jest.mock('@supabase/supabase-js', () => {
             eq: () => ({
               maybeSingle: async () =>
                 table === 'tenants'
-                  ? { data: (global as any).__tenantRow }
-                  : { data: (global as any).__convRow },
+                  ? { data: global.__tenantRow }
+                  : { data: global.__convRow },
             }),
             maybeSingle: async () =>
               table === 'tenants'
-                ? { data: (global as any).__tenantRow }
-                : { data: (global as any).__convRow },
+                ? { data: global.__tenantRow }
+                : { data: global.__convRow },
           }),
         }),
       }),
@@ -61,8 +66,8 @@ jest.mock('@supabase/supabase-js', () => {
 });
 
 beforeEach(() => {
-  (global as any).__tenantRow = tenantRow;
-  (global as any).__convRow = { last_inbound_at: null, opted_out_at: null };
+  global.__tenantRow = tenantRow;
+  global.__convRow = { last_inbound_at: null, opted_out_at: null };
 });
 
 const NOW = new Date('2026-06-08T12:00:00Z');

@@ -1,0 +1,9 @@
+/* src/app/(showcase)/showcase.css — utility classes bound to --sc-* vars (scoped, never touches brand-theme) */
+.sc-bg { background: var(--sc-background); color: var(--sc-foreground); }
+.sc-surface { background: var(--sc-surface); }
+.sc-primary { background: var(--sc-primary); color: var(--sc-primary-fg); }
+.sc-eyebrow { color: var(--sc-eyebrow); }
+.sc-eyebrow-muted { color: var(--sc-muted); }
+.sc-display { font-family: var(--sc-font-display); }
+.sc-body { font-family: var(--sc-font-body); }
+@media (prefers-reduced-motion: reduce) { .sc-root * { animation: none !important; transition: none !important; } }

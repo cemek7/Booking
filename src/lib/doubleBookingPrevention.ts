@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { SupabaseClient } from '@supabase/supabase-js';
 import { trace } from '@opentelemetry/api';
 import { publishEvent } from './eventBus';
@@ -142,14 +141,14 @@ export class DoubleBookingPrevention {
 
       span.setAttribute('lock.acquired', true);
       span.setAttribute('lock.duration_ms', lockDuration);
-      observeRequest('booking.lock_acquired', Date.now() - startTime, 'success');
+      observeRequest('booking.lock_acquired', 'LOCK', 200, (Date.now() - startTime) / 1000);
 
       return { success: true, lockId };
 
     } catch (error) {
       span.recordException(error as Error);
       span.setAttribute('lock.error', true);
-      observeRequest('booking.lock_acquired', Date.now() - startTime, 'error');
+      observeRequest('booking.lock_acquired', 'LOCK', 500, (Date.now() - startTime) / 1000);
 
       return { 
         success: false, 
@@ -311,8 +310,7 @@ export class DoubleBookingPrevention {
           start_at: params.startAt,
           end_at: params.endAt
         },
-        tenant_id: params.tenantId,
-        location_id: null
+        tenantId: params.tenantId
       });
 
       return {

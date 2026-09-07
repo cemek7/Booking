@@ -24,7 +24,7 @@ export default async function globalTeardown() {
   }
 }
 
-async function cleanupAllTestData(supabase: any) {
+async function cleanupAllTestData(supabase: import('@supabase/supabase-js').SupabaseClient) {
   try {
     // Clean up test data in proper order (respecting foreign keys)
     const cleanupQueries = [

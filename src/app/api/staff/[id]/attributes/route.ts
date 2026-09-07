@@ -4,7 +4,7 @@ import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 
 export const PATCH = createHttpHandler(
   async (ctx) => {
-    const id = (ctx as any).params?.id;
+    const id = (ctx as { params?: { id?: string } }).params?.id;
     if (!id) throw ApiErrorFactory.badRequest('Staff ID required');
     
     const body = await ctx.request.json();
@@ -14,7 +14,7 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.badRequest('Nothing to update');
     }
     
-    const patch: Record<string, any> = {};
+    const patch: Record<string, unknown> = {};
     if (role) patch.role = role;
     if (typeof staff_type === 'string') patch.staff_type = staff_type;
     

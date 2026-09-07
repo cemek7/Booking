@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
+import { getStoredProviderApiKey, upsertStoredProviderApiKey } from '@/lib/whatsapp/providerSecrets';
 
 /**
  * Instagram credential storage.
@@ -27,11 +28,12 @@ export async function upsertInstagramSecret(
   tenantId: string,
   secret: InstagramSecret
 ): Promise<void> {
+  await upsertStoredProviderApiKey(supabase, tenantId, 'instagram', secret.accessToken);
   const { error } = await supabase.from('whatsapp_provider_secrets').upsert(
     {
       tenant_id: tenantId,
       provider: 'instagram',
-      api_key: secret.accessToken,
+      api_key: null,
       base_url: INSTAGRAM_GRAPH_BASE_URL,
       instance_name: secret.igId,
       token_expires_at: secret.tokenExpiresAt,
@@ -41,6 +43,22 @@ export async function upsertInstagramSecret(
   );
 
   if (error) throw error;
+}
+
+export async function getInstagramSecret(
+  supabase: SupabaseClient,
+  tenantId: string,
+): Promise<{ accessToken: string; igId: string; tokenExpiresAt: string | null } | null> {
+  const { data, error } = await supabase
+    .from('whatsapp_provider_secrets')
+    .select('instance_name, token_expires_at, revoked_at')
+    .eq('tenant_id', tenantId)
+    .eq('provider', 'instagram')
+    .maybeSingle();
+  if (error || !data?.instance_name || data.revoked_at) return null;
+  const accessToken = await getStoredProviderApiKey(supabase, tenantId, 'instagram');
+  if (!accessToken) return null;
+  return { accessToken, igId: data.instance_name, tokenExpiresAt: data.token_expires_at ?? null };
 }
 
 /**

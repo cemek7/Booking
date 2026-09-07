@@ -368,12 +368,21 @@ async function processMedia(
   messageRowId: string
 ) {
   try {
+    const phoneNumber = typeof message.from_number === 'string' ? message.from_number : null;
+    const messageId = typeof message.evolution_message_id === 'string' ? message.evolution_message_id : undefined;
+    const messageType = typeof message.message_type === 'string' && ['image', 'audio', 'video', 'document', 'sticker'].includes(message.message_type)
+      ? message.message_type as 'image' | 'audio' | 'video' | 'document' | 'sticker'
+      : null;
+    if (!phoneNumber || !messageType) {
+      defaultLogger.warn('[WEBHOOK] Skipping malformed media message');
+      return;
+    }
     const mediaResult = await whatsappMediaHandler.processIncomingMedia(
       tenantId,
-      message.from_number as string,
+      phoneNumber,
       {
-        id: message.evolution_message_id,
-        type: message.message_type,
+        id: messageId,
+        type: messageType,
         ...(message.media_info as object),
       }
     );
