@@ -76,6 +76,9 @@ describe('getAuthenticatedUserRole', () => {
     from: jest.Mock;
     select: jest.Mock;
     eq: jest.Mock;
+    // isSuperadminUser matches the admins row case-insensitively, so the fake
+    // client needs ilike as well — it was set below but never declared here.
+    ilike: jest.Mock;
     maybeSingle: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
   };
   let mockRequest: NextRequest;

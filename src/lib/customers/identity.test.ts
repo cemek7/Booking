@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 import { findCustomerByPhone, normalizePhone, resolveCustomer } from './identity';
 
 describe('normalizePhone', () => {

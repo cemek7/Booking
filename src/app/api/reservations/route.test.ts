@@ -1,11 +1,11 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 const mockAdminFrom = jest.fn();
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: () => ({ from: mockAdminFrom }),
 }));
 
 import { GET } from './route';
+import type { NextRequest } from 'next/server';
 
 describe('/api/reservations', () => {
   it('returns the documented data and pagination envelope for a global superadmin', async () => {
@@ -16,7 +16,7 @@ describe('/api/reservations', () => {
     mockAdminFrom.mockImplementation((table: string) => ({ select: table === 'reservations' && mockAdminFrom.mock.calls.length <= 1 ? dataSelect : countSelect }));
 
     const result = await GET({
-      request: new Request('http://localhost/api/reservations?page=2&limit=10'),
+      request: new Request('http://localhost/api/reservations?page=2&limit=10') as unknown as NextRequest,
       supabase: {} as never,
       user: { id: 'admin-1', email: 'admin@example.com', role: 'superadmin', permissions: [] },
     });

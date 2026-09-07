@@ -378,6 +378,29 @@ psql $DATABASE_URL -f db/migrations/145_wallet_paid_topup.sql
 
 Each has a matching `*_rollback.sql`.
 
+> **Seven migration numbers have two different files each** — 065, 077, 078, 079, 097, 122 and
+> 123. Applying by number, or globbing `db/migrations/097_*`, will run one and silently skip the
+> other, and that file's tables then simply never exist. Apply by full filename. The pairs:
+>
+> | # | Files |
+> |---|---|
+> | 065 | `chats_unique_constraint`, `messages_read_columns` |
+> | 077 | `ai_wallets`, `customer_no_show_score` |
+> | 078 | `instagram_channel`, `whatsapp_showcase_packs` |
+> | 079 | `finance_ledgers`, `whatsapp_message_queue_channel` |
+> | 097 | `ai_front_desk_stage_d_training_views`, `wallet_cost_caps` |
+> | 122 | `booka_revenue_requests`, `business_events` |
+> | 123 | `reconciliation`, `revenue_attribution_verification` |
+>
+> They are not renumbered because the numbers are already recorded in runbooks and in what has
+> been applied to live; renumbering now would be the more dangerous change. A test
+> (`migrationNumbering.test.ts`) stops the set growing.
+
+Three filename shapes are in use, and all three sort deterministically under a glob:
+`123_name.sql` (main sequence), `123b_name.sql` (a follow-up, sorts right after its number), and
+`2026-07-26_name.sql` (date-named; sorts after every numbered file). `create-audit-logs.sql` has
+no defined position — apply it explicitly if you need it.
+
 **145 is what makes top-up a payment.** It adds `wallet_topup_intents` (the row that ties a
 Paystack reference to a tenant and an amount before the customer pays), the stored card
 authorization columns on `ai_wallets`, and `credit_wallet_topup` — the idempotent claim-and-credit

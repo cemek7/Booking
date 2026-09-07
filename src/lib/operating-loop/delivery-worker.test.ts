@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const captureServerAnalyticsEvent = jest.fn();
@@ -31,7 +31,7 @@ function makeAdmin(rows = [delivery]) {
 
 function workerDependencies(rows = [delivery]) {
   const { admin, rpc } = makeAdmin(rows);
-  const sendTextMessage = jest.fn(async () => ({ success: true, messageId: 'provider-message-1' }));
+  const sendTextMessage = jest.fn(async (_to: string, _text: string) => ({ success: true, messageId: 'provider-message-1' }));
   const governedSend = jest.fn(async (_admin: SupabaseClient, params: {
     sendFreeform: (text: string) => Promise<boolean>;
   }) => {

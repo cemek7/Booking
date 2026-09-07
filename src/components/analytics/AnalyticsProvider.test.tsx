@@ -1,8 +1,7 @@
 // src/components/analytics/AnalyticsProvider.test.tsx
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 const initMock = jest.fn();
 const optInMock = jest.fn();
 const optOutMock = jest.fn();

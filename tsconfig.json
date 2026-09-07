@@ -47,6 +47,8 @@
     "src/__tests__",
     "src/test",
     "src/components/__tests__",
-    "jest.permission.config.ts"
+    "jest.permission.config.ts",
+    "cypress",
+    "cypress.config.ts"
   ]
 }

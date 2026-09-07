@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BUSINESS_EVENT_ACTIONS, recordBusinessEvent } from './businessEvents';
 

@@ -14,9 +14,7 @@
     "types/**/*.d.ts",
     "next-env.d.ts",
     "src/app/**/*.ts",
-    "src/app/**/*.tsx",
-    "src/showcase/**/*.ts",
-    "src/showcase/**/*.tsx"
+    "src/app/**/*.tsx"
   ],
   "references": [
     { "path": "./tsconfig.shared.json" },

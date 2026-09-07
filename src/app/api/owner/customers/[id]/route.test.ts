@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-
+import { beforeEach, describe, expect, it } from '@jest/globals';
 const mockCreateSupabaseAdminClient = jest.fn();
 const mockRecomputeProfile = jest.fn();
 const mockDetectDuplicates = jest.fn();
@@ -17,6 +16,7 @@ jest.mock('@/lib/customers/merge', () => ({
 }));
 
 import { GET } from './route';
+import type { NextRequest } from 'next/server';
 
 function createAdminMock() {
   return {
@@ -122,7 +122,7 @@ describe('/api/owner/customers/[id]', () => {
 
   it('returns owner customer profile and includes notes when permitted', async () => {
     const response = await GET({
-      request: new Request('http://localhost/api/owner/customers/cust-1', { method: 'GET' }),
+      request: new Request('http://localhost/api/owner/customers/cust-1', { method: 'GET' }) as unknown as NextRequest,
       supabase: {} as never,
       params: { id: 'cust-1' },
       user: {

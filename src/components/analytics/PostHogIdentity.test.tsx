@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, waitFor } from '@testing-library/react';
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { AnalyticsReadyProvider } from '@/components/analytics/AnalyticsReadyContext';
 
 const identifyMock = jest.fn();

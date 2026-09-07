@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 const mockListCountSessions = jest.fn();
 const mockStartCountSession = jest.fn();
 
@@ -9,13 +8,14 @@ jest.mock('@/lib/inventory/stockCountService', () => ({
 }));
 
 import { GET, POST } from './route';
+import type { NextRequest } from 'next/server';
 
 describe('/api/owner/stock-counts', () => {
   it('lists stock count sessions', async () => {
     mockListCountSessions.mockResolvedValueOnce([{ id: 'session-1' }]);
 
     const response = await GET({
-      request: new Request('http://localhost/api/owner/stock-counts', { method: 'GET' }),
+      request: new Request('http://localhost/api/owner/stock-counts', { method: 'GET' }) as unknown as NextRequest,
       supabase: {} as never,
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: [] },
     });
