@@ -28,7 +28,8 @@
  * The columns below are grounded in db/schema/live_schema_2026-07-30.md
  * (the authoritative information_schema dump) and in the code paths that most
  * recently shipped (messages.media_* for the WhatsApp media handler,
- * event_outbox.* for the event bus). Keep this manifest in sync with the
+ * event_outbox.* for the event bus, and the ai_wallets / message-charge
+ * columns the WhatsApp metering path reserves and settles against). Keep this manifest in sync with the
  * schema doc; it is a curated subset of critical dependencies, not the full
  * schema.
  */
@@ -63,6 +64,30 @@ const REQUIRED_SCHEMA = {
   // The event bus outbox (PR #94 now publishes background-context events here).
   event_outbox: ['id', 'type', 'tenant_id', 'payload', 'hash', 'delivered_at', 'created_at'],
   customers: ['id', 'tenant_id', 'phone_number', 'normalized_phone'],
+  // WhatsApp message metering (migrations 139-145). From 2026-10-01 Meta bills
+  // every delivered service message, and every outbound send reserves against
+  // this wallet — so a missing column here is not a degraded feature, it is the
+  // send path failing for every tenant.
+  ai_wallets: [
+    'tenant_id', 'balance_credits', 'low_balance_threshold_credits',
+    'message_rate_credits', 'grace_overdraft_credits',              // 139
+    'auto_recharge_enabled', 'auto_recharge_amount_credits',        // 139
+    'message_handoff_warned_on', 'message_handoff_unanchored_on',   // 143
+    'low_balance_warned_on',                                        // 144
+    'paystack_authorization_code', 'paystack_authorization_email',  // 145
+    'auto_recharge_failed_at',                                      // 145
+  ],
+  ai_wallet_ledger: ['id', 'tenant_id', 'kind', 'amount_credits', 'reference', 'meter'],
+  whatsapp_message_charges: [
+    'id', 'tenant_id', 'provider', 'wamid', 'wallet_reservation_id',
+    'reserved_credits', 'settled_credits', 'status', 'billable',
+    'message_kind', 'mode', 'attribution', 'sent_at',
+  ],
+  // Paid top-up (145). Without it no owner can buy credits at all.
+  wallet_topup_intents: [
+    'id', 'tenant_id', 'reference', 'amount_credits', 'amount_minor',
+    'currency', 'email', 'status', 'origin',
+  ],
 };
 
 /** True when a supabase-js error indicates the whole relation is missing. */
