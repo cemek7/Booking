@@ -468,10 +468,18 @@ FROM public.ai_wallets
 WHERE paystack_authorization_code IS NOT NULL;
 ```
 
+Owners turn it on themselves, under **Billing → Top Up → Auto top-up**
+(`GET`/`PATCH /api/billing/wallet/auto-recharge`). The toggle is disabled until a card is saved,
+and the route refuses to enable without both a card and an amount — arming something that cannot
+fire would leave an owner believing they are covered until their bot goes quiet. The authorization
+code is never returned to the browser; the page shows only the card brand and last four.
+
 When the balance cannot fund a send, the reserve path charges the saved card and re-reserves. A
-decline stamps `auto_recharge_failed_at` and backs off for 24 hours — without that, a dead card is
+decline — or an unreachable Paystack — stamps `auto_recharge_failed_at` and backs off for 24 hours — without that, a dead card is
 re-charged on every single send, which is a stream of failed charges against the tenant's bank and
-a stream of latency on Booka's inbound path. Saving a new card clears the stamp. A tenant whose
+a full network timeout on Booka's inbound path — and that path is a shared worker, so the stall is
+paid by every other tenant in the batch. Saving a new card clears the stamp, and the owner sees the
+decline on the billing page. A tenant whose
 recharge fails falls through to the bounded grace overdraft and then the handoff, exactly as
 before.
 

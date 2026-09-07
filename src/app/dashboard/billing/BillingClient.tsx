@@ -42,6 +42,17 @@ interface WalletSummary {
   recent_ledger: WalletLedgerEntry[];
 }
 
+interface AutoRecharge {
+  enabled: boolean;
+  threshold_credits: number | null;
+  amount_credits: number | null;
+  has_saved_card: boolean;
+  card_brand: string | null;
+  card_last4: string | null;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+}
+
 export default function BillingClient() {
   const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payment'>('overview');
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -53,6 +64,11 @@ export default function BillingClient() {
   const [topUpAmount, setTopUpAmount] = useState('100');
   const [topUpMessage, setTopUpMessage] = useState<string | null>(null);
   const [topUpPending, setTopUpPending] = useState(false);
+  const [autoRecharge, setAutoRecharge] = useState<AutoRecharge | null>(null);
+  const [autoThreshold, setAutoThreshold] = useState('');
+  const [autoAmount, setAutoAmount] = useState('');
+  const [autoMessage, setAutoMessage] = useState<string | null>(null);
+  const [autoPending, setAutoPending] = useState(false);
   const headers = useAuthHeaders();
 
   useEffect(() => {
@@ -77,6 +93,17 @@ export default function BillingClient() {
         if (!active) return;
         setMetricsLoading(false);
       });
+
+    authFetch<AutoRecharge>('/api/billing/wallet/auto-recharge', { headers })
+      .then((res) => {
+        if (!active || res.error) return;
+        const cfg = res.data as AutoRecharge | null;
+        if (!cfg) return;
+        setAutoRecharge(cfg);
+        setAutoThreshold(cfg.threshold_credits != null ? String(cfg.threshold_credits) : '');
+        setAutoAmount(cfg.amount_credits != null ? String(cfg.amount_credits) : '');
+      })
+      .catch(() => { /* auto top-up is optional; its absence must not break billing */ });
 
     authFetch<WalletSummary>('/api/billing/wallet', { headers })
       .then((res) => {
@@ -141,6 +168,27 @@ export default function BillingClient() {
       return;
     }
     window.location.href = url;
+  }
+
+  async function saveAutoRecharge(nextEnabled: boolean) {
+    setAutoMessage(null);
+    setAutoPending(true);
+    const res = await authFetch<AutoRecharge>('/api/billing/wallet/auto-recharge', {
+      method: 'PATCH',
+      body: {
+        enabled: nextEnabled,
+        ...(Number(autoThreshold) > 0 ? { threshold_credits: Number(autoThreshold) } : {}),
+        ...(Number(autoAmount) > 0 ? { amount_credits: Number(autoAmount) } : {}),
+      },
+    });
+    setAutoPending(false);
+
+    if (res.error) {
+      setAutoMessage(res.error.message);
+      return;
+    }
+    setAutoRecharge((res.data as AutoRecharge) ?? null);
+    setAutoMessage(nextEnabled ? 'Auto top-up is on.' : 'Auto top-up is off.');
   }
 
   return (
@@ -319,6 +367,81 @@ export default function BillingClient() {
                 {topUpPending ? 'Starting payment…' : 'Continue to payment'}
               </button>
               {topUpMessage && <span className="text-sm text-slate-600">{topUpMessage}</span>}
+            </div>
+
+            {/* Auto top-up. Off for every tenant until the owner turns it on
+                here — it charges their card without them present, so it is
+                never enabled on their behalf. */}
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Auto top-up</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {autoRecharge?.has_saved_card
+                      ? <>Charge your saved {autoRecharge.card_brand ?? 'card'} ending {autoRecharge.card_last4 ?? '••••'} when your balance runs low, so your assistant never goes quiet mid-conversation.</>
+                      : <>Top up once by card and we can do this for you automatically, so your assistant never goes quiet mid-conversation.</>}
+                  </p>
+                </div>
+                <button
+                  onClick={() => saveAutoRecharge(!autoRecharge?.enabled)}
+                  disabled={autoPending || !autoRecharge?.has_saved_card}
+                  className={`shrink-0 rounded-xl px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                    autoRecharge?.enabled
+                      ? 'border border-slate-300 text-slate-700 hover:bg-slate-50'
+                      : 'bg-slate-900 text-white hover:bg-slate-800'
+                  }`}
+                >
+                  {autoRecharge?.enabled ? 'Turn off' : 'Turn on'}
+                </button>
+              </div>
+
+              {autoRecharge?.has_saved_card && (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">When balance drops below</label>
+                    <input
+                      value={autoThreshold}
+                      onChange={(e) => setAutoThreshold(e.target.value)}
+                      className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="200"
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">Add this many credits</label>
+                    <input
+                      value={autoAmount}
+                      onChange={(e) => setAutoAmount(e.target.value)}
+                      className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="1000"
+                      inputMode="decimal"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {autoRecharge?.enabled && (
+                <button
+                  onClick={() => saveAutoRecharge(true)}
+                  disabled={autoPending}
+                  className="mt-4 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Save amounts
+                </button>
+              )}
+
+              {/* A declined card is the one thing an owner must see here: auto
+                  top-up backs off for 24h after a decline, so until they fix it
+                  the feature silently is not protecting them. */}
+              {autoRecharge?.last_failure_at && (
+                <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Your last automatic top-up didn&rsquo;t go through
+                  {autoRecharge.last_failure_reason ? ` (${autoRecharge.last_failure_reason})` : ''}.
+                  Top up by card again to update your saved card.
+                </p>
+              )}
+
+              {autoMessage && <p className="mt-3 text-sm text-slate-600">{autoMessage}</p>}
             </div>
           </div>
 
