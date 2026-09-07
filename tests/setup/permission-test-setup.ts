@@ -134,6 +134,9 @@ export const mockUser = (overrides: Partial<{
 
 // Type extensions for Jest
 declare global {
+  // Augmenting Jest's matcher types requires the namespace form; there is
+  // no interface-only way to extend jest.Matchers.
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace jest {
     interface Matchers<R> {
       toHavePermission(permission: string): R;

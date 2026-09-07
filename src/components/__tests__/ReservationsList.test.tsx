@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -15,7 +14,7 @@ jest.mock('@/lib/auth/auth-api-client', () => ({
   authPatch: jest.fn(),
 }))
 
-const { authFetch } = require('@/lib/auth/auth-api-client')
+const { authFetch } = jest.requireMock('@/lib/auth/auth-api-client') as { authFetch: jest.Mock }
 
 const mockReservations = [
   // customer is shown by number/name (not the internal customer_id UUID)

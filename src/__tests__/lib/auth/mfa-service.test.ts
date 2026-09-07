@@ -349,14 +349,14 @@ describe('MFAService - Security Features', () => {
 
     it('should enforce maximum attempts', () => {
       const maxAttempts = 5;
-      let failureCount = 3;
+      const failureCount = 3;
       const canAttempt = failureCount < maxAttempts;
       expect(canAttempt).toBe(true);
     });
 
     it('should block after maximum attempts', () => {
       const maxAttempts = 5;
-      let failureCount = 5;
+      const failureCount = 5;
       const canAttempt = failureCount < maxAttempts;
       expect(canAttempt).toBe(false);
     });

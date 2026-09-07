@@ -15,7 +15,7 @@ jest.mock('@/hooks/useTenantCurrency', () => ({
   }),
 }));
 
-const { authFetch } = require('@/lib/auth/auth-api-client');
+const { authFetch } = jest.requireMock('@/lib/auth/auth-api-client') as { authFetch: jest.Mock };
 
 describe('UsagePanel', () => {
   beforeEach(() => authFetch.mockReset());

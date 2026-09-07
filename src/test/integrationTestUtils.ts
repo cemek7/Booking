@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Phase 6: Integration Testing Framework
  * End-to-end workflow testing with proper type safety

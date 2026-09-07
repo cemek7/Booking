@@ -40,7 +40,6 @@ function createRedisError(message: string, redisErrorKind: RedisErrorKind, cause
 export function isRedisFeatureEnabled() {
   const flag = process.env.REDIS_ENABLED;
   const hasRedisUrl = Boolean(process.env.REDIS_URL);
-  
   // If REDIS_ENABLED is explicitly set (non-empty string), it takes precedence
   if (typeof flag === 'string' && flag.trim() !== '') {
     const isExplicitlyEnabled = ENABLED_VALUES.has(flag.trim().toLowerCase());
@@ -76,7 +75,6 @@ export function isRedisConfigured() {
 
 function isModuleAvailable(moduleName: string): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     require.resolve(moduleName);
     return true;
   } catch {

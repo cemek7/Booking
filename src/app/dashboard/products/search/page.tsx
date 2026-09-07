@@ -141,10 +141,10 @@ function ProductSearchPageInner() {
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <h4 className="font-medium text-gray-900 mb-2">Search Examples</h4>
                   <ul className="text-sm text-gray-600 space-y-1">
-                    <li>• "hair color" - Find hair coloring products</li>
-                    <li>• "wig" - Show all wig products</li>
-                    <li>• "treatment" - Beauty treatment products</li>
-                    <li>• "shampoo" - Hair care essentials</li>
+                    <li>• &quot;hair color&quot; - Find hair coloring products</li>
+                    <li>• &quot;wig&quot; - Show all wig products</li>
+                    <li>• &quot;treatment&quot; - Beauty treatment products</li>
+                    <li>• &quot;shampoo&quot; - Hair care essentials</li>
                   </ul>
                 </div>
               </div>

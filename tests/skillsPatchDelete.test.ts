@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Jest globals are available without import
 import { NextRequest } from 'next/server';
 import { PATCH as skillPATCH, DELETE as skillDELETE } from '@/app/api/skills/[id]/route';

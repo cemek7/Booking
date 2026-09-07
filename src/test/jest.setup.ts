@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Dummy Supabase env so modules that construct a client at import time
 // (e.g. createClient() at the top of conversationState.ts) don't throw
 // "Invalid supabase URL" during test-file load. Real network is still mocked.

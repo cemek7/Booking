@@ -64,6 +64,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
         const history = Array.isArray(parsedHistory)
           ? parsedHistory.filter(isSearchHistoryItem).map(item => ({ ...item, timestamp: new Date(item.timestamp) }))
           : [];
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only state (localStorage/URL) after hydration; doing it during render would desync server and client HTML
         setSearchHistory(history);
       } catch (error) {
         console.error('Failed to parse search history:', error);
@@ -230,7 +231,7 @@ export default function AdvancedSearch({ onSearch, initialQuery, onClear }: Adva
           <div className="mt-3 flex flex-wrap gap-2">
             {searchQuery.search && (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
-                Search: "{searchQuery.search}"
+                Search: &quot;{searchQuery.search}&quot;
               </span>
             )}
             {searchQuery.category && (

@@ -55,6 +55,7 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ tenantId, className }) =
     setLoading(false);
   }, [tenantId]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
   useEffect(() => { void load(); }, [load]);
 
   const days = data?.window ?? [];

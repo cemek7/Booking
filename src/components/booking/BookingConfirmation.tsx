@@ -186,7 +186,7 @@ export default function BookingConfirmation({
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                 <div className="flex-1">
                   <h3 className="font-medium text-gray-900">Add to Your Calendar</h3>
-                  <p className="text-sm text-gray-600">Don't forget your appointment - add it to your calendar now</p>
+                  <p className="text-sm text-gray-600">Don&apos;t forget your appointment - add it to your calendar now</p>
                 </div>
                 <QuickAddCalendar booking={booking} />
               </div>
@@ -296,7 +296,7 @@ export default function BookingConfirmation({
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium">Add to Calendar</div>
-                <div className="text-sm text-muted-foreground">Don't forget your appointment</div>
+                <div className="text-sm text-muted-foreground">Don&apos;t forget your appointment</div>
               </div>
               <QuickAddCalendar booking={booking} />
             </div>

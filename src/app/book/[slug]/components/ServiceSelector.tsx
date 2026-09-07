@@ -57,7 +57,7 @@ export default function ServiceSelector({ slug, onSelect }: ServiceSelectorProps
   return (
     <div className="space-y-4">
       <h2 className="text-2xl font-bold text-slate-900">Select a Service</h2>
-      <p className="text-slate-600">Choose the service you'd like to book</p>
+      <p className="text-slate-600">Choose the service you&apos;d like to book</p>
 
       <div className="grid gap-3 mt-6">
         {services.map((service) => (

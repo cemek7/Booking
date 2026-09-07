@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Build outputs. tsconfig already excludes dist/; linting it only produced
+    // errors nobody can act on, and `eslint --fix` rewrote a generated file.
+    "dist/**",
+    ".tsbuild/**",
+    "coverage/**",
   ]),
 ]);
 

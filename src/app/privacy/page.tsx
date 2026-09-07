@@ -20,7 +20,7 @@ export default function PrivacyPage() {
           <a href={`mailto:${LEGAL.privacyEmail}`}>{LEGAL.privacyEmail}</a>.
         </p>
         <p>
-          {LEGAL.product} serves two groups: <strong>business customers ("tenants")</strong> who use the
+          {LEGAL.product} serves two groups: <strong>business customers (&quot;tenants&quot;)</strong> who use the
           platform to run conversations, sell services and products, and take bookings, and the tenants&apos;{' '}
           <strong>end-customers</strong> who message, buy from, and book them. For an end-customer&apos;s data
           (conversations, orders, bookings), the tenant is the data controller and {LEGAL.product}{' '}

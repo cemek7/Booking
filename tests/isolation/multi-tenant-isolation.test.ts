@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Multi-Tenant Data Isolation Tests
  *

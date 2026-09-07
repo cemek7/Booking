@@ -15,9 +15,13 @@ const createWrapper = () => {
       mutations: { retry: false },
     },
   });
-  return ({ children }: { children: React.ReactNode }) => (
+  // Named so React DevTools and the lint rule can identify the wrapper; an
+  // anonymous arrow component has no display name.
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
+  Wrapper.displayName = 'QueryClientTestWrapper';
+  return Wrapper;
 };
 
 describe('useStaff', () => {

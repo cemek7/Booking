@@ -369,6 +369,7 @@ export function useAnalyticsNotifications(config: AnalyticsRealtimeConfig) {
         timestamp: lastUpdate.timestamp,
       };
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state arrives from a subscription/realtime callback, not from a render
       setNotifications((prev) => [...prev.slice(-9), notification]); // Keep last 10
 
       // Auto-dismiss after 5 seconds

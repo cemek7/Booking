@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * PHASE 4A: Comprehensive End-to-End Authentication Tests
  * Tests the complete authentication lifecycle including consolidations from Phase 2

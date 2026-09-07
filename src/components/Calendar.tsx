@@ -142,7 +142,6 @@ export const Calendar: React.FC<CalendarProps> = ({ view, events, staffLanes, on
         setMonthOffset(diff);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Month grid view (simple 7x6 calendar) when not using staff lanes
@@ -249,7 +248,6 @@ export const Calendar: React.FC<CalendarProps> = ({ view, events, staffLanes, on
       </div>
     );
   }
-  
 
   // Drag start/finish stubs
   function handleDragStart(e: React.DragEvent, ev: BookingEvent) { e.dataTransfer.setData('text/plain', ev.id); }
