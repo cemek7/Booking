@@ -1,5 +1,4 @@
 // Jest globals are available without import
-// @ts-nocheck
 import { NextRequest } from 'next/server';
 import { POST as invitesPOST } from '@/app/api/tenants/[tenantId]/invites/route';
 

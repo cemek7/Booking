@@ -33,7 +33,7 @@ export const GET = createHttpHandler(
       throw ApiErrorFactory.internalServerError(new Error('Failed to query LLM calls'));
     }
 
-    let totalRequests = (data || []).length;
+    const totalRequests = (data || []).length;
     let totalTokens = 0;
     let estimatedCost = 0;
 

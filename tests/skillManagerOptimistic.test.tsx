@@ -5,8 +5,7 @@ import { SkillManager } from '@/components/SkillManager.client';
 
 // Sequence-based fetch mock
 const fetchMock = jest.fn();
-// @ts-ignore
-global.fetch = fetchMock;
+global.fetch = fetchMock as unknown as typeof fetch;
 
 describe('SkillManager optimistic flows', () => {
   const h = { get: () => 'application/json' };

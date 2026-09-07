@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Test: StaffInvitePage renders correctly
 import React from 'react';
 import { render, screen } from '@testing-library/react';

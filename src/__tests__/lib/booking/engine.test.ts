@@ -43,7 +43,8 @@ describe('BookingEngine', () => {
     bookingEngine = new BookingEngine();
 
     // Get mock supabase instance
-    const { createServerSupabaseClient } = require('@/lib/supabase/server');
+    const { createServerSupabaseClient } = jest.requireMock('@/lib/supabase/server') as
+      { createServerSupabaseClient: () => unknown };
     mockSupabase = createServerSupabaseClient() as unknown as typeof mockSupabase;
   });
 

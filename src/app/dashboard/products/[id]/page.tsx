@@ -199,7 +199,7 @@ export default function ProductDetailPage({ params }: ProductDetailPageProps) {
         <div className="max-w-4xl mx-auto">
           <div className="bg-white rounded-lg shadow-sm p-6 text-center">
             <h1 className="text-2xl font-bold text-gray-900 mb-2">Product Not Found</h1>
-            <p className="text-gray-600 mb-4">The product you're looking for doesn't exist or has been removed.</p>
+            <p className="text-gray-600 mb-4">The product you&apos;re looking for doesn&apos;t exist or has been removed.</p>
             <Button onClick={() => router.push('/dashboard/products')}>
               Back to Products
             </Button>

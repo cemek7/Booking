@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Integration tests for the unified API route handler authentication.
  * Tests auth enforcement in createApiHandler / createHttpHandler.

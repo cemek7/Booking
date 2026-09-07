@@ -22,7 +22,6 @@ export const vi = {
   clearAllMocks: jest.clearAllMocks.bind(jest),
   resetAllMocks: jest.resetAllMocks.bind(jest),
   restoreAllMocks: jest.restoreAllMocks.bind(jest),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mocked: <T>(fn: T): jest.MockedFunction<T extends (...args: never[]) => unknown ? T : never> =>
     fn as jest.MockedFunction<T extends (...args: never[]) => unknown ? T : never>,
 };

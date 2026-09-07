@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import LegalDocument from '@/components/legal/LegalDocument';
 import LegalSection from '@/components/legal/LegalSection';
 import { LEGAL } from '@/lib/legal/constants';
+import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Cookie Policy | Boka',
@@ -30,7 +31,7 @@ export default function CookiesPage() {
 
       <LegalSection heading="More information">
         <p>
-          See our <a href="/privacy">Privacy Policy</a> for how we handle personal data, or contact{' '}
+          See our <Link href="/privacy">Privacy Policy</Link> for how we handle personal data, or contact{' '}
           <a href={`mailto:${LEGAL.privacyEmail}`}>{LEGAL.privacyEmail}</a>.
         </p>
       </LegalSection>

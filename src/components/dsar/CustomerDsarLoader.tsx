@@ -15,6 +15,7 @@ export default function CustomerDsarLoader() {
     try {
       const raw = typeof window !== 'undefined' ? localStorage.getItem('current_tenant') : null;
       const current = raw ? JSON.parse(raw) : null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
       setTenantId(current?.id ?? null);
     } catch {
       // ignore

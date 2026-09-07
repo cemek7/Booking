@@ -50,6 +50,7 @@ export default function OwnerLLMMetrics() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
   useEffect(() => { void load(); }, [load]);
 
   const fmtInt = (n: number) => new Intl.NumberFormat().format(Math.round(n || 0));

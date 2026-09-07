@@ -1,5 +1,4 @@
 // Jest globals are available without import
-// @ts-nocheck
 import { NextRequest } from 'next/server';
 import { GET as skillsGET, POST as skillsPOST } from '@/app/api/skills/route';
 

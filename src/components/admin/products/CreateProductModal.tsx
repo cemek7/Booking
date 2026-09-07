@@ -45,6 +45,7 @@ export default function CreateProductModal({ isOpen, onClose, onSuccess }: Creat
 
   // Default a new product's currency to the tenant's currency when the modal opens.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
     if (isOpen) setFormData((prev) => ({ ...prev, currency: tenantCurrency }));
   }, [isOpen, tenantCurrency]);
 

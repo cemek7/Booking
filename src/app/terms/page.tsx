@@ -15,7 +15,7 @@ export default function TermsPage() {
       <LegalSection heading="Overview">
         <p>
           These Terms govern use of {LEGAL.product}. Part A applies to <strong>business customers
-          ("tenants")</strong> who subscribe to {LEGAL.product}. Part B applies to <strong>end-customers</strong>{' '}
+          (&quot;tenants&quot;)</strong> who subscribe to {LEGAL.product}. Part B applies to <strong>end-customers</strong>{' '}
           who book or message a tenant through the platform. By using {LEGAL.product} you agree to the
           applicable part.
         </p>
@@ -47,7 +47,7 @@ export default function TermsPage() {
 
       <LegalSection heading="Disclaimers &amp; liability">
         <p>
-          {LEGAL.product} is provided "as is." To the extent permitted by law, {LEGAL.company} is not liable
+          {LEGAL.product} is provided &quot;as is.&quot; To the extent permitted by law, {LEGAL.company} is not liable
           for the acts or omissions of tenants or their service delivery, and our aggregate liability is
           limited as set out in the applicable order or subscription agreement.
         </p>
