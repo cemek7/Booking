@@ -64,6 +64,9 @@ export default function BillingClient() {
   const [topUpAmount, setTopUpAmount] = useState('100');
   const [topUpMessage, setTopUpMessage] = useState<string | null>(null);
   const [topUpPending, setTopUpPending] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoMessage, setPromoMessage] = useState<string | null>(null);
+  const [promoPending, setPromoPending] = useState(false);
   const [autoRecharge, setAutoRecharge] = useState<AutoRecharge | null>(null);
   const [autoThreshold, setAutoThreshold] = useState('');
   const [autoAmount, setAutoAmount] = useState('');
@@ -168,6 +171,38 @@ export default function BillingClient() {
       return;
     }
     window.location.href = url;
+  }
+
+  // Promotional credit lands immediately — there is no payment to wait on — so
+  // refetch the wallet rather than leaving a stale balance on screen.
+  async function submitPromo() {
+    if (!headers) return;
+    setPromoMessage(null);
+
+    const code = promoCode.trim();
+    if (!code) {
+      setPromoMessage('Enter a promo code.');
+      return;
+    }
+
+    setPromoPending(true);
+    const res = await authFetch<{ amount_credits?: number }>('/api/billing/wallet/promo-redemptions', {
+      method: 'POST',
+      body: { code },
+    });
+    setPromoPending(false);
+
+    if (res.error) {
+      setPromoMessage(res.error.message);
+      return;
+    }
+
+    const granted = (res.data as { amount_credits?: number } | null)?.amount_credits ?? 0;
+    setPromoCode('');
+    setPromoMessage(`Added ${granted.toLocaleString()} credits.`);
+
+    const summary = await authFetch<WalletSummary>('/api/billing/wallet', { headers });
+    if (!summary.error) setWallet(summary.data as WalletSummary);
   }
 
   async function saveAutoRecharge(nextEnabled: boolean) {
@@ -367,6 +402,35 @@ export default function BillingClient() {
                 {topUpPending ? 'Starting payment…' : 'Continue to payment'}
               </button>
               {topUpMessage && <span className="text-sm text-slate-600">{topUpMessage}</span>}
+            </div>
+
+            {/* Promotional credit. Separate from the paid path on purpose:
+                these credits are granted, not bought, so they never touch the
+                Paystack flow above. */}
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <h3 className="text-sm font-semibold text-slate-900">Have a promo code?</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Redeem it here and the credits are added to your balance straight away.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <input
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitPromo(); }}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm uppercase focus:border-slate-400 focus:outline-none sm:w-56"
+                  placeholder="SUMMER26"
+                  autoComplete="off"
+                  aria-label="Promo code"
+                />
+                <button
+                  onClick={submitPromo}
+                  disabled={promoPending || !promoCode.trim()}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {promoPending ? 'Redeeming…' : 'Redeem'}
+                </button>
+                {promoMessage && <span className="text-sm text-slate-600">{promoMessage}</span>}
+              </div>
             </div>
 
             {/* Auto top-up. Off for every tenant until the owner turns it on
