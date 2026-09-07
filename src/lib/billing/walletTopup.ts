@@ -277,6 +277,26 @@ export interface AutoRechargeWallet {
   auto_recharge_failed_at?: string | null;
 }
 
+/** Marks the intent dead and starts the backoff clock. */
+async function failCharge(
+  admin: SupabaseClient,
+  tenantId: string,
+  reference: string,
+  reason: string,
+): Promise<void> {
+  await markIntent(admin, reference, 'failed');
+  const { error } = await admin
+    .from('ai_wallets')
+    .update({
+      auto_recharge_failed_at: new Date().toISOString(),
+      auto_recharge_failure_reason: reason.slice(0, 200),
+    })
+    .eq('tenant_id', tenantId);
+  if (error) {
+    console.warn('[walletTopup] could not record auto-recharge failure', { tenantId, error });
+  }
+}
+
 /**
  * Charges the tenant's saved card and credits the wallet.
  *
@@ -335,22 +355,21 @@ export async function attemptAutoRecharge(params: {
       metadata: { booka_wallet_topup: true, tenant_id: params.tenantId, origin: 'auto_recharge' },
     });
   } catch (error) {
+    // Back off on a THROW as well as a decline. This runs inside the inbound
+    // send path, so an unreachable or hanging Paystack costs a real timeout —
+    // without the stamp that timeout is paid again on every single send, which
+    // stalls the shared worker for every other tenant in the batch. With it,
+    // the cost is once per tenant per backoff window.
     console.warn('[walletTopup] auto-recharge charge threw', { tenantId: params.tenantId, error });
-    await markIntent(params.admin, intent.reference, 'failed');
+    await failCharge(params.admin, params.tenantId, intent.reference,
+      error instanceof Error ? error.message : 'charge failed');
     return false;
   }
 
   if (!charge.success || charge.chargeStatus !== 'success') {
     const reason = charge.gatewayResponse ?? charge.error ?? charge.chargeStatus ?? 'unknown';
     console.warn('[walletTopup] auto-recharge declined', { tenantId: params.tenantId, reason });
-    await markIntent(params.admin, intent.reference, 'failed');
-    await params.admin
-      .from('ai_wallets')
-      .update({
-        auto_recharge_failed_at: new Date().toISOString(),
-        auto_recharge_failure_reason: String(reason).slice(0, 200),
-      })
-      .eq('tenant_id', params.tenantId);
+    await failCharge(params.admin, params.tenantId, intent.reference, String(reason));
     return false;
   }
 

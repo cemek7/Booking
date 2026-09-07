@@ -295,4 +295,18 @@ describe('attemptAutoRecharge', () => {
       attemptAutoRecharge({ admin, tenantId: 'tenant-1', wallet: armed }),
     ).resolves.toBe(false);
   });
+
+  it('starts the backoff on a THROW, not only on a decline', async () => {
+    mockCharge.mockRejectedValue(new Error('socket hang up'));
+
+    await attemptAutoRecharge({ admin, tenantId: 'tenant-1', wallet: armed });
+
+    // Without this stamp an unreachable Paystack costs a full timeout on every
+    // single send, stalling the shared worker for every other tenant in the
+    // batch — not once per tenant per backoff window.
+    expect(updates).toContainEqual(expect.objectContaining({
+      table: 'ai_wallets',
+      patch: expect.objectContaining({ auto_recharge_failure_reason: 'socket hang up' }),
+    }));
+  });
 });
