@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { authFetch } from '@/lib/auth/auth-api-client';
+import { Button } from '@/components/ui/button';
 import { FormSection } from './FormSection';
 
 const STATUS_MESSAGES: Record<string, { text: string; tone: 'ok' | 'error' }> = {
@@ -49,7 +50,20 @@ export function InstagramConnectSection({ tenantId }: { tenantId: string }) {
         across tenants.
       </p>
 
-      {connection?.status === 'connected' ? <div className="flex items-center gap-3 text-sm"><span className="text-emerald-700">Connected</span><button type="button" onClick={disconnect} className="rounded border border-rose-300 px-3 py-1.5 text-rose-800">Disconnect</button></div> : <a href="/api/auth/instagram/start" className="inline-flex items-center rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">{connection?.status === 'action_required' ? 'Reconnect Instagram' : 'Connect Instagram'}</a>}
+      {connection?.status === 'connected' ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">Connected</span>
+          <button type="button" onClick={disconnect} className="rounded-md border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50">
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <Button asChild size="sm">
+          <a href={`/api/auth/instagram/start?tenant_id=${encodeURIComponent(tenantId)}`}>
+            {connection?.status === 'action_required' ? 'Reconnect Instagram' : 'Connect Instagram'}
+          </a>
+        </Button>
+      )}
     </FormSection>
   );
 }
