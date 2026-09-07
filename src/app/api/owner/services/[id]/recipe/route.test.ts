@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-
+import { beforeEach, describe, expect, it } from '@jest/globals';
 const mockCreateSupabaseAdminClient = jest.fn();
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -7,6 +6,7 @@ jest.mock('@/lib/supabase/server', () => ({
 }));
 
 import { GET, PUT } from './route';
+import type { NextRequest } from 'next/server';
 
 const SERVICE_ID = '11111111-1111-4111-8111-111111111111';
 const PRODUCT_ID_1 = '22222222-2222-4222-8222-222222222222';
@@ -105,7 +105,7 @@ describe('/api/owner/services/[id]/recipe', () => {
     mockCreateSupabaseAdminClient.mockReturnValue(createAdminMock());
 
     const response = await GET({
-      request: new Request(`http://localhost/api/owner/services/${SERVICE_ID}/recipe`, { method: 'GET' }),
+      request: new Request(`http://localhost/api/owner/services/${SERVICE_ID}/recipe`, { method: 'GET' }) as unknown as NextRequest,
       supabase: {} as never,
       params: { id: SERVICE_ID },
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: ['MANAGE_PRODUCTS'] },

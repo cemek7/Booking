@@ -1,10 +1,10 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordMovement } from './recordMovement';
 
 describe('recordMovement', () => {
   it('calls update_inventory with signed quantity change and unit cost', async () => {
-    const rpc = jest.fn(async () => ({ data: [], error: null }));
+    const rpc = jest.fn(async (_name: string, _args?: Record<string, unknown>) => ({ data: [], error: null }));
     const admin = { rpc } as unknown as SupabaseClient;
 
     await recordMovement(admin, {

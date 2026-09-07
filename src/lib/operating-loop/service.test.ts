@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createOperatingLoopService } from './service';
 import type { OperatingObjectiveDraft } from './types';
@@ -13,7 +13,12 @@ function makeAdmin(seed: Tables) {
     Object.entries(seed).map(([table, rows]) => [table, rows.map((row) => ({ ...row }))]),
   ) as Tables;
   let nextId = 1;
-  const rpc = jest.fn((name: string) => {
+  // Two params and a widened return: supabase's rpc() is called as
+  // rpc(name, args), and the branches below return differently-shaped rows.
+  // A one-param implementation made every toHaveBeenCalledWith(name, args)
+  // an arity error, and narrowed the return to whichever branch came first.
+  type RpcResult = Promise<{ data: unknown; error: unknown }>;
+  const rpc = jest.fn((name: string, _args?: unknown): RpcResult => {
     if (name === 'queue_operating_delivery') return Promise.resolve({ data: [{ action_id: 'action-1', outbox_id: 'outbox-1' }], error: null });
     if (name === 'apply_operating_suppression') return Promise.resolve({ data: [{ action_id: 'action-2', suppression_id: 'suppression-1' }], error: null });
     if (name === 'persist_operating_objective_draft') return Promise.resolve({ data: [{ outcome: 'suppressed', objective: null }], error: null });

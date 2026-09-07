@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockLogAiAction = jest.fn();

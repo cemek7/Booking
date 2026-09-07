@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 import { detectDuplicates, mergeCustomers } from './merge';
 import { BUSINESS_EVENT_ACTIONS } from '@/lib/audit/businessEvents';
 

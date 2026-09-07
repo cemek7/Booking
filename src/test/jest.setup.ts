@@ -8,6 +8,16 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ||
 
 // Optional: @testing-library/jest-dom (install if using React Testing Library)
 import '@testing-library/jest-dom';
+import { configure as configureTestingLibrary } from '@testing-library/dom';
+
+// Testing Library's waitFor/findBy default to a 1000ms budget. This repo runs
+// 300+ suites in parallel workers, and under that load an async render can
+// genuinely take longer than a second — which showed up as component tests
+// (MentionsFeed, CloseAccountSection, RevenueRequestsClient) failing in a full
+// run and passing on their own. Raising the budget removes the false failures
+// without hiding real ones: a component that never renders still never renders,
+// it just takes 5s to say so.
+configureTestingLibrary({ asyncUtilTimeout: 5000 });
 
 // Polyfill setImmediate for jsdom environment (used by Winston logger)
 if (typeof setImmediate === 'undefined') {

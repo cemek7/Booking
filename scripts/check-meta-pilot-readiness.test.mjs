@@ -99,3 +99,43 @@ test('reports Embedded Signup configuration separately from Meta approval', () =
   assert.equal(readiness.whatsapp.publicOnboardingConfigured, true);
   assert.equal(readiness.whatsapp.metaApprovalVerified, false);
 });
+
+// ── Message metering cutover (2026-10-01) ────────────────────────────────────
+// Both failure modes below are silent: nothing else in the system notices that
+// Booka is absorbing every message, or that tenants are being billed off a
+// placeholder rate.
+
+test('warns when metering is live but no confirmed rate is configured', () => {
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    BOOKA_MESSAGE_METERING_MODE: 'live',
+  });
+
+  assert.equal(readiness.messageMetering.mode, 'live');
+  assert.equal(readiness.messageMetering.rateConfigured, false);
+  assert.ok(
+    readiness.messageMetering.warnings.some((w) => w.includes('BOOKA_MESSAGE_RATE_CREDITS')),
+  );
+});
+
+test('is quiet when metering is live with a confirmed rate', () => {
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    BOOKA_MESSAGE_METERING_MODE: 'live',
+    BOOKA_MESSAGE_RATE_CREDITS: '14',
+  });
+
+  assert.equal(readiness.messageMetering.rateConfigured, true);
+  assert.deepEqual(readiness.messageMetering.warnings, []);
+});
+
+test('treats anything other than "live" as shadow mode', () => {
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    BOOKA_MESSAGE_METERING_MODE: 'LIVE',
+  });
+
+  // messageRates.ts compares against the exact string 'live'. A config that
+  // reads as enabled but is not would mean nobody is billed at all.
+  assert.equal(readiness.messageMetering.mode, 'shadow');
+});

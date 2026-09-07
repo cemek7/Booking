@@ -1,15 +1,20 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { findByIdempotencyKey, logAiAction } from './aiActionLog';
 
 describe('aiActionLog', () => {
   it('returns the prior outcome on idempotency hit', async () => {
     const maybeSingle = jest.fn(async () => ({ data: { outcome: 'duplicate' }, error: null }));
-    const eq = jest.fn(() => ({ eq }));
+    // `const eq = jest.fn(() => ({ eq }))` referenced itself in its own
+    // initializer, so TypeScript could not infer a type for it and every
+    // .mockReturnValueOnce() below resolved against `any`. Declaring the chain
+    // shape first breaks the cycle without changing what the mock does.
+    type EqChain = { eq: jest.Mock; maybeSingle?: typeof maybeSingle };
+    const eq: jest.Mock<EqChain> = jest.fn(() => ({ eq }));
     eq.mockReturnValueOnce({ eq });
-    eq.mockReturnValueOnce({ maybeSingle });
+    eq.mockReturnValueOnce({ eq, maybeSingle });
     const select = jest.fn(() => ({ eq }));
-    const from = jest.fn(() => ({ select }));
+    const from = jest.fn((_table: string) => ({ select }));
     const admin = { from } as unknown as SupabaseClient;
 
     const result = await findByIdempotencyKey(admin, 'tenant-1', 'idem-1');
@@ -19,8 +24,8 @@ describe('aiActionLog', () => {
   });
 
   it('inserts ai action log rows', async () => {
-    const insert = jest.fn(async () => ({ error: null }));
-    const from = jest.fn(() => ({ insert }));
+    const insert = jest.fn(async (_row: Record<string, unknown>) => ({ error: null }));
+    const from = jest.fn((_table: string) => ({ insert }));
     const admin = { from } as unknown as SupabaseClient;
 
     await logAiAction(admin, {

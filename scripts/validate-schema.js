@@ -88,6 +88,32 @@ const REQUIRED_SCHEMA = {
     'id', 'tenant_id', 'reference', 'amount_credits', 'amount_minor',
     'currency', 'email', 'status', 'origin',
   ],
+  // Relationship-intelligence VIEWS (migration 094). The AI grounding service
+  // and the owner booking handlers read these directly. They fail safe — a
+  // missing view yields empty grounding rather than an error — which is exactly
+  // why they need checking here: without the gate, an unapplied 094 shows up as
+  // an assistant that has quietly forgotten every customer, not as a 500.
+  customer_service_history_view: [
+    'tenant_id', 'customer_id', 'customer_name', 'customer_phone',
+    'service_id', 'service_name', 'booking_count', 'completed_count',
+    'cancelled_count', 'last_completed_at', 'estimated_revenue',
+  ],
+  staff_customer_history_view: [
+    'tenant_id', 'staff_id', 'staff_name', 'customer_id', 'customer_name',
+    'customer_phone', 'booking_count', 'completed_count', 'last_completed_at',
+  ],
+  followup_candidates_view: [
+    'tenant_id', 'customer_id', 'customer_name', 'customer_phone',
+    'days_since_visit', 'candidate_reason', 'risk_score',
+    'lifetime_bookings', 'favorite_service', 'favorite_staff',
+    'next_booking_at', 'is_followup_candidate',
+  ],
+  tenant_revenue_view: [
+    'tenant_id', 'booking_date', 'service_id', 'service_name',
+    'staff_id', 'staff_name', 'customer_id', 'customer_name', 'customer_phone',
+    'booking_count', 'completed_count', 'estimated_revenue',
+  ],
+  products: ['id', 'tenant_id', 'name', 'is_active'],
 };
 
 /** True when a supabase-js error indicates the whole relation is missing. */
