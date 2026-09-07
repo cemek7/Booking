@@ -17,7 +17,9 @@
     "src/hooks/**/*.ts",
     "src/hooks/**/*.tsx",
     "src/store/**/*.ts",
-    "src/store/**/*.tsx"
+    "src/store/**/*.tsx",
+    "src/showcase/**/*.ts",
+    "src/showcase/**/*.tsx"
   ],
   "references": [
     { "path": "./tsconfig.shared.json" }

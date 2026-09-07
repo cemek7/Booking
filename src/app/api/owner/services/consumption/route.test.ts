@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-
+import { beforeEach, describe, expect, it } from '@jest/globals';
 const mockCreateSupabaseAdminClient = jest.fn();
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -7,6 +6,7 @@ jest.mock('@/lib/supabase/server', () => ({
 }));
 
 import { GET } from './route';
+import type { NextRequest } from 'next/server';
 
 function createAdminMock() {
   return {
@@ -61,7 +61,7 @@ describe('/api/owner/services/consumption', () => {
     mockCreateSupabaseAdminClient.mockReturnValue(createAdminMock());
 
     const response = await GET({
-      request: new Request('http://localhost/api/owner/services/consumption?start=2026-07-20T00:00:00.000Z&end=2026-07-20T23:59:59.999Z', { method: 'GET' }),
+      request: new Request('http://localhost/api/owner/services/consumption?start=2026-07-20T00:00:00.000Z&end=2026-07-20T23:59:59.999Z', { method: 'GET' }) as unknown as NextRequest,
       supabase: {} as never,
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: ['MANAGE_PRODUCTS'] },
     });

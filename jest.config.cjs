@@ -5,6 +5,10 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
   setupFilesAfterEnv: ['<rootDir>/src/test/jest.setup.ts'],
+  // Jest's 5s default is tight for a 300-suite parallel run on a loaded
+  // machine; it has to exceed the Testing Library asyncUtilTimeout set in
+  // jest.setup.ts or a slow render fails the test before waitFor gives up.
+  testTimeout: 20000,
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^tinypool$': '<rootDir>/src/test/tinypoolStub.ts',

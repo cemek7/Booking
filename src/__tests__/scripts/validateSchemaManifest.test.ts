@@ -35,6 +35,19 @@ const METERED_TABLES = [
   'wallet_topup_intents',
 ];
 
+/**
+ * Relationship views (094). These fail SAFE at runtime — a missing view yields
+ * empty grounding, not an error — so nothing surfaces if 094 was never applied
+ * except an assistant that has quietly forgotten every customer. The gate is
+ * the only thing that turns that into a visible failure.
+ */
+const RELATIONSHIP_VIEWS = [
+  'customer_service_history_view',
+  'staff_customer_history_view',
+  'followup_candidates_view',
+  'tenant_revenue_view',
+];
+
 describe('db:validate manifest', () => {
   it('covers every table the metering path writes to', () => {
     METERED_TABLES.forEach((table) => {
@@ -42,7 +55,13 @@ describe('db:validate manifest', () => {
     });
   });
 
-  describe.each(METERED_TABLES)('%s', (table) => {
+  it('covers the relationship views the AI grounding service reads', () => {
+    RELATIONSHIP_VIEWS.forEach((view) => {
+      expect(Object.keys(REQUIRED_SCHEMA)).toContain(view);
+    });
+  });
+
+  describe.each([...METERED_TABLES, ...RELATIONSHIP_VIEWS])('%s', (table) => {
     it('lists only columns a migration actually creates', () => {
       const sql = migrationsMentioning(table);
       expect(sql).not.toBe('');

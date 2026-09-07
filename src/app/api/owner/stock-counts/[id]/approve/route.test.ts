@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 const mockApproveSession = jest.fn();
 
 jest.mock('@/lib/inventory/stockCountService', () => ({
@@ -7,13 +6,14 @@ jest.mock('@/lib/inventory/stockCountService', () => ({
 }));
 
 import { POST } from './route';
+import type { NextRequest } from 'next/server';
 
 describe('/api/owner/stock-counts/[id]/approve', () => {
   it('approves a stock count session', async () => {
     mockApproveSession.mockResolvedValueOnce({ id: 'session-1', status: 'approved' });
 
     const response = await POST({
-      request: new Request('http://localhost/api/owner/stock-counts/session-1/approve', { method: 'POST' }),
+      request: new Request('http://localhost/api/owner/stock-counts/session-1/approve', { method: 'POST' }) as unknown as NextRequest,
       supabase: {} as never,
       params: { id: 'session-1' },
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: [] },

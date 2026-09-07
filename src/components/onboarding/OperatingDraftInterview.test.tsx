@@ -36,7 +36,7 @@ describe('OperatingDraftInterview', () => {
   });
 
   it('shows one conversational next question with readiness and submits a natural-language answer', async () => {
-    const onAction = jest.fn<Promise<void>, [OperatingDraftInterviewAction]>().mockResolvedValue(undefined);
+    const onAction = jest.fn<(action: OperatingDraftInterviewAction) => Promise<void>>().mockResolvedValue(undefined);
     render(<OperatingDraftInterview enabled draft={activeDraft} onAction={onAction} onContinue={() => {}} />);
 
     expect(screen.getByText('1 of 5 front-desk details ready')).toBeInTheDocument();
@@ -54,7 +54,7 @@ describe('OperatingDraftInterview', () => {
   });
 
   it('shows the final operating summary and requires an explicit approval before continuing', async () => {
-    const onAction = jest.fn<Promise<void>, [OperatingDraftInterviewAction]>().mockResolvedValue(undefined);
+    const onAction = jest.fn<(action: OperatingDraftInterviewAction) => Promise<void>>().mockResolvedValue(undefined);
     render(<OperatingDraftInterview enabled draft={reviewDraft} onAction={onAction} onContinue={() => {}} />);
 
     expect(screen.getByText('Review your front-desk setup')).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('OperatingDraftInterview', () => {
   });
 
   it('keeps the interview actionable and explains a failed save', async () => {
-    const onAction = jest.fn<Promise<void>, [OperatingDraftInterviewAction]>().mockRejectedValue(new Error('Network unavailable'));
+    const onAction = jest.fn<(action: OperatingDraftInterviewAction) => Promise<void>>().mockRejectedValue(new Error('Network unavailable'));
     render(<OperatingDraftInterview enabled draft={activeDraft} onAction={onAction} onContinue={() => {}} />);
 
     fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'We sell braids and take weekend appointments.' } });

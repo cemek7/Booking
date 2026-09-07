@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { BOOKA_PERMISSIONS } from '@/types/permissions';
 
 const mockNlToMetric = jest.fn();

@@ -1,0 +1,10 @@
+{
+  "//": "Cypress ships its own global `expect` from Chai. While its specs were part of the root tsconfig program, that global shadowed Jest's `expect` across the whole repo — every colocated *.test.ts failed with 'Property toEqual does not exist on type Assertion. Did you mean equal?' (356 errors). The root tsconfig now excludes cypress/; this keeps these specs typechecked on their own terms. `exclude` must be restated because the inherited one excludes this very directory.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["cypress", "node"],
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "../cypress.config.ts"],
+  "exclude": ["../node_modules"]
+}
