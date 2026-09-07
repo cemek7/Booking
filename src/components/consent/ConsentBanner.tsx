@@ -3,11 +3,13 @@
 
 import React, { useEffect, useState } from 'react';
 import { getConsent, setConsent } from '@/lib/consent/consentStore';
+import Link from 'next/link';
 
 export default function ConsentBanner() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only state (localStorage/URL) after hydration; doing it during render would desync server and client HTML
     setVisible(getConsent() === null);
   }, []);
 
@@ -27,7 +29,7 @@ export default function ConsentBanner() {
       <p className="text-sm text-gray-700">
         We use essential cookies to run Boka. With your consent we also use analytics
         cookies to improve the product. See our{' '}
-        <a href="/cookies" className="underline">Cookie Policy</a>.
+        <Link href="/cookies" className="underline">Cookie Policy</Link>.
       </p>
       <div className="mt-3 flex gap-2 justify-end">
         <button

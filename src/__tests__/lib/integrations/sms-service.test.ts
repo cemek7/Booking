@@ -133,7 +133,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include service name in message', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingConfirmationSMS('+19876543210', bookingDetails);
@@ -141,7 +143,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include date in message', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingConfirmationSMS('+19876543210', bookingDetails);
@@ -149,7 +153,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include time in message', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingConfirmationSMS('+19876543210', bookingDetails);
@@ -157,7 +163,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include confirmation code when provided', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingConfirmationSMS('+19876543210', bookingDetails);
@@ -178,7 +186,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should send to correct phone number', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingConfirmationSMS('+15551234567', bookingDetails);
@@ -186,7 +196,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should contain "Booking Confirmed" text', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingConfirmationSMS('+19876543210', bookingDetails);
@@ -209,7 +221,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include service name in reminder', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingReminderSMS('+19876543210', reminderDetails);
@@ -217,7 +231,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include time in reminder', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingReminderSMS('+19876543210', reminderDetails);
@@ -225,7 +241,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should include hours until appointment', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingReminderSMS('+19876543210', reminderDetails);
@@ -233,7 +251,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should handle 1 hour reminder', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       const oneHourReminder = {
@@ -247,7 +267,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should handle 2 hour reminder', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       const twoHourReminder = {
@@ -261,7 +283,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should contain "Reminder" text', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingReminderSMS('+19876543210', reminderDetails);
@@ -269,7 +293,9 @@ describe('SMS Service - Integration', () => {
     });
 
     it('should send to correct phone number', async () => {
-      const twilio = require('twilio');
+      // jest.requireMock is the sanctioned way to reach a mocked module; a bare
+      // require() is the same object but trips no-require-imports.
+      const twilio = jest.requireMock('twilio') as () => { messages: { create: jest.Mock } };
       const mockClient = twilio();
 
       await sendBookingReminderSMS('+15559876543', reminderDetails);

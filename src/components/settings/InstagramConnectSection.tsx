@@ -49,7 +49,8 @@ export function InstagramConnectSection({ tenantId }: { tenantId: string }) {
         across tenants.
       </p>
 
-      {connection?.status === 'connected' ? <div className="flex items-center gap-3 text-sm"><span className="text-emerald-700">Connected</span><button type="button" onClick={disconnect} className="rounded border border-rose-300 px-3 py-1.5 text-rose-800">Disconnect</button></div> : <a href="/api/auth/instagram/start" className="inline-flex items-center rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">{connection?.status === 'action_required' ? 'Reconnect Instagram' : 'Connect Instagram'}</a>}
+      {connection?.status === 'connected' ? <div className="flex items-center gap-3 text-sm"><span className="text-emerald-700">Connected</span><button type="button" onClick={disconnect} className="rounded border border-rose-300 px-3 py-1.5 text-rose-800">Disconnect</button></div> : /* eslint-disable-next-line @next/next/no-html-link-for-pages -- this is an OAuth entry point, not a page: it must be a real navigation so the browser follows Instagram's redirect chain. next/link would client-side route and break the flow. */
+        <a href="/api/auth/instagram/start" className="inline-flex items-center rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">{connection?.status === 'action_required' ? 'Reconnect Instagram' : 'Connect Instagram'}</a>}
     </FormSection>
   );
 }

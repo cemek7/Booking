@@ -11,6 +11,7 @@ function UnsubscribeInner() {
 
   useEffect(() => {
     if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
       setState({ kind: 'error' });
       return;
     }

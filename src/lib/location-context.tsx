@@ -20,6 +20,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       const raw = localStorage.getItem('current_location');
       if (raw) {
         const parsed = JSON.parse(raw);
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only state (localStorage/URL) after hydration; doing it during render would desync server and client HTML
         if (parsed?.id) setLocationState({ id: parsed.id, name: parsed.name });
       }
     } catch {}

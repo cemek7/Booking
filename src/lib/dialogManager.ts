@@ -48,8 +48,10 @@ async function initRedisIfAvailable() {
   const url = process.env.REDIS_URL;
   if (!url) return;
   try {
-    // dynamic import so repo doesn't require ioredis at install time
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // ioredis is an OPTIONAL dependency — the session store falls back to
+    // Postgres/in-memory without it (see the catch below). A static import
+    // would make it a hard install requirement for every deployment.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const IORedis = require('ioredis');
     redisClient = new IORedis(url);
     usingRedis = true;

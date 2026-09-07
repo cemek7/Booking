@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Product, ProductVariant } from '@/types/product-catalogue';
 import Button from '@/components/ui/button';
 
@@ -28,16 +28,18 @@ export default function BookingProductList({
   showPricing = true,
   editable = true
 }: BookingProductListProps) {
-  const [total, setTotal] = useState(0);
+  // `total` is derived from selectedProducts, so it is computed during render
+  // rather than mirrored into state by an effect. Storing it meant every change
+  // to the basket rendered twice: once with the stale total, once with the new
+  // one. Only notifying the parent is an actual side effect.
+  const total = useMemo(
+    () => selectedProducts.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    [selectedProducts],
+  );
 
-  // Calculate total whenever selectedProducts changes
   useEffect(() => {
-    const newTotal = selectedProducts.reduce((sum, item) => {
-      return sum + (item.price * item.quantity);
-    }, 0);
-    setTotal(newTotal);
-    onUpdateTotal(newTotal);
-  }, [selectedProducts, onUpdateTotal]);
+    onUpdateTotal(total);
+  }, [total, onUpdateTotal]);
 
   const getProductDisplayName = (item: SelectedProduct) => {
     if (item.variant) {

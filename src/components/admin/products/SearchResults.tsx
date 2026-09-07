@@ -130,7 +130,7 @@ export default function SearchResults({
         {/* Search Summary */}
         {!isLoading && searchQuery.search && (
           <div className="text-sm text-gray-600">
-            Showing results for "{searchQuery.search}"
+            Showing results for &quot;{searchQuery.search}&quot;
             {searchQuery.category && ` in ${searchQuery.category}`}
             {searchQuery.tags && (Array.isArray(searchQuery.tags) ? searchQuery.tags.length > 0 : true) && ` with tags: ${Array.isArray(searchQuery.tags) ? searchQuery.tags.join(', ') : searchQuery.tags}`}
           </div>

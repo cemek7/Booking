@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Security tests for permission system
  * 

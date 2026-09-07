@@ -24,6 +24,7 @@ export default function TenantsClient({ user }: TenantsClientProps) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
     if (!tenantId) return setUsage(null);
     authFetch(`/api/admin/llm-usage?tenant_id=${tenantId}`).then((res) => {
       const json = res.data as Record<string, unknown> | null;

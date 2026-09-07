@@ -4,7 +4,7 @@ export default function WhatsAppQRCodeSection({ qrCodeUrl, onRefresh, status }: 
   return (
     <div className="mb-6 p-4 border rounded bg-white">
       <h2 className="text-lg font-semibold mb-2">WhatsApp QR Code Linking</h2>
-      <p className="mb-2 text-gray-600">Scan this QR code with your WhatsApp Business app to link your tenant's WhatsApp number for chat onboarding.</p>
+      <p className="mb-2 text-gray-600">Scan this QR code with your WhatsApp Business app to link your tenant&apos;s WhatsApp number for chat onboarding.</p>
       {qrCodeUrl ? (
         <div className="flex flex-col items-center">
           <img src={qrCodeUrl} alt="WhatsApp QR Code" className="w-48 h-48 border mb-2" />

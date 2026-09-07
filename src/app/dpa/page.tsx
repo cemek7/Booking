@@ -14,7 +14,7 @@ export default function DpaPage() {
     <LegalDocument title="Data Processing Agreement (DPA)" lastUpdated={LEGAL.lastUpdated}>
       <LegalSection heading="Roles">
         <p>
-          This DPA applies where a business customer ("tenant") uses {LEGAL.product} to process personal
+          This DPA applies where a business customer (&quot;tenant&quot;) uses {LEGAL.product} to process personal
           data of its own customers. The <strong>tenant is the data controller</strong> and {LEGAL.company}{' '}
           is the <strong>processor</strong>, acting on the tenant&apos;s documented instructions.
         </p>

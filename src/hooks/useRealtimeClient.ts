@@ -14,6 +14,7 @@ export function useRealtimeClient() {
     // Use token from tenant context; avoid reading from localStorage to reduce XSS surface
     const c = getRealtimeClient(token || undefined);
     c.onStatus(setStatus);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state arrives from a subscription/realtime callback, not from a render
     setStatus(c.getStatus());
     setClient(c);
     return () => { /* keep singleton; do not stop */ };

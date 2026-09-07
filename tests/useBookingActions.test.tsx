@@ -4,8 +4,7 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useBookingActions } from '@/hooks/useBookingActions';
 
-// @ts-ignore
-global.fetch = jest.fn();
+global.fetch = jest.fn() as unknown as typeof fetch;
 const fetchMock = global.fetch as unknown as ReturnType<typeof jest.fn>;
 
 function wrapperFactory() {
