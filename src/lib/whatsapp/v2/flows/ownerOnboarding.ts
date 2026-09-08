@@ -485,9 +485,23 @@ async function activateTenant(tenantId: string): Promise<string> {
     .update({ routing_code: routingCode, v2_enabled: true })
     .eq('id', tenantId);
 
-  const waNumber = process.env.EVOLUTION_DEFAULT_PHONE ?? '2348000000000';
-  const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
   const businessName = tenantData?.name ?? 'your business';
+
+  // Never invent a number. This used to fall back to a hardcoded
+  // '2348000000000', so an unset EVOLUTION_DEFAULT_PHONE handed every newly
+  // onboarded owner a booking link pointing at a number that is not Booka's —
+  // and then told them to print it as a QR code. The routing code still works
+  // on its own, so the activation is real; only the shareable link is missing.
+  const waNumber = (process.env.EVOLUTION_DEFAULT_PHONE ?? '').replace(/\D/g, '');
+  if (!waNumber) {
+    console.error(
+      '[ownerOnboarding] EVOLUTION_DEFAULT_PHONE is not set — activated a tenant with no booking link',
+      { tenantId, routingCode },
+    );
+    return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by texting *${routingCode}* to this number.\n\nShare that code on Instagram, WhatsApp broadcast, or print it as a QR code.`;
+  }
+
+  const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
 
   return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.`;
 }

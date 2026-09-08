@@ -119,6 +119,28 @@ describe('step 4 (hours) hands over to email capture', () => {
     singleQueue = [{ data: { name: 'Glamour', metadata: {} }, error: null }]; // tenants read
   });
 
+  it('never hands the owner a booking link to a number that is not Booka\u2019s', async () => {
+    // This used to fall back to a hardcoded '2348000000000' when
+    // EVOLUTION_DEFAULT_PHONE was unset, and the same message told the owner to
+    // print that link as a QR code.
+    delete process.env.EVOLUTION_DEFAULT_PHONE;
+
+    const reply = await handleOnboarding(PHONE, TENANT, 'Mon-Fri 9am-7pm', conv({ onboarding_step: 4 }));
+
+    expect(reply).not.toContain('wa.me');
+    expect(reply).not.toContain('2348000000000');
+    // The routing code still works on its own, so activation is still real.
+    expect(reply).toContain("You're live!");
+    expect(reply).toContain('GLAM01');
+  });
+
+  it('builds the booking link from the configured number when there is one', async () => {
+    process.env.EVOLUTION_DEFAULT_PHONE = '+234 801 234 5678';
+    const reply = await handleOnboarding(PHONE, TENANT, 'Mon-Fri 9am-7pm', conv({ onboarding_step: 4 }));
+    expect(reply).toContain('https://wa.me/2348012345678?text=GLAM01');
+    delete process.env.EVOLUTION_DEFAULT_PHONE;
+  });
+
   it('still activates the tenant before asking for an email', async () => {
     const reply = await handleOnboarding(PHONE, TENANT, 'Mon-Fri 9am-7pm', conv({ onboarding_step: 4 }));
 
