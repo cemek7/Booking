@@ -32,19 +32,29 @@ export interface AtRiskTenant {
 /**
  * Tenants whose own Meta account needs a payment method.
  *
- * Deliberately includes rows where `meta_billing_owner` is NULL but the
- * connection source says the tenant brought their own number: the column was
- * added later than the connection flow, so an older self-connected tenant can
- * have a null owner and still be billed directly by Meta. Warning someone who
- * turns out to be covered costs one message; missing someone costs them their
- * whole assistant.
+ * THE PHONE NUMBER ID IS THE DISCRIMINATOR, not `meta_billing_owner`. Only the
+ * Embedded Signup route ever writes that column; the dashboard connect route
+ * (`POST /api/tenants/[id]/whatsapp/connect`) takes a `metaPhoneNumberId` and
+ * writes NO billing owner, NO connection source and NO WABA id at all. A tenant
+ * who connected that way owns their number, therefore owns the WABA behind it,
+ * therefore gets the Meta invoice — and was indistinguishable from a
+ * shared-gateway tenant by the billing-owner column alone.
+ *
+ * So the rule is the same one the inbound webhook already uses to recognise its
+ * own gateway: a phone number id that is not Booka's shared one belongs to the
+ * tenant. `meta_billing_owner = 'booka'` still wins as an explicit override for
+ * a number Booka operates on a tenant's behalf.
+ *
+ * Tenants onboarded through the v2 chat flow have no whatsapp_configurations
+ * row at all — they ride the shared gateway via the fallback in
+ * getTenantWhatsAppConfig — so they never appear here, which is correct.
  */
 export async function findTenantsOwningMetaBilling(
   admin: SupabaseClient,
 ): Promise<AtRiskTenant[]> {
   const { data, error } = await admin
     .from('whatsapp_configurations')
-    .select('tenant_id, meta_billing_owner, meta_connection_source')
+    .select('tenant_id, meta_billing_owner, meta_connection_source, meta_phone_number_id')
     .eq('provider', 'meta')
     .eq('active', true);
 
@@ -53,18 +63,28 @@ export async function findTenantsOwningMetaBilling(
     return [];
   }
 
+  const sharedGatewayId = (process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID || '').trim();
+
   const rows = (data ?? []) as Array<{
     tenant_id: string;
     meta_billing_owner: string | null;
     meta_connection_source: string | null;
+    meta_phone_number_id: string | null;
   }>;
 
   return rows
     .filter((r) => {
-      if (r.meta_billing_owner === 'booka') return false;      // covered by Booka's card
+      // Explicit records first.
+      if (r.meta_billing_owner === 'booka') return false;
       if (r.meta_billing_owner === 'client') return true;
-      // Owner not recorded: infer from how the connection was made.
-      return r.meta_connection_source === 'embedded_signup' || r.meta_connection_source === 'direct';
+      if (r.meta_connection_source === 'embedded_signup' || r.meta_connection_source === 'direct') {
+        return true;
+      }
+      // Nothing recorded: the number itself says who owns the account.
+      const own = (r.meta_phone_number_id || '').trim();
+      if (!own) return false;                       // no number of their own
+      if (sharedGatewayId && own === sharedGatewayId) return false;  // Booka's gateway
+      return true;
     })
     .map((r) => ({ tenantId: r.tenant_id, connectionSource: r.meta_connection_source }));
 }
