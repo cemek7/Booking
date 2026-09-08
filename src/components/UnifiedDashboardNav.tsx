@@ -223,6 +223,7 @@ const ALL_NAV_ITEMS: NavItemDef[] = [
   { href: '/dashboard/superadmin/reservations', label: 'Reservations', icon: Icons.bookings, roles: ['superadmin'] },
   { href: '/dashboard/superadmin/reservation-logs', label: 'Reservation Logs', icon: Icons.reports, roles: ['superadmin'] },
   { href: '/dashboard/superadmin/staff', label: 'Tenant Staff', icon: Icons.staff, roles: ['superadmin'] },
+  { href: '/dashboard/superadmin/promo-codes', label: 'Promo Codes', icon: Icons.billing, roles: ['superadmin'] },
 ];
 
 const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
@@ -349,6 +350,7 @@ const ROLE_GROUPS: Record<Role, NavGroupDef[]> = {
       items: [
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservations')!,
         ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/reservation-logs')!,
+        ALL_NAV_ITEMS.find((i) => i.href === '/dashboard/superadmin/promo-codes')!,
       ],
     },
   ],
