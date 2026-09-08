@@ -44,6 +44,8 @@ export type PromoCodeInput = {
 export type PromoCodeRow = {
   id: string;
   campaign: string;
+  issued_to?: string[] | null;
+  issued_at?: string | null;
   amount_credits: number | string;
   starts_at: string | null;
   expires_at: string | null;
@@ -104,7 +106,7 @@ export async function listPromoCodes(params: {
 
   const { data, error } = await params.admin
     .from('wallet_promo_codes')
-    .select('id, campaign, amount_credits, starts_at, expires_at, max_redemptions, max_redemptions_per_tenant, active, created_at')
+    .select('id, campaign, amount_credits, starts_at, expires_at, max_redemptions, max_redemptions_per_tenant, active, created_at, issued_to, issued_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -126,6 +128,28 @@ export async function listPromoCodes(params: {
   );
 
   return rows.map((row, i) => ({ ...row, redemptions: counts[i] }));
+}
+
+/**
+ * Records where a code was emailed. Separate from creation because delivery
+ * can partly fail — one address bounces, another lands — and the row should
+ * reflect what actually arrived rather than what was attempted.
+ */
+export async function recordPromoDelivery(params: {
+  admin: SupabaseClient;
+  id: string;
+  sentTo: string[];
+}): Promise<void> {
+  if (params.sentTo.length === 0) return;
+
+  const { error } = await params.admin
+    .from('wallet_promo_codes')
+    .update({ issued_to: params.sentTo, issued_at: new Date().toISOString() })
+    .eq('id', params.id);
+
+  // The code is already created and delivered; failing to write the audit line
+  // must not turn a successful send into an error for the superadmin.
+  if (error) console.warn('[walletPromoAdmin] could not record delivery', { id: params.id, error: error.message });
 }
 
 /**
