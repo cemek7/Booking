@@ -114,6 +114,11 @@ const REQUIRED_SCHEMA = {
     'booking_count', 'completed_count', 'estimated_revenue',
   ],
   products: ['id', 'tenant_id', 'name', 'is_active'],
+  // Cost basis (migration 147). These fail SAFE — pricing falls back to the
+  // compiled-in constants — so an unapplied 147 shows up as margins quietly
+  // modelled on a stale naira rather than as an error anyone would see.
+  message_rate_card: ['id', 'category', 'cost_usd', 'effective_from', 'country_code'],
+  platform_fx_rates: ['id', 'base', 'quote', 'rate', 'as_of'],
 };
 
 /** True when a supabase-js error indicates the whole relation is missing. */
