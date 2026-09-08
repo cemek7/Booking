@@ -41,6 +41,7 @@ function makeAdmin() {
 const NOW = new Date('2026-09-08T00:00:00Z');
 
 beforeEach(() => {
+  delete process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID;
   mockDeliver.mockClear();
   configError = null; notificationError = null;
   notificationRows = [];
@@ -67,8 +68,44 @@ describe('findTenantsOwningMetaBilling', () => {
     expect(out.map((t) => t.tenantId)).toEqual(['t-old']);
   });
 
-  it('excludes shared-gateway tenants with no connection source', async () => {
-    configRows = [{ tenant_id: 't-shared', meta_billing_owner: null, meta_connection_source: null }];
+  it('excludes a row on Booka\u2019s own shared gateway number', async () => {
+    process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID = 'shared-123';
+    configRows = [{
+      tenant_id: 't-shared', meta_billing_owner: null,
+      meta_connection_source: null, meta_phone_number_id: 'shared-123',
+    }];
+    expect(await findTenantsOwningMetaBilling(makeAdmin())).toEqual([]);
+  });
+
+  it('excludes a row with no number of its own at all', async () => {
+    configRows = [{
+      tenant_id: 't-none', meta_billing_owner: null,
+      meta_connection_source: null, meta_phone_number_id: null,
+    }];
+    expect(await findTenantsOwningMetaBilling(makeAdmin())).toEqual([]);
+  });
+
+  it('CATCHES a dashboard-connected tenant, which records no billing owner', async () => {
+    // POST /api/tenants/[id]/whatsapp/connect takes a metaPhoneNumberId and
+    // writes no billing owner, no connection source and no WABA id. Keying on
+    // meta_billing_owner alone missed these tenants entirely, even though their
+    // own number means their own WABA and their own Meta invoice.
+    process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID = 'shared-123';
+    configRows = [{
+      tenant_id: 't-dashboard', meta_billing_owner: null,
+      meta_connection_source: null, meta_phone_number_id: 'their-own-999',
+    }];
+    const out = await findTenantsOwningMetaBilling(makeAdmin());
+    expect(out.map((t) => t.tenantId)).toEqual(['t-dashboard']);
+  });
+
+  it('lets an explicit booka owner override its own number', async () => {
+    // A number Booka operates on a tenant's behalf: recorded, so trusted.
+    process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID = 'shared-123';
+    configRows = [{
+      tenant_id: 't-managed', meta_billing_owner: 'booka',
+      meta_connection_source: null, meta_phone_number_id: 'managed-777',
+    }];
     expect(await findTenantsOwningMetaBilling(makeAdmin())).toEqual([]);
   });
 
