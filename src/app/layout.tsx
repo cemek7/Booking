@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { siteMetadata } from './siteMetadata';
 import localFont from "next/font/local";
 import "./globals.css";
 import RootChrome from "@/components/system/RootChrome";
@@ -22,11 +23,7 @@ const brandDisplay = localFont({
   variable: "--font-booka-display-loaded",
 });
 
-export const metadata: Metadata = {
-  title: "Techclave | AI Operating Systems for African Businesses",
-  description:
-    "Techclave builds AI products for customer operations. Booka is the first product: an AI Revenue Front Desk that turns WhatsApp and Instagram enquiries into booked and paying customers.",
-};
+export const metadata: Metadata = siteMetadata;
 
 export default function RootLayout({
   children,
