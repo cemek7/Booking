@@ -14,6 +14,8 @@
 -- They also do not increment lifetime_topups_credits, which tracks money
 -- actually paid.
 
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS public.wallet_promo_codes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   code_hash TEXT NOT NULL UNIQUE,
@@ -49,12 +51,27 @@ ALTER TABLE public.wallet_promo_redemptions ENABLE ROW LEVEL SECURITY;
 -- No policies are defined on purpose. Codes and redemptions are service-role
 -- only; a tenant seeing other campaigns' codes would defeat the point. The
 -- owner's view of a granted credit is the existing wallet ledger entry.
+REVOKE ALL ON TABLE public.wallet_promo_codes FROM PUBLIC;
+REVOKE ALL ON TABLE public.wallet_promo_codes FROM anon;
+REVOKE ALL ON TABLE public.wallet_promo_codes FROM authenticated;
+GRANT ALL ON TABLE public.wallet_promo_codes TO service_role;
+
+REVOKE ALL ON TABLE public.wallet_promo_redemptions FROM PUBLIC;
+REVOKE ALL ON TABLE public.wallet_promo_redemptions FROM anon;
+REVOKE ALL ON TABLE public.wallet_promo_redemptions FROM authenticated;
+GRANT ALL ON TABLE public.wallet_promo_redemptions TO service_role;
 
 -- ── Redeem a promotional code ────────────────────────────────────────────────
 -- One transaction: validate, claim, credit, record. The row lock on the code
 -- serializes concurrent redemptions, so two simultaneous attempts cannot both
 -- pass a cap check.
-CREATE OR REPLACE FUNCTION public.redeem_wallet_promo(
+-- PostgreSQL cannot use CREATE OR REPLACE when an existing function with the
+-- same input signature has a different RETURNS TABLE shape. Drop only this
+-- exact signature first so this migration can repair a partial/older rollout;
+-- no CASCADE means an unexpected dependency aborts safely.
+DROP FUNCTION IF EXISTS public.redeem_wallet_promo(UUID, TEXT, UUID);
+
+CREATE FUNCTION public.redeem_wallet_promo(
   p_tenant_id UUID,
   p_code_hash TEXT,
   p_redeemer_user_id UUID DEFAULT NULL
@@ -141,5 +158,7 @@ REVOKE ALL ON FUNCTION public.redeem_wallet_promo(UUID, TEXT, UUID) FROM anon;
 REVOKE ALL ON FUNCTION public.redeem_wallet_promo(UUID, TEXT, UUID) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.redeem_wallet_promo(UUID, TEXT, UUID) TO service_role;
 
--- CREATE OR REPLACE resets a search_path pin, so re-apply it here.
+-- Pin the lookup path after creation.
 ALTER FUNCTION public.redeem_wallet_promo(UUID, TEXT, UUID) SET search_path = public, pg_temp;
+
+COMMIT;

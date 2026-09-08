@@ -44,10 +44,32 @@ describe('146 promotional credit security contract', () => {
     expect(sql).toContain(`alter function ${signature} set search_path = public, pg_temp`);
   });
 
+  it('drops an incompatible prior signature before recreating the function', () => {
+    const sql = migrationSql();
+    const drop = 'drop function if exists public.redeem_wallet_promo(uuid, text, uuid)';
+    const create = 'create function public.redeem_wallet_promo(';
+
+    expect(sql).toContain('begin;');
+    expect(sql).toContain('commit;');
+    expect(sql.indexOf(drop)).toBeGreaterThanOrEqual(0);
+    expect(sql.indexOf(drop)).toBeLessThan(sql.indexOf(create));
+  });
+
   it('keeps row-level security on both promo tables', () => {
     const sql = migrationSql();
     expect(sql).toContain('alter table public.wallet_promo_codes enable row level security');
     expect(sql).toContain('alter table public.wallet_promo_redemptions enable row level security');
+  });
+
+  it('grants the invoker table access only to service_role', () => {
+    const sql = migrationSql();
+
+    for (const table of ['wallet_promo_codes', 'wallet_promo_redemptions']) {
+      for (const role of ['public', 'anon', 'authenticated']) {
+        expect(sql).toContain(`revoke all on table public.${table} from ${role}`);
+      }
+      expect(sql).toContain(`grant all on table public.${table} to service_role`);
+    }
   });
 
   it('stores a hash rather than the code, and keeps that hash unique', () => {
