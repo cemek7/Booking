@@ -105,6 +105,26 @@ export function buildMetaPilotReadiness(env = process.env) {
     );
   }
 
+  // ── Meta payment method (hard deadline 2026-09-30) ────────────────────────
+  // Meta stops delivering service messages on 2026-10-01 for any provider
+  // without a payment method on file. No API reports this, so it is an
+  // attestation: set BOOKA_META_PAYMENT_METHOD_ON_FILE=true once it is done.
+  // Until then this counts down, because forgetting it silences every tenant.
+  const paymentMethodOnFile = configured(env, 'BOOKA_META_PAYMENT_METHOD_ON_FILE')
+    && env.BOOKA_META_PAYMENT_METHOD_ON_FILE !== 'false';
+  const paymentDeadline = new Date('2026-09-30T23:59:59Z');
+  const daysToPaymentDeadline = Math.ceil((paymentDeadline - new Date()) / 86400000);
+  if (!paymentMethodOnFile) {
+    meteringWarnings.push(
+      daysToPaymentDeadline >= 0
+        ? `No payment method attested on the WhatsApp Business Account. Meta stops `
+          + `delivering service messages on 2026-10-01 without one — ${daysToPaymentDeadline} `
+          + `days left. Set BOOKA_META_PAYMENT_METHOD_ON_FILE=true once it is added.`
+        : `PAST DEADLINE: no payment method attested on the WhatsApp Business Account. `
+          + `Meta may already have stopped delivering service messages.`,
+    );
+  }
+
   const publicOnboardingConfigured = Boolean(
     appUrl &&
     configured(env, 'META_APP_ID') &&
@@ -137,6 +157,8 @@ export function buildMetaPilotReadiness(env = process.env) {
     messageMetering: {
       mode: meteringMode,
       rateConfigured: configured(env, 'BOOKA_MESSAGE_RATE_CREDITS'),
+      paymentMethodOnFile,
+      daysToPaymentDeadline,
       warnings: meteringWarnings,
     },
   };

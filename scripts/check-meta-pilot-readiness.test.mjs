@@ -123,6 +123,9 @@ test('is quiet when metering is live with a confirmed rate', () => {
     ...controlledPilotEnvironment,
     BOOKA_MESSAGE_METERING_MODE: 'live',
     BOOKA_MESSAGE_RATE_CREDITS: '14',
+    // Attested too: without a payment method on file Meta stops delivering, so
+    // "quiet" is only meaningful once that is settled.
+    BOOKA_META_PAYMENT_METHOD_ON_FILE: 'true',
   });
 
   assert.equal(readiness.messageMetering.rateConfigured, true);
@@ -138,4 +141,39 @@ test('treats anything other than "live" as shadow mode', () => {
   // messageRates.ts compares against the exact string 'live'. A config that
   // reads as enabled but is not would mean nobody is billed at all.
   assert.equal(readiness.messageMetering.mode, 'shadow');
+});
+
+// ── Meta payment method (hard deadline 2026-09-30) ───────────────────────────
+// Meta stops delivering service messages on 2026-10-01 without one. Nothing
+// else in the system would notice until every tenant went quiet.
+
+test('warns until the payment method is attested', () => {
+  const { readiness } = runChecker({ ...controlledPilotEnvironment });
+
+  assert.equal(readiness.messageMetering.paymentMethodOnFile, false);
+  assert.ok(
+    readiness.messageMetering.warnings.some((w) => w.includes('payment method')),
+  );
+});
+
+test('goes quiet once the payment method is attested', () => {
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    BOOKA_META_PAYMENT_METHOD_ON_FILE: 'true',
+  });
+
+  assert.equal(readiness.messageMetering.paymentMethodOnFile, true);
+  assert.ok(
+    !readiness.messageMetering.warnings.some((w) => w.includes('payment method')),
+  );
+});
+
+test('treats an explicit "false" as not attested', () => {
+  // Otherwise setting the variable to anything at all would silence the warning.
+  const { readiness } = runChecker({
+    ...controlledPilotEnvironment,
+    BOOKA_META_PAYMENT_METHOD_ON_FILE: 'false',
+  });
+
+  assert.equal(readiness.messageMetering.paymentMethodOnFile, false);
 });

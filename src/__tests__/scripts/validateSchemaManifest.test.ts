@@ -33,6 +33,8 @@ const METERED_TABLES = [
   'ai_wallet_ledger',
   'whatsapp_message_charges',
   'wallet_topup_intents',
+  'message_rate_card',
+  'platform_fx_rates',
 ];
 
 /**

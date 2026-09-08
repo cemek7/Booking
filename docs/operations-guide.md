@@ -374,6 +374,8 @@ psql $DATABASE_URL -f db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
 psql $DATABASE_URL -f db/migrations/143_message_handoff_warned_on.sql
 psql $DATABASE_URL -f db/migrations/144_low_balance_alerts.sql
 psql $DATABASE_URL -f db/migrations/145_wallet_paid_topup.sql
+psql $DATABASE_URL -f db/migrations/146_wallet_promo_codes.sql
+psql $DATABASE_URL -f db/migrations/147_message_rate_card.sql
 ```
 
 Each has a matching `*_rollback.sql`.
@@ -433,6 +435,39 @@ WHERE mode = 'shadow' AND provider = 'meta'
 GROUP BY 1, 2
 ORDER BY 3 DESC;
 ```
+
+### Keeping the cost basis honest
+
+**The naira figure is derived, not stored.** `message_rate_card` holds Meta's price in **USD** by
+category with an `effective_from` date; `platform_fx_rates` holds USD/NGN. Credits are
+`cost_usd x fx x markup`. Storing NGN 14 directly hid both halves of the number and both ways it
+can move:
+
+| Risk | How you find out | What you change |
+|---|---|---|
+| Meta raises a rate | Only on the 1st of a quarter, announced **1 month ahead** (6 for a pricing-model change). The readiness check warns 45 days out if nothing is dated for the next quarter. | One row: the new `cost_usd` with a future `effective_from`. It applies itself on the day. |
+| The naira moves | The `fx-rate` worker refreshes daily and alerts on a move of 5% or more. | Nothing — pricing follows automatically. The alert is so a human can check the tiers still work. |
+| Someone sets a bad tenant rate | Clamped at cost x 1.15 and logged. | Fix the override. |
+
+Enter a Meta change the day it is announced; do not wait for the 1st:
+
+```sql
+INSERT INTO public.message_rate_card (category, cost_usd, effective_from, source, note)
+VALUES ('marketing', 0.0680, DATE '2027-01-01', 'meta_announced_2026-11', 'Q1 2027');
+```
+
+Everything falls back to the compiled-in constants in `messageRates.ts` if the tables are
+unreachable or have nothing in effect — a pricing lookup must never be why a message goes unsent.
+`checkRateCard()` reports when that fallback is active, when a quarter is approaching unconfirmed,
+and when the FX reading is more than 14 days old.
+
+**Schedule the FX worker**: `GET /api/worker/fx-rate` daily, `Authorization: Bearer $CRON_SECRET`.
+It only ever appends a reading and alerts; it never blocks or slows a send.
+
+> **Hard deadline 2026-09-30: a payment method must be on the WhatsApp Business Account.**
+> Meta stops delivering service messages on 2026-10-01 without one. No API reports this, so it is
+> an attestation — set `BOOKA_META_PAYMENT_METHOD_ON_FILE=true` once it is added, and until then
+> `npm run check:meta-pilot` counts down.
 
 ### Message categories and what they cost
 

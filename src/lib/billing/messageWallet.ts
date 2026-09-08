@@ -1,12 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  resolveMessageSellCredits,
   isShadowMode,
   getGraceOverdraftDefault,
   normalizeCategory,
 } from '@/lib/billing/messageRates';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
+import { resolveSellCredits } from '@/lib/billing/rateCard';
 import { attemptAutoRecharge } from '@/lib/billing/walletTopup';
 
 const CHARGES_TABLE = 'whatsapp_message_charges';
@@ -272,7 +272,12 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
     const wallet = walletData as WalletRow | null;
 
     const tenantRate = wallet?.message_rate_credits != null ? Number(wallet.message_rate_credits) : null;
-    const sellCredits = resolveMessageSellCredits(tenantRate);
+    // The category is unknown before the send, so the reserve books the service
+    // rate; settlement trues it up from Meta's own verdict. The rate itself now
+    // comes from the dated rate card (USD x FX) rather than a naira env var,
+    // falling back to the constants if the card is unreachable — a pricing
+    // lookup must never be the reason a message goes unsent.
+    const sellCredits = await resolveSellCredits(p.admin, tenantRate, 'service');
     const graceCredits = wallet?.grace_overdraft_credits != null
       ? Number(wallet.grace_overdraft_credits)
       : getGraceOverdraftDefault();
@@ -755,7 +760,7 @@ export async function settleOutboundMessage(p: SettleOutboundParams): Promise<vo
   // platform default at settlement.
   const actualCategory = normalizeCategory(pricing?.category);
   const marketingCredits = actualCategory === 'marketing'
-    ? resolveMessageSellCredits(null, 'marketing')
+    ? await resolveSellCredits(admin, null, 'marketing')
     : 0;
   const priced = Math.max(reservedCredits, marketingCredits);
   const settledCredits = billable ? priced : 0;
