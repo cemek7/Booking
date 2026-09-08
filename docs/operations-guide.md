@@ -434,6 +434,43 @@ GROUP BY 1, 2
 ORDER BY 3 DESC;
 ```
 
+### Message categories and what they cost
+
+Meta does not charge one price. As of 2026-09 the Nigerian rates are roughly:
+
+| Category | Meta charges | Booka bills (1.6x) | What it is |
+|---|---|---|---|
+| service | ~NGN 14 ($0.0101) | ~NGN 22.40 | free-form reply inside the 24h window |
+| utility | ~NGN 14 | ~NGN 22.40 | reminders, payment and booking updates |
+| authentication | ~NGN 14 | ~NGN 22.40 | one-time codes |
+| **marketing** | **~NGN 84 ($0.062)** | **~NGN 134.40** | anything promotional, incl. broadcasts |
+
+**Marketing is six times the price**, and it is the one that can lose money at
+scale: a broadcast to 500 customers costs Booka NGN 42,000. Override the rates with
+`BOOKA_MESSAGE_RATE_CREDITS` and `BOOKA_MESSAGE_MARKETING_RATE_CREDITS` as the naira moves.
+
+The reservation runs *before* the send and cannot know a template's category, so it books the
+service rate. The delivery webhook carries Meta's authoritative category, and settlement trues the
+charge **up** to the marketing rate when Meta says marketing — the same reason `billable` is taken
+from Meta rather than modelled locally. It never trues *down*, so a negotiated per-tenant rate is
+not silently replaced by the platform default.
+
+A per-tenant `message_rate_credits` override applies to service and utility only. Marketing always
+bills at the platform marketing rate, so a negotiated conversational rate cannot become a
+six-times-under-cost rate the moment that tenant sends a broadcast.
+
+To find marketing traffic that settled above its reservation:
+
+```sql
+SELECT tenant_id, count(*) AS messages, sum(settled_credits - reserved_credits) AS extra_billed
+FROM public.whatsapp_message_charges
+WHERE pricing_category = 'marketing' AND settled_credits > reserved_credits
+GROUP BY 1 ORDER BY 3 DESC;
+```
+
+A large `extra_billed` on one tenant means they are broadcasting, and their plan should probably
+say so. The log line `settling above the reservation: Meta priced this as marketing` marks each one.
+
 ### Paying for credits
 
 **1 credit = NGN 1.** Two ways credits enter a wallet, and only two:

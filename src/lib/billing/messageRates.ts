@@ -1,11 +1,18 @@
 export type MeteringMode = 'shadow' | 'live';
 
 /**
- * Provisional Nigerian service-message cost, in credits (1 credit = NGN 1).
- * Meta publishes confirmed country rates on 2026-09-01; update
- * BOOKA_MESSAGE_RATE_CREDITS then. This constant is the last resort only.
+ * Nigerian per-message costs, in credits (1 credit = NGN 1).
+ *
+ * Meta's published rates as of 2026-09: service/utility $0.0101 (~NGN 14 at
+ * ~NGN 1,340/$), marketing $0.062 (~NGN 84). Both move with the exchange rate,
+ * so both are env-overridable and these constants are the last resort only.
+ *
+ * MARKETING IS SIX TIMES THE PRICE. Charging one flat rate meant a marketing
+ * message cost Booka NGN 84 and billed the tenant NGN 22.40 — a NGN 61.60 loss
+ * on every one. Anything that fans out to a customer list is marketing.
  */
 const PROVISIONAL_COST_CREDITS = 14;
+const PROVISIONAL_MARKETING_COST_CREDITS = 84;
 const DEFAULT_MARKUP = 1.6;
 const DEFAULT_GRACE_CREDITS = 100;
 const DEFAULT_DRIFT_PCT = 2;
@@ -25,8 +32,30 @@ export function isShadowMode(): boolean {
   return getMeteringMode() === 'shadow';
 }
 
-/** What Booka pays Meta per delivered message. */
-export function resolveMessageCostCredits(): number {
+/**
+ * Meta's pricing categories. `service` is a free-form reply inside the 24-hour
+ * customer-service window; the rest are template categories.
+ */
+export type MessageCategory = 'service' | 'utility' | 'marketing' | 'authentication';
+
+/** Normalises whatever Meta put in the webhook's pricing.category. */
+export function normalizeCategory(raw?: string | null): MessageCategory | null {
+  const c = String(raw ?? '').trim().toLowerCase();
+  if (c === 'marketing') return 'marketing';
+  if (c === 'utility') return 'utility';
+  if (c === 'authentication' || c === 'authentication_international') return 'authentication';
+  if (c === 'service') return 'service';
+  return null;
+}
+
+/** What Booka pays Meta per delivered message of this category. */
+export function resolveMessageCostCredits(category?: MessageCategory | null): number {
+  if (category === 'marketing') {
+    return positiveNumber(
+      process.env.BOOKA_MESSAGE_MARKETING_RATE_CREDITS,
+      PROVISIONAL_MARKETING_COST_CREDITS,
+    );
+  }
   return positiveNumber(process.env.BOOKA_MESSAGE_RATE_CREDITS, PROVISIONAL_COST_CREDITS);
 }
 
@@ -36,12 +65,22 @@ export function getMessageMarkup(): number {
   return Number.isFinite(parsed) && parsed >= 1 ? parsed : DEFAULT_MARKUP;
 }
 
-/** What the tenant is charged per delivered message. */
-export function resolveMessageSellCredits(tenantRate?: number | null): number {
-  if (typeof tenantRate === 'number' && Number.isFinite(tenantRate) && tenantRate > 0) {
+/**
+ * What the tenant is charged per delivered message.
+ *
+ * A per-tenant rate override still applies to service and utility traffic, but
+ * NOT to marketing: a negotiated rate for conversational replies must not
+ * silently become a six-times-under-cost rate for broadcasts.
+ */
+export function resolveMessageSellCredits(
+  tenantRate?: number | null,
+  category?: MessageCategory | null,
+): number {
+  const hasOverride = typeof tenantRate === 'number' && Number.isFinite(tenantRate) && tenantRate > 0;
+  if (hasOverride && category !== 'marketing') {
     return tenantRate;
   }
-  return resolveMessageCostCredits() * getMessageMarkup();
+  return resolveMessageCostCredits(category) * getMessageMarkup();
 }
 
 export function getGraceOverdraftDefault(): number {
