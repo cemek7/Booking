@@ -464,6 +464,26 @@ and when the FX reading is more than 14 days old.
 **Schedule the FX worker**: `GET /api/worker/fx-rate` daily, `Authorization: Bearer $CRON_SECRET`.
 It only ever appends a reading and alerts; it never blocks or slows a send.
 
+**Two payment methods, not one.** `whatsapp_configurations.meta_billing_owner` decides who Meta
+bills:
+
+| Value | Who pays Meta | Covered by |
+|---|---|---|
+| `booka` / null with no connection source | Booka's shared gateway WABA | **your** card — the superadmin alert |
+| `client` (Embedded Signup or direct) | the tenant's own WABA | **their** card — nothing you can add for them |
+
+A `client` tenant whose Meta account has no payment method goes silent on 2026-10-01 and nothing
+in Booka raises an error. `GET /api/worker/meta-payment-watch` (daily, `Bearer $CRON_SECRET`)
+warns each of them once a day through the owner alert path — email *and* WhatsApp, because the
+owners most likely to miss this are the ones who never open the dashboard.
+
+```sql
+SELECT meta_billing_owner, meta_connection_source, count(*)
+FROM public.whatsapp_configurations
+WHERE provider = 'meta' AND active
+GROUP BY 1, 2;
+```
+
 > **Hard deadline 2026-09-30: a payment method must be on the WhatsApp Business Account.**
 > Meta stops delivering service messages on 2026-10-01 without one. No API reports this, so it is
 > an attestation — set `BOOKA_META_PAYMENT_METHOD_ON_FILE=true` once it is added, and until then
