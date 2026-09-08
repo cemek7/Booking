@@ -3,6 +3,7 @@ import {
   resolveMessageSellCredits,
   isShadowMode,
   getGraceOverdraftDefault,
+  normalizeCategory,
 } from '@/lib/billing/messageRates';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
@@ -739,7 +740,31 @@ export async function settleOutboundMessage(p: SettleOutboundParams): Promise<vo
   const reservedCredits = safeCredits(row.reserved_credits, 'settleOutboundMessage');
   if (reservedCredits === null) return;
   const billable = deliveryStatus === 'failed' ? false : !!pricing?.billable;
-  const settledCredits = billable ? reservedCredits : 0;
+
+  // Price from META'S OWN category, not from whatever the reserve guessed.
+  //
+  // The reserve happens before the send and cannot know a template's category;
+  // it books the service rate. Marketing costs six times that, so settling at
+  // the reserved amount billed the tenant NGN 22.40 for a message that cost
+  // Booka NGN 84. The delivery webhook carries the authoritative category, so
+  // it is the right place to correct the price — the same reason `billable`
+  // is taken from Meta rather than modelled locally.
+  //
+  // Only ever used to true UP to marketing. Everything else keeps the reserved
+  // amount, so a tenant's negotiated rate is not silently overwritten by the
+  // platform default at settlement.
+  const actualCategory = normalizeCategory(pricing?.category);
+  const marketingCredits = actualCategory === 'marketing'
+    ? resolveMessageSellCredits(null, 'marketing')
+    : 0;
+  const priced = Math.max(reservedCredits, marketingCredits);
+  const settledCredits = billable ? priced : 0;
+
+  if (billable && priced > reservedCredits) {
+    console.warn('[messageWallet] settling above the reservation: Meta priced this as marketing', {
+      tenantId, wamid, reservedCredits, settledCredits: priced,
+    });
+  }
   const targetStatus = deliveryStatus === 'failed' ? 'released' : 'settled';
 
   // Claim the row before moving money: only proceed if this call is the one
