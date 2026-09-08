@@ -14,6 +14,16 @@ type PromoCode = {
   active: boolean;
   created_at: string;
   redemptions: number;
+  issued_to?: string[] | null;
+  issued_at?: string | null;
+};
+
+type TenantOption = { id: string; name: string };
+
+type Delivery = {
+  attempted: boolean;
+  sentTo: string[];
+  failed: Array<{ email: string; error: string }>;
 };
 
 /** Fetch only — no state — so it can be shared by the mount effect and handlers. */
@@ -21,6 +31,15 @@ async function fetchPromoCodes(): Promise<{ rows: PromoCode[]; error: string | n
   const res = await authGet<{ data?: PromoCode[] }>('/api/superadmin/promo-codes');
   if (res.error) return { rows: [], error: res.error.message };
   return { rows: (res.data as { data?: PromoCode[] } | null)?.data ?? [], error: null };
+}
+
+/** Tenants for the "send to" picker. A failure here is not fatal — the email
+ *  field still works — so it resolves to an empty list rather than throwing. */
+async function fetchTenants(): Promise<TenantOption[]> {
+  const res = await authGet<{ tenants?: TenantOption[] }>('/api/superadmin/tenants');
+  if (res.error) return [];
+  return ((res.data as { tenants?: TenantOption[] } | null)?.tenants ?? [])
+    .map((t) => ({ id: t.id, name: t.name }));
 }
 
 /** Blank stays blank: an empty datetime-local must send null, not ''. */
@@ -56,6 +75,11 @@ export default function PromoCodesClient() {
   const [maxRedemptions, setMaxRedemptions] = useState('');
   const [perTenant, setPerTenant] = useState('1');
 
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
+  const [deliverTenantId, setDeliverTenantId] = useState('');
+  const [deliverEmails, setDeliverEmails] = useState('');
+  const [delivery, setDelivery] = useState<Delivery | null>(null);
+
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   // Held in state because it is unrecoverable — see the banner below.
@@ -69,9 +93,10 @@ export default function PromoCodesClient() {
     let active = true;
 
     async function loadOnMount() {
-      const res = await fetchPromoCodes();
+      const [res, tenantList] = await Promise.all([fetchPromoCodes(), fetchTenants()]);
       if (!active) return;
       setLoading(false);
+      setTenants(tenantList);
       if (res.error) { setLoadError(res.error); return; }
       setLoadError(null);
       setRows(res.rows);
@@ -93,6 +118,7 @@ export default function PromoCodesClient() {
     e.preventDefault();
     setFormError(null);
     setIssuedCode(null);
+    setDelivery(null);
     setCopied(false);
 
     const credits = Number(amount);
@@ -100,7 +126,12 @@ export default function PromoCodesClient() {
     if (!Number.isFinite(credits) || credits <= 0) { setFormError('Enter a credit amount above zero.'); return; }
 
     setCreating(true);
-    const res = await authPost<{ code?: string }>('/api/superadmin/promo-codes', {
+    const emails = deliverEmails
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const res = await authPost<{ code?: string; delivery?: Delivery }>('/api/superadmin/promo-codes', {
       campaign: campaign.trim(),
       amount_credits: credits,
       code: code.trim() ? code.trim() : null,
@@ -108,14 +139,19 @@ export default function PromoCodesClient() {
       expires_at: toIsoOrNull(expiresAt),
       max_redemptions: maxRedemptions.trim() ? Number(maxRedemptions) : null,
       max_redemptions_per_tenant: Number(perTenant) || 1,
+      deliver_to_tenant_id: deliverTenantId || null,
+      deliver_to_emails: emails.length ? emails : null,
     });
     setCreating(false);
 
     if (res.error) { setFormError(res.error.message); return; }
 
-    setIssuedCode((res.data as { code?: string } | null)?.code ?? null);
+    const payload = res.data as { code?: string; delivery?: Delivery } | null;
+    setIssuedCode(payload?.code ?? null);
+    setDelivery(payload?.delivery ?? null);
     setCampaign(''); setAmount(''); setCode('');
     setStartsAt(''); setExpiresAt(''); setMaxRedemptions(''); setPerTenant('1');
+    setDeliverTenantId(''); setDeliverEmails('');
     await refresh();
   }
 
@@ -148,11 +184,29 @@ export default function PromoCodesClient() {
 
       {issuedCode && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5">
-          <h2 className="text-sm font-semibold text-amber-900">Copy this code now</h2>
+          <h2 className="text-sm font-semibold text-amber-900">
+            {delivery?.sentTo.length ? 'Code created and emailed' : 'Copy this code now'}
+          </h2>
           <p className="mt-1 text-sm text-amber-800">
-            Only a hash is stored, so this is the one and only time it can be shown. If you lose it,
-            deactivate the code and create another.
+            Only a hash is stored, so this is the one and only time it can be shown. It cannot be
+            resent. If you lose it, deactivate the code and create another.
           </p>
+          {delivery?.sentTo.length ? (
+            <p className="mt-2 text-sm text-amber-900">
+              Emailed to {delivery.sentTo.join(', ')}.
+            </p>
+          ) : null}
+          {delivery?.failed.length ? (
+            <p className="mt-2 text-sm font-medium text-red-700">
+              Could not email {delivery.failed.map((f) => `${f.email} (${f.error})`).join(', ')} —
+              copy the code and send it by hand.
+            </p>
+          ) : null}
+          {delivery && !delivery.attempted ? (
+            <p className="mt-2 text-sm text-amber-900">
+              No recipient was chosen, so this code was not emailed to anyone.
+            </p>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <code className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-mono text-lg tracking-widest text-slate-900">
               {issuedCode}
@@ -255,6 +309,41 @@ export default function PromoCodesClient() {
           </div>
         </div>
 
+        <div className="mt-5 border-t border-slate-200 pt-4">
+          <h3 className="text-sm font-semibold text-slate-900">Send it to</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Creation is the only moment the code exists, so this is the only chance to email it.
+            Leave both blank to copy it by hand instead.
+          </p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="block text-sm font-medium text-slate-700">Tenant</span>
+              <select
+                value={deliverTenantId}
+                onChange={(e) => setDeliverTenantId(e.target.value)}
+                className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+              >
+                <option value="">No tenant</option>
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">Goes to that tenant&rsquo;s owner.</span>
+            </label>
+
+            <label className="block">
+              <span className="block text-sm font-medium text-slate-700">Other addresses</span>
+              <input
+                value={deliverEmails}
+                onChange={(e) => setDeliverEmails(e.target.value)}
+                placeholder="ada@salon.ng, partner@example.com"
+                className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+              />
+              <span className="mt-1 block text-xs text-slate-500">Comma separated. Each gets its own email.</span>
+            </label>
+          </div>
+        </div>
+
         <div className="mt-4 flex items-center gap-3">
           <button
             type="submit"
@@ -288,6 +377,7 @@ export default function PromoCodesClient() {
                   <th scope="col" className="px-5 py-3">Used</th>
                   <th scope="col" className="px-5 py-3">Per tenant</th>
                   <th scope="col" className="px-5 py-3">Window</th>
+                  <th scope="col" className="px-5 py-3">Sent to</th>
                   <th scope="col" className="px-5 py-3">Status</th>
                   <th scope="col" className="px-5 py-3"><span className="sr-only">Actions</span></th>
                 </tr>
@@ -304,6 +394,9 @@ export default function PromoCodesClient() {
                       </td>
                       <td className="px-5 py-3 text-slate-700">{row.max_redemptions_per_tenant}</td>
                       <td className="px-5 py-3 text-slate-700">{formatWindow(row)}</td>
+                      <td className="px-5 py-3 text-slate-700">
+                        {row.issued_to?.length ? row.issued_to.join(', ') : <span className="text-slate-400">Not emailed</span>}
+                      </td>
                       <td className="px-5 py-3">
                         {!row.active ? (
                           <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">Inactive</span>
@@ -332,8 +425,8 @@ export default function PromoCodesClient() {
           </div>
         )}
         <p className="border-t border-slate-200 px-5 py-3 text-xs text-slate-500">
-          Codes cannot be shown again or deleted — a redeemed code is an accounting record.
-          Deactivate to retire a campaign.
+          Codes cannot be shown again, resent, or deleted — a redeemed code is an accounting
+          record. Deactivate to retire a campaign, and create a new code if one is lost.
         </p>
       </div>
     </div>

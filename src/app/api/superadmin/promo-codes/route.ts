@@ -7,8 +7,10 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import {
   createPromoCode,
   listPromoCodes,
+  recordPromoDelivery,
   PromoCodeConflictError,
 } from '@/lib/billing/walletPromoAdmin';
+import { deliverPromoCode, resolvePromoRecipients } from '@/lib/billing/walletPromoDelivery';
 
 /**
  * Promotional codes are the one route that adds wallet value without a
@@ -28,6 +30,10 @@ const CreateSchema = z.object({
   expires_at: z.string().datetime({ offset: true }).optional().nullable(),
   max_redemptions: z.number().int().positive().optional().nullable(),
   max_redemptions_per_tenant: z.number().int().positive().max(1000).default(1),
+  // Delivery. Creation is the only moment the plaintext exists, so this is the
+  // only chance to email it.
+  deliver_to_tenant_id: z.string().uuid().optional().nullable(),
+  deliver_to_emails: z.array(z.string().email()).max(20).optional().nullable(),
 });
 
 export const GET = createHttpHandler(
@@ -70,9 +76,33 @@ export const POST = createHttpHandler(
         },
       });
 
+      // Delivery is attempted after the row exists, so a mail failure cannot
+      // leave a created code unrecorded.
+      const recipients = await resolvePromoRecipients({
+        admin,
+        tenantId: parsed.data.deliver_to_tenant_id ?? null,
+        emails: parsed.data.deliver_to_emails ?? null,
+      });
+
+      const delivery = await deliverPromoCode({
+        recipients,
+        code,
+        campaign: parsed.data.campaign,
+        amountCredits: parsed.data.amount_credits,
+        expiresAt: parsed.data.expires_at ?? null,
+      });
+
+      await recordPromoDelivery({ admin, id: row.id, sentTo: delivery.sentTo });
+
       // `code` is returned exactly once. Only its hash is stored, so nothing —
-      // here or in the database — can produce it again.
-      return { success: true, data: { ...row, redemptions: 0 }, code };
+      // here or in the database — can produce it again. It is returned even
+      // when delivery succeeded, so the superadmin always has a fallback.
+      return {
+        success: true,
+        data: { ...row, redemptions: 0, issued_to: delivery.sentTo, issued_at: delivery.sentTo.length ? new Date().toISOString() : null },
+        code,
+        delivery,
+      };
     } catch (err) {
       if (err instanceof PromoCodeConflictError) {
         throw ApiErrorFactory.validationError({ code: err.message });
