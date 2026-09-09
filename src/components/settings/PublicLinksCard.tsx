@@ -1,4 +1,5 @@
 import { headers } from 'next/headers';
+import { getBookaGatewayPhone } from '@/lib/whatsapp/gatewayPhone';
 import QRCode from 'qrcode';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getTenantCapabilities } from '@/lib/capabilities';
@@ -31,7 +32,7 @@ export default async function PublicLinksCard({ tenantId }: { tenantId: string }
   const host = hdrs.get('host');
   const proto = hdrs.get('x-forwarded-proto') ?? (host?.startsWith('localhost') ? 'http' : 'https');
   const origin = host ? `${proto}://${host}` : '';
-  const waNumber = process.env.EVOLUTION_DEFAULT_PHONE || '';
+  const waNumber = getBookaGatewayPhone() ?? '';
 
   type Share = { key: string; label: string; desc: string; url: string; download: string };
   const shares: Share[] = [];

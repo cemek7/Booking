@@ -123,6 +123,7 @@ describe('step 4 (hours) hands over to email capture', () => {
     // This used to fall back to a hardcoded '2348000000000' when
     // EVOLUTION_DEFAULT_PHONE was unset, and the same message told the owner to
     // print that link as a QR code.
+    delete process.env.BOOKA_GATEWAY_PHONE;
     delete process.env.EVOLUTION_DEFAULT_PHONE;
 
     const reply = await handleOnboarding(PHONE, TENANT, 'Mon-Fri 9am-7pm', conv({ onboarding_step: 4 }));
@@ -135,9 +136,10 @@ describe('step 4 (hours) hands over to email capture', () => {
   });
 
   it('builds the booking link from the configured number when there is one', async () => {
-    process.env.EVOLUTION_DEFAULT_PHONE = '+234 801 234 5678';
+    process.env.BOOKA_GATEWAY_PHONE = '+234 801 234 5678';
     const reply = await handleOnboarding(PHONE, TENANT, 'Mon-Fri 9am-7pm', conv({ onboarding_step: 4 }));
     expect(reply).toContain('https://wa.me/2348012345678?text=GLAM01');
+    delete process.env.BOOKA_GATEWAY_PHONE;
     delete process.env.EVOLUTION_DEFAULT_PHONE;
   });
 

@@ -31,6 +31,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { callGoogleAI } from '@/lib/google-ai';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import { generateRoutingCode } from '../identityResolver';
+import { buildGatewayChatLink } from '@/lib/whatsapp/gatewayPhone';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
 import { sendTransactionalEmail } from '@/lib/integrations/email-service';
 import {
@@ -305,6 +306,37 @@ Prices are in local currency (no currency symbol needed).`;
   return `Got it! Here's what I've added:\n${serviceLines}\n\n${staffTitleQuestion}\n\nReply *solo* if it's just you, or tell me your team members and their specialties.`;
 }
 
+/**
+ * Maps the specialties an owner typed onto the services they already listed.
+ *
+ * Owners do not repeat their own service names exactly — they set up "Braids —
+ * 5000" and then say someone "does braids and twists". So matching is
+ * case-insensitive and accepts either string containing the other, which covers
+ * "braids" against "Box Braids" and "Frontal Install" against "frontal".
+ *
+ * Exported for tests: getting this wrong silently produces staff who can
+ * perform nothing.
+ */
+export function matchSpecialtiesToServices(
+  specialties: string[] | undefined,
+  services: Array<{ id: string; name: string }>,
+): string[] {
+  if (!specialties?.length) return [];
+  const matched = new Set<string>();
+  for (const raw of specialties) {
+    const needle = String(raw ?? '').trim().toLowerCase();
+    if (!needle) continue;
+    for (const service of services) {
+      const name = String(service.name ?? '').trim().toLowerCase();
+      if (!name) continue;
+      if (name === needle || name.includes(needle) || needle.includes(name)) {
+        matched.add(service.id);
+      }
+    }
+  }
+  return [...matched];
+}
+
 // ─── Step 3: Team setup ───────────────────────────────────────────────────────
 
 async function handleStep3(
@@ -358,13 +390,61 @@ Phone is optional — only include if explicitly mentioned.`;
       const staffList: Array<{ name: string; phone?: string; specialties?: string[] }> =
         JSON.parse(text.replace(/```json?\n?/g, '').replace(/```/g, '').trim());
 
+      // The owner names their team in chat — "Adaeze does braids and twists" —
+      // and both halves of that sentence used to be thrown away: the insert
+      // wrote no `name`, so every staff member was an anonymous row the owner
+      // could never book by name, and the specialties only flipped
+      // services_all to false without ever being linked to a service. The net
+      // effect was staff who could perform nothing at all, because the booking
+      // engine reads staff_services to decide who can do what.
+      const { data: tenantServices } = await supabaseAdmin
+        .from('services')
+        .select('id, name')
+        .eq('tenant_id', resolvedTenantId);
+      const services = (tenantServices ?? []) as Array<{ id: string; name: string }>;
+
       for (const member of staffList) {
-        await supabaseAdmin.from('tenant_users').insert({
-          tenant_id: resolvedTenantId,
-          role: 'staff',
-          phone: member.phone ?? null,
-          services_all: !member.specialties?.length,
-        });
+        const matched = matchSpecialtiesToServices(member.specialties, services);
+        // services_all only when the owner named no specialty for them.
+        const servicesAll = matched.length === 0;
+
+        const { data: inserted, error: staffError } = await supabaseAdmin
+          .from('tenant_users')
+          .insert({
+            tenant_id: resolvedTenantId,
+            role: 'staff',
+            name: member.name?.trim() || null,
+            phone: member.phone ?? null,
+            services_all: servicesAll,
+          })
+          .select('id')
+          .single();
+
+        if (staffError || !inserted) {
+          console.error('[ownerOnboarding] could not create staff member', {
+            tenantId: resolvedTenantId, error: staffError,
+          });
+          continue;
+        }
+
+        if (matched.length > 0) {
+          const { error: linkError } = await supabaseAdmin.from('staff_services').insert(
+            matched.map((serviceId) => ({
+              tenant_id: resolvedTenantId,
+              staff_user_id: (inserted as { id: string }).id,
+              service_id: serviceId,
+            })),
+          );
+          if (linkError) {
+            // Leave them able to work rather than silently unbookable.
+            console.error('[ownerOnboarding] could not link staff specialties, widening to all', {
+              tenantId: resolvedTenantId, error: linkError,
+            });
+            await supabaseAdmin.from('tenant_users')
+              .update({ services_all: true })
+              .eq('id', (inserted as { id: string }).id);
+          }
+        }
       }
     } catch {
       return 'I had trouble reading the team list. Try: "Adaeze does braids and twists, Chioma does locs and weaves"';
@@ -492,16 +572,16 @@ async function activateTenant(tenantId: string): Promise<string> {
   // onboarded owner a booking link pointing at a number that is not Booka's —
   // and then told them to print it as a QR code. The routing code still works
   // on its own, so the activation is real; only the shareable link is missing.
-  const waNumber = (process.env.EVOLUTION_DEFAULT_PHONE ?? '').replace(/\D/g, '');
-  if (!waNumber) {
+  const bookingLinkOrNull = buildGatewayChatLink(routingCode);
+  if (!bookingLinkOrNull) {
     console.error(
-      '[ownerOnboarding] EVOLUTION_DEFAULT_PHONE is not set — activated a tenant with no booking link',
+      '[ownerOnboarding] no gateway phone configured — activated a tenant with no booking link',
       { tenantId, routingCode },
     );
     return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by texting *${routingCode}* to this number.\n\nShare that code on Instagram, WhatsApp broadcast, or print it as a QR code.`;
   }
 
-  const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
+  const bookingLink = bookingLinkOrNull;
 
   return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.`;
 }
