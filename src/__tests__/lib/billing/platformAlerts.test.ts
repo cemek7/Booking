@@ -12,6 +12,7 @@ const BASE = {
   meteringMode: 'shadow' as const,
   rateConfigured: true,
   paymentMethodOnFile: true,
+  gatewayPhoneSet: true,
   now: new Date('2026-09-08T00:00:00Z'),
 };
 
@@ -94,5 +95,20 @@ describe('daysBetween', () => {
   it('counts forward and goes negative once the date has passed', () => {
     expect(daysBetween(new Date('2026-09-08T00:00:00Z'), new Date('2026-09-30T00:00:00Z'))).toBe(22);
     expect(daysBetween(new Date('2026-10-05T00:00:00Z'), new Date('2026-09-30T00:00:00Z'))).toBeLessThan(0);
+  });
+});
+
+describe('gateway phone', () => {
+  it('warns when it is unset, because activation still succeeds without it', () => {
+    // The Evolution-era fallback was removed, so an unset variable now means
+    // every chat-onboarded tenant gets no booking link and nothing else says so.
+    const alerts = buildPlatformAlerts({ ...BASE, gatewayPhoneSet: false });
+    const a = alerts.find((x) => x.id === 'gateway_phone_missing');
+    expect(a).toBeDefined();
+    expect(a!.action).toContain('BOOKA_GATEWAY_PHONE');
+  });
+
+  it('is silent once it is set', () => {
+    expect(buildPlatformAlerts({ ...BASE, gatewayPhoneSet: true })).toEqual([]);
   });
 });
