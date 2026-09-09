@@ -103,6 +103,19 @@ CRON_SECRET=${CRON_SECRET}
 * * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/whatsapp" >/dev/null 2>&1
 */10 * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/cron/reminders" >/dev/null 2>&1
 0 22 * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/cron/nightly" >/dev/null 2>&1
+*/5 * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/operating-loop" >/dev/null 2>&1
+# Releases message-charge reservations that never got a delivery webhook. Without
+# it every tenant's balance drains into reservations that never settle, and its
+# released count is the only early warning that Meta has stopped delivering
+# statuses at all.
+*/15 * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/message-charges" >/dev/null 2>&1
+# Meta bills in USD and Booka sells in naira, so the real cost moves with the
+# rate, on no schedule and with nothing to read. This is the only thing that
+# notices.
+17 6 * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/fx-rate" >/dev/null 2>&1
+# Warns tenants who own their own Meta billing before 2026-10-01, when Meta
+# stops delivering service messages for accounts with no payment method.
+23 9 * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/meta-payment-watch" >/dev/null 2>&1
 # techclave-${TARGET}-end
 EOF
 
