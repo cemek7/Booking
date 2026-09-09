@@ -83,6 +83,33 @@ const VERTICAL_PRESETS: Record<string, Record<string, string>> = {
   general: { staff_title: 'staff', staff_title_plural: 'staff members', booking_noun: 'booking', session_noun: 'session', ai_personality: 'friendly and professional' },
 };
 
+/**
+ * Booka's home market. Overridable, because the fallback should follow the
+ * business rather than the server.
+ */
+const DEFAULT_TIMEZONE = process.env.BOOKA_DEFAULT_TIMEZONE || 'Africa/Lagos';
+
+/**
+ * Validates the timezone the model inferred from the owner's location.
+ *
+ * A model will happily return "WAT" or "GMT+1", neither of which Postgres or
+ * Intl accepts, and a bad value is worse than none: it would be written to the
+ * tenant and then throw wherever a time is formatted. Anything that does not
+ * round-trip through Intl is discarded in favour of the default.
+ */
+export function resolveTenantTimezone(candidate?: string | null): string {
+  const tz = String(candidate ?? '').trim();
+  if (tz) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+      return tz;
+    } catch {
+      console.warn('[ownerOnboarding] model returned an unusable timezone, using the default', { tz });
+    }
+  }
+  return DEFAULT_TIMEZONE;
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export async function handleOnboarding(
@@ -130,10 +157,16 @@ Return JSON only:
 {
   "business_name": "extracted name or null",
   "vertical": "beauty | fitness | medical | education | automotive | hospitality | legal | general",
-  "location": "city/area or null"
+  "location": "city/area or null",
+  "timezone": "IANA timezone for that location, e.g. Africa/Lagos, or null"
 }`;
 
-  let parsed: { business_name: string | null; vertical: string; location: string | null };
+  let parsed: {
+    business_name: string | null;
+    vertical: string;
+    location: string | null;
+    timezone?: string | null;
+  };
   try {
     const result = await withTenantWalletSpend(
       supabaseAdmin,
@@ -169,20 +202,37 @@ Return JSON only:
       .insert({
         name: businessName,
         v2_enabled: false, // enabled at step 5
+        // Without a timezone every consumer falls back to UTC, and a 9am
+        // appointment in Lagos is stored and read back an hour out. The
+        // dashboard onboarding has always set this; the chat flow never did.
+        timezone: resolveTenantTimezone(parsed.timezone),
+        business_type: vertical,
         metadata: { vertical, ...preset, location: parsed.location },
       })
       .select('id')
       .single();
     resolvedTenantId = newTenant?.id ?? null;
 
-    // Create tenant_users row for the owner (WA-native: user_id=NULL)
+    // Create tenant_users row for the owner (WA-native: user_id=NULL).
+    // `name` is the business name rather than the person's: the flow never asks
+    // who the owner is, and a row with no name at all shows up as a blank in
+    // every staff picker and assignment list. The business name is at least
+    // true and recognisable, and the owner can correct it later.
     if (resolvedTenantId) {
-      await supabaseAdmin.from('tenant_users').insert({
+      const { error: ownerError } = await supabaseAdmin.from('tenant_users').insert({
         tenant_id: resolvedTenantId,
         role: 'owner',
+        name: businessName,
         phone,
         services_all: true,
       });
+      if (ownerError) {
+        // Without this row the owner is not a member of their own tenant:
+        // no schedules, no assignment, and no contact for wallet alerts.
+        console.error('[ownerOnboarding] could not create the owner tenant_users row', {
+          tenantId: resolvedTenantId, error: ownerError,
+        });
+      }
     }
   }
 
@@ -506,24 +556,34 @@ Only include days that are open.`;
     return 'I had trouble reading those hours. Try: "Mon–Fri 9am–7pm, Sat 8am–5pm"';
   }
 
-  // Find the owner's tenant_user record to link schedules
-  const { data: ownerUser } = await supabaseAdmin
+  // Hours go to EVERY member of the team, not just the owner.
+  //
+  // The owner is describing when the business is open, and the slot engine
+  // treats a person with no staff_schedules row as having no availability at
+  // all — `if (!scheduleRows || scheduleRows.length === 0) return []`. So
+  // scheduling only the owner left every staff member added a step earlier
+  // permanently unbookable, however carefully their services were linked.
+  const { data: teamRows } = await supabaseAdmin
     .from('tenant_users')
     .select('id')
-    .eq('tenant_id', resolvedTenantId)
-    .eq('phone', phone)
-    .maybeSingle();
+    .eq('tenant_id', resolvedTenantId);
+  const team = (teamRows ?? []) as Array<{ id: string }>;
 
-  if (ownerUser) {
-    const rows = schedules.map((s) => ({
+  if (team.length > 0) {
+    const rows = team.flatMap((member) => schedules.map((s) => ({
       tenant_id: resolvedTenantId,
-      tenant_user_id: ownerUser.id,
+      tenant_user_id: member.id,
       day_of_week: s.day_of_week,
       start_time: s.start_time,
       end_time: s.end_time,
       is_active: true,
-    }));
-    await supabaseAdmin.from('staff_schedules').insert(rows);
+    })));
+    const { error: scheduleError } = await supabaseAdmin.from('staff_schedules').insert(rows);
+    if (scheduleError) {
+      console.error('[ownerOnboarding] could not save working hours — nobody will be bookable', {
+        tenantId: resolvedTenantId, error: scheduleError,
+      });
+    }
   }
 
 
