@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkRateCard, type RateCardWarning } from '@/lib/billing/rateCardWatch';
 import { getMeteringMode } from '@/lib/billing/messageRates';
+import { getBookaGatewayPhone } from '@/lib/whatsapp/gatewayPhone';
 
 /**
  * Platform-level things a superadmin must not miss.
@@ -37,6 +38,7 @@ export interface PlatformAlertInputs {
   meteringMode: 'shadow' | 'live';
   rateConfigured: boolean;
   paymentMethodOnFile: boolean;
+  gatewayPhoneSet: boolean;
   now: Date;
 }
 
@@ -89,6 +91,22 @@ export function buildPlatformAlerts(input: PlatformAlertInputs): PlatformAlert[]
     });
   }
 
+  // ── Gateway number ─────────────────────────────────────────────────────────
+  // Every tenant onboarded over chat is handed a wa.me link built from this.
+  // With no fallback left, an unset variable means each one is activated with
+  // no shareable link at all — and nothing else would report it, because the
+  // activation still succeeds.
+  if (!input.gatewayPhoneSet) {
+    alerts.push({
+      id: 'gateway_phone_missing',
+      severity: 'warning',
+      title: 'No gateway phone number configured',
+      message: 'Tenants finishing chat onboarding are activated without a booking link. '
+        + 'Their routing code still works, but they have nothing to share or print.',
+      action: 'Set BOOKA_GATEWAY_PHONE to the number customers message.',
+    });
+  }
+
   // ── Cost basis ─────────────────────────────────────────────────────────────
   for (const w of input.rateCard) {
     alerts.push({
@@ -119,6 +137,7 @@ export async function getPlatformAlerts(
   const rateCard = await checkRateCard(admin, now);
   const attested = process.env.BOOKA_META_PAYMENT_METHOD_ON_FILE;
   return buildPlatformAlerts({
+    gatewayPhoneSet: !!getBookaGatewayPhone(),
     rateCard,
     meteringMode: getMeteringMode(),
     rateConfigured: !!process.env.BOOKA_MESSAGE_RATE_CREDITS,
