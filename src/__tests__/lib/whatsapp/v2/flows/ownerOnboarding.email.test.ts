@@ -18,21 +18,28 @@ const updates: Array<{ table: string; patch: Row }> = [];
 let singleQueue: Array<{ data: unknown; error: unknown }> = [];
 let maybeSingleQueue: Array<{ data: unknown; error: unknown }> = [];
 let updateResult: { data: unknown; error: unknown } = { data: null, error: null };
+let selectResult: { data: unknown; error: unknown } = { data: null, error: null };
 
 function makeQuery(table: string) {
   const q: Record<string, unknown> = {};
   let isUpdate = false;
+  let isSelect = false;
   Object.assign(q, {
-    select: () => q,
-    insert: (rows: unknown) => { inserts.push({ table, rows }); return q; },
+    select: () => { isSelect = true; return q; },
+    insert: (rows: unknown) => { isSelect = false; inserts.push({ table, rows }); return q; },
     update: (patch: Row) => { isUpdate = true; updates.push({ table, patch }); return q; },
     eq: () => q,
     neq: () => q,
     single: async () => singleQueue.shift() ?? { data: null, error: null },
     maybeSingle: async () => maybeSingleQueue.shift() ?? { data: null, error: null },
-    // Terminal await on a builder that was never .single()'d (e.g. an UPDATE).
-    then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
-      Promise.resolve(isUpdate ? updateResult : { data: null, error: null }).then(res, rej),
+    // Terminal await on a builder that was never .single()'d: an UPDATE, or a
+    // multi-row SELECT such as the team lookup that fans schedules out.
+    then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => {
+      const out = isUpdate ? updateResult
+        : isSelect ? selectResult
+        : { data: null, error: null };
+      return Promise.resolve(out).then(res, rej);
+    },
   });
   return q;
 }
@@ -106,6 +113,7 @@ beforeEach(() => {
   singleQueue = [];
   maybeSingleQueue = [];
   updateResult = { data: null, error: null };
+  selectResult = { data: null, error: null };
   mockUpdateConversation.mockClear();
   mockSendEmail.mockClear().mockResolvedValue({ success: true });
 });
@@ -115,8 +123,21 @@ beforeEach(() => {
 describe('step 4 (hours) hands over to email capture', () => {
   beforeEach(() => {
     aiJson = JSON.stringify([{ day_of_week: 1, start_time: '09:00', end_time: '19:00' }]);
-    maybeSingleQueue = [{ data: { id: 'tu-1' }, error: null }];      // owner tenant_users row
+    maybeSingleQueue = [{ data: { id: 'tu-1' }, error: null }];
     singleQueue = [{ data: { name: 'Glamour', metadata: {} }, error: null }]; // tenants read
+  });
+
+  it('gives the working hours to every team member, not just the owner', async () => {
+    // The slot engine returns no availability at all for a person with no
+    // staff_schedules row, so scheduling only the owner left every staff
+    // member the owner had just added permanently unbookable.
+    selectResult = { data: [{ id: 'tu-owner' }, { id: 'tu-staff' }], error: null };
+
+    await handleOnboarding(PHONE, TENANT, 'Mon-Fri 9am-7pm', conv({ onboarding_step: 4 }));
+
+    const scheduleWrite = inserts.find((i) => i.table === 'staff_schedules');
+    const rows = scheduleWrite!.rows as Array<{ tenant_user_id: string }>;
+    expect(rows.map((r) => r.tenant_user_id).sort()).toEqual(['tu-owner', 'tu-staff']);
   });
 
   it('never hands the owner a booking link to a number that is not Booka\u2019s', async () => {
