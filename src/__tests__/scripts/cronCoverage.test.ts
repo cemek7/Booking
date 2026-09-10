@@ -68,7 +68,19 @@ describe('cron coverage', () => {
     // to the cron block was invisible to the box. That is exactly how four
     // workers shipped and never ran.
     expect(DEPLOY).toContain('/usr/local/bin/techclave-deploy');
-    expect(DEPLOY).toMatch(/install -m 755 "\$\{BASH_SOURCE\[0\]\}"/);
+    // The install now runs over a src:dest list rather than one hardcoded pair,
+    // so assert on the loop's install call and on the wrapper being in the list.
+    expect(DEPLOY).toContain('install -m 755 "$src" "$dest"');
+    expect(DEPLOY).toContain('${BASH_SOURCE[0]}:$INSTALLED_WRAPPER');
+  });
+
+  it('refreshes the secret generator alongside the wrapper', () => {
+    // Both are installed by bootstrap ONCE, so a box provisioned before either
+    // existed never acquires it. Staging had the wrapper and not the generator,
+    // and the only symptom was the deploy dying on a fallback path under
+    // /usr/local/bin that was never meant to exist.
+    expect(DEPLOY).toContain('/usr/local/bin/techclave-ensure-runtime-secrets');
+    expect(DEPLOY).toContain('ensure-generated-runtime-secrets.sh');
   });
 
   it('bootstrap installs the wrapper from the same file the deploy maintains', () => {
