@@ -11,6 +11,28 @@ if [[ ! -x "$DEFAULT_SECRET_GENERATOR" ]]; then
 fi
 SECRET_GENERATOR="${TECHCLAVE_RUNTIME_SECRET_GENERATOR:-$DEFAULT_SECRET_GENERATOR}"
 
+# The cron block below is baked into this script, and bootstrap-vps.sh copies
+# this file to /usr/local/bin/techclave-deploy ONCE at provisioning. Nothing
+# ever re-copied it, so every later edit — new workers, changed schedules — was
+# invisible to the box: the wrapper stayed frozen at whatever shipped on the day
+# the server was built, and `techclave-deploy` kept installing that generation's
+# jobs while the repo said otherwise.
+#
+# So when this is run FROM the repo, it reinstalls the wrapper first. Only then,
+# because overwriting the file bash is currently reading is how you get a
+# half-executed script.
+INSTALLED_WRAPPER="/usr/local/bin/techclave-deploy"
+if [[ "$SCRIPT_DIR" != "$(dirname "$INSTALLED_WRAPPER")" ]]; then
+  if [[ ! -f "$INSTALLED_WRAPPER" ]] || ! cmp -s "${BASH_SOURCE[0]}" "$INSTALLED_WRAPPER"; then
+    if install -m 755 "${BASH_SOURCE[0]}" "$INSTALLED_WRAPPER" 2>/dev/null; then
+      echo "Updated $INSTALLED_WRAPPER from the repo copy."
+    else
+      echo "WARNING: $INSTALLED_WRAPPER is out of date and could not be updated (needs root)." >&2
+      echo "         Run: sudo install -m 755 ${BASH_SOURCE[0]} $INSTALLED_WRAPPER" >&2
+    fi
+  fi
+fi
+
 usage() {
   cat <<EOF
 Usage: techclave-deploy <staging|production>
@@ -94,7 +116,7 @@ install_cron() {
   fi
 
   cat > "$STACK_DIR/cron.block" <<EOF
-# techclave-${TARGET}-start
+# techclave-${TARGET}-start (cron-generation 2)
 APP_URL=${APP_PUBLIC_URL}
 CRON_SECRET=${CRON_SECRET}
 
@@ -123,10 +145,14 @@ EOF
   existing="$(mktemp)"
   crontab -l > "$existing" 2>/dev/null || true
 
+  # Prefix match, not equality: the start marker carries a generation suffix so
+  # `crontab -l` shows which version is installed, and an exact match would fail
+  # to strip a block written by a different generation — leaving the old jobs in
+  # place alongside the new ones and running everything twice.
   awk "
     BEGIN {skip=0}
-    \$0 == \"# techclave-${TARGET}-start\" {skip=1; next}
-    \$0 == \"# techclave-${TARGET}-end\" {skip=0; next}
+    index(\$0, \"# techclave-${TARGET}-start\") == 1 {skip=1; next}
+    index(\$0, \"# techclave-${TARGET}-end\") == 1 {skip=0; next}
     skip == 0 {print}
   " "$existing" > "$STACK_DIR/cron.tab"
 
