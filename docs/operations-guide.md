@@ -376,7 +376,15 @@ psql $DATABASE_URL -f db/migrations/144_low_balance_alerts.sql
 psql $DATABASE_URL -f db/migrations/145_wallet_paid_topup.sql
 psql $DATABASE_URL -f db/migrations/146_wallet_promo_codes.sql
 psql $DATABASE_URL -f db/migrations/147_message_rate_card.sql
+psql $DATABASE_URL -f db/migrations/148_promo_code_delivery.sql
+psql $DATABASE_URL -f db/migrations/149_staff_schedules_v2_nullable_staff_id.sql
 ```
+
+**149 is what makes a chat-onboarded tenant bookable at all.** `staff_schedules.staff_id`
+references `auth.users(id)` and is NOT NULL, but WhatsApp-native staff have no auth account by
+design, so every v2 attempt to save working hours was rejected by Postgres. The code did not check
+the error and the slot engine returns no availability for anyone without a schedule row, so a
+tenant could finish onboarding and be structurally unable to take a single booking.
 
 Each has a matching `*_rollback.sql`.
 
