@@ -121,7 +121,7 @@ export async function handleOnboarding(
   const step = conv?.flow_data?.onboarding_step ?? 0;
 
   switch (step) {
-    case 0: return startOnboarding(phone);
+    case 0: return startOnboarding(phone, tenantId, conv);
     case 1: return handleStep1(phone, tenantId, message, conv!);
     case 2: return handleStep2(phone, tenantId, message, conv!);
     case 3: return handleStep3(phone, tenantId, message, conv!);
@@ -134,7 +134,37 @@ export async function handleOnboarding(
 
 // ─── Step 0: Initial greeting ─────────────────────────────────────────────────
 
-async function startOnboarding(phone: string): Promise<string> {
+async function startOnboarding(
+  phone: string,
+  tenantId: string | null,
+  conv: ConvState | null,
+): Promise<string> {
+  // Advance the step, or the greeting is the only thing this flow can ever say.
+  //
+  // Step 0 used to return the greeting and persist nothing, so the next message
+  // read onboarding_step as 0 again and got the greeting again — an owner could
+  // answer the question correctly forever and never reach step 1. The
+  // `onboarding_step: 1` further down is telemetry metadata on the wallet spend
+  // call, not a write to the conversation, which is why this looked handled.
+  //
+  // current_flow must move too: the pipeline only routes here while it is
+  // 'onboarding' or the tenant is an unactivated owner, and the second of those
+  // stops being true the moment step 4 activates them.
+  if (conv && tenantId) {
+    const channel: ConvChannel = conv.channel ?? 'whatsapp';
+    const externalId = conv.external_id ?? phone;
+    await updateConversation(externalId, tenantId, {
+      current_flow: 'onboarding',
+      flow_step: 0,
+      flow_data: { ...(conv.flow_data ?? {}), onboarding_step: 1 },
+    }, channel);
+  } else {
+    // No conversation row means the next message starts from zero again.
+    console.error('[ownerOnboarding] cannot advance past the greeting', {
+      hasConv: !!conv, hasTenant: !!tenantId,
+    });
+  }
+
   return `Hi! I'm Booka — I help businesses manage bookings on WhatsApp. 🎉
 
 What kind of business do you run and where are you located?
@@ -229,6 +259,54 @@ Return JSON only:
       if (ownerError) {
         // Without this row the owner is not a member of their own tenant:
         // no schedules, no assignment, and no contact for wallet alerts.
+        console.error('[ownerOnboarding] could not create the owner tenant_users row', {
+          tenantId: resolvedTenantId, error: ownerError,
+        });
+      }
+    }
+  } else {
+    // The tenant already exists, which in the live pipeline is ALWAYS the case:
+    // processMessageV2 is only ever called with a resolved tenant id, so the
+    // branch above never runs there. Without this the owner's answer to "what
+    // kind of business do you run" was parsed and then dropped — no name, no
+    // vertical, no timezone, no business_type, and no owner tenant_users row,
+    // which is the row schedules, staff assignment and wallet alerts all hang
+    // off. Onboarding only runs before activation, so the answer given here is
+    // authoritative for a tenant that is not live yet.
+    const { error: tenantError } = await supabaseAdmin
+      .from('tenants')
+      .update({
+        name: businessName,
+        timezone: resolveTenantTimezone(parsed.timezone),
+        business_type: vertical,
+        metadata: { vertical, ...preset, location: parsed.location },
+      })
+      .eq('id', resolvedTenantId);
+    if (tenantError) {
+      console.error('[ownerOnboarding] could not configure the existing tenant', {
+        tenantId: resolvedTenantId, error: tenantError,
+      });
+    }
+
+    // Only if they are not already a member — tenant_users has no unique
+    // constraint on (tenant_id, role), so a blind insert would duplicate the
+    // owner on every re-run of this step.
+    const { data: existingOwner } = await supabaseAdmin
+      .from('tenant_users')
+      .select('id')
+      .eq('tenant_id', resolvedTenantId)
+      .eq('phone', phone)
+      .maybeSingle();
+
+    if (!existingOwner) {
+      const { error: ownerError } = await supabaseAdmin.from('tenant_users').insert({
+        tenant_id: resolvedTenantId,
+        role: 'owner',
+        name: businessName,
+        phone,
+        services_all: true,
+      });
+      if (ownerError) {
         console.error('[ownerOnboarding] could not create the owner tenant_users row', {
           tenantId: resolvedTenantId, error: ownerError,
         });
