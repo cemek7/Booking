@@ -51,4 +51,31 @@ describe('cron coverage', () => {
     expect(DEPLOY).toContain('techclave-${TARGET}-start');
     expect(DEPLOY).toContain('techclave-${TARGET}-end');
   });
+
+  it('strips the old block by PREFIX, so a generation change still replaces it', () => {
+    // The start marker carries a generation suffix. Matching it with equality
+    // would fail to recognise a block written by an earlier generation, leaving
+    // those jobs in the crontab beside the new ones — every job running twice.
+    // The awk lives inside a double-quoted bash string, so $ and " are escaped
+    // in the file itself.
+    expect(DEPLOY).toContain('index(\\$0, \\"# techclave-${TARGET}-start\\") == 1');
+    expect(DEPLOY).not.toContain('\\$0 == \\"# techclave-${TARGET}-start\\"');
+  });
+
+  it('reinstalls the wrapper when run from the repo', () => {
+    // bootstrap-vps.sh copies this script to /usr/local/bin/techclave-deploy
+    // ONCE at provisioning and nothing ever re-copied it, so every later edit
+    // to the cron block was invisible to the box. That is exactly how four
+    // workers shipped and never ran.
+    expect(DEPLOY).toContain('/usr/local/bin/techclave-deploy');
+    expect(DEPLOY).toMatch(/install -m 755 "\$\{BASH_SOURCE\[0\]\}"/);
+  });
+
+  it('bootstrap installs the wrapper from the same file the deploy maintains', () => {
+    // If these ever diverge, provisioning a new box and updating an existing
+    // one would install different scripts.
+    const bootstrap = readFileSync(join(ROOT, 'deployment/scripts/bootstrap-vps.sh'), 'utf8');
+    expect(bootstrap).toContain('deployment/scripts/deploy-vps.sh');
+    expect(bootstrap).toContain('/usr/local/bin/techclave-deploy');
+  });
 });
