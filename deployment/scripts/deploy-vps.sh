@@ -23,14 +23,27 @@ SECRET_GENERATOR="${TECHCLAVE_RUNTIME_SECRET_GENERATOR:-$DEFAULT_SECRET_GENERATO
 # half-executed script.
 INSTALLED_WRAPPER="/usr/local/bin/techclave-deploy"
 if [[ "$SCRIPT_DIR" != "$(dirname "$INSTALLED_WRAPPER")" ]]; then
-  if [[ ! -f "$INSTALLED_WRAPPER" ]] || ! cmp -s "${BASH_SOURCE[0]}" "$INSTALLED_WRAPPER"; then
-    if install -m 755 "${BASH_SOURCE[0]}" "$INSTALLED_WRAPPER" 2>/dev/null; then
-      echo "Updated $INSTALLED_WRAPPER from the repo copy."
-    else
-      echo "WARNING: $INSTALLED_WRAPPER is out of date and could not be updated (needs root)." >&2
-      echo "         Run: sudo install -m 755 ${BASH_SOURCE[0]} $INSTALLED_WRAPPER" >&2
+  # The wrapper and its companions are all installed by bootstrap-vps.sh ONCE,
+  # so a box provisioned before any of them existed never acquires them. That is
+  # not hypothetical: the secret generator was missing on staging, and the only
+  # symptom was this script dying on a fallback path under /usr/local/bin that
+  # was never meant to exist. Refresh the whole set together, not just the one
+  # file that happened to change.
+  for pair in \
+    "${BASH_SOURCE[0]}:$INSTALLED_WRAPPER" \
+    "$SCRIPT_DIR/ensure-generated-runtime-secrets.sh:/usr/local/bin/techclave-ensure-runtime-secrets"
+  do
+    src="${pair%%:*}"; dest="${pair##*:}"
+    [[ -f "$src" ]] || continue
+    if [[ ! -f "$dest" ]] || ! cmp -s "$src" "$dest"; then
+      if install -m 755 "$src" "$dest" 2>/dev/null; then
+        echo "Updated $dest from the repo copy."
+      else
+        echo "WARNING: $dest is missing or out of date and could not be written (needs root)." >&2
+        echo "         Run: sudo install -m 755 $src $dest" >&2
+      fi
     fi
-  fi
+  done
 fi
 
 usage() {
