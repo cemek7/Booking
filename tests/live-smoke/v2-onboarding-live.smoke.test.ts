@@ -49,7 +49,8 @@ jest.mock('@/lib/billing/ai-wallet', () => ({
 
 import { handleOnboarding } from '@/lib/whatsapp/v2/flows/ownerOnboarding';
 import { getAvailableSlots } from '@/lib/whatsapp/v2/slotEngine';
-import { getConversation, ensureConversation } from '@/lib/whatsapp/v2/conversationState';
+import { getConversation } from '@/lib/whatsapp/v2/conversationState';
+import { startSelfSignup, isSignupIntent } from '@/lib/whatsapp/v2/selfSignup';
 
 let admin: SupabaseClient;
 let tenantId = '';
@@ -67,13 +68,15 @@ beforeAll(async () => {
   }
   admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
-  // Step 1 creates the tenant itself, so start from a bare conversation.
-  const { data: tenant, error } = await admin
-    .from('tenants').insert({ name: MARK }).select('id').single();
-  if (error) throw new Error(`tenant insert failed: ${error.message}`);
-  tenantId = (tenant as { id: string }).id;
+  // Enter the way a real owner does: an unrecognised number replying START.
+  // Starting from a hand-made tenant was what let the step 1 bug hide.
+  expect(isSignupIntent('START')).toBe(true);
+  const signup = await startSelfSignup(admin, OWNER_PHONE);
+  if (!signup) throw new Error('self signup failed');
+  tenantId = signup.tenantId;
 
-  await ensureConversation(OWNER_PHONE, tenantId, 'owner', 'whatsapp');
+  // Name it so teardown can find it even if the test dies mid-way.
+  await admin.from('tenants').update({ name: MARK }).eq('id', tenantId);
 }, 60_000);
 
 afterAll(async () => {
@@ -91,7 +94,14 @@ afterAll(async () => {
 describe('v2 chat onboarding produces a tenant that can actually take a booking', () => {
   it('walks the whole conversation and leaves a bookable business behind', async () => {
     // ── the conversation ──────────────────────────────────────────────────
-    await step('hi', '{}');
+    // Signup already opened this as an owner in the onboarding flow, so the
+    // first turn is the greeting and it must ADVANCE — that is the bug where an
+    // owner could answer correctly forever and keep being greeted.
+    const greeting = await step('', '{}');
+    expect(greeting).toContain("I'm Booka");
+    const afterGreeting = await getConversation(OWNER_PHONE, tenantId, 'whatsapp');
+    expect(afterGreeting?.flow_data?.onboarding_step).toBe(1);
+
     await step('Glamour Hair Studio, hair salon in Yaba Lagos', JSON.stringify({
       business_name: 'Glamour Hair Studio', vertical: 'beauty',
       location: 'Yaba, Lagos', timezone: 'Africa/Lagos',

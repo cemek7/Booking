@@ -298,7 +298,22 @@ Return JSON only:
       .eq('phone', phone)
       .maybeSingle();
 
-    if (!existingOwner) {
+    if (existingOwner) {
+      // Self-signup creates the owner row BEFORE the business has a name — that
+      // is the whole point, it is how the sender becomes resolvable by phone on
+      // their next message. So the name arrives here, one step later, and this
+      // is the only place that fills it in. Skipping the update left every
+      // self-signed-up owner nameless in each staff picker.
+      const { error: nameError } = await supabaseAdmin
+        .from('tenant_users')
+        .update({ name: businessName })
+        .eq('id', (existingOwner as { id: string }).id);
+      if (nameError) {
+        console.error('[ownerOnboarding] could not name the existing owner row', {
+          tenantId: resolvedTenantId, error: nameError,
+        });
+      }
+    } else {
       const { error: ownerError } = await supabaseAdmin.from('tenant_users').insert({
         tenant_id: resolvedTenantId,
         role: 'owner',
