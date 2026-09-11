@@ -1,0 +1,12 @@
+# Build output. Linting and formatting generated files produces errors nobody
+# can act on, and `--write` would rewrite artifacts.
+dist/
+.tsbuild/
+.next/
+coverage/
+node_modules/
+
+# Hand-maintained SQL and the live schema dump: column alignment there is
+# deliberate and reflows badly.
+db/migrations/
+db/schema/

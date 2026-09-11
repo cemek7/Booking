@@ -12,7 +12,9 @@
  */
 
 /** Booka's home market. Used to expand a local number to international form. */
-const DEFAULT_COUNTRY_CODE = (process.env.BOOKA_DEFAULT_COUNTRY_CODE || '234').replace(/\D/g, '');
+const DEFAULT_COUNTRY_CODE = (
+  process.env.BOOKA_DEFAULT_COUNTRY_CODE || "234"
+).replace(/\D/g, "");
 
 /**
  * Normalises whatever form the number was configured in to the digits a wa.me
@@ -28,22 +30,27 @@ const DEFAULT_COUNTRY_CODE = (process.env.BOOKA_DEFAULT_COUNTRY_CODE || '234').r
  *   +234 813 405 2165 -> 2348134052165
  *   2348134052165   -> 2348134052165   (already international)
  */
-export function normaliseGatewayPhone(raw: string | null | undefined): string | null {
-  const digits = String(raw ?? '').replace(/\D/g, '');
+export function normaliseGatewayPhone(
+  raw: string | null | undefined,
+): string | null {
+  const digits = String(raw ?? "").replace(/\D/g, "");
   if (!digits) return null;
 
   // A leading 0 is a national trunk prefix, never part of an international
   // number, so it is replaced by the country code rather than kept.
-  const international = digits.startsWith('0')
+  const international = digits.startsWith("0")
     ? `${DEFAULT_COUNTRY_CODE}${digits.slice(1)}`
     : digits;
 
   // E.164 allows up to 15 digits; anything under 10 cannot carry a country code
   // plus a subscriber number, so it is a typo rather than a number.
   if (international.length < 10 || international.length > 15) {
-    console.warn('[gatewayPhone] configured number does not look like an international number', {
-      digits: international.length,
-    });
+    console.warn(
+      "[gatewayPhone] configured number does not look like an international number",
+      {
+        digits: international.length,
+      },
+    );
     return null;
   }
 

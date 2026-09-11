@@ -1,7 +1,7 @@
-import { randomUUID } from 'crypto';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { chargeAuthorization, initializeTransaction } from '@/lib/paystack';
-import { resolveTenantOwner } from '@/lib/billing/walletAlerts';
+import { randomUUID } from "crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { chargeAuthorization, initializeTransaction } from "@/lib/paystack";
+import { resolveTenantOwner } from "@/lib/billing/walletAlerts";
 
 /**
  * Paid wallet top-up.
@@ -20,7 +20,7 @@ import { resolveTenantOwner } from '@/lib/billing/walletAlerts';
  * 1 credit = NGN 1 (see messageRates.ts), so credits → kobo is × 100.
  */
 
-const INTENTS_TABLE = 'wallet_topup_intents';
+const INTENTS_TABLE = "wallet_topup_intents";
 
 /** NGN minor units per credit. Named so the conversion is never a bare × 100. */
 const KOBO_PER_CREDIT = 100;
@@ -29,7 +29,7 @@ export function creditsToMinor(credits: number): number {
   return Math.round(credits * KOBO_PER_CREDIT);
 }
 
-export type TopupOrigin = 'manual' | 'auto_recharge';
+export type TopupOrigin = "manual" | "auto_recharge";
 
 export interface CreateIntentParams {
   admin: SupabaseClient;
@@ -56,7 +56,7 @@ export interface WalletTopupIntent {
 export async function createTopupIntent(
   p: CreateIntentParams,
 ): Promise<WalletTopupIntent | null> {
-  const reference = `bokawallet_${randomUUID().replace(/-/g, '')}`;
+  const reference = `bokawallet_${randomUUID().replace(/-/g, "")}`;
   const amountMinor = creditsToMinor(p.amountCredits);
 
   const { data, error } = await p.admin
@@ -67,14 +67,15 @@ export async function createTopupIntent(
       amount_credits: p.amountCredits,
       amount_minor: amountMinor,
       email: p.email,
-      origin: p.origin ?? 'manual',
+      origin: p.origin ?? "manual",
     })
-    .select('id')
+    .select("id")
     .single();
 
   if (error || !data) {
-    console.error('[walletTopup] could not record top-up intent', {
-      tenantId: p.tenantId, error,
+    console.error("[walletTopup] could not record top-up intent", {
+      tenantId: p.tenantId,
+      error,
     });
     return null;
   }
@@ -91,15 +92,19 @@ export async function createTopupIntent(
 async function markIntent(
   admin: SupabaseClient,
   reference: string,
-  status: 'failed' | 'abandoned',
+  status: "failed" | "abandoned",
 ): Promise<void> {
   const { error } = await admin
     .from(INTENTS_TABLE)
     .update({ status })
-    .eq('reference', reference)
-    .eq('status', 'pending');
+    .eq("reference", reference)
+    .eq("status", "pending");
   if (error) {
-    console.warn('[walletTopup] could not mark intent', { reference, status, error });
+    console.warn("[walletTopup] could not mark intent", {
+      reference,
+      status,
+      error,
+    });
   }
 }
 
@@ -128,7 +133,10 @@ export async function startWalletCheckout(params: {
     email: params.email,
   });
   if (!intent) {
-    return { success: false, error: 'Could not start the top-up. Please try again.' };
+    return {
+      success: false,
+      error: "Could not start the top-up. Please try again.",
+    };
   }
 
   const init = await initializeTransaction({
@@ -139,17 +147,24 @@ export async function startWalletCheckout(params: {
     // Card only: an authorization from a bank transfer or USSD payment is not
     // reusable, so any other channel produces a top-up that can never become
     // auto-recharge. Say so up front rather than discovering it at charge time.
-    channels: ['card'],
+    channels: ["card"],
     metadata: { booka_wallet_topup: true, tenant_id: params.tenantId },
   });
 
   if (!init.success || !init.authorizationUrl) {
     // Leave no pending intent behind for a checkout that never opened.
-    await markIntent(params.admin, intent.reference, 'abandoned');
-    return { success: false, error: init.error ?? 'Payment provider unavailable' };
+    await markIntent(params.admin, intent.reference, "abandoned");
+    return {
+      success: false,
+      error: init.error ?? "Payment provider unavailable",
+    };
   }
 
-  return { success: true, authorizationUrl: init.authorizationUrl, reference: intent.reference };
+  return {
+    success: true,
+    authorizationUrl: init.authorizationUrl,
+    reference: intent.reference,
+  };
 }
 
 // ─── Crediting from a verified charge ────────────────────────────────────────
@@ -181,7 +196,7 @@ export async function creditVerifiedTopup(params: {
   customerEmail?: string | null;
   authorization?: PaystackAuthorizationPayload | null;
 }): Promise<CreditResult> {
-  const { data, error } = await params.admin.rpc('credit_wallet_topup', {
+  const { data, error } = await params.admin.rpc("credit_wallet_topup", {
     p_reference: params.reference,
     p_amount_minor: params.amountMinor,
   });
@@ -189,18 +204,28 @@ export async function creditVerifiedTopup(params: {
   if (error) {
     // Throwing would be wrong here only if the caller swallowed it; the webhook
     // route lets it surface so Paystack retries the delivery.
-    console.error('[walletTopup] credit_wallet_topup failed', { reference: params.reference, error });
+    console.error("[walletTopup] credit_wallet_topup failed", {
+      reference: params.reference,
+      error,
+    });
     throw new Error(`credit_wallet_topup failed: ${error.message}`);
   }
 
   const row = (Array.isArray(data) ? data[0] : data) as {
-    credited?: boolean; tenant_id?: string; amount_credits?: number | string; reason?: string;
+    credited?: boolean;
+    tenant_id?: string;
+    amount_credits?: number | string;
+    reason?: string;
   } | null;
 
   if (!row?.credited) {
     // 'no_pending_intent' is the ordinary case for a replayed webhook and for
     // every payment that is not a wallet top-up. Not an error.
-    return { credited: false, tenantId: row?.tenant_id, reason: row?.reason ?? 'unknown' };
+    return {
+      credited: false,
+      tenantId: row?.tenant_id,
+      reason: row?.reason ?? "unknown",
+    };
   }
 
   const tenantId = row.tenant_id!;
@@ -236,14 +261,17 @@ async function maybeStoreAuthorization(params: {
   const auth = params.authorization;
   if (!auth?.authorization_code || auth.reusable !== true) return;
   if (!params.customerEmail) {
-    console.warn('[walletTopup] reusable authorization arrived with no customer email — not stored', {
-      tenantId: params.tenantId,
-    });
+    console.warn(
+      "[walletTopup] reusable authorization arrived with no customer email — not stored",
+      {
+        tenantId: params.tenantId,
+      },
+    );
     return;
   }
 
   const { error } = await params.admin
-    .from('ai_wallets')
+    .from("ai_wallets")
     .update({
       paystack_authorization_code: auth.authorization_code,
       paystack_authorization_email: params.customerEmail,
@@ -255,11 +283,12 @@ async function maybeStoreAuthorization(params: {
       auto_recharge_failed_at: null,
       auto_recharge_failure_reason: null,
     })
-    .eq('tenant_id', params.tenantId);
+    .eq("tenant_id", params.tenantId);
 
   if (error) {
-    console.warn('[walletTopup] could not store card authorization', {
-      tenantId: params.tenantId, error,
+    console.warn("[walletTopup] could not store card authorization", {
+      tenantId: params.tenantId,
+      error,
     });
   }
 }
@@ -284,16 +313,19 @@ async function failCharge(
   reference: string,
   reason: string,
 ): Promise<void> {
-  await markIntent(admin, reference, 'failed');
+  await markIntent(admin, reference, "failed");
   const { error } = await admin
-    .from('ai_wallets')
+    .from("ai_wallets")
     .update({
       auto_recharge_failed_at: new Date().toISOString(),
       auto_recharge_failure_reason: reason.slice(0, 200),
     })
-    .eq('tenant_id', tenantId);
+    .eq("tenant_id", tenantId);
   if (error) {
-    console.warn('[walletTopup] could not record auto-recharge failure', { tenantId, error });
+    console.warn("[walletTopup] could not record auto-recharge failure", {
+      tenantId,
+      error,
+    });
   }
 }
 
@@ -315,14 +347,17 @@ export async function attemptAutoRecharge(params: {
 
   const amountCredits = Number(w.auto_recharge_amount_credits ?? 0);
   if (!Number.isFinite(amountCredits) || amountCredits <= 0) {
-    console.warn('[walletTopup] auto-recharge enabled with no amount configured', {
-      tenantId: params.tenantId,
-    });
+    console.warn(
+      "[walletTopup] auto-recharge enabled with no amount configured",
+      {
+        tenantId: params.tenantId,
+      },
+    );
     return false;
   }
 
   if (!w.paystack_authorization_code || !w.paystack_authorization_email) {
-    console.warn('[walletTopup] auto-recharge enabled with no saved card', {
+    console.warn("[walletTopup] auto-recharge enabled with no saved card", {
       tenantId: params.tenantId,
     });
     return false;
@@ -341,7 +376,7 @@ export async function attemptAutoRecharge(params: {
     tenantId: params.tenantId,
     amountCredits,
     email: w.paystack_authorization_email,
-    origin: 'auto_recharge',
+    origin: "auto_recharge",
   });
   if (!intent) return false;
 
@@ -352,7 +387,11 @@ export async function attemptAutoRecharge(params: {
       email: w.paystack_authorization_email,
       amountMinor: intent.amountMinor,
       reference: intent.reference,
-      metadata: { booka_wallet_topup: true, tenant_id: params.tenantId, origin: 'auto_recharge' },
+      metadata: {
+        booka_wallet_topup: true,
+        tenant_id: params.tenantId,
+        origin: "auto_recharge",
+      },
     });
   } catch (error) {
     // Back off on a THROW as well as a decline. This runs inside the inbound
@@ -360,16 +399,35 @@ export async function attemptAutoRecharge(params: {
     // without the stamp that timeout is paid again on every single send, which
     // stalls the shared worker for every other tenant in the batch. With it,
     // the cost is once per tenant per backoff window.
-    console.warn('[walletTopup] auto-recharge charge threw', { tenantId: params.tenantId, error });
-    await failCharge(params.admin, params.tenantId, intent.reference,
-      error instanceof Error ? error.message : 'charge failed');
+    console.warn("[walletTopup] auto-recharge charge threw", {
+      tenantId: params.tenantId,
+      error,
+    });
+    await failCharge(
+      params.admin,
+      params.tenantId,
+      intent.reference,
+      error instanceof Error ? error.message : "charge failed",
+    );
     return false;
   }
 
-  if (!charge.success || charge.chargeStatus !== 'success') {
-    const reason = charge.gatewayResponse ?? charge.error ?? charge.chargeStatus ?? 'unknown';
-    console.warn('[walletTopup] auto-recharge declined', { tenantId: params.tenantId, reason });
-    await failCharge(params.admin, params.tenantId, intent.reference, String(reason));
+  if (!charge.success || charge.chargeStatus !== "success") {
+    const reason =
+      charge.gatewayResponse ??
+      charge.error ??
+      charge.chargeStatus ??
+      "unknown";
+    console.warn("[walletTopup] auto-recharge declined", {
+      tenantId: params.tenantId,
+      reason,
+    });
+    await failCharge(
+      params.admin,
+      params.tenantId,
+      intent.reference,
+      String(reason),
+    );
     return false;
   }
 
@@ -386,17 +444,25 @@ export async function attemptAutoRecharge(params: {
   } catch (error) {
     // The money moved but crediting failed. Loud, and recoverable: the webhook
     // for this same reference will credit it when it arrives.
-    console.error('[walletTopup] auto-recharge charged but crediting failed — webhook will settle', {
-      tenantId: params.tenantId, reference: intent.reference, error,
-    });
+    console.error(
+      "[walletTopup] auto-recharge charged but crediting failed — webhook will settle",
+      {
+        tenantId: params.tenantId,
+        reference: intent.reference,
+        error,
+      },
+    );
     return false;
   }
 
   if (result.credited) {
     await params.admin
-      .from('ai_wallets')
-      .update({ auto_recharge_failed_at: null, auto_recharge_failure_reason: null })
-      .eq('tenant_id', params.tenantId);
+      .from("ai_wallets")
+      .update({
+        auto_recharge_failed_at: null,
+        auto_recharge_failure_reason: null,
+      })
+      .eq("tenant_id", params.tenantId);
   }
   return result.credited;
 }
