@@ -32,6 +32,22 @@ export const META_PAYMENT_DEADLINE = "2026-09-30T23:59:59Z";
 /** Per-message charging begins. */
 export const METERING_CUTOVER = "2026-10-01T00:00:00Z";
 
+/**
+ * Message types a business-initiated send asks the template registry for, and
+ * which are almost always sent OUTSIDE the customer's 24-hour service window.
+ * Without an approved template for one of these, sendGovernedInitiated holds
+ * and the message is never delivered.
+ */
+export const OUT_OF_WINDOW_MESSAGE_TYPES = [
+  "reservation_reminder_24h",
+  "reservation_reminder_2h",
+  "booking_reminder",
+  "payment_receipt",
+  "rebooking_followup",
+  "rebooking_nudge",
+  "waitlist_slot",
+] as const;
+
 export function daysBetween(from: Date, to: Date): number {
   return Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
 }
@@ -44,6 +60,8 @@ export interface PlatformAlertInputs {
   gatewayPhoneSet: boolean;
   /** Rows in whatsapp_message_charges. Zero means metering is recording nothing. */
   meteredMessageCount: number;
+  /** Message types from OUT_OF_WINDOW_MESSAGE_TYPES with no approved shared template. */
+  missingTemplateTypes: string[];
   now: Date;
 }
 
@@ -134,6 +152,27 @@ export function buildPlatformAlerts(
     });
   }
 
+  // ── Meta templates ─────────────────────────────────────────────────────────
+  // A reminder goes to someone who booked days ago, so it is outside the
+  // 24-hour service window by definition. Outside that window WhatsApp accepts
+  // only an approved template. With none registered the send gate holds, the
+  // reminder is never delivered, and no error is raised anywhere — the tenant
+  // just quietly stops getting the feature they pay for.
+  if (input.missingTemplateTypes.length > 0) {
+    alerts.push({
+      id: "out_of_window_templates_missing",
+      severity: "critical",
+      title: `No approved template for ${input.missingTemplateTypes.length} message type${input.missingTemplateTypes.length === 1 ? "" : "s"}`,
+      message:
+        "These are only ever sent outside the customer’s 24-hour window, where " +
+        "WhatsApp requires an approved template. Every one of them is currently " +
+        `held and never delivered: ${input.missingTemplateTypes.join(", ")}.`,
+      action:
+        "Get each template approved in Meta Business Manager, then run " +
+        "scripts/sql/seed_deliverability_templates.sql with the approved names.",
+    });
+  }
+
   // ── Gateway number ─────────────────────────────────────────────────────────
   // Every tenant onboarded over chat is handed a wa.me link built from this.
   // With no fallback left, an unset variable means each one is activated with
@@ -199,10 +238,33 @@ export async function getPlatformAlerts(
   // On a failed count assume there IS data, so a transient read error cannot
   // manufacture a critical alert.
   const meteredMessageCount = countError ? 1 : (count ?? 0);
+
+  // Shared (tenant_id IS NULL) templates are the floor every tenant falls back
+  // to. A read error reports nothing missing, so a transient failure cannot
+  // manufacture a critical alert.
+  const { data: templateRows, error: templateError } = await admin
+    .from("message_templates")
+    .select("message_type")
+    .is("tenant_id", null)
+    .eq("status", "approved")
+    .in("message_type", OUT_OF_WINDOW_MESSAGE_TYPES as unknown as string[]);
+  if (templateError) {
+    console.warn(
+      "[platformAlerts] could not read message templates",
+      templateError,
+    );
+  }
+  const approved = new Set(
+    (templateRows ?? []).map((r) => r.message_type as string),
+  );
+  const missingTemplateTypes = templateError
+    ? []
+    : OUT_OF_WINDOW_MESSAGE_TYPES.filter((t) => !approved.has(t));
   const attested = process.env.BOOKA_META_PAYMENT_METHOD_ON_FILE;
   return buildPlatformAlerts({
     gatewayPhoneSet: !!getBookaGatewayPhone(),
     meteredMessageCount,
+    missingTemplateTypes,
     rateCard,
     meteringMode: getMeteringMode(),
     rateConfigured: !!process.env.BOOKA_MESSAGE_RATE_CREDITS,
