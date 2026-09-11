@@ -7,6 +7,7 @@ export default function Modal({ open, onClose, children }: { open: boolean; onCl
 
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- transition state machine driven by the `open` prop; the render that follows is the animation
       setVisible(false);
       return;
     }

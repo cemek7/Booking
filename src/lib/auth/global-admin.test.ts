@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import { isActiveGlobalAdmin, normalizeAdminEmail, resolveActiveGlobalAdmin } from './global-admin';
 
 function adminClient(result: { data: unknown; error: unknown }) {

@@ -11,6 +11,41 @@ if [[ ! -x "$DEFAULT_SECRET_GENERATOR" ]]; then
 fi
 SECRET_GENERATOR="${TECHCLAVE_RUNTIME_SECRET_GENERATOR:-$DEFAULT_SECRET_GENERATOR}"
 
+# The cron block below is baked into this script, and bootstrap-vps.sh copies
+# this file to /usr/local/bin/techclave-deploy ONCE at provisioning. Nothing
+# ever re-copied it, so every later edit — new workers, changed schedules — was
+# invisible to the box: the wrapper stayed frozen at whatever shipped on the day
+# the server was built, and `techclave-deploy` kept installing that generation's
+# jobs while the repo said otherwise.
+#
+# So when this is run FROM the repo, it reinstalls the wrapper first. Only then,
+# because overwriting the file bash is currently reading is how you get a
+# half-executed script.
+INSTALLED_WRAPPER="/usr/local/bin/techclave-deploy"
+if [[ "$SCRIPT_DIR" != "$(dirname "$INSTALLED_WRAPPER")" ]]; then
+  # The wrapper and its companions are all installed by bootstrap-vps.sh ONCE,
+  # so a box provisioned before any of them existed never acquires them. That is
+  # not hypothetical: the secret generator was missing on staging, and the only
+  # symptom was this script dying on a fallback path under /usr/local/bin that
+  # was never meant to exist. Refresh the whole set together, not just the one
+  # file that happened to change.
+  for pair in \
+    "${BASH_SOURCE[0]}:$INSTALLED_WRAPPER" \
+    "$SCRIPT_DIR/ensure-generated-runtime-secrets.sh:/usr/local/bin/techclave-ensure-runtime-secrets"
+  do
+    src="${pair%%:*}"; dest="${pair##*:}"
+    [[ -f "$src" ]] || continue
+    if [[ ! -f "$dest" ]] || ! cmp -s "$src" "$dest"; then
+      if install -m 755 "$src" "$dest" 2>/dev/null; then
+        echo "Updated $dest from the repo copy."
+      else
+        echo "WARNING: $dest is missing or out of date and could not be written (needs root)." >&2
+        echo "         Run: sudo install -m 755 $src $dest" >&2
+      fi
+    fi
+  done
+fi
+
 usage() {
   cat <<EOF
 Usage: techclave-deploy <staging|production>
@@ -94,7 +129,7 @@ install_cron() {
   fi
 
   cat > "$STACK_DIR/cron.block" <<EOF
-# techclave-${TARGET}-start
+# techclave-${TARGET}-start (cron-generation 2)
 APP_URL=${APP_PUBLIC_URL}
 CRON_SECRET=${CRON_SECRET}
 
@@ -103,6 +138,19 @@ CRON_SECRET=${CRON_SECRET}
 * * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/whatsapp" >/dev/null 2>&1
 */10 * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/cron/reminders" >/dev/null 2>&1
 0 22 * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/cron/nightly" >/dev/null 2>&1
+*/5 * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/operating-loop" >/dev/null 2>&1
+# Releases message-charge reservations that never got a delivery webhook. Without
+# it every tenant's balance drains into reservations that never settle, and its
+# released count is the only early warning that Meta has stopped delivering
+# statuses at all.
+*/15 * * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/message-charges" >/dev/null 2>&1
+# Meta bills in USD and Booka sells in naira, so the real cost moves with the
+# rate, on no schedule and with nothing to read. This is the only thing that
+# notices.
+17 6 * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/fx-rate" >/dev/null 2>&1
+# Warns tenants who own their own Meta billing before 2026-10-01, when Meta
+# stops delivering service messages for accounts with no payment method.
+23 9 * * * curl -fsS -H "Authorization: Bearer \$CRON_SECRET" "\$APP_URL/api/worker/meta-payment-watch" >/dev/null 2>&1
 # techclave-${TARGET}-end
 EOF
 
@@ -110,10 +158,14 @@ EOF
   existing="$(mktemp)"
   crontab -l > "$existing" 2>/dev/null || true
 
+  # Prefix match, not equality: the start marker carries a generation suffix so
+  # `crontab -l` shows which version is installed, and an exact match would fail
+  # to strip a block written by a different generation — leaving the old jobs in
+  # place alongside the new ones and running everything twice.
   awk "
     BEGIN {skip=0}
-    \$0 == \"# techclave-${TARGET}-start\" {skip=1; next}
-    \$0 == \"# techclave-${TARGET}-end\" {skip=0; next}
+    index(\$0, \"# techclave-${TARGET}-start\") == 1 {skip=1; next}
+    index(\$0, \"# techclave-${TARGET}-end\") == 1 {skip=0; next}
     skip == 0 {print}
   " "$existing" > "$STACK_DIR/cron.tab"
 

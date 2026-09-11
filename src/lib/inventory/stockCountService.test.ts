@@ -68,7 +68,7 @@ function makeAdmin() {
             return {
               eq: () => ({
                 select: () => ({
-                  single: async () => ({ data: { id: 'session-1', ...payload }, error: null }),
+                  single: async () => ({ data: { id: 'session-1', ...(payload as Record<string, unknown>) }, error: null }),
                 }),
               }),
             };
@@ -153,7 +153,7 @@ function makeAdmin() {
             return {
               eq: () => ({
                 select: () => ({
-                  single: async () => ({ data: { id: 'item-1', ...payload }, error: null }),
+                  single: async () => ({ data: { id: 'item-1', ...(payload as Record<string, unknown>) }, error: null }),
                 }),
               }),
             };

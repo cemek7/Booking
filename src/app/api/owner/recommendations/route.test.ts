@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 const mockListRecommendations = jest.fn();
 
 jest.mock('@/lib/recommendations/outcomes', () => ({

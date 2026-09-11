@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { toast } from '@/components/ui/toast';
 import { BusinessHoursSection, type BusinessHours } from './BusinessHoursSection';
 import { FormSection } from './FormSection';
+import Link from 'next/link';
 
 const LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -259,7 +260,7 @@ export function AgentConfigSection({ values, onChange, tenantId }: Props) {
           {scrapedFaqs.length > 0 && (
             <div className="border rounded-lg p-3 space-y-2">
               <p className="text-xs text-gray-500 font-medium">
-                Found {scrapedFaqs.length} FAQ{scrapedFaqs.length !== 1 ? 's' : ''} — uncheck any you don't want to save.
+                Found {scrapedFaqs.length} FAQ{scrapedFaqs.length !== 1 ? 's' : ''} — uncheck any you don&apos;t want to save.
               </p>
               <div className="max-h-52 overflow-y-auto space-y-2">
                 {scrapedFaqs.map((faq, i) => (
@@ -329,7 +330,7 @@ export function AgentConfigSection({ values, onChange, tenantId }: Props) {
                   className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
                   placeholder="Hi {name}, still thinking about booking? We'd love to help!"
                 />
-                <p className="text-xs text-gray-500 mt-1">Use {'{name}'} as a placeholder for the customer's name.</p>
+                <p className="text-xs text-gray-500 mt-1">Use {'{name}'} as a placeholder for the customer&apos;s name.</p>
               </div>
             </>
           )}
@@ -349,12 +350,12 @@ export function AgentConfigSection({ values, onChange, tenantId }: Props) {
         {!isPro ? (
           <div className="flex flex-col items-center gap-3 py-4 text-center">
             <p className="text-sm text-gray-600">Upgrade to Pro to enable inbound voice booking.</p>
-            <a
+            <Link
               href="/dashboard/settings?tab=payments"
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm"
             >
               Upgrade Plan
-            </a>
+            </Link>
           </div>
         ) : (
           <div className="space-y-4">

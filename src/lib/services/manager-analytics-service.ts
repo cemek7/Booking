@@ -78,7 +78,7 @@ export interface ManagerBookingData {
 
 export function calculateDateRange(period: string) {
   const now = new Date();
-  let startDate = new Date();
+  const startDate = new Date();
 
   switch (period) {
     case 'day':
@@ -763,7 +763,7 @@ export async function generateCustomReport(
     | { reportType: 'bookings'; data: ManagerBookingData }
     | { reportType: 'comprehensive'; data: { overview: ManagerOverviewMetrics; revenue: ManagerRevenueData; team: ManagerTeamData; bookings: ManagerBookingData } };
 
-  let report: {
+  const report: {
     reportType: string;
     generatedAt: string;
     generatedBy: string;

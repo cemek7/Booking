@@ -8,7 +8,23 @@ jest.mock('@/lib/monitoring/telegramAlert', () => ({
   sendTelegramInfo: jest.fn(async () => undefined),
 }));
 
+// routeToInbox reads the conversation to decide whether the thread may be
+// reserved for a human, and both of these build their own admin client rather
+// than using the one under test — so they are mocked to keep the inbox
+// assertions deterministic instead of silently failing into the catch.
+jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({
+  setHumanHandling: jest.fn(async () => undefined),
+}));
+jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
+  getConversation: jest.fn(async () => ({ role: 'customer', flow_data: {} })),
+}));
+
 import { triggerWalletHandoff } from '@/lib/billing/messageHandoff';
+import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
+import { getConversation } from '@/lib/whatsapp/v2/conversationState';
+
+const mockSetHumanHandling = setHumanHandling as jest.MockedFunction<typeof setHumanHandling>;
+const mockGetConversation = getConversation as jest.MockedFunction<typeof getConversation>;
 
 // ── queue-based supabase mock ────────────────────────────────────────────────
 // Same harness as messageWallet.test.ts (queue of responses, plus insert/update
@@ -426,6 +442,7 @@ describe('triggerWalletHandoff — owner reaches the owner', () => {
     pushDb({ id: 'chat-1', metadata: {} });                       // metadata re-read
     pushDb([{ id: 'chat-1' }]);                                   // stamp update
     pushDb(null);                                                 // messages insert
+    pushDb(null);                                                 // chats -> pending (routeToInbox)
     pushDb(null);                                                 // notifications insert
     pushDb({ email: 'owner@example.com', phone: '2349000000000' }); // owner lookup
     sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
@@ -438,5 +455,68 @@ describe('triggerWalletHandoff — owner reaches the owner', () => {
     expect(sendTextMessage.mock.calls[0][0]).toBe('2348012345678');
     expect(sendTextMessage.mock.calls[1][0]).toBe('2349000000000');
     expect(providerMod.getTenantWhatsAppProviderClientUnmetered).toHaveBeenCalledWith('t1');
+  });
+});
+
+describe('triggerWalletHandoff — routing the promise to a human', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetConversation.mockResolvedValue(
+      { role: 'customer', flow_data: {} } as unknown as Awaited<ReturnType<typeof getConversation>>,
+    );
+  });
+
+  it('reserves the conversation for a human and raises it in the inbox', async () => {
+    seedSendPath();
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+
+    await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+
+    // HANDOFF_TEXT promises a team member will reply here. Without these two
+    // writes nobody is pointed at the conversation and the promise is empty.
+    expect(mockSetHumanHandling).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: '2348012345678', tenantId: 't1', channel: 'whatsapp' }),
+    );
+    expect(updates).toContainEqual(
+      expect.objectContaining({ table: 'chats', row: { status: 'pending' } }),
+    );
+  });
+
+  it('only reopens a chat that is still open, never one already resolved', async () => {
+    seedSendPath();
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+
+    await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+
+    const write = updates.find((u) => u.table === 'chats' && u.row.status === 'pending');
+    expect(write!.filters).toContainEqual(['status', 'open']);
+  });
+
+  it('does NOT reserve an owner thread for a human', async () => {
+    mockGetConversation.mockResolvedValue(
+      { role: 'owner', flow_data: {} } as unknown as Awaited<ReturnType<typeof getConversation>>,
+    );
+    seedSendPath();
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+
+    await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+
+    // A refused send to the owner is their own command thread. Flagging it
+    // would silence the assistant for the one person able to top the wallet up.
+    expect(mockSetHumanHandling).not.toHaveBeenCalled();
+    expect(updates).not.toContainEqual(
+      expect.objectContaining({ table: 'chats', row: { status: 'pending' } }),
+    );
+  });
+
+  it('still reports the handoff as sent when the inbox flagging fails', async () => {
+    mockGetConversation.mockRejectedValue(new Error('conversation read blew up'));
+    seedSendPath();
+    sendTextMessage.mockResolvedValue({ success: true, messageId: 'wamid.H' });
+
+    // The customer has already been told a human is coming; a bookkeeping
+    // failure afterwards must not become a delivery failure.
+    const r = await triggerWalletHandoff(adminAny, 't1', '2348012345678', 'whatsapp');
+    expect(r).toEqual({ sent: true, reason: 'sent' });
   });
 });

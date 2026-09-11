@@ -28,7 +28,6 @@ export default function VoiceCallPage() {
     }
     connectToRoom();
     return () => { leaveRoom(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   async function connectToRoom() {

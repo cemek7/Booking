@@ -42,6 +42,17 @@ interface WalletSummary {
   recent_ledger: WalletLedgerEntry[];
 }
 
+interface AutoRecharge {
+  enabled: boolean;
+  threshold_credits: number | null;
+  amount_credits: number | null;
+  has_saved_card: boolean;
+  card_brand: string | null;
+  card_last4: string | null;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+}
+
 export default function BillingClient() {
   const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payment'>('overview');
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -51,8 +62,16 @@ export default function BillingClient() {
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [topUpAmount, setTopUpAmount] = useState('100');
-  const [topUpDescription, setTopUpDescription] = useState('Manual top-up');
   const [topUpMessage, setTopUpMessage] = useState<string | null>(null);
+  const [topUpPending, setTopUpPending] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoMessage, setPromoMessage] = useState<string | null>(null);
+  const [promoPending, setPromoPending] = useState(false);
+  const [autoRecharge, setAutoRecharge] = useState<AutoRecharge | null>(null);
+  const [autoThreshold, setAutoThreshold] = useState('');
+  const [autoAmount, setAutoAmount] = useState('');
+  const [autoMessage, setAutoMessage] = useState<string | null>(null);
+  const [autoPending, setAutoPending] = useState(false);
   const headers = useAuthHeaders();
 
   useEffect(() => {
@@ -77,6 +96,17 @@ export default function BillingClient() {
         if (!active) return;
         setMetricsLoading(false);
       });
+
+    authFetch<AutoRecharge>('/api/billing/wallet/auto-recharge', { headers })
+      .then((res) => {
+        if (!active || res.error) return;
+        const cfg = res.data as AutoRecharge | null;
+        if (!cfg) return;
+        setAutoRecharge(cfg);
+        setAutoThreshold(cfg.threshold_credits != null ? String(cfg.threshold_credits) : '');
+        setAutoAmount(cfg.amount_credits != null ? String(cfg.amount_credits) : '');
+      })
+      .catch(() => { /* auto top-up is optional; its absence must not break billing */ });
 
     authFetch<WalletSummary>('/api/billing/wallet', { headers })
       .then((res) => {
@@ -109,6 +139,9 @@ export default function BillingClient() {
 
   const lowBalanceThreshold = wallet?.low_balance_threshold_credits ?? 0;
 
+  // Sends the owner to Paystack. Credits arrive only when the signed webhook
+  // lands — this used to POST straight to /api/billing/wallet, which credited
+  // the wallet with no payment at all.
   async function submitTopUp() {
     setTopUpMessage(null);
     const amount = Number(topUpAmount);
@@ -117,21 +150,80 @@ export default function BillingClient() {
       return;
     }
 
-    const res = await authFetch<WalletSummary>('/api/billing/wallet', {
+    setTopUpPending(true);
+    const res = await authFetch<{ authorization_url?: string }>('/api/billing/wallet/checkout', {
       method: 'POST',
       body: {
         amount_credits: amount,
-        description: topUpDescription.trim() || 'Manual top-up',
+        callback_url: typeof window !== 'undefined' ? window.location.href : undefined,
       },
     });
+    setTopUpPending(false);
 
     if (res.error) {
       setTopUpMessage(res.error.message);
       return;
     }
 
-    setWallet((res.data as WalletSummary) ?? null);
-    setTopUpMessage('Top-up applied.');
+    const url = (res.data as { authorization_url?: string } | null)?.authorization_url;
+    if (!url) {
+      setTopUpMessage('Could not start the payment. Please try again.');
+      return;
+    }
+    window.location.href = url;
+  }
+
+  // Promotional credit lands immediately — there is no payment to wait on — so
+  // refetch the wallet rather than leaving a stale balance on screen.
+  async function submitPromo() {
+    if (!headers) return;
+    setPromoMessage(null);
+
+    const code = promoCode.trim();
+    if (!code) {
+      setPromoMessage('Enter a promo code.');
+      return;
+    }
+
+    setPromoPending(true);
+    const res = await authFetch<{ amount_credits?: number }>('/api/billing/wallet/promo-redemptions', {
+      method: 'POST',
+      body: { code },
+    });
+    setPromoPending(false);
+
+    if (res.error) {
+      setPromoMessage(res.error.message);
+      return;
+    }
+
+    const granted = (res.data as { amount_credits?: number } | null)?.amount_credits ?? 0;
+    setPromoCode('');
+    setPromoMessage(`Added ${granted.toLocaleString()} credits.`);
+
+    const summary = await authFetch<WalletSummary>('/api/billing/wallet', { headers });
+    if (!summary.error) setWallet(summary.data as WalletSummary);
+  }
+
+  async function saveAutoRecharge(nextEnabled: boolean) {
+    setAutoMessage(null);
+    setAutoPending(true);
+    const res = await authFetch<AutoRecharge>('/api/billing/wallet/auto-recharge', {
+      method: 'PATCH',
+      body: {
+        enabled: nextEnabled,
+        ...(Number(autoThreshold) > 0 ? { threshold_credits: Number(autoThreshold) } : {}),
+        ...(Number(autoAmount) > 0 ? { amount_credits: Number(autoAmount) } : {}),
+      },
+    });
+    setAutoPending(false);
+
+    if (res.error) {
+      setAutoMessage(res.error.message);
+      return;
+    }
+    setAutoRecharge((res.data as AutoRecharge) ?? null);
+    setAutoMessage(nextEnabled ? 'Auto top-up is on.' : 'Auto top-up is off.');
   }
 
   return (
@@ -281,7 +373,8 @@ export default function BillingClient() {
           <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">Top up credits</h2>
             <p className="mt-1 text-sm text-slate-500">
-              This is a manual top-up for now. We can wire Paystack/Stripe later without changing the wallet model.
+              1 credit = &#8358;1. You&rsquo;ll be taken to Paystack to pay by card; your balance updates once the
+              payment is confirmed. Paying by card also lets you turn on auto top-up later.
             </p>
 
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -294,26 +387,125 @@ export default function BillingClient() {
                   placeholder="100"
                   inputMode="decimal"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700">Description</label>
-                <input
-                  value={topUpDescription}
-                  onChange={(e) => setTopUpDescription(e.target.value)}
-                  className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
-                  placeholder="Manual top-up"
-                />
+                <p className="mt-1 text-xs text-slate-500">
+                  You&rsquo;ll pay &#8358;{Number(topUpAmount) > 0 ? Number(topUpAmount).toLocaleString() : '0'}
+                </p>
               </div>
             </div>
 
             <div className="mt-4 flex items-center gap-3">
               <button
                 onClick={submitTopUp}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+                disabled={topUpPending}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
               >
-                Add credits
+                {topUpPending ? 'Starting payment…' : 'Continue to payment'}
               </button>
               {topUpMessage && <span className="text-sm text-slate-600">{topUpMessage}</span>}
+            </div>
+
+            {/* Promotional credit. Separate from the paid path on purpose:
+                these credits are granted, not bought, so they never touch the
+                Paystack flow above. */}
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <h3 className="text-sm font-semibold text-slate-900">Have a promo code?</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Redeem it here and the credits are added to your balance straight away.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <input
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitPromo(); }}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm uppercase focus:border-slate-400 focus:outline-none sm:w-56"
+                  placeholder="SUMMER26"
+                  autoComplete="off"
+                  aria-label="Promo code"
+                />
+                <button
+                  onClick={submitPromo}
+                  disabled={promoPending || !promoCode.trim()}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {promoPending ? 'Redeeming…' : 'Redeem'}
+                </button>
+                {promoMessage && <span className="text-sm text-slate-600">{promoMessage}</span>}
+              </div>
+            </div>
+
+            {/* Auto top-up. Off for every tenant until the owner turns it on
+                here — it charges their card without them present, so it is
+                never enabled on their behalf. */}
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Auto top-up</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {autoRecharge?.has_saved_card
+                      ? <>Charge your saved {autoRecharge.card_brand ?? 'card'} ending {autoRecharge.card_last4 ?? '••••'} when your balance runs low, so your assistant never goes quiet mid-conversation.</>
+                      : <>Top up once by card and we can do this for you automatically, so your assistant never goes quiet mid-conversation.</>}
+                  </p>
+                </div>
+                <button
+                  onClick={() => saveAutoRecharge(!autoRecharge?.enabled)}
+                  disabled={autoPending || !autoRecharge?.has_saved_card}
+                  className={`shrink-0 rounded-xl px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                    autoRecharge?.enabled
+                      ? 'border border-slate-300 text-slate-700 hover:bg-slate-50'
+                      : 'bg-slate-900 text-white hover:bg-slate-800'
+                  }`}
+                >
+                  {autoRecharge?.enabled ? 'Turn off' : 'Turn on'}
+                </button>
+              </div>
+
+              {autoRecharge?.has_saved_card && (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">When balance drops below</label>
+                    <input
+                      value={autoThreshold}
+                      onChange={(e) => setAutoThreshold(e.target.value)}
+                      className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="200"
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">Add this many credits</label>
+                    <input
+                      value={autoAmount}
+                      onChange={(e) => setAutoAmount(e.target.value)}
+                      className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="1000"
+                      inputMode="decimal"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {autoRecharge?.enabled && (
+                <button
+                  onClick={() => saveAutoRecharge(true)}
+                  disabled={autoPending}
+                  className="mt-4 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Save amounts
+                </button>
+              )}
+
+              {/* A declined card is the one thing an owner must see here: auto
+                  top-up backs off for 24h after a decline, so until they fix it
+                  the feature silently is not protecting them. */}
+              {autoRecharge?.last_failure_at && (
+                <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Your last automatic top-up didn&rsquo;t go through
+                  {autoRecharge.last_failure_reason ? ` (${autoRecharge.last_failure_reason})` : ''}.
+                  Top up by card again to update your saved card.
+                </p>
+              )}
+
+              {autoMessage && <p className="mt-3 text-sm text-slate-600">{autoMessage}</p>}
             </div>
           </div>
 

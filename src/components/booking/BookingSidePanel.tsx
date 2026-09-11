@@ -23,9 +23,21 @@ export const BookingSidePanel: React.FC<BookingSidePanelProps> = ({ booking, onC
   const [pendingMessages, setPendingMessages] = useState<ChatMessage[]>([]);
 
   // Clear pending once a matching server message (same text) has arrived.
+  //
+  // The setter MUST return the same array when nothing was removed. `.filter`
+  // always allocates, and `pendingMessages` is this effect's own dependency, so
+  // returning a fresh array on every run re-triggered the effect forever —
+  // an infinite render loop for any pending message the server had not echoed
+  // back yet.
   useEffect(() => {
     if (!messages || messages.length === 0 || pendingMessages.length === 0) return;
-    setPendingMessages(pending => pending.filter(message => !messages.some(serverMessage => serverMessage.content === message.content)));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
+    setPendingMessages((pending) => {
+      const remaining = pending.filter(
+        (message) => !messages.some((serverMessage) => serverMessage.content === message.content),
+      );
+      return remaining.length === pending.length ? pending : remaining;
+    });
   }, [messages, pendingMessages]);
   const runAction = async (a: 'confirm'|'cancel'|'reschedule'|'mark_paid') => {
     if (onAction) return onAction(a);

@@ -530,3 +530,100 @@ export async function fetchSubscription(
     },
   };
 }
+
+// ─── Transactions ─────────────────────────────────────────────────────────────
+
+interface PaystackInitData {
+  authorization_url: string;
+  access_code: string;
+  reference: string;
+}
+
+/**
+ * Starts a checkout the customer completes in their browser.
+ *
+ * `amountMinor` is in the currency's smallest unit — kobo for NGN — and is
+ * passed through untouched. Callers do the conversion so the unit is explicit
+ * at the point where the money is decided, not buried here.
+ */
+export async function initializeTransaction(params: {
+  email: string;
+  amountMinor: number;
+  reference: string;
+  currency?: string;
+  callbackUrl?: string;
+  channels?: string[];
+  metadata?: Record<string, unknown>;
+}): Promise<{ success: boolean; authorizationUrl?: string; accessCode?: string; error?: string }> {
+  const data = await paystackFetch<PaystackInitData>('/transaction/initialize', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: params.email,
+      amount: params.amountMinor,
+      reference: params.reference,
+      currency: params.currency ?? 'NGN',
+      callback_url: params.callbackUrl,
+      channels: params.channels,
+      metadata: params.metadata ?? {},
+    }),
+  });
+  if (!data.status) return { success: false, error: data.message };
+  return {
+    success: true,
+    authorizationUrl: data.data?.authorization_url,
+    accessCode: data.data?.access_code,
+  };
+}
+
+interface PaystackChargeData {
+  status: string;
+  reference: string;
+  amount: number;
+  gateway_response?: string;
+}
+
+/**
+ * Charges a saved card without the customer present.
+ *
+ * Paystack only honours this for authorizations whose `reusable` flag is true,
+ * and only with the email the authorization was created with — sending any
+ * other email is rejected, so the email must be stored alongside the code
+ * rather than re-derived from the tenant later.
+ *
+ * A `success: true` here means the API call succeeded, NOT that money moved:
+ * a declined card returns HTTP 200 with data.status 'failed'. Callers must
+ * check `chargeStatus`.
+ */
+export async function chargeAuthorization(params: {
+  authorizationCode: string;
+  email: string;
+  amountMinor: number;
+  reference: string;
+  currency?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{
+  success: boolean;
+  chargeStatus?: string;
+  reference?: string;
+  gatewayResponse?: string;
+  error?: string;
+}> {
+  const data = await paystackFetch<PaystackChargeData>('/transaction/charge_authorization', {
+    method: 'POST',
+    body: JSON.stringify({
+      authorization_code: params.authorizationCode,
+      email: params.email,
+      amount: params.amountMinor,
+      reference: params.reference,
+      currency: params.currency ?? 'NGN',
+      metadata: params.metadata ?? {},
+    }),
+  });
+  if (!data.status) return { success: false, error: data.message };
+  return {
+    success: true,
+    chargeStatus: data.data?.status,
+    reference: data.data?.reference,
+    gatewayResponse: data.data?.gateway_response,
+  };
+}

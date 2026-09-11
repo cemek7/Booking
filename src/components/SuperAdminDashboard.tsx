@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { authFetch, authPost } from '@/lib/auth/auth-api-client';
+import PlatformAlertsBanner from '@/components/superadmin/PlatformAlertsBanner';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -286,6 +287,10 @@ export default function SuperAdminDashboard({ compact = false }: SuperAdminDashb
 
   return (
     <div className={cn('space-y-6', compact ? '' : 'pb-10')}>
+      {/* Above everything else on purpose: these are the failures that are
+          otherwise completely silent — an unpaid Meta account, an unconfirmed
+          rate card, a stale naira. Nothing throws, so nothing surfaces them. */}
+      <PlatformAlertsBanner />
       <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-slate-500">

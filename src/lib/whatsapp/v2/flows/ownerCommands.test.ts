@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-
+import { beforeEach, describe, expect, it } from '@jest/globals';
 const mockExecuteAction = jest.fn();
 const mockUpdateConversation = jest.fn();
 const mockCaptureAnalytics = jest.fn();

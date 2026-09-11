@@ -1,25 +1,49 @@
 /**
- * Owner Onboarding Flow (5-step chat)
+ * Owner Onboarding Flow (chat)
  *
  * Guides a new business owner through setup entirely via WhatsApp chat.
  * All free-form parsing is done by L2 Flash-Lite — no templates to fill in.
  *
  * State is stored in whatsapp_conversations.flow_data:
- *   { onboarding_step: 0-5, partial_tenant: {...}, partial_services: [...] }
+ *   { onboarding_step, partial_tenant: {...}, partial_services: [...] }
  *
  * Steps:
  *   0 → 1: Greeting + business type/location
  *   1 → 2: Services list
  *   2 → 3: Team (solo or named staff)
  *   3 → 4: Working hours
- *   4 → 5: Activation (generate routing_code + QR + send link)
+ *   4 → 6: Activation (routing_code + link), then ask for an email address
+ *   6 → 7: Email captured, verification code sent to it
+ *   7 → 5: Code confirmed, address written to tenant_users
+ *   5:     Done
+ *
+ * The email epilogue is numbered 6 and 7, not 5 and 6, because
+ * `onboarding_step` is persisted per conversation: renumbering would misroute
+ * owners who are mid-signup right now, and would ask already-finished tenants
+ * for an email they were never promised.
+ *
+ * Activation deliberately still happens at the end of step 4. The email is an
+ * epilogue, never a gate — an owner who stops replying after giving their hours
+ * is live anyway, which is how this flow behaved before email capture existed.
  */
 
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { callGoogleAI } from '@/lib/google-ai';
 import { updateConversation, ConvState, ConvChannel } from '../conversationState';
 import { generateRoutingCode } from '../identityResolver';
+import { buildGatewayChatLink } from '@/lib/whatsapp/gatewayPhone';
 import { estimatePromptTokens, withTenantWalletSpend } from '@/lib/billing/ai-wallet';
+import { sendTransactionalEmail } from '@/lib/integrations/email-service';
+import {
+  buildChallenge,
+  clearChallenge,
+  generateCode,
+  isSkipRequest,
+  MAX_ATTEMPTS,
+  parseEmail,
+  verifyCode,
+  type EmailVerificationState,
+} from './ownerEmailCapture';
 import type { RuleMatch } from '@/lib/ai/rulesEngine';
 import type { AIResponse } from '../actionValidator';
 
@@ -59,6 +83,33 @@ const VERTICAL_PRESETS: Record<string, Record<string, string>> = {
   general: { staff_title: 'staff', staff_title_plural: 'staff members', booking_noun: 'booking', session_noun: 'session', ai_personality: 'friendly and professional' },
 };
 
+/**
+ * Booka's home market. Overridable, because the fallback should follow the
+ * business rather than the server.
+ */
+const DEFAULT_TIMEZONE = process.env.BOOKA_DEFAULT_TIMEZONE || 'Africa/Lagos';
+
+/**
+ * Validates the timezone the model inferred from the owner's location.
+ *
+ * A model will happily return "WAT" or "GMT+1", neither of which Postgres or
+ * Intl accepts, and a bad value is worse than none: it would be written to the
+ * tenant and then throw wherever a time is formatted. Anything that does not
+ * round-trip through Intl is discarded in favour of the default.
+ */
+export function resolveTenantTimezone(candidate?: string | null): string {
+  const tz = String(candidate ?? '').trim();
+  if (tz) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+      return tz;
+    } catch {
+      console.warn('[ownerOnboarding] model returned an unusable timezone, using the default', { tz });
+    }
+  }
+  return DEFAULT_TIMEZONE;
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export async function handleOnboarding(
@@ -70,18 +121,50 @@ export async function handleOnboarding(
   const step = conv?.flow_data?.onboarding_step ?? 0;
 
   switch (step) {
-    case 0: return startOnboarding(phone);
+    case 0: return startOnboarding(phone, tenantId, conv);
     case 1: return handleStep1(phone, tenantId, message, conv!);
     case 2: return handleStep2(phone, tenantId, message, conv!);
     case 3: return handleStep3(phone, tenantId, message, conv!);
     case 4: return handleStep4(phone, tenantId, message, conv!);
+    case 6: return handleStep6(phone, tenantId, message, conv!);
+    case 7: return handleStep7(phone, tenantId, message, conv!);
     default: return 'Your setup is complete! Just message me any time to manage your business.';
   }
 }
 
 // ─── Step 0: Initial greeting ─────────────────────────────────────────────────
 
-async function startOnboarding(phone: string): Promise<string> {
+async function startOnboarding(
+  phone: string,
+  tenantId: string | null,
+  conv: ConvState | null,
+): Promise<string> {
+  // Advance the step, or the greeting is the only thing this flow can ever say.
+  //
+  // Step 0 used to return the greeting and persist nothing, so the next message
+  // read onboarding_step as 0 again and got the greeting again — an owner could
+  // answer the question correctly forever and never reach step 1. The
+  // `onboarding_step: 1` further down is telemetry metadata on the wallet spend
+  // call, not a write to the conversation, which is why this looked handled.
+  //
+  // current_flow must move too: the pipeline only routes here while it is
+  // 'onboarding' or the tenant is an unactivated owner, and the second of those
+  // stops being true the moment step 4 activates them.
+  if (conv && tenantId) {
+    const channel: ConvChannel = conv.channel ?? 'whatsapp';
+    const externalId = conv.external_id ?? phone;
+    await updateConversation(externalId, tenantId, {
+      current_flow: 'onboarding',
+      flow_step: 0,
+      flow_data: { ...(conv.flow_data ?? {}), onboarding_step: 1 },
+    }, channel);
+  } else {
+    // No conversation row means the next message starts from zero again.
+    console.error('[ownerOnboarding] cannot advance past the greeting', {
+      hasConv: !!conv, hasTenant: !!tenantId,
+    });
+  }
+
   return `Hi! I'm Booka — I help businesses manage bookings on WhatsApp. 🎉
 
 What kind of business do you run and where are you located?
@@ -104,10 +187,16 @@ Return JSON only:
 {
   "business_name": "extracted name or null",
   "vertical": "beauty | fitness | medical | education | automotive | hospitality | legal | general",
-  "location": "city/area or null"
+  "location": "city/area or null",
+  "timezone": "IANA timezone for that location, e.g. Africa/Lagos, or null"
 }`;
 
-  let parsed: { business_name: string | null; vertical: string; location: string | null };
+  let parsed: {
+    business_name: string | null;
+    vertical: string;
+    location: string | null;
+    timezone?: string | null;
+  };
   try {
     const result = await withTenantWalletSpend(
       supabaseAdmin,
@@ -143,20 +232,100 @@ Return JSON only:
       .insert({
         name: businessName,
         v2_enabled: false, // enabled at step 5
+        // Without a timezone every consumer falls back to UTC, and a 9am
+        // appointment in Lagos is stored and read back an hour out. The
+        // dashboard onboarding has always set this; the chat flow never did.
+        timezone: resolveTenantTimezone(parsed.timezone),
+        business_type: vertical,
         metadata: { vertical, ...preset, location: parsed.location },
       })
       .select('id')
       .single();
     resolvedTenantId = newTenant?.id ?? null;
 
-    // Create tenant_users row for the owner (WA-native: user_id=NULL)
+    // Create tenant_users row for the owner (WA-native: user_id=NULL).
+    // `name` is the business name rather than the person's: the flow never asks
+    // who the owner is, and a row with no name at all shows up as a blank in
+    // every staff picker and assignment list. The business name is at least
+    // true and recognisable, and the owner can correct it later.
     if (resolvedTenantId) {
-      await supabaseAdmin.from('tenant_users').insert({
+      const { error: ownerError } = await supabaseAdmin.from('tenant_users').insert({
         tenant_id: resolvedTenantId,
         role: 'owner',
+        name: businessName,
         phone,
         services_all: true,
       });
+      if (ownerError) {
+        // Without this row the owner is not a member of their own tenant:
+        // no schedules, no assignment, and no contact for wallet alerts.
+        console.error('[ownerOnboarding] could not create the owner tenant_users row', {
+          tenantId: resolvedTenantId, error: ownerError,
+        });
+      }
+    }
+  } else {
+    // The tenant already exists, which in the live pipeline is ALWAYS the case:
+    // processMessageV2 is only ever called with a resolved tenant id, so the
+    // branch above never runs there. Without this the owner's answer to "what
+    // kind of business do you run" was parsed and then dropped — no name, no
+    // vertical, no timezone, no business_type, and no owner tenant_users row,
+    // which is the row schedules, staff assignment and wallet alerts all hang
+    // off. Onboarding only runs before activation, so the answer given here is
+    // authoritative for a tenant that is not live yet.
+    const { error: tenantError } = await supabaseAdmin
+      .from('tenants')
+      .update({
+        name: businessName,
+        timezone: resolveTenantTimezone(parsed.timezone),
+        business_type: vertical,
+        metadata: { vertical, ...preset, location: parsed.location },
+      })
+      .eq('id', resolvedTenantId);
+    if (tenantError) {
+      console.error('[ownerOnboarding] could not configure the existing tenant', {
+        tenantId: resolvedTenantId, error: tenantError,
+      });
+    }
+
+    // Only if they are not already a member — tenant_users has no unique
+    // constraint on (tenant_id, role), so a blind insert would duplicate the
+    // owner on every re-run of this step.
+    const { data: existingOwner } = await supabaseAdmin
+      .from('tenant_users')
+      .select('id')
+      .eq('tenant_id', resolvedTenantId)
+      .eq('phone', phone)
+      .maybeSingle();
+
+    if (existingOwner) {
+      // Self-signup creates the owner row BEFORE the business has a name — that
+      // is the whole point, it is how the sender becomes resolvable by phone on
+      // their next message. So the name arrives here, one step later, and this
+      // is the only place that fills it in. Skipping the update left every
+      // self-signed-up owner nameless in each staff picker.
+      const { error: nameError } = await supabaseAdmin
+        .from('tenant_users')
+        .update({ name: businessName })
+        .eq('id', (existingOwner as { id: string }).id);
+      if (nameError) {
+        console.error('[ownerOnboarding] could not name the existing owner row', {
+          tenantId: resolvedTenantId, error: nameError,
+        });
+      }
+    } else {
+      const { error: ownerError } = await supabaseAdmin.from('tenant_users').insert({
+        tenant_id: resolvedTenantId,
+        role: 'owner',
+        name: businessName,
+        phone,
+        services_all: true,
+      });
+      if (ownerError) {
+        console.error('[ownerOnboarding] could not create the owner tenant_users row', {
+          tenantId: resolvedTenantId, error: ownerError,
+        });
+      }
     }
   }
 
@@ -280,6 +449,37 @@ Prices are in local currency (no currency symbol needed).`;
   return `Got it! Here's what I've added:\n${serviceLines}\n\n${staffTitleQuestion}\n\nReply *solo* if it's just you, or tell me your team members and their specialties.`;
 }
 
+/**
+ * Maps the specialties an owner typed onto the services they already listed.
+ *
+ * Owners do not repeat their own service names exactly — they set up "Braids —
+ * 5000" and then say someone "does braids and twists". So matching is
+ * case-insensitive and accepts either string containing the other, which covers
+ * "braids" against "Box Braids" and "Frontal Install" against "frontal".
+ *
+ * Exported for tests: getting this wrong silently produces staff who can
+ * perform nothing.
+ */
+export function matchSpecialtiesToServices(
+  specialties: string[] | undefined,
+  services: Array<{ id: string; name: string }>,
+): string[] {
+  if (!specialties?.length) return [];
+  const matched = new Set<string>();
+  for (const raw of specialties) {
+    const needle = String(raw ?? '').trim().toLowerCase();
+    if (!needle) continue;
+    for (const service of services) {
+      const name = String(service.name ?? '').trim().toLowerCase();
+      if (!name) continue;
+      if (name === needle || name.includes(needle) || needle.includes(name)) {
+        matched.add(service.id);
+      }
+    }
+  }
+  return [...matched];
+}
+
 // ─── Step 3: Team setup ───────────────────────────────────────────────────────
 
 async function handleStep3(
@@ -333,13 +533,61 @@ Phone is optional — only include if explicitly mentioned.`;
       const staffList: Array<{ name: string; phone?: string; specialties?: string[] }> =
         JSON.parse(text.replace(/```json?\n?/g, '').replace(/```/g, '').trim());
 
+      // The owner names their team in chat — "Adaeze does braids and twists" —
+      // and both halves of that sentence used to be thrown away: the insert
+      // wrote no `name`, so every staff member was an anonymous row the owner
+      // could never book by name, and the specialties only flipped
+      // services_all to false without ever being linked to a service. The net
+      // effect was staff who could perform nothing at all, because the booking
+      // engine reads staff_services to decide who can do what.
+      const { data: tenantServices } = await supabaseAdmin
+        .from('services')
+        .select('id, name')
+        .eq('tenant_id', resolvedTenantId);
+      const services = (tenantServices ?? []) as Array<{ id: string; name: string }>;
+
       for (const member of staffList) {
-        await supabaseAdmin.from('tenant_users').insert({
-          tenant_id: resolvedTenantId,
-          role: 'staff',
-          phone: member.phone ?? null,
-          services_all: !member.specialties?.length,
-        });
+        const matched = matchSpecialtiesToServices(member.specialties, services);
+        // services_all only when the owner named no specialty for them.
+        const servicesAll = matched.length === 0;
+
+        const { data: inserted, error: staffError } = await supabaseAdmin
+          .from('tenant_users')
+          .insert({
+            tenant_id: resolvedTenantId,
+            role: 'staff',
+            name: member.name?.trim() || null,
+            phone: member.phone ?? null,
+            services_all: servicesAll,
+          })
+          .select('id')
+          .single();
+
+        if (staffError || !inserted) {
+          console.error('[ownerOnboarding] could not create staff member', {
+            tenantId: resolvedTenantId, error: staffError,
+          });
+          continue;
+        }
+
+        if (matched.length > 0) {
+          const { error: linkError } = await supabaseAdmin.from('staff_services').insert(
+            matched.map((serviceId) => ({
+              tenant_id: resolvedTenantId,
+              staff_user_id: (inserted as { id: string }).id,
+              service_id: serviceId,
+            })),
+          );
+          if (linkError) {
+            // Leave them able to work rather than silently unbookable.
+            console.error('[ownerOnboarding] could not link staff specialties, widening to all', {
+              tenantId: resolvedTenantId, error: linkError,
+            });
+            await supabaseAdmin.from('tenant_users')
+              .update({ services_all: true })
+              .eq('id', (inserted as { id: string }).id);
+          }
+        }
       }
     } catch {
       return 'I had trouble reading the team list. Try: "Adaeze does braids and twists, Chioma does locs and weaves"';
@@ -401,31 +649,66 @@ Only include days that are open.`;
     return 'I had trouble reading those hours. Try: "Mon–Fri 9am–7pm, Sat 8am–5pm"';
   }
 
-  // Find the owner's tenant_user record to link schedules
-  const { data: ownerUser } = await supabaseAdmin
+  // Hours go to EVERY member of the team, not just the owner.
+  //
+  // The owner is describing when the business is open, and the slot engine
+  // treats a person with no staff_schedules row as having no availability at
+  // all — `if (!scheduleRows || scheduleRows.length === 0) return []`. So
+  // scheduling only the owner left every staff member added a step earlier
+  // permanently unbookable, however carefully their services were linked.
+  const { data: teamRows } = await supabaseAdmin
     .from('tenant_users')
     .select('id')
-    .eq('tenant_id', resolvedTenantId)
-    .eq('phone', phone)
-    .maybeSingle();
+    .eq('tenant_id', resolvedTenantId);
+  const team = (teamRows ?? []) as Array<{ id: string }>;
 
-  if (ownerUser) {
-    const rows = schedules.map((s) => ({
+  if (team.length > 0) {
+    const rows = team.flatMap((member) => schedules.map((s) => ({
       tenant_id: resolvedTenantId,
-      tenant_user_id: ownerUser.id,
+      tenant_user_id: member.id,
       day_of_week: s.day_of_week,
       start_time: s.start_time,
       end_time: s.end_time,
       is_active: true,
-    }));
-    await supabaseAdmin.from('staff_schedules').insert(rows);
+    })));
+    const { error: scheduleError } = await supabaseAdmin.from('staff_schedules').insert(rows);
+    if (scheduleError) {
+      console.error('[ownerOnboarding] could not save working hours — nobody will be bookable', {
+        tenantId: resolvedTenantId, error: scheduleError,
+      });
+    }
   }
 
+
   // ── Activation ────────────────────────────────────────────────────────────
+  const activation = await activateTenant(resolvedTenantId);
+
+  // Stay in the `onboarding` flow for the email epilogue. Flipping current_flow
+  // to 'managing' here would route the owner's next message to the owner-command
+  // handler instead, and steps 6 and 7 below would never run at all.
+  const convChannel4: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId4 = conv.external_id ?? phone;
+  await updateConversation(convExternalId4, resolvedTenantId, {
+    current_flow: 'onboarding',
+    flow_step: 4,
+    flow_data: { ...conv.flow_data, onboarding_step: 6 },
+  }, convChannel4);
+
+  return `${activation}\n\n${EMAIL_ASK}`;
+}
+
+// ─── Activation + completion ──────────────────────────────────────────────────
+
+/**
+ * Generates the routing code, flips the tenant live, and builds the "you're
+ * live" message. Runs at the end of step 4, before email capture, so the tenant
+ * is usable whether or not the owner finishes the epilogue.
+ */
+async function activateTenant(tenantId: string): Promise<string> {
   const { data: tenantData } = await supabaseAdmin
     .from('tenants')
-    .select('name, metadata, tone_config')
-    .eq('id', resolvedTenantId)
+    .select('name')
+    .eq('id', tenantId)
     .single();
 
   const routingCode = await generateRoutingCode(tenantData?.name ?? 'BIZ');
@@ -433,21 +716,271 @@ Only include days that are open.`;
   await supabaseAdmin
     .from('tenants')
     .update({ routing_code: routingCode, v2_enabled: true })
-    .eq('id', resolvedTenantId);
+    .eq('id', tenantId);
 
-  const convChannel4: ConvChannel = conv.channel ?? 'whatsapp';
-  const convExternalId4 = conv.external_id ?? phone;
-  await updateConversation(convExternalId4, resolvedTenantId, {
+  const businessName = tenantData?.name ?? 'your business';
+
+  // Never invent a number. This used to fall back to a hardcoded
+  // '2348000000000', so an unset EVOLUTION_DEFAULT_PHONE handed every newly
+  // onboarded owner a booking link pointing at a number that is not Booka's —
+  // and then told them to print it as a QR code. The routing code still works
+  // on its own, so the activation is real; only the shareable link is missing.
+  const bookingLinkOrNull = buildGatewayChatLink(routingCode);
+  if (!bookingLinkOrNull) {
+    console.error(
+      '[ownerOnboarding] no gateway phone configured — activated a tenant with no booking link',
+      { tenantId, routingCode },
+    );
+    return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by texting *${routingCode}* to this number.\n\nShare that code on Instagram, WhatsApp broadcast, or print it as a QR code.`;
+  }
+
+  const bookingLink = bookingLinkOrNull;
+
+  return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.`;
+}
+
+const HOW_TO_MANAGE = `To manage your business, just message me any time:\n  • "Who's booked tomorrow?"\n  • "Block Thursday afternoon"\n  • "Change braids price to 6000"\n  • "How was this week?"`;
+
+/**
+ * Leaves the onboarding flow for good. Any half-finished email challenge is
+ * cleared so no code hash outlives the conversation that issued it.
+ */
+async function finishOnboarding(
+  phone: string,
+  tenantId: string,
+  conv: ConvState,
+  closing: string,
+): Promise<string> {
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId = conv.external_id ?? phone;
+  await updateConversation(convExternalId, tenantId, {
     current_flow: 'managing',
     flow_step: 0,
-    flow_data: { onboarding_step: 5 },
-  }, convChannel4);
+    flow_data: { ...clearChallenge(conv.flow_data ?? {}), onboarding_step: 5 },
+  }, convChannel);
 
-  const waNumber = process.env.EVOLUTION_DEFAULT_PHONE ?? '2348000000000';
-  const bookingLink = `https://wa.me/${waNumber}?text=${routingCode}`;
-  const businessName = tenantData?.name ?? 'your business';
-  const activationSettings = getTenantSettings(tenantData);
-  const bookingNoun = String(activationSettings.booking_noun ?? 'booking');
+  return `${closing}\n\n${HOW_TO_MANAGE}\n\nYou're all set! 🎉`;
+}
 
-  return `You're live! 🚀\n\n*${businessName}* is now on Booka.\n\nYour customers can book by:\n  1. Tapping this link: ${bookingLink}\n  2. Texting *${routingCode}* to this number\n\nShare it on Instagram, WhatsApp broadcast, or print it as a QR code.\n\nTo manage your business, just message me any time:\n  • "Who's booked tomorrow?"\n  • "Block Thursday afternoon"\n  • "Change braids price to 6000"\n  • "How was this week?"\n\nYou're all set! 🎉`;
+// ─── Steps 6 & 7: email capture and verification ──────────────────────────────
+
+const EMAIL_ASK = `One last thing — what email should I use for your receipts and account alerts?\n\nIt's how I reach you if your message balance runs low, before your bot goes quiet. Reply *skip* if you'd rather not.`;
+
+// The "my email is ..." promise is kept by handleOwnerEmailUpdate below, which
+// re-enters this same verification flow at step 7. Do not reword this to
+// promise anything that command does not actually do.
+const SKIPPED_CLOSING = `No problem — I'll send your account alerts to this WhatsApp number instead. You can add one any time by saying "my email is ...".`;
+
+async function persistFlowData(
+  phone: string,
+  tenantId: string,
+  conv: ConvState,
+  flow_data: Record<string, unknown>,
+): Promise<void> {
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId = conv.external_id ?? phone;
+  await updateConversation(convExternalId, tenantId, { flow_data }, convChannel);
+  conv.flow_data = flow_data;
+}
+
+/**
+ * Issues a fresh code and mails it. Returns false when the address could not be
+ * mailed at all, which is itself the most useful verification signal available:
+ * a typo'd domain fails here rather than being stored as reachable.
+ */
+async function issueEmailChallenge(
+  phone: string,
+  tenantId: string,
+  conv: ConvState,
+  email: string,
+): Promise<boolean> {
+  const code = generateCode();
+  const sent = await sendTransactionalEmail({
+    to: email,
+    subject: `${code} is your Booka verification code`,
+    html: `<p>Your Booka verification code is <strong>${code}</strong>.</p>`
+      + '<p>Type it back into your Booka WhatsApp chat to confirm this address. It expires in 15 minutes.</p>'
+      + '<p>If you did not ask for this, you can ignore this email.</p>',
+    text: `Your Booka verification code is ${code}. Type it back into your Booka WhatsApp chat to confirm this address. It expires in 15 minutes.`,
+  }).catch((error) => {
+    console.warn('[ownerOnboarding] verification email threw', { tenantId, error });
+    return { success: false } as const;
+  });
+
+  if (!sent?.success) return false;
+
+  await persistFlowData(phone, tenantId, conv, {
+    ...(conv.flow_data ?? {}),
+    ...buildChallenge(email, code, tenantId),
+    onboarding_step: 7,
+  });
+  return true;
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  return `${local.slice(0, 2)}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+}
+
+async function handleStep6(
+  phone: string,
+  tenantId: string | null,
+  message: string,
+  conv: ConvState
+): Promise<string> {
+  const resolvedTenantId = tenantId ?? conv.flow_data?.tenant_id;
+  if (!resolvedTenantId) return 'Something went wrong. Please start over.';
+
+  // Address first, skip-word second: "arno@salon.ng" contains "no", and an owner
+  // who typed a real address is plainly not asking to skip.
+  const email = parseEmail(message);
+  if (email) {
+    const ok = await issueEmailChallenge(phone, resolvedTenantId, conv, email);
+    if (!ok) {
+      return `I couldn't send anything to *${email}* — that address may have a typo. Send it again, or reply *skip*.`;
+    }
+    return `I've sent a 6-digit code to *${email}*. What does it say?\n\nIt expires in 15 minutes. Send a different address any time to change it, or reply *skip*.`;
+  }
+
+  if (isSkipRequest(message)) {
+    return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
+  }
+
+  return `I didn't catch an email address there. Send it like *ada@salon.ng*, or reply *skip* if you'd rather not.`;
+}
+
+async function handleStep7(
+  phone: string,
+  tenantId: string | null,
+  message: string,
+  conv: ConvState
+): Promise<string> {
+  const resolvedTenantId = tenantId ?? conv.flow_data?.tenant_id;
+  if (!resolvedTenantId) return 'Something went wrong. Please start over.';
+
+  const state = (conv.flow_data ?? {}) as EmailVerificationState & Record<string, unknown>;
+
+  // Any address supersedes the pending challenge — an owner correcting a typo
+  // should not have to ask for a resend first, and re-sending the SAME address
+  // is plainly a request for a fresh code rather than something to ignore.
+  const newEmail = parseEmail(message);
+  if (newEmail) {
+    const ok = await issueEmailChallenge(phone, resolvedTenantId, conv, newEmail);
+    if (!ok) {
+      return `I couldn't send anything to *${newEmail}* — that address may have a typo. Send it again, or reply *skip*.`;
+    }
+    return `New code sent to *${newEmail}*. What does it say?`;
+  }
+
+  if (/\bresend\b|\bsend again\b|\bnew code\b/i.test(message) && state.email_pending) {
+    const ok = await issueEmailChallenge(phone, resolvedTenantId, conv, state.email_pending);
+    return ok
+      ? `Sent a fresh code to *${maskEmail(state.email_pending)}*. What does it say?`
+      : `I couldn't reach *${maskEmail(state.email_pending)}* just now. Send a different address, or reply *skip*.`;
+  }
+
+  if (isSkipRequest(message)) {
+    return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
+  }
+
+  const { outcome, next } = verifyCode(message, state, resolvedTenantId);
+
+  if (outcome === 'ok') {
+    const email = state.email_pending!;
+    const { error } = await supabaseAdmin
+      .from('tenant_users')
+      .update({ email })
+      .eq('tenant_id', resolvedTenantId)
+      .eq('role', 'owner')
+      .eq('phone', phone);
+
+    // supabase-js resolves with an error rather than throwing, so this has to be
+    // read explicitly. Saying "confirmed" over a failed write would leave the
+    // owner believing they are reachable when nothing was stored.
+    if (error) {
+      console.error('[ownerOnboarding] failed to store verified owner email', {
+        tenantId: resolvedTenantId, error,
+      });
+      return finishOnboarding(
+        phone, resolvedTenantId, conv,
+        `That code is right, but I couldn't save your address just now. I'll send your account alerts to this WhatsApp number — say "my email is ..." to try again.`,
+      );
+    }
+
+    return finishOnboarding(
+      phone, resolvedTenantId, conv,
+      `✅ *${email}* is confirmed. Receipts and account alerts will go there.`,
+    );
+  }
+
+  if (outcome === 'wrong') {
+    await persistFlowData(phone, resolvedTenantId, conv, { ...state, ...next });
+    const left = MAX_ATTEMPTS - (next.email_code_attempts ?? MAX_ATTEMPTS);
+    if (left <= 0) {
+      return `That code doesn't match, and that was the last try. Send your email address again for a fresh code, or reply *skip*.`;
+    }
+    return `That code doesn't match. ${left} ${left === 1 ? 'try' : 'tries'} left — or say *resend* for a new code.`;
+  }
+
+  if (outcome === 'expired' || outcome === 'locked') {
+    // Back to step 6 rather than a dead end. The next challenge carries a
+    // brand-new code, so restarting does not weaken the attempt limit.
+    await persistFlowData(phone, resolvedTenantId, conv, {
+      ...clearChallenge(state),
+      onboarding_step: 6,
+    });
+    return outcome === 'expired'
+      ? `That code has expired. Send your email address again and I'll issue a new one, or reply *skip*.`
+      : `Too many wrong codes. Send your email address again for a fresh one, or reply *skip*.`;
+  }
+
+  // no_pending — nothing to verify against; do not strand the owner here.
+  return finishOnboarding(phone, resolvedTenantId, conv, SKIPPED_CLOSING);
+}
+
+// ─── Post-onboarding: "my email is ..." ───────────────────────────────────────
+
+/**
+ * Lets an owner add or change their email long after onboarding, which is what
+ * the skip copy promises. Recognised only when the message both names an email
+ * address and says "email" — specific enough not to collide with the ordinary
+ * owner commands this runs ahead of.
+ *
+ * It re-enters the onboarding flow at step 7 rather than duplicating the
+ * verification loop: `handleStep7` already sends codes, counts attempts, writes
+ * the verified address, and returns the conversation to `managing` when it is
+ * done. Returns null when the message is not an email update, so the caller
+ * falls through to its normal handling.
+ */
+export async function handleOwnerEmailUpdate(
+  phone: string,
+  tenantId: string,
+  message: string,
+  conv: ConvState,
+): Promise<string | null> {
+  if (conv.role !== 'owner') return null;
+  if (!/\be-?mail\b/i.test(message)) return null;
+
+  const email = parseEmail(message);
+  if (!email) {
+    return `I couldn't read an email address in that. Send it like *my email is ada@salon.ng*.`;
+  }
+
+  const ok = await issueEmailChallenge(phone, tenantId, conv, email);
+  if (!ok) {
+    return `I couldn't send anything to *${email}* — that address may have a typo. Try again.`;
+  }
+
+  // issueEmailChallenge has already written the challenge and onboarding_step 7.
+  // Routing back through the onboarding flow is what makes the next message —
+  // the code — reach handleStep7.
+  const convChannel: ConvChannel = conv.channel ?? 'whatsapp';
+  const convExternalId = conv.external_id ?? phone;
+  await updateConversation(convExternalId, tenantId, {
+    current_flow: 'onboarding',
+    flow_data: { ...(conv.flow_data ?? {}), onboarding_step: 7 },
+  }, convChannel);
+
+  return `I've sent a 6-digit code to *${email}*. What does it say?\n\nIt expires in 15 minutes.`;
 }

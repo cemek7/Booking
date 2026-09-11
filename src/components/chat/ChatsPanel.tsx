@@ -46,8 +46,14 @@ export default function ChatsPanel() {
     });
   }, [assignmentFilter, channelFilter, chats, selectedAssigneeId, statusFilter]);
   const totalUnread = useMemo(() => filteredChats.reduce((s, c) => s + (c.unread ?? 0), 0), [filteredChats]);
+  // Reading the clock during render is impure, and deliberately so: this is a
+  // badge showing whether the human-handling window is still open, and it is
+  // allowed to be as stale as the last render. Making it stateful would mean
+  // running a timer to re-render a label nobody is watching to the second.
   const isHumanHandling = Boolean(
-    activeChat?.humanHandlingUntil && Date.parse(activeChat.humanHandlingUntil) > Date.now()
+    activeChat?.humanHandlingUntil
+    // eslint-disable-next-line react-hooks/purity
+    && Date.parse(activeChat.humanHandlingUntil) > Date.now()
   );
 
   const handleSelect = useCallback((id: string) => setActiveId(id), [setActiveId]);

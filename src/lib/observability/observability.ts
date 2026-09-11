@@ -13,8 +13,14 @@ const isEdge = process.env.NEXT_RUNTIME === 'edge';
 let observabilityService;
 
 if (isEdge) {
+  // Deliberate require(), not import: the two implementations must not both be
+  // pulled into every bundle — the node one drags in OpenTelemetry, which does
+  // not run on the edge runtime. A top-level `await import()` would also force
+  // this module async and break the synchronous `export const` below.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   observabilityService = require('./edge-observability').observability;
 } else {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   observabilityService = require('./node-observability').observability;
 }
 

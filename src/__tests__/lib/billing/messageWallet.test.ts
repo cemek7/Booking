@@ -345,6 +345,53 @@ describe('settleOutboundMessage', () => {
     });
   });
 
+  it('trues UP to the marketing rate when Meta priced it as marketing', async () => {
+    // The reserve runs before the send and books the service rate; it cannot
+    // know a template's category. Marketing costs Booka six times that, so
+    // settling at the reservation billed NGN 22.40 for an NGN 84 message.
+    pushDb({ id: 'c1', status: 'reserved', reserved_credits: 22.4,
+             wallet_reservation_id: 'res-1' });
+    pushDb([{ id: 'c1' }]);
+    pushRpc([{ allowed: true, balance_credits: 0, settlement_id: 's1' }]);
+    await settleOutboundMessage({
+      admin: adminAny, tenantId: 't1', wamid: 'wamid.M', deliveryStatus: 'delivered',
+      pricing: { billable: true, category: 'marketing', type: 'paid', pricing_model: 'PMP' },
+    });
+    expect(rpcCalls[0].args).toMatchObject({
+      p_estimated_credits: 22.4,
+      p_actual_credits: 84 * 1.6,
+    });
+    expect(updates[0].row).toMatchObject({
+      status: 'settled', settled_credits: 84 * 1.6, pricing_category: 'marketing',
+    });
+  });
+
+  it('never trues DOWN below the reservation', async () => {
+    // A tenant's negotiated rate must not be quietly replaced by the platform
+    // default at settlement time.
+    pushDb({ id: 'c1', status: 'reserved', reserved_credits: 200,
+             wallet_reservation_id: 'res-1' });
+    pushDb([{ id: 'c1' }]);
+    pushRpc([{ allowed: true, balance_credits: 0, settlement_id: 's1' }]);
+    await settleOutboundMessage({
+      admin: adminAny, tenantId: 't1', wamid: 'wamid.M', deliveryStatus: 'delivered',
+      pricing: { billable: true, category: 'marketing', type: 'paid' },
+    });
+    expect(rpcCalls[0].args).toMatchObject({ p_actual_credits: 200 });
+  });
+
+  it('leaves utility and service traffic on the reserved amount', async () => {
+    pushDb({ id: 'c1', status: 'reserved', reserved_credits: 22.4,
+             wallet_reservation_id: 'res-1' });
+    pushDb([{ id: 'c1' }]);
+    pushRpc([{ allowed: true, balance_credits: 0, settlement_id: 's1' }]);
+    await settleOutboundMessage({
+      admin: adminAny, tenantId: 't1', wamid: 'wamid.U', deliveryStatus: 'delivered',
+      pricing: { billable: true, category: 'utility', type: 'paid' },
+    });
+    expect(rpcCalls[0].args).toMatchObject({ p_actual_credits: 22.4 });
+  });
+
   it('refunds in full when Meta says not billable', async () => {
     pushDb({ id: 'c1', status: 'reserved', reserved_credits: 22.4,
              wallet_reservation_id: 'res-1' });

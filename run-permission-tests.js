@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-require-imports -- standalone CommonJS script, not part of the TS build */
 
 /**
  * Permission System Test Runner

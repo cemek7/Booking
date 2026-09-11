@@ -40,3 +40,13 @@ CRON_SECRET=CHANGE_ME
 # Releases wallet reservations that never got a Meta delivery status. A sustained
 # non-zero "released" count means the Meta status webhook has stopped delivering.
 */15 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/message-charges" >/dev/null 2>&1
+
+# Refreshes the USD/NGN rate the message cost basis is derived from, and alerts
+# when the naira has moved enough to matter. Meta bills in USD and Booka sells
+# in naira, so the real cost per message moves with no announcement to read.
+17 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/fx-rate" >/dev/null 2>&1
+
+# Warns tenants who own their own Meta billing (their own number, therefore
+# their own WABA and invoice) that they need a payment method before
+# 2026-10-01, when Meta stops delivering service messages without one.
+23 9 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/worker/meta-payment-watch" >/dev/null 2>&1

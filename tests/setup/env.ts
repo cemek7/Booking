@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Environment setup for permission tests
  */

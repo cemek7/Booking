@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Jest globals are available without import
 import { NextRequest } from 'next/server';
 import { GET as authMeGET } from '@/app/api/auth/me/route';

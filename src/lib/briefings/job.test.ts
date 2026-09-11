@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 const mockBuildMorningBriefing = jest.fn();
 const mockBuildWeeklyBriefing = jest.fn();
 const mockGetTenantClient = jest.fn();

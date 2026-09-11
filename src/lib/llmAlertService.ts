@@ -1,4 +1,5 @@
 import { defaultLogger } from '@/lib/logger';
+import { resolveTenantOwner } from '@/lib/billing/walletAlerts';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/integrations/email-service';
 import { sendSMS } from '@/lib/integrations/sms-service';
@@ -124,16 +125,17 @@ class LLMAlertService {
         defaultLogger.error('Failed to get tenant notification settings:', settingsError);
       }
 
-      // Get tenant owner email for notifications
-      const { data: owner, error: ownerError } = await this.supabase
-        .from('tenant_users')
-        .select('email, phone')
-        .eq('tenant_id', tenantId)
-        .eq('role', 'owner')
-        .single();
-
-      if (ownerError) {
-        defaultLogger.warn('Failed to get tenant owner details:', ownerError);
+      // Get tenant owner email for notifications.
+      //
+      // Shared with the wallet alerts rather than re-queried here, because this
+      // lookup used `.single()`: `tenant_users` has a primary key on `id` and no
+      // unique constraint on (tenant_id, role), so a tenant with two owner rows
+      // is structurally possible and `.single()` errors on more than one match.
+      // That turned "this tenant has two owners" into "this tenant gets no
+      // alert contact at all" — silently, for the messiest setups.
+      const owner = await resolveTenantOwner(this.supabase, tenantId);
+      if (!owner) {
+        defaultLogger.warn('No owner contact on file for tenant', { tenantId });
       }
 
       // Return combined config
@@ -142,8 +144,8 @@ class LLMAlertService {
         email_notifications: settings?.email_notifications ?? true,
         sms_notifications: settings?.sms_notifications ?? false,
         whatsapp_notifications: settings?.whatsapp_notifications ?? false,
-        notification_email: owner?.email,
-        notification_phone: owner?.phone,
+        notification_email: owner?.email ?? undefined,
+        notification_phone: owner?.phone ?? undefined,
         notification_threshold: settings?.llm_notification_threshold ?? 80,
         budget_alerts: settings?.llm_budget_alerts ?? true,
         quota_alerts: settings?.llm_quota_alerts ?? true,

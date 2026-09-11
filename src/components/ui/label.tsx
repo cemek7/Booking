@@ -1,7 +1,8 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-export interface LabelProps extends React.LabelHTMLAttributes<HTMLLabelElement> {}
+// An empty interface that only extends another is just an alias for it.
+export type LabelProps = React.LabelHTMLAttributes<HTMLLabelElement>;
 
 export function Label({ className, children, ...props }: LabelProps) {
   return (

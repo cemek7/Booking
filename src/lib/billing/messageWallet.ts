@@ -1,11 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  resolveMessageSellCredits,
   isShadowMode,
   getGraceOverdraftDefault,
+  normalizeCategory,
 } from '@/lib/billing/messageRates';
 import { checkCaps } from '@/lib/billing/spendCaps/spendGuard';
 import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
+import { resolveSellCredits } from '@/lib/billing/rateCard';
+import { attemptAutoRecharge } from '@/lib/billing/walletTopup';
 
 const CHARGES_TABLE = 'whatsapp_message_charges';
 
@@ -66,6 +68,10 @@ type WalletRow = {
   message_rate_credits?: number | string | null;
   grace_overdraft_credits?: number | string | null;
   auto_recharge_enabled?: boolean | null;
+  auto_recharge_amount_credits?: number | string | null;
+  paystack_authorization_code?: string | null;
+  paystack_authorization_email?: string | null;
+  auto_recharge_failed_at?: string | null;
   low_balance_threshold_credits?: number | string | null;
   low_balance_warned_on?: string | null;
 };
@@ -257,6 +263,8 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
       .from('ai_wallets')
       .select(
         'message_rate_credits, grace_overdraft_credits, auto_recharge_enabled, '
+        + 'auto_recharge_amount_credits, paystack_authorization_code, '
+        + 'paystack_authorization_email, auto_recharge_failed_at, '
         + 'low_balance_threshold_credits, low_balance_warned_on',
       )
       .eq('tenant_id', p.tenantId)
@@ -264,7 +272,12 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
     const wallet = walletData as WalletRow | null;
 
     const tenantRate = wallet?.message_rate_credits != null ? Number(wallet.message_rate_credits) : null;
-    const sellCredits = resolveMessageSellCredits(tenantRate);
+    // The category is unknown before the send, so the reserve books the service
+    // rate; settlement trues it up from Meta's own verdict. The rate itself now
+    // comes from the dated rate card (USD x FX) rather than a naira env var,
+    // falling back to the constants if the card is unreachable — a pricing
+    // lookup must never be the reason a message goes unsent.
+    const sellCredits = await resolveSellCredits(p.admin, tenantRate, 'service');
     const graceCredits = wallet?.grace_overdraft_credits != null
       ? Number(wallet.grace_overdraft_credits)
       : getGraceOverdraftDefault();
@@ -283,8 +296,9 @@ export async function reserveOutboundMessage(p: ReserveOutboundParams): Promise<
 
     if (!reserveRes.allowed && reserveRes.reason === 'insufficient_balance') {
       if (autoRechargeEnabled) {
-        // TODO: stub — always returns false (see attemptAutoRecharge doc comment).
-        const recharged = await attemptAutoRecharge().catch((e) => {
+        const recharged = await attemptAutoRecharge({
+          admin: p.admin, tenantId: p.tenantId, wallet,
+        }).catch((e) => {
           console.warn('[messageWallet] auto-recharge attempt threw', e);
           return false;
         });
@@ -424,22 +438,6 @@ async function maybeWarnLowBalance(
     // An alert must never cost a tenant a message.
     console.warn('[messageWallet] low-balance warning failed', { tenantId, error });
   }
-}
-
-/**
- * Best-effort attempt to top up a tenant's wallet via their saved Paystack
- * payment method before falling back to the bounded grace overdraft.
- *
- * Not yet wired to a real charge: this codebase has no saved-card auto-debit
- * flow for AI/message wallets today (only one-off checkout charges), and per
- * the dependency-verification rule we do not implement a payment integration
- * without first confirming the exact API against Paystack's current docs.
- * Until that's built, this always reports failure so the caller falls through
- * to the grace-overdraft path — safe because grace is bounded, and refusing
- * silently would violate "never let a metering fault silence the bot".
- */
-async function attemptAutoRecharge(): Promise<boolean> {
-  return false;
 }
 
 /**
@@ -747,7 +745,31 @@ export async function settleOutboundMessage(p: SettleOutboundParams): Promise<vo
   const reservedCredits = safeCredits(row.reserved_credits, 'settleOutboundMessage');
   if (reservedCredits === null) return;
   const billable = deliveryStatus === 'failed' ? false : !!pricing?.billable;
-  const settledCredits = billable ? reservedCredits : 0;
+
+  // Price from META'S OWN category, not from whatever the reserve guessed.
+  //
+  // The reserve happens before the send and cannot know a template's category;
+  // it books the service rate. Marketing costs six times that, so settling at
+  // the reserved amount billed the tenant NGN 22.40 for a message that cost
+  // Booka NGN 84. The delivery webhook carries the authoritative category, so
+  // it is the right place to correct the price — the same reason `billable`
+  // is taken from Meta rather than modelled locally.
+  //
+  // Only ever used to true UP to marketing. Everything else keeps the reserved
+  // amount, so a tenant's negotiated rate is not silently overwritten by the
+  // platform default at settlement.
+  const actualCategory = normalizeCategory(pricing?.category);
+  const marketingCredits = actualCategory === 'marketing'
+    ? await resolveSellCredits(admin, null, 'marketing')
+    : 0;
+  const priced = Math.max(reservedCredits, marketingCredits);
+  const settledCredits = billable ? priced : 0;
+
+  if (billable && priced > reservedCredits) {
+    console.warn('[messageWallet] settling above the reservation: Meta priced this as marketing', {
+      tenantId, wamid, reservedCredits, settledCredits: priced,
+    });
+  }
   const targetStatus = deliveryStatus === 'failed' ? 'released' : 'settled';
 
   // Claim the row before moving money: only proceed if this call is the one

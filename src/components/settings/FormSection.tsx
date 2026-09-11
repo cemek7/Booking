@@ -13,7 +13,7 @@ interface FormSectionProps {
 export function FormSection({ title, description, children, aside, id }: FormSectionProps) {
   const sectionId = id || `fs-${title.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`;
   return (
-    <section aria-labelledby={sectionId} className="rounded-md border bg-white/50 backdrop-blur-sm p-4 space-y-3">
+    <section aria-labelledby={sectionId} className="space-y-3 rounded-lg border border-gray-200 bg-gray-50/50 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h3 id={sectionId} className="text-sm font-semibold tracking-tight">{title}</h3>

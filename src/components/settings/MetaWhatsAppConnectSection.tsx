@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/components/ui/toast';
+import { Button } from '@/components/ui/button';
+import { FormSection } from './FormSection';
 
 declare global {
   interface Window {
@@ -203,21 +205,20 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
 
   const isConnected = connection?.meta_connection_status === 'connected';
   return (
-    <section className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
-      <div>
-        <h3 className="font-medium text-emerald-950">WhatsApp Business connection</h3>
-        <p className="mt-1 text-xs text-emerald-900">Connect your own WhatsApp Business Account and phone number. Your business remains responsible for any Meta messaging charges; Booka does not collect your payment-card information.</p>
-      </div>
+    <FormSection
+      title="WhatsApp Business connection"
+      description="Connect your own WhatsApp Business Account and phone number. Your business remains responsible for Meta messaging charges; Booka does not collect your payment-card information."
+    >
       {loading ? <p className="text-sm text-gray-500">Loading connection status…</p> : isConnected ? (
-        <div className="text-sm text-emerald-950">
-          <p className="font-medium">Connected</p>
-          <p>Phone ID: {connection?.meta_phone_number_id}</p>
+        <div className="text-sm text-gray-700">
+          <p><span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">Connected</span></p>
+          <p className="mt-3">Phone ID: {connection?.meta_phone_number_id}</p>
           <p className="text-xs mt-1">Billing owner: your business (client payment method).</p>
-          <div className="mt-4 rounded-md border border-emerald-200 bg-white/80 p-3">
+          <div className="mt-4 rounded-md border border-gray-200 bg-white p-3">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-medium">AI customer replies</p>
-                <p className="mt-1 text-xs text-emerald-900">When paused, Booka still receives and records customer messages but sends no automated reply, disclosure, or booking action.</p>
+                <p className="font-medium text-gray-900">AI customer replies</p>
+                <p className="mt-1 text-xs text-gray-600">When paused, Booka still receives and records customer messages but sends no automated reply, disclosure, or booking action.</p>
               </div>
               <button
                 type="button"
@@ -276,7 +277,7 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
               </div>
             ) : !healthLoading ? <p className="mt-3 text-xs text-slate-600">Health data is temporarily unavailable. Your connection and reply setting are unchanged.</p> : null}
           </div>
-          <button type="button" onClick={disconnect} disabled={disconnecting} className="mt-3 rounded border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-800 disabled:opacity-60">
+          <button type="button" onClick={disconnect} disabled={disconnecting} className="mt-3 rounded-md border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-60">
             {disconnecting ? 'Disconnecting…' : 'Disconnect WhatsApp'}
           </button>
         </div>
@@ -287,12 +288,12 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
               Booka could not complete the last connection attempt. Check that the selected Meta business account and number are active, then try again.
             </p>
           )}
-          <button type="button" onClick={connect} disabled={connecting || !configured || !embeddedSignup} className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">
+          <Button type="button" size="sm" onClick={connect} disabled={connecting || !configured || !embeddedSignup}>
             {connecting ? 'Connecting…' : configured ? 'Connect WhatsApp' : 'Connect WhatsApp (coming soon)'}
-          </button>
+          </Button>
           {(!configured || !embeddedSignup) && <p className="text-xs text-gray-600">Booka is waiting for Meta Partner/Embedded Signup configuration in this environment.</p>}
         </>
       )}
-    </section>
+    </FormSection>
   );
 }

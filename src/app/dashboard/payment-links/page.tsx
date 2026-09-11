@@ -37,6 +37,7 @@ export default function PaymentLinksPage() {
     const res = await authFetch<{ links?: LinkRow[] }>('/api/payments/links');
     setLinks(res.data?.links ?? []);
   }
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
   useEffect(() => { void loadLinks(); }, []);
 
   const canCreate = useMemo(() => Number(amount) > 0 && description.trim().length > 0, [amount, description]);

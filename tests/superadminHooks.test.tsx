@@ -4,8 +4,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useSuperadminTenants, useTenantAction } from '@/hooks/useSuperadminTenants';
 
-// @ts-ignore
-global.fetch = jest.fn();
+global.fetch = jest.fn() as unknown as typeof fetch;
 const fetchMock = global.fetch as unknown as ReturnType<typeof jest.fn>;
 
 function wrapperFactory() {

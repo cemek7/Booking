@@ -201,7 +201,10 @@ const InteractiveCalendar: React.FC = () => {
           endAccessor="end"
           view={view}
           date={date}
-          onView={(newView: CalendarView) => setView(newView)}
+          // react-big-calendar's View union also contains 'work_week', which this
+          // component does not render, so the narrowing is explicit rather than
+          // hidden behind an `any` from the old wildcard module declaration.
+          onView={(newView) => setView(newView as CalendarView)}
           onNavigate={(newDate: Date) => setDate(newDate)}
           style={{ height: '100%' }}
           resourceIdAccessor="resourceId"

@@ -1,5 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
-
+import { describe, expect, it } from '@jest/globals';
 const mockGetCountSessionWithItems = jest.fn();
 const mockEnterCount = jest.fn();
 
@@ -9,6 +8,7 @@ jest.mock('@/lib/inventory/stockCountService', () => ({
 }));
 
 import { GET, PATCH } from './route';
+import type { NextRequest } from 'next/server';
 
 describe('/api/owner/stock-counts/[id]', () => {
   const sessionId = '11111111-1111-4111-8111-111111111111';
@@ -18,7 +18,7 @@ describe('/api/owner/stock-counts/[id]', () => {
     mockGetCountSessionWithItems.mockResolvedValueOnce({ session: { id: sessionId }, items: [] });
 
     const response = await GET({
-      request: new Request(`http://localhost/api/owner/stock-counts/${sessionId}`, { method: 'GET' }),
+      request: new Request(`http://localhost/api/owner/stock-counts/${sessionId}`, { method: 'GET' }) as unknown as NextRequest,
       supabase: {} as never,
       params: { id: sessionId },
       user: { id: 'user-1', email: 'owner@test.com', role: 'owner', tenantId: 'tenant-1', permissions: [] },

@@ -16,6 +16,7 @@ import { PaymentSettingsSection } from '@/components/settings/PaymentSettingsSec
 import { AgentConfigSection } from '@/components/settings/AgentConfigSection';
 import type { BusinessHours } from '@/components/settings/BusinessHoursSection';
 import { toast } from '@/components/ui/toast';
+import { Button } from '@/components/ui/button';
 
 // Canonical settings surface. Tabs are driven by ?tab= on /dashboard/settings.
 const BASE_PATH = '/dashboard/settings';
@@ -152,19 +153,34 @@ function SettingsWorkspaceInner() {
     onSettled: () => { if (tenantId) qc.invalidateQueries({ queryKey: ['tenant-settings', tenantId] }); }
   });
 
+  function selectTab(tab: string) {
+    const params = new URLSearchParams(search?.toString());
+    params.set('tab', tab);
+    router.replace(`${BASE_PATH}?${params.toString()}`, { scroll: false });
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1" role="tablist" aria-label="Settings sections">
         {tabs.map(t => (
           <button
             key={t.key}
-            onClick={() => router.push(`${BASE_PATH}?tab=${t.key}`)}
-            className={`px-3 py-1 rounded border text-sm ${active.key===t.key ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white hover:bg-gray-50'}`}
-            aria-current={active.key===t.key ? 'true' : 'false'}
+            id={`settings-tab-${t.key}`}
+            type="button"
+            role="tab"
+            onClick={() => selectTab(t.key)}
+            className={`rounded-md px-3 py-2 text-sm font-medium transition ${active.key===t.key ? 'bg-white text-gray-950 shadow-sm' : 'text-gray-600 hover:bg-white/70 hover:text-gray-900'}`}
+            aria-selected={active.key===t.key}
+            aria-controls={`settings-panel-${t.key}`}
           >{t.label}</button>
         ))}
       </div>
-      <div className="p-4 border rounded bg-white space-y-4" aria-labelledby={`settings-section-${active.key}`}>
+      <div
+        id={`settings-panel-${active.key}`}
+        role="tabpanel"
+        className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+        aria-labelledby={`settings-tab-${active.key}`}
+      >
         <h2 id={`settings-section-${active.key}`} className="text-lg font-medium">{active.label}</h2>
         <p className="text-sm text-gray-600">{active.description}</p>
         {isLoading && <div className="text-sm text-gray-500">Loading settings…</div>}
@@ -308,11 +324,11 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
     <div className="space-y-4">
       {content}
       <div className="flex justify-end">
-        <button
+        <Button
           onClick={handleSave}
           disabled={saving}
-          className={`px-3 py-1 rounded text-sm border ${saving ? 'opacity-60 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600'}`}
-        >{saving ? 'Saving…' : 'Save Changes'}</button>
+          size="sm"
+        >{saving ? 'Saving…' : 'Save Changes'}</Button>
       </div>
     </div>
   );

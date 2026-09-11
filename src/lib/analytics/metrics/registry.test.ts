@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import { MetricValidationError, METRICS, runMetric, validateMetricParams } from './registry';
 
 type Row = Record<string, unknown>;
@@ -23,16 +23,18 @@ function makeQuery(rows: Row[]) {
 function makeAdmin(fixtures: Record<string, Row[]>) {
   const queries = new Map<string, ReturnType<typeof makeQuery>>();
 
-  const admin = {
-    from: jest.fn((table: string) => {
-      const query = makeQuery(fixtures[table] ?? []);
-      queries.set(table, query);
-      return query;
-    }),
-  } as never;
+  // `admin` is cast to never so it can be handed to runMetric, which wants a
+  // real SupabaseClient. That cast also makes `admin.from` unreachable for
+  // assertions, so the mock is returned separately rather than dug back out.
+  const from = jest.fn((table: string) => {
+    const query = makeQuery(fixtures[table] ?? []);
+    queries.set(table, query);
+    return query;
+  });
 
   return {
-    admin,
+    admin: { from } as never,
+    from,
     queries,
   };
 }
@@ -73,7 +75,7 @@ describe('analytics metric registry', () => {
   });
 
   it('runs revenue_total against a tenant-scoped transaction query', async () => {
-    const { admin, queries } = makeAdmin({
+    const { admin, from, queries } = makeAdmin({
       transactions: [{ amount: 1500 }, { amount: '500' }, { amount: null }],
     });
 
@@ -87,7 +89,7 @@ describe('analytics metric registry', () => {
     });
 
     const query = queries.get('transactions');
-    expect(admin.from).toHaveBeenCalledWith('transactions');
+    expect(from).toHaveBeenCalledWith('transactions');
     expect(query?.select).toHaveBeenCalledWith('amount');
     expect(query?.eq).toHaveBeenNthCalledWith(1, 'tenant_id', 'tenant-123');
     expect(query?.eq).toHaveBeenNthCalledWith(2, 'subject_type', 'reservation');

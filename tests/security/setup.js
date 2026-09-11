@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- standalone CommonJS script, not part of the TS build */
 // Security test setup
 const { TextEncoder, TextDecoder } = require('util');
 

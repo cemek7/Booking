@@ -10,6 +10,7 @@ import { ingestQualityWebhook } from '@/lib/whatsapp/v2/deliverability/metaQuali
 import { MetaAdapter } from '@/lib/whatsapp/providers/meta';
 import { resolveChargeTenantByWamid, settleOutboundMessage } from '@/lib/billing/messageWallet';
 import { getWhatsAppGraphApiVersion } from '@/lib/whatsapp/metaApiConfig';
+import { isSignupIntent, startSelfSignup } from '@/lib/whatsapp/v2/selfSignup';
 
 interface MetaWebhookPayload {
   object?: string;
@@ -278,8 +279,30 @@ export async function POST(request: NextRequest) {
           routedContent = identity.strippedMessage || routedContent;
 
           if (!tenantId) {
-            await sendSharedGatewayRoutingPrompt(message.from, metaPhoneNumberId);
-            continue;
+            // A prospective owner has no routing code — they have not signed up
+            // yet — so without this branch the flow they were told to use has no
+            // entry point. Signup is explicit: unrecognised traffic on this
+            // number is mostly wrong numbers, and auto-creating a tenant for
+            // each would fill the platform with junk and bill Booka for it.
+            if (isSignupIntent(routedContent)) {
+              const signup = await startSelfSignup(supabase, message.from);
+              if (signup) {
+                tenantId = signup.tenantId;
+                // Their first word was "start", not a business description, so
+                // it must not reach step 1 as the answer. Onboarding's step 0
+                // greets and advances; let it run with an empty message.
+                routedContent = '';
+                defaultLogger.info('[WEBHOOK-META] self-signup started', {
+                  tenantId, created: signup.created,
+                });
+              } else {
+                await sendSharedGatewayRoutingPrompt(message.from, metaPhoneNumberId);
+                continue;
+              }
+            } else {
+              await sendSharedGatewayRoutingPrompt(message.from, metaPhoneNumberId);
+              continue;
+            }
           }
         }
         if (!tenantId) continue;
@@ -330,7 +353,9 @@ async function sendSharedGatewayRoutingPrompt(to: string, phoneNumberId: string)
   const client = new MetaAdapter({ provider: 'meta', baseUrl: `${base}/${version}`, apiKey: token, instanceName: phoneNumberId });
   await client.sendTextMessage(
     to,
-    'Welcome to Booka. Please open your business\'s Booka WhatsApp link, or reply with its 6-character business code so we can connect you to the right business.'
+    'Welcome to Booka.\n\nIf you are trying to reach a business, open their Booka WhatsApp link or '
+    + 'reply with their 6-character business code.\n\nIf you run a business and want to set yours up '
+    + 'on Booka, reply *START*.'
   );
 }
 

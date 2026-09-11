@@ -373,9 +373,49 @@ psql $DATABASE_URL -f db/migrations/141_overdraft_reservation.sql
 psql $DATABASE_URL -f db/migrations/142_fix_topup_ai_wallet_ambiguity.sql
 psql $DATABASE_URL -f db/migrations/143_message_handoff_warned_on.sql
 psql $DATABASE_URL -f db/migrations/144_low_balance_alerts.sql
+psql $DATABASE_URL -f db/migrations/145_wallet_paid_topup.sql
+psql $DATABASE_URL -f db/migrations/146_wallet_promo_codes.sql
+psql $DATABASE_URL -f db/migrations/147_message_rate_card.sql
+psql $DATABASE_URL -f db/migrations/148_promo_code_delivery.sql
+psql $DATABASE_URL -f db/migrations/149_staff_schedules_v2_nullable_staff_id.sql
 ```
 
+**149 is what makes a chat-onboarded tenant bookable at all.** `staff_schedules.staff_id`
+references `auth.users(id)` and is NOT NULL, but WhatsApp-native staff have no auth account by
+design, so every v2 attempt to save working hours was rejected by Postgres. The code did not check
+the error and the slot engine returns no availability for anyone without a schedule row, so a
+tenant could finish onboarding and be structurally unable to take a single booking.
+
 Each has a matching `*_rollback.sql`.
+
+> **Seven migration numbers have two different files each** — 065, 077, 078, 079, 097, 122 and
+> 123. Applying by number, or globbing `db/migrations/097_*`, will run one and silently skip the
+> other, and that file's tables then simply never exist. Apply by full filename. The pairs:
+>
+> | # | Files |
+> |---|---|
+> | 065 | `chats_unique_constraint`, `messages_read_columns` |
+> | 077 | `ai_wallets`, `customer_no_show_score` |
+> | 078 | `instagram_channel`, `whatsapp_showcase_packs` |
+> | 079 | `finance_ledgers`, `whatsapp_message_queue_channel` |
+> | 097 | `ai_front_desk_stage_d_training_views`, `wallet_cost_caps` |
+> | 122 | `booka_revenue_requests`, `business_events` |
+> | 123 | `reconciliation`, `revenue_attribution_verification` |
+>
+> They are not renumbered because the numbers are already recorded in runbooks and in what has
+> been applied to live; renumbering now would be the more dangerous change. A test
+> (`migrationNumbering.test.ts`) stops the set growing.
+
+Three filename shapes are in use, and all three sort deterministically under a glob:
+`123_name.sql` (main sequence), `123b_name.sql` (a follow-up, sorts right after its number), and
+`2026-07-26_name.sql` (date-named; sorts after every numbered file). `create-audit-logs.sql` has
+no defined position — apply it explicitly if you need it.
+
+**145 is what makes top-up a payment.** It adds `wallet_topup_intents` (the row that ties a
+Paystack reference to a tenant and an amount before the customer pays), the stored card
+authorization columns on `ai_wallets`, and `credit_wallet_topup` — the idempotent claim-and-credit
+function the webhook calls. Without it, `POST /api/billing/wallet/checkout` returns an error and
+no owner can pay for credits.
 
 **142 is not optional.** It fixes `topup_ai_wallet`, which has never worked: the function
 declares `RETURNS TABLE (… balance_credits …)`, which collides with the column of the same name
@@ -404,17 +444,167 @@ GROUP BY 1, 2
 ORDER BY 3 DESC;
 ```
 
-### Two limitations the cutover plan must not assume away
+### Keeping the cost basis honest
 
-**1. Auto-recharge is not implemented.** `ai_wallets.auto_recharge_enabled` exists and defaults
-to `false`, and the code path behind it is an explicit stub that always reports failure. This
-codebase has no saved-card auto-debit flow — building one needs stored per-tenant Paystack
-authorization codes plus customer consent, which is its own feature with its own spec.
+**The naira figure is derived, not stored.** `message_rate_card` holds Meta's price in **USD** by
+category with an `effective_from` date; `platform_fx_rates` holds USD/NGN. Credits are
+`cost_usd x fx x markup`. Storing NGN 14 directly hid both halves of the number and both ways it
+can move:
 
-> **Do not enable `auto_recharge_enabled` for any tenant. It is inert.** A tenant who exhausts
-> credits mid-conversation falls through to the bounded grace overdraft, then to the
-> wallet-exhausted handoff, and must top up manually. Tenants near their limit need a *manual*
-> top-up prompt before 2026-10-01, not an automatic one.
+| Risk | How you find out | What you change |
+|---|---|---|
+| Meta raises a rate | Only on the 1st of a quarter, announced **1 month ahead** (6 for a pricing-model change). The readiness check warns 45 days out if nothing is dated for the next quarter. | One row: the new `cost_usd` with a future `effective_from`. It applies itself on the day. |
+| The naira moves | The `fx-rate` worker refreshes daily and alerts on a move of 5% or more. | Nothing — pricing follows automatically. The alert is so a human can check the tiers still work. |
+| Someone sets a bad tenant rate | Clamped at cost x 1.15 and logged. | Fix the override. |
+
+Enter a Meta change the day it is announced; do not wait for the 1st:
+
+```sql
+INSERT INTO public.message_rate_card (category, cost_usd, effective_from, source, note)
+VALUES ('marketing', 0.0680, DATE '2027-01-01', 'meta_announced_2026-11', 'Q1 2027');
+```
+
+Everything falls back to the compiled-in constants in `messageRates.ts` if the tables are
+unreachable or have nothing in effect — a pricing lookup must never be why a message goes unsent.
+`checkRateCard()` reports when that fallback is active, when a quarter is approaching unconfirmed,
+and when the FX reading is more than 14 days old.
+
+**Schedule the FX worker**: `GET /api/worker/fx-rate` daily, `Authorization: Bearer $CRON_SECRET`.
+It only ever appends a reading and alerts; it never blocks or slows a send.
+
+**Two payment methods, not one.** `whatsapp_configurations.meta_billing_owner` decides who Meta
+bills:
+
+| Value | Who pays Meta | Covered by |
+|---|---|---|
+| `booka` / null with no connection source | Booka's shared gateway WABA | **your** card — the superadmin alert |
+| `client` (Embedded Signup or direct) | the tenant's own WABA | **their** card — nothing you can add for them |
+
+A `client` tenant whose Meta account has no payment method goes silent on 2026-10-01 and nothing
+in Booka raises an error. `GET /api/worker/meta-payment-watch` (daily, `Bearer $CRON_SECRET`)
+warns each of them once a day through the owner alert path — email *and* WhatsApp, because the
+owners most likely to miss this are the ones who never open the dashboard.
+
+```sql
+SELECT meta_billing_owner, meta_connection_source, count(*)
+FROM public.whatsapp_configurations
+WHERE provider = 'meta' AND active
+GROUP BY 1, 2;
+```
+
+> **Hard deadline 2026-09-30: a payment method must be on the WhatsApp Business Account.**
+> Meta stops delivering service messages on 2026-10-01 without one. No API reports this, so it is
+> an attestation — set `BOOKA_META_PAYMENT_METHOD_ON_FILE=true` once it is added, and until then
+> `npm run check:meta-pilot` counts down.
+
+### Message categories and what they cost
+
+Meta does not charge one price. As of 2026-09 the Nigerian rates are roughly:
+
+| Category | Meta charges | Booka bills (1.6x) | What it is |
+|---|---|---|---|
+| service | ~NGN 14 ($0.0101) | ~NGN 22.40 | free-form reply inside the 24h window |
+| utility | ~NGN 14 | ~NGN 22.40 | reminders, payment and booking updates |
+| authentication | ~NGN 14 | ~NGN 22.40 | one-time codes |
+| **marketing** | **~NGN 84 ($0.062)** | **~NGN 134.40** | anything promotional, incl. broadcasts |
+
+**Marketing is six times the price**, and it is the one that can lose money at
+scale: a broadcast to 500 customers costs Booka NGN 42,000. Override the rates with
+`BOOKA_MESSAGE_RATE_CREDITS` and `BOOKA_MESSAGE_MARKETING_RATE_CREDITS` as the naira moves.
+
+The reservation runs *before* the send and cannot know a template's category, so it books the
+service rate. The delivery webhook carries Meta's authoritative category, and settlement trues the
+charge **up** to the marketing rate when Meta says marketing — the same reason `billable` is taken
+from Meta rather than modelled locally. It never trues *down*, so a negotiated per-tenant rate is
+not silently replaced by the platform default.
+
+A per-tenant `message_rate_credits` override applies to service and utility only. Marketing always
+bills at the platform marketing rate, so a negotiated conversational rate cannot become a
+six-times-under-cost rate the moment that tenant sends a broadcast.
+
+To find marketing traffic that settled above its reservation:
+
+```sql
+SELECT tenant_id, count(*) AS messages, sum(settled_credits - reserved_credits) AS extra_billed
+FROM public.whatsapp_message_charges
+WHERE pricing_category = 'marketing' AND settled_credits > reserved_credits
+GROUP BY 1 ORDER BY 3 DESC;
+```
+
+A large `extra_billed` on one tenant means they are broadcasting, and their plan should probably
+say so. The log line `settling above the reservation: Meta priced this as marketing` marks each one.
+
+### Paying for credits
+
+**1 credit = NGN 1.** Two ways credits enter a wallet, and only two:
+
+| Path | Route | Who | Payment |
+|---|---|---|---|
+| Owner tops up | `POST /api/billing/wallet/checkout` | owner | Paystack card checkout; credited by the webhook |
+| Booka credits a tenant by hand | `POST /api/billing/wallet` | **superadmin** | none — use for refunds, goodwill, migration |
+
+`POST /api/billing/wallet` used to be `roles: ['owner']` and credited the wallet with no payment
+at all, which let any owner mint themselves credits *and* book them as revenue. It is superadmin
+only now, and runs on the service-role client because migration 142 revoked `topup_ai_wallet` to
+`service_role`.
+
+The owner path never credits directly. It writes a `wallet_topup_intents` row **before** the
+customer pays, sends them to Paystack, and the signed `charge.success` webhook calls
+`credit_wallet_topup`, which claims the intent and credits the wallet in one transaction. That
+claim is what makes Paystack's routine webhook retries safe: a second delivery finds no pending
+intent and credits nothing. A payment short of the intent amount is refused and the intent marked
+`failed`.
+
+To see top-ups that never completed:
+
+```sql
+SELECT reference, tenant_id, amount_credits, origin, status, created_at
+FROM public.wallet_topup_intents
+WHERE status <> 'paid'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+A `pending` row older than an hour means the owner opened checkout and did not pay, or the webhook
+never arrived — check Paystack's dashboard for that reference before crediting anything by hand.
+
+### Auto-recharge
+
+**Auto-recharge is now implemented, and still off for every tenant.**
+`ai_wallets.auto_recharge_enabled` defaults to `false` and must stay there until you deliberately
+turn it on per tenant. Turning it on does nothing by itself: it also needs
+`auto_recharge_amount_credits` and a **saved card**.
+
+Booka can only save a card that Paystack marks `reusable`, which is why the checkout requests
+`channels: ['card']` — a bank-transfer or USSD authorization is never reusable. The card is stored
+only from a verified `charge.success`, together with the email that created it, because Paystack
+rejects a recurring charge sent with any other address.
+
+```sql
+-- Which tenants could actually auto-recharge today
+SELECT tenant_id,
+       auto_recharge_enabled,
+       auto_recharge_amount_credits,
+       paystack_card_brand, paystack_card_last4,
+       auto_recharge_failed_at, auto_recharge_failure_reason
+FROM public.ai_wallets
+WHERE paystack_authorization_code IS NOT NULL;
+```
+
+Owners turn it on themselves, under **Billing → Top Up → Auto top-up**
+(`GET`/`PATCH /api/billing/wallet/auto-recharge`). The toggle is disabled until a card is saved,
+and the route refuses to enable without both a card and an amount — arming something that cannot
+fire would leave an owner believing they are covered until their bot goes quiet. The authorization
+code is never returned to the browser; the page shows only the card brand and last four.
+
+When the balance cannot fund a send, the reserve path charges the saved card and re-reserves. A
+decline — or an unreachable Paystack — stamps `auto_recharge_failed_at` and backs off for 24 hours — without that, a dead card is
+re-charged on every single send, which is a stream of failed charges against the tenant's bank and
+a full network timeout on Booka's inbound path — and that path is a shared worker, so the stall is
+paid by every other tenant in the batch. Saving a new card clears the stamp, and the owner sees the
+decline on the billing page. A tenant whose
+recharge fails falls through to the bounded grace overdraft and then the handoff, exactly as
+before.
 
 **2. Some stranded reservations need manual reconciliation.** Two error logs mean credits are
 debited with no automatic recovery, because the sweeper deliberately cannot see these rows —
@@ -497,6 +687,32 @@ they never touch the dashboard and never use a magic link. Those owners are aler
 instead — including the low-balance warning, which would otherwise reach them not at all. An
 owner with an email does **not** also get a WhatsApp for the low-balance warning; there is no
 point spending a platform-funded message on a tenant who will see the email.
+
+Onboarding now *asks* for an email in chat (steps 6 and 7 of `ownerOnboarding.ts`) and verifies it
+with a six-digit code mailed to the address, so newly onboarded tenants should have one on file.
+It is asked **after** activation and can be skipped, so it is a coverage improvement, not a
+guarantee — the WhatsApp fallback above remains the thing that makes the alert reliable. To see
+how much of the base is reachable by email before the cutover:
+
+```sql
+SELECT count(*) FILTER (WHERE email IS NOT NULL) AS with_email,
+       count(*) FILTER (WHERE email IS NULL AND phone IS NOT NULL) AS phone_only,
+       count(*) FILTER (WHERE email IS NULL AND phone IS NULL) AS unreachable
+FROM public.tenant_users
+WHERE role = 'owner';
+```
+
+The verification code lives only in `whatsapp_conversations.flow_data`, salted-hashed per tenant
+and never stored in the clear, and is cleared when onboarding completes. No migration backs it.
+
+On wallet exhaustion the conversation is also **reserved for a human**: `human_handling_until` is
+set (default 60 minutes, `BOOKA_HANDOFF_HUMAN_MINUTES`) so the assistant stays out, and the chat is
+flipped to `pending` so it surfaces in the dashboard inbox. That is what makes the handoff copy —
+"a member of our team will reply to you here shortly" — a promise Booka can keep: staff reply from
+the inbox over WhatsApp and hand the thread back with `POST /api/chats/[id]/release`. The window is
+deliberately far shorter than the 24-hour handoff re-arm so the assistant resumes promptly once the
+wallet is topped up. An **owner or staff** thread is never reserved this way — silencing it would
+cut off the one person who can fix the wallet.
 
 `tenant_users` has no unique constraint on `(tenant_id, role)`, so a tenant can have more than one
 owner row. The lookup takes the most contactable one rather than erroring, which would otherwise

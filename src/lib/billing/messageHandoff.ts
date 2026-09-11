@@ -5,6 +5,9 @@ import { getTenantWhatsAppProviderClientUnmetered } from '@/lib/whatsapp/provide
 import { sendTelegramInfo } from '@/lib/monitoring/telegramAlert';
 import { getHandoffRearmHours } from '@/lib/billing/messageRates';
 import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
+import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
+import { getConversation } from '@/lib/whatsapp/v2/conversationState';
+import { getHandoffHumanHandlingMinutes } from '@/lib/billing/messageRates';
 
 /**
  * Wallet-exhausted handoff: the one message a customer gets when the tenant's
@@ -400,6 +403,7 @@ export async function triggerWalletHandoff(
     }
 
     await persistHandoffMessage(admin, tenantId, chat.id, toNumber, result.messageId);
+    await routeToInbox(admin, tenantId, chat.id, toNumber);
     await notifyOwner(admin, tenantId, toNumber, markers.warnedOn, today);
 
     return { sent: true, reason: 'sent' };
@@ -492,6 +496,54 @@ async function markHandoffUnanchored(
  * Best-effort: a failed notification must never turn a delivered handoff into
  * a reported failure.
  */
+/**
+ * Makes the handoff promise keepable.
+ *
+ * HANDOFF_TEXT tells the customer a team member will reply here shortly. That
+ * is only true if a human is actually pointed at the conversation, so on a
+ * successful handoff the chat is reserved for a human and raised in the
+ * dashboard inbox — where an owner or staff member can already read the thread
+ * and reply over WhatsApp (POST /api/chats/[id]/messages), then hand it back
+ * (POST /api/chats/[id]/release).
+ *
+ * Best-effort throughout: the customer has already been told a human is coming,
+ * and failing to flag the chat must not turn that into an error.
+ */
+async function routeToInbox(
+  admin: SupabaseClient,
+  tenantId: string,
+  chatId: string,
+  toNumber: string,
+): Promise<void> {
+  try {
+    // Only a CUSTOMER conversation may be reserved for a human. A refused send
+    // to an owner or staff member is their own command thread — flagging it
+    // would silence the assistant for the very person trying to fix the wallet.
+    const conv = await getConversation(toNumber, tenantId, 'whatsapp');
+    if (!conv || conv.role === 'owner' || conv.role === 'staff') return;
+
+    await setHumanHandling({
+      externalId: toNumber,
+      tenantId,
+      channel: 'whatsapp',
+      minutes: getHandoffHumanHandlingMinutes(),
+    });
+
+    // Surfaces in the inbox's pending filter. Never reopens a chat someone has
+    // already resolved.
+    const { error } = await admin
+      .from(CHATS_TABLE)
+      .update({ status: 'pending' })
+      .eq('id', chatId)
+      .eq('status', 'open');
+    if (error) {
+      console.warn('[messageHandoff] could not flag chat as pending', { tenantId, chatId, error });
+    }
+  } catch (error) {
+    console.warn('[messageHandoff] routeToInbox failed', { tenantId, chatId, error });
+  }
+}
+
 async function notifyOwner(
   admin: SupabaseClient,
   tenantId: string,
@@ -510,7 +562,8 @@ async function notifyOwner(
       title: 'Message wallet empty — replies paused',
       message:
         'Your message wallet is out of credit, so the assistant has told this customer '
-        + 'a team member will follow up. Top up to resume automated replies.',
+        + 'a team member will follow up. The chat is waiting for a reply in your Boka '
+        + 'inbox. Top up to resume automated replies.',
       meta: { customer_phone: toNumber },
       // Exhaustion is the one case worth a platform-funded WhatsApp to the
       // owner: their bot has stopped answering customers and a dashboard row

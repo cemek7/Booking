@@ -29,7 +29,10 @@ export default function BrandMark({ variant = 'techclave', className = '' }: Bra
       </div>
       <div
         className={`pointer-events-none absolute inset-[14%] rounded-[1.05rem] border ${
-          isTechclave ? 'border-[#d4b368]/30' : 'border-white/18'
+          // The inner ring used to be gold, matching the old gold wordmark
+          // artwork. The mark is now the green-and-white TC monogram, so the
+          // ring picks up the logo's own green (#40a050) instead of fighting it.
+          isTechclave ? 'border-[#40a050]/30' : 'border-white/18'
         }`}
       />
     </div>

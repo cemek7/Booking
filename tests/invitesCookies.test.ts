@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Test: invite route rejects requests without auth and accepts authenticated requests
 import { NextRequest } from 'next/server';
 import { POST as invitesPOST } from '@/app/api/tenants/[tenantId]/invites/route';
