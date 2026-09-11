@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata } from "next";
 
 /**
  * Site-level metadata, kept out of layout.tsx so it can be asserted on without
@@ -10,15 +10,17 @@ import type { Metadata } from 'next';
  * in exactly the channel it sells into.
  */
 
-export const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://techclave.cloud';
+export const SITE_URL =
+  process.env.NEXT_PUBLIC_APP_URL || "https://techclave.cloud";
 
-export const SITE_TITLE = 'Techclave | AI Operating Systems for African Businesses';
+export const SITE_TITLE =
+  "Techclave | AI Operating Systems for African Businesses";
 
 export const SITE_DESCRIPTION =
-  'Techclave builds AI products for customer operations. Booka is the first product: an AI '
-  + 'Revenue Front Desk that turns WhatsApp and Instagram enquiries into booked and paying customers.';
+  "Techclave builds AI products for customer operations. Booka is the first product: an AI " +
+  "Revenue Front Desk that turns WhatsApp and Instagram enquiries into booked and paying customers.";
 
-export const OG_IMAGE = '/brand/techclave-og.jpg';
+export const OG_IMAGE = "/brand/techclave-og.jpg";
 
 export const siteMetadata: Metadata = {
   // Without metadataBase, Next cannot resolve the relative OG image and the
@@ -27,20 +29,22 @@ export const siteMetadata: Metadata = {
   title: SITE_TITLE,
   description: SITE_DESCRIPTION,
   openGraph: {
-    type: 'website',
-    siteName: 'Techclave',
+    type: "website",
+    siteName: "Techclave",
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
     url: SITE_URL,
-    images: [{
-      url: OG_IMAGE,
-      width: 1200,
-      height: 630,
-      alt: 'Techclave — intelligence builds what’s next',
-    }],
+    images: [
+      {
+        url: OG_IMAGE,
+        width: 1200,
+        height: 630,
+        alt: "Techclave — intelligence builds what’s next",
+      },
+    ],
   },
   twitter: {
-    card: 'summary_large_image',
+    card: "summary_large_image",
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
     images: [OG_IMAGE],

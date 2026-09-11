@@ -13,6 +13,7 @@ const BASE = {
   rateConfigured: true,
   paymentMethodOnFile: true,
   gatewayPhoneSet: true,
+  meteredMessageCount: 42,
   now: new Date('2026-09-08T00:00:00Z'),
 };
 
@@ -110,5 +111,36 @@ describe('gateway phone', () => {
 
   it('is silent once it is set', () => {
     expect(buildPlatformAlerts({ ...BASE, gatewayPhoneSet: true })).toEqual([]);
+  });
+});
+
+describe('metering actually recording', () => {
+  it('warns before the cutover when nothing has been recorded', () => {
+    // Shadow mode should be filling this table now. Empty means either no
+    // traffic yet, or metering is not attached to the send path at all — and it
+    // will not start working on 1 October by itself.
+    const alerts = buildPlatformAlerts({ ...BASE, meteredMessageCount: 0 });
+    const a = alerts.find((x) => x.id === 'metering_recorded_nothing');
+    expect(a?.severity).toBe('warning');
+    expect(a?.message).toContain('not attached to the send path');
+  });
+
+  it('is CRITICAL once the cutover has passed with an empty table', () => {
+    // After the cutover, silence is money: Meta bills Booka for every message
+    // and nothing is charged back, and the first symptom is an invoice.
+    const alerts = buildPlatformAlerts({
+      ...BASE, meteredMessageCount: 0, now: new Date('2026-10-03T00:00:00Z'),
+      meteringMode: 'live',
+    });
+    const a = alerts.find((x) => x.id === 'metering_recorded_nothing');
+    expect(a?.severity).toBe('critical');
+    expect(a?.action).toContain('webhook');
+  });
+
+  it('is silent as soon as anything has been recorded', () => {
+    expect(
+      buildPlatformAlerts({ ...BASE, meteredMessageCount: 1 })
+        .find((x) => x.id === 'metering_recorded_nothing'),
+    ).toBeUndefined();
   });
 });
