@@ -15,6 +15,8 @@ const BASE = {
   gatewayPhoneSet: true,
   meteredMessageCount: 42,
   missingTemplateTypes: [] as string[],
+  unnotifiedInquiries: 0,
+  inquiryRecipientSet: true,
   now: new Date("2026-09-08T00:00:00Z"),
 };
 
@@ -193,5 +195,32 @@ describe("metering actually recording", () => {
     });
     expect(a.title).toContain("1 message type");
     expect(a.title).not.toContain("types");
+  });
+
+  it("is critical when an inquiry arrived and nobody was told", () => {
+    const alerts = buildPlatformAlerts({ ...BASE, unnotifiedInquiries: 3 });
+    const a = alerts.find((x) => x.id === "inquiries_unnotified");
+    // Someone asked to talk to us and is waiting on a reply nobody knows to write.
+    expect(a?.severity).toBe("critical");
+    expect(a?.title).toContain("3");
+  });
+
+  it("warns before the first inquiry when no recipient is configured", () => {
+    const [a] = buildPlatformAlerts({ ...BASE, inquiryRecipientSet: false });
+    expect(a.id).toBe("inquiry_recipient_missing");
+    // Nothing is lost yet, so this is a warning — but it says what will happen.
+    expect(a.severity).toBe("warning");
+    expect(a.message).toContain("unseen");
+  });
+
+  it("escalates the missing recipient once inquiries are actually waiting", () => {
+    const [a] = buildPlatformAlerts({
+      ...BASE,
+      inquiryRecipientSet: false,
+      unnotifiedInquiries: 2,
+    });
+    expect(a.id).toBe("inquiry_recipient_missing");
+    expect(a.severity).toBe("critical");
+    expect(a.message).toContain("2 inquiries are");
   });
 });

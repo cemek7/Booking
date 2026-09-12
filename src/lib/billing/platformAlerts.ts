@@ -5,6 +5,10 @@ import {
 } from "@/lib/billing/rateCardWatch";
 import { getMeteringMode } from "@/lib/billing/messageRates";
 import { getBookaGatewayPhone } from "@/lib/whatsapp/gatewayPhone";
+import {
+  countUnnotifiedInquiries,
+  inquiryRecipient,
+} from "@/lib/inquiries/platformInquiries";
 
 /**
  * Platform-level things a superadmin must not miss.
@@ -48,6 +52,11 @@ export const OUT_OF_WINDOW_MESSAGE_TYPES = [
   "waitlist_slot",
 ] as const;
 
+/** "1 inquiry" / "3 inquiries" — the alert text reads as a sentence either way. */
+function pluralInquiries(count: number): string {
+  return `${count} ${count === 1 ? "inquiry" : "inquiries"}`;
+}
+
 export function daysBetween(from: Date, to: Date): number {
   return Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
 }
@@ -62,6 +71,10 @@ export interface PlatformAlertInputs {
   meteredMessageCount: number;
   /** Message types from OUT_OF_WINDOW_MESSAGE_TYPES with no approved shared template. */
   missingTemplateTypes: string[];
+  /** Contact-form inquiries stored but never announced to anyone. */
+  unnotifiedInquiries: number;
+  /** Whether TECHCLAVE_INQUIRY_EMAIL is set at all. */
+  inquiryRecipientSet: boolean;
   now: Date;
 }
 
@@ -173,6 +186,37 @@ export function buildPlatformAlerts(
     });
   }
 
+  // ── Inbound inquiries ──────────────────────────────────────────────────────
+  // An inquiry that is stored and never announced is the same failure as a
+  // contact form that posts nowhere: someone asked to talk to us and nobody
+  // knows. The row is stamped only when a notification actually went out, so
+  // anything unstamped means the mail failed or no recipient is configured.
+  if (!input.inquiryRecipientSet) {
+    alerts.push({
+      id: "inquiry_recipient_missing",
+      severity: input.unnotifiedInquiries > 0 ? "critical" : "warning",
+      title: "Contact-form inquiries are not being emailed to anyone",
+      message:
+        input.unnotifiedInquiries > 0
+          ? `${pluralInquiries(input.unnotifiedInquiries)} ${input.unnotifiedInquiries === 1 ? "is" : "are"} sitting in the database and nobody has been told.`
+          : "The contact form stores inquiries, but no address is configured to " +
+            "receive them, so the first one to arrive will go unseen.",
+      action:
+        "Set TECHCLAVE_INQUIRY_EMAIL to the inbox that should receive them.",
+    });
+  } else if (input.unnotifiedInquiries > 0) {
+    alerts.push({
+      id: "inquiries_unnotified",
+      severity: "critical",
+      title: `${pluralInquiries(input.unnotifiedInquiries)} nobody was told about`,
+      message:
+        "These people used the contact form and the notification email failed. " +
+        "They are waiting on a reply that nobody knows to write.",
+      action:
+        "Read them in platform_inquiries, reply, and check the Resend API key.",
+    });
+  }
+
   // ── Gateway number ─────────────────────────────────────────────────────────
   // Every tenant onboarded over chat is handed a wa.me link built from this.
   // With no fallback left, an unset variable means each one is activated with
@@ -265,6 +309,8 @@ export async function getPlatformAlerts(
     gatewayPhoneSet: !!getBookaGatewayPhone(),
     meteredMessageCount,
     missingTemplateTypes,
+    unnotifiedInquiries: await countUnnotifiedInquiries(admin),
+    inquiryRecipientSet: !!inquiryRecipient(),
     rateCard,
     meteringMode: getMeteringMode(),
     rateConfigured: !!process.env.BOOKA_MESSAGE_RATE_CREDITS,
