@@ -136,6 +136,20 @@ export function inquiryRecipient(): string | null {
 }
 
 /**
+ * The address printed on the contact page, for people who would rather write
+ * than fill in a form.
+ *
+ * Kept separate from the notification recipient because the two can legitimately
+ * differ: the published address is a routed alias, while alerts may land in a
+ * private inbox. It falls back to the recipient because in the common case they
+ * are the same address, and renders nothing when neither is set — an email
+ * address printed on a page that nobody receives is worse than none.
+ */
+export function publicContactEmail(): string | null {
+  return process.env.TECHCLAVE_CONTACT_EMAIL ?? inquiryRecipient();
+}
+
+/**
  * Validate, store, and announce one inquiry.
  *
  * `admin` must be a service-role client: platform_inquiries has RLS enabled

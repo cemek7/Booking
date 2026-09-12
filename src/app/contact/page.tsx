@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import BrandMark from "@/components/brand/BrandMark";
 import { ContactForm } from "@/components/contact/ContactForm";
+import { publicContactEmail } from "@/lib/inquiries/platformInquiries";
 
 export const metadata: Metadata = {
   title: "Contact — Techclave",
@@ -25,6 +26,8 @@ const answers = [
 ];
 
 export default function ContactPage() {
+  const email = publicContactEmail();
+
   return (
     <main className="min-h-screen bg-[#f6f5ef] text-[#10211a]">
       <div className="relative overflow-hidden">
@@ -75,6 +78,18 @@ export default function ContactPage() {
                 Tell us what is going wrong in your front desk and we will tell
                 you honestly whether we can fix it. A real person reads this.
               </p>
+
+              {email ? (
+                <p className="mt-6 text-[15px] text-[#4f5d59]">
+                  Prefer email?{" "}
+                  <a
+                    href={`mailto:${email}`}
+                    className="font-medium text-emerald-800 underline underline-offset-4 transition hover:text-emerald-900"
+                  >
+                    {email}
+                  </a>
+                </p>
+              ) : null}
 
               <div className="mt-10 grid gap-4">
                 {answers.map((item) => (
