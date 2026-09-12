@@ -23,6 +23,7 @@ jest.mock("@/lib/logger", () => ({
 import {
   clientIpFrom,
   hashIp,
+  publicContactEmail,
   RATE_LIMIT_MAX,
   submitInquiry,
 } from "@/lib/inquiries/platformInquiries";
@@ -261,5 +262,32 @@ describe("IP handling", () => {
 
   it("is null when the request carries no address at all", () => {
     expect(clientIpFrom(new Headers())).toBeNull();
+  });
+});
+
+describe("publicContactEmail", () => {
+  const saved = process.env.TECHCLAVE_CONTACT_EMAIL;
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.TECHCLAVE_CONTACT_EMAIL;
+    else process.env.TECHCLAVE_CONTACT_EMAIL = saved;
+  });
+
+  it("prefers the published alias over the notification inbox", () => {
+    process.env.TECHCLAVE_CONTACT_EMAIL = "hello@techclave.cloud";
+    process.env.TECHCLAVE_INQUIRY_EMAIL = "private@example.com";
+    expect(publicContactEmail()).toBe("hello@techclave.cloud");
+  });
+
+  it("falls back to the notification inbox when they are the same address", () => {
+    delete process.env.TECHCLAVE_CONTACT_EMAIL;
+    process.env.TECHCLAVE_INQUIRY_EMAIL = "hello@techclave.cloud";
+    expect(publicContactEmail()).toBe("hello@techclave.cloud");
+  });
+
+  it("is null when neither is configured, so no dead address is printed", () => {
+    delete process.env.TECHCLAVE_CONTACT_EMAIL;
+    delete process.env.TECHCLAVE_INQUIRY_EMAIL;
+    expect(publicContactEmail()).toBeNull();
   });
 });
