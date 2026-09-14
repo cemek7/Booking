@@ -172,6 +172,33 @@ describe('deliverWalletAlert — WhatsApp-native owners', () => {
     expect(getTenantWhatsAppProviderClientUnmetered).toHaveBeenCalledWith('t1');
   });
 
+  it('falls back to WhatsApp when the email provider throws', async () => {
+    // Resend rejects everything past the free plan's daily cap, and the sender
+    // throws on a rejection. The warning must still reach the owner.
+    pushDb(null);
+    pushDb([{ email: 'owner@example.com', phone: '2349000000000' }]);
+    sendTransactionalEmail.mockRejectedValueOnce(new Error('Resend API error (429)'));
+    await deliverWalletAlert(admin, lowBalance);
+    expect(sendTextMessage).toHaveBeenCalledTimes(1);
+    expect(getTenantWhatsAppProviderClientUnmetered).toHaveBeenCalledWith('t1');
+  });
+
+  it('falls back to WhatsApp when email reports it was not sent', async () => {
+    pushDb(null);
+    pushDb([{ email: 'owner@example.com', phone: '2349000000000' }]);
+    sendTransactionalEmail.mockResolvedValueOnce({ success: false });
+    await deliverWalletAlert(admin, lowBalance);
+    expect(sendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send WhatsApp twice when it was already one of the channels', async () => {
+    pushDb(null);
+    pushDb([{ email: 'owner@example.com', phone: '2349000000000' }]);
+    sendTransactionalEmail.mockRejectedValueOnce(new Error('Resend API error (429)'));
+    await deliverWalletAlert(admin, { ...lowBalance, whatsappOwner: true });
+    expect(sendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('does not spend a WhatsApp message when the owner has an email', async () => {
     pushDb(null);
     pushDb([{ email: 'owner@example.com', phone: '2349000000000' }]);

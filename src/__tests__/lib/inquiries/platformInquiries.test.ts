@@ -163,6 +163,22 @@ describe("submitInquiry", () => {
     expect(updated).toEqual([]);
   });
 
+  it("still reports success when the email provider throws after the row is stored", async () => {
+    // The sender throws on a Resend rejection (daily cap, unverified domain).
+    // The message is safely stored, so the visitor must not be told to retry,
+    // and the row stays unstamped for the superadmin alert.
+    mockSendTransactionalEmail.mockRejectedValue(
+      new Error("Resend API error (429)"),
+    );
+    const { admin, inserted, updated } = makeAdmin();
+
+    const result = await submitInquiry(admin, VALID);
+
+    expect(result).toEqual({ ok: true, id: "inq-1" });
+    expect(inserted).toHaveLength(1);
+    expect(updated).toEqual([]);
+  });
+
   it("stores the inquiry even with no recipient configured", async () => {
     delete process.env.TECHCLAVE_INQUIRY_EMAIL;
     const { admin, inserted } = makeAdmin();
