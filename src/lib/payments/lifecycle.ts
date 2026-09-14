@@ -76,6 +76,16 @@ export type RefundRequest = z.infer<typeof RefundRequestSchema>;
 // PAYMENT LIFECYCLE SERVICE
 // ===============================
 
+/**
+ * Paystack and Flutterwave require a customer email, and many WhatsApp
+ * customers never give one. The placeholder must be on a reserved domain.
+ * It used to be an address on boka.app — a parked domain someone else controls, whose
+ * mail is already forwarded elsewhere — so provider receipts carrying customer
+ * names and amounts could have been delivered to a stranger. example.com is
+ * reserved by IANA and can never receive mail.
+ */
+const PLACEHOLDER_CUSTOMER_EMAIL = 'noemail@example.com';
+
 export class PaymentLifecycleService {
   private supabase;
   private eventBus;
@@ -826,7 +836,7 @@ export class PaymentLifecycleService {
 
     const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
     const reference = `pay_${request.bookingId}_${Date.now()}`;
-    const email = booking.customer_email || booking.metadata?.customer_email || 'noemail@boka.app';
+    const email = booking.customer_email || booking.metadata?.customer_email || PLACEHOLDER_CUSTOMER_EMAIL;
 
     const resp = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
@@ -861,7 +871,7 @@ export class PaymentLifecycleService {
 
     const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
     const txRef = `pay_${request.bookingId}_${Date.now()}`;
-    const email = booking.customer_email || booking.metadata?.customer_email || 'noemail@boka.app';
+    const email = booking.customer_email || booking.metadata?.customer_email || PLACEHOLDER_CUSTOMER_EMAIL;
     const redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/api/payments/flutterwave/callback`;
 
     const resp = await fetchWithTimeout('https://api.flutterwave.com/v3/payments', {

@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Tells you a Meta price change is coming BEFORE it lands.
@@ -22,7 +22,7 @@ export const LOOKAHEAD_DAYS = 45;
 export const FX_STALE_DAYS = 14;
 
 export interface RateCardWarning {
-  kind: 'quarter_unconfirmed' | 'fx_stale' | 'no_rate_card';
+  kind: "quarter_unconfirmed" | "fx_stale" | "no_rate_card";
   message: string;
   /** The quarter start this concerns, for quarter_unconfirmed. */
   effectiveOn?: string;
@@ -40,8 +40,13 @@ export function daysUntil(target: Date, from: Date): number {
   return Math.ceil((target.getTime() - from.getTime()) / 86_400_000);
 }
 
-interface CardRow { category: string; effective_from: string }
-interface FxRow { as_of: string }
+interface CardRow {
+  category: string;
+  effective_from: string;
+}
+interface FxRow {
+  as_of: string;
+}
 
 /**
  * Everything worth a human's attention about the cost basis. Pure enough to
@@ -56,10 +61,10 @@ export function evaluateRateCard(
 
   if (card.length === 0) {
     out.push({
-      kind: 'no_rate_card',
+      kind: "no_rate_card",
       message:
-        'No message rate card rows. Pricing has fallen back to the compiled-in '
-        + 'constants, which nothing keeps current — apply migration 147.',
+        "No message rate card rows. Pricing has fallen back to the compiled-in " +
+        "constants, which nothing keeps current — apply migration 147.",
     });
   } else {
     const quarter = nextQuarterStart(now);
@@ -72,12 +77,12 @@ export function evaluateRateCard(
       const confirmed = card.some((r) => r.effective_from >= onDate);
       if (!confirmed) {
         out.push({
-          kind: 'quarter_unconfirmed',
+          kind: "quarter_unconfirmed",
           effectiveOn: onDate,
           message:
-            `Meta's next possible price change is ${onDate} (${days} days). The rate `
-            + `card has nothing dated on or after it. Confirm Meta's published rates and `
-            + `add rows — a future-dated row applies itself on the day.`,
+            `Meta's next possible price change is ${onDate} (${days} days). The rate ` +
+            `card has nothing dated on or after it. Confirm Meta's published rates and ` +
+            `add rows — a future-dated row applies itself on the day.`,
         });
       }
     }
@@ -86,18 +91,19 @@ export function evaluateRateCard(
   const asOf = fx?.as_of ? Date.parse(fx.as_of) : NaN;
   if (!Number.isFinite(asOf)) {
     out.push({
-      kind: 'fx_stale',
-      message: 'No USD/NGN reading stored. Message costs are set in USD, so the naira '
-        + 'cost cannot be derived — run the fx-rate worker.',
+      kind: "fx_stale",
+      message:
+        "No USD/NGN reading stored. Message costs are set in USD, so the naira " +
+        "cost cannot be derived — run the fx-rate worker.",
     });
   } else {
     const ageDays = Math.floor((now.getTime() - asOf) / 86_400_000);
     if (ageDays > FX_STALE_DAYS) {
       out.push({
-        kind: 'fx_stale',
+        kind: "fx_stale",
         message:
-          `The USD/NGN rate is ${ageDays} days old. Margins are being modelled on a `
-          + `stale naira, and the naira moves with no announcement — check the fx-rate worker.`,
+          `The USD/NGN rate is ${ageDays} days old. Margins are being modelled on a ` +
+          `stale naira, and the naira moves with no announcement — check the fx-rate worker.`,
       });
     }
   }
@@ -112,10 +118,18 @@ export async function checkRateCard(
 ): Promise<RateCardWarning[]> {
   try {
     const [cardRes, fxRes] = await Promise.all([
-      admin.from('message_rate_card').select('category, effective_from').eq('country_code', 'NG'),
-      admin.from('platform_fx_rates').select('as_of')
-        .eq('base', 'USD').eq('quote', 'NGN')
-        .order('as_of', { ascending: false }).limit(1).maybeSingle(),
+      admin
+        .from("message_rate_card")
+        .select("category, effective_from")
+        .eq("country_code", "NG"),
+      admin
+        .from("platform_fx_rates")
+        .select("as_of")
+        .eq("base", "USD")
+        .eq("quote", "NGN")
+        .order("as_of", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
     return evaluateRateCard(
       (cardRes.data ?? []) as CardRow[],
@@ -123,7 +137,7 @@ export async function checkRateCard(
       now,
     );
   } catch (error) {
-    console.warn('[rateCardWatch] check failed', error);
+    console.warn("[rateCardWatch] check failed", error);
     return [];
   }
 }

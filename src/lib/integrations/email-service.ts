@@ -10,7 +10,7 @@ import { generateCalendarLinks, type BookingEvent } from './universalCalendar';
 import { makeUnsubscribeToken } from '@/lib/email/unsubscribe';
 import { isUnsubscribed } from '@/lib/email/preferences';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
-import { resolveSenderAddress, type EmailSenderKey } from '@/lib/email/senders';
+import { resolveReplyToAddress, resolveSenderAddress, type EmailSenderKey } from '@/lib/email/senders';
 
 /** Secret for signing unsubscribe tokens (mirrors /api/email/unsubscribe). */
 function unsubscribeSecret(): string {
@@ -426,7 +426,7 @@ export async function sendTenantInviteEmail(input: {
   return sendSupportEmail({
     to: input.to,
     senderKey: 'support',
-    replyTo: resolveSenderAddress('support'),
+    replyTo: resolveReplyToAddress(),
     subject: `You're invited to join ${tenantName} on Booka`,
     html: `
       <h2>You're invited to join ${escapeHtml(tenantName)}</h2>

@@ -87,17 +87,19 @@ function emailHtml(alert: WalletAlert): string {
   ].join('');
 }
 
-async function emailOwner(alert: WalletAlert, owner: TenantOwner): Promise<void> {
-  if (!owner.email) return;
+/** Resolves true only when the email provider actually accepted the message. */
+async function emailOwner(alert: WalletAlert, owner: TenantOwner): Promise<boolean> {
+  if (!owner.email) return false;
   // Transactional, never marketing: this must not be suppressed by a marketing
   // opt-out. A tenant who unsubscribed from product mail still needs to know
   // their bot has stopped replying.
-  await sendTransactionalEmail({
+  const result = await sendTransactionalEmail({
     to: owner.email,
     subject: alert.title,
     html: emailHtml(alert),
     text: alert.message,
   });
+  return result?.success === true;
 }
 
 async function whatsappOwner(alert: WalletAlert, owner: TenantOwner): Promise<void> {
@@ -156,17 +158,34 @@ export async function deliverWalletAlert(
       });
     }
 
-    const results = await Promise.allSettled([
+    const [emailResult, whatsappResult] = await Promise.allSettled([
       emailOwner(alert, owner),
       needsWhatsapp ? whatsappOwner(alert, owner) : Promise.resolve(),
     ]);
-    results.forEach((r) => {
+    [emailResult, whatsappResult].forEach((r) => {
       if (r.status === 'rejected') {
         console.warn('[walletAlerts] a delivery channel failed', {
           tenantId: alert.tenantId, reason: r.reason,
         });
       }
     });
+
+    // Email is the channel most likely to fail silently: Resend's free plan
+    // stops at 100 messages a UTC day and rejects everything after that, and an
+    // unverified sending domain rejects everything always. If email did not go
+    // out and WhatsApp was not already used, the owner would get nothing — so
+    // fall back to WhatsApp rather than let a wallet warning disappear.
+    const emailDelivered = emailResult.status === 'fulfilled' && emailResult.value === true;
+    if (!emailDelivered && !needsWhatsapp && owner.phone) {
+      console.info('[walletAlerts] email not delivered, alerting over WhatsApp instead', {
+        tenantId: alert.tenantId, kind: alert.kind,
+      });
+      await whatsappOwner(alert, owner).catch((reason) => {
+        console.warn('[walletAlerts] WhatsApp fallback failed', {
+          tenantId: alert.tenantId, reason,
+        });
+      });
+    }
   } catch (error) {
     // An alert is never worth breaking a send for.
     console.warn('[walletAlerts] deliverWalletAlert failed', { tenantId: alert.tenantId, error });

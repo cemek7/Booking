@@ -1,7 +1,14 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { checkRateCard, type RateCardWarning } from '@/lib/billing/rateCardWatch';
-import { getMeteringMode } from '@/lib/billing/messageRates';
-import { getBookaGatewayPhone } from '@/lib/whatsapp/gatewayPhone';
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  checkRateCard,
+  type RateCardWarning,
+} from "@/lib/billing/rateCardWatch";
+import { getMeteringMode } from "@/lib/billing/messageRates";
+import { getBookaGatewayPhone } from "@/lib/whatsapp/gatewayPhone";
+import {
+  countUnnotifiedInquiries,
+  inquiryRecipient,
+} from "@/lib/inquiries/platformInquiries";
 
 /**
  * Platform-level things a superadmin must not miss.
@@ -13,7 +20,7 @@ import { getBookaGatewayPhone } from '@/lib/whatsapp/gatewayPhone';
  * reads is not a control; the dashboard is.
  */
 
-export type AlertSeverity = 'critical' | 'warning' | 'info';
+export type AlertSeverity = "critical" | "warning" | "info";
 
 export interface PlatformAlert {
   id: string;
@@ -25,9 +32,30 @@ export interface PlatformAlert {
 }
 
 /** Meta stops delivering service messages without a payment method on file. */
-export const META_PAYMENT_DEADLINE = '2026-09-30T23:59:59Z';
+export const META_PAYMENT_DEADLINE = "2026-09-30T23:59:59Z";
 /** Per-message charging begins. */
-export const METERING_CUTOVER = '2026-10-01T00:00:00Z';
+export const METERING_CUTOVER = "2026-10-01T00:00:00Z";
+
+/**
+ * Message types a business-initiated send asks the template registry for, and
+ * which are almost always sent OUTSIDE the customer's 24-hour service window.
+ * Without an approved template for one of these, sendGovernedInitiated holds
+ * and the message is never delivered.
+ */
+export const OUT_OF_WINDOW_MESSAGE_TYPES = [
+  "reservation_reminder_24h",
+  "reservation_reminder_2h",
+  "booking_reminder",
+  "payment_receipt",
+  "rebooking_followup",
+  "rebooking_nudge",
+  "waitlist_slot",
+] as const;
+
+/** "1 inquiry" / "3 inquiries" — the alert text reads as a sentence either way. */
+function pluralInquiries(count: number): string {
+  return `${count} ${count === 1 ? "inquiry" : "inquiries"}`;
+}
 
 export function daysBetween(from: Date, to: Date): number {
   return Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
@@ -35,15 +63,27 @@ export function daysBetween(from: Date, to: Date): number {
 
 export interface PlatformAlertInputs {
   rateCard: RateCardWarning[];
-  meteringMode: 'shadow' | 'live';
+  meteringMode: "shadow" | "live";
   rateConfigured: boolean;
   paymentMethodOnFile: boolean;
   gatewayPhoneSet: boolean;
+  /** Rows in whatsapp_message_charges. Zero means metering is recording nothing. */
+  meteredMessageCount: number;
+  /** Message types from OUT_OF_WINDOW_MESSAGE_TYPES with no approved shared template. */
+  missingTemplateTypes: string[];
+  /** Contact-form inquiries stored but never announced to anyone. */
+  unnotifiedInquiries: number;
+  /** platform_inquiries does not exist: migration 150 is not applied. */
+  inquiriesTableMissing: boolean;
+  /** Whether TECHCLAVE_INQUIRY_EMAIL is set at all. */
+  inquiryRecipientSet: boolean;
   now: Date;
 }
 
 /** Pure, so the severity rules can be tested without a database or a clock. */
-export function buildPlatformAlerts(input: PlatformAlertInputs): PlatformAlert[] {
+export function buildPlatformAlerts(
+  input: PlatformAlertInputs,
+): PlatformAlert[] {
   const alerts: PlatformAlert[] = [];
   const { now } = input;
 
@@ -53,41 +93,141 @@ export function buildPlatformAlerts(input: PlatformAlertInputs): PlatformAlert[]
   if (!input.paymentMethodOnFile) {
     const daysLeft = daysBetween(now, new Date(META_PAYMENT_DEADLINE));
     alerts.push({
-      id: 'meta_payment_method',
-      severity: daysLeft <= 14 ? 'critical' : 'warning',
-      title: daysLeft < 0
-        ? 'Meta payment method is overdue'
-        : `Meta payment method: ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`,
-      message: daysLeft < 0
-        ? 'The deadline has passed. Meta may already have stopped delivering service '
-          + 'messages, which silences every tenant’s assistant at once.'
-        : 'Meta stops delivering service messages from 2026-10-01 for any provider '
-          + 'without a payment method on the WhatsApp Business Account.',
-      action: 'Add a payment method in Meta Business Manager, then set '
-        + 'BOOKA_META_PAYMENT_METHOD_ON_FILE=true.',
+      id: "meta_payment_method",
+      severity: daysLeft <= 14 ? "critical" : "warning",
+      title:
+        daysLeft < 0
+          ? "Meta payment method is overdue"
+          : `Meta payment method: ${daysLeft} day${daysLeft === 1 ? "" : "s"} left`,
+      message:
+        daysLeft < 0
+          ? "The deadline has passed. Meta may already have stopped delivering service " +
+            "messages, which silences every tenant’s assistant at once."
+          : "Meta stops delivering service messages from 2026-10-01 for any provider " +
+            "without a payment method on the WhatsApp Business Account.",
+      action:
+        "Add a payment method in Meta Business Manager, then set " +
+        "BOOKA_META_PAYMENT_METHOD_ON_FILE=true.",
     });
   }
 
   // ── Metering cutover ───────────────────────────────────────────────────────
   const daysToCutover = daysBetween(now, new Date(METERING_CUTOVER));
-  if (input.meteringMode === 'shadow' && daysToCutover <= 0) {
+  if (input.meteringMode === "shadow" && daysToCutover <= 0) {
     alerts.push({
-      id: 'metering_shadow_after_cutover',
-      severity: 'critical',
-      title: 'Metering is still in shadow mode',
-      message: 'Meta is charging Booka for these messages and no tenant is being billed '
-        + 'for them. Every message sent since the cutover is absorbed cost.',
-      action: 'Set BOOKA_MESSAGE_METERING_MODE=live.',
+      id: "metering_shadow_after_cutover",
+      severity: "critical",
+      title: "Metering is still in shadow mode",
+      message:
+        "Meta is charging Booka for these messages and no tenant is being billed " +
+        "for them. Every message sent since the cutover is absorbed cost.",
+      action: "Set BOOKA_MESSAGE_METERING_MODE=live.",
     });
   }
-  if (input.meteringMode === 'live' && !input.rateConfigured) {
+  if (input.meteringMode === "live" && !input.rateConfigured) {
     alerts.push({
-      id: 'metering_live_no_rate',
-      severity: 'warning',
-      title: 'Metering is live on a fallback rate',
-      message: 'Tenants are being charged from the compiled-in provisional rate rather '
-        + 'than a confirmed one.',
-      action: 'Confirm Meta’s published rate and add it to the rate card.',
+      id: "metering_live_no_rate",
+      severity: "warning",
+      title: "Metering is live on a fallback rate",
+      message:
+        "Tenants are being charged from the compiled-in provisional rate rather " +
+        "than a confirmed one.",
+      action: "Confirm Meta’s published rate and add it to the rate card.",
+    });
+  }
+
+  // ── Is metering recording anything at all? ────────────────────────────────
+  // Shadow mode exists to record every send at zero cost, so the charge table
+  // should be filling up NOW. If it is empty, metering is not attached to the
+  // send path — and it will not start working simply because the date changes.
+  // The cutover would then bill nobody while Meta bills Booka for everything,
+  // and the first symptom is an invoice.
+  //
+  // Before the cutover this is a warning: on a system with no traffic yet it is
+  // expected, and saying so is more useful than crying wolf. After it, silence
+  // is money.
+  if (input.meteredMessageCount === 0) {
+    const past = daysBetween(now, new Date(METERING_CUTOVER)) <= 0;
+    alerts.push({
+      id: "metering_recorded_nothing",
+      severity: past ? "critical" : "warning",
+      title: past
+        ? "Metering has recorded no messages since the cutover"
+        : "Metering has never recorded a message",
+      message: past
+        ? "Meta is billing Booka for every message and nothing is being charged back. " +
+          "This is not a delay — the charge table is empty."
+        : "Shadow mode should be recording every send at zero cost. An empty charge table " +
+          "means either no messages have been sent yet, or metering is not attached to the " +
+          "send path — and it will not start working on 1 October by itself.",
+      action: past
+        ? "Check the Meta delivery webhook is reaching /api/webhooks/whatsapp/meta."
+        : "Send a real message through a tenant and confirm a row appears in " +
+          "whatsapp_message_charges.",
+    });
+  }
+
+  // ── Meta templates ─────────────────────────────────────────────────────────
+  // A reminder goes to someone who booked days ago, so it is outside the
+  // 24-hour service window by definition. Outside that window WhatsApp accepts
+  // only an approved template. With none registered the send gate holds, the
+  // reminder is never delivered, and no error is raised anywhere — the tenant
+  // just quietly stops getting the feature they pay for.
+  if (input.missingTemplateTypes.length > 0) {
+    alerts.push({
+      id: "out_of_window_templates_missing",
+      severity: "critical",
+      title: `No approved template for ${input.missingTemplateTypes.length} message type${input.missingTemplateTypes.length === 1 ? "" : "s"}`,
+      message:
+        "These are only ever sent outside the customer’s 24-hour window, where " +
+        "WhatsApp requires an approved template. Every one of them is currently " +
+        `held and never delivered: ${input.missingTemplateTypes.join(", ")}.`,
+      action:
+        "Get each template approved in Meta Business Manager, then run " +
+        "scripts/sql/seed_deliverability_templates.sql with the approved names.",
+    });
+  }
+
+  // ── Inbound inquiries ──────────────────────────────────────────────────────
+  // An inquiry that is stored and never announced is the same failure as a
+  // contact form that posts nowhere: someone asked to talk to us and nobody
+  // knows. The row is stamped only when a notification actually went out, so
+  // anything unstamped means the mail failed or no recipient is configured.
+  if (input.inquiriesTableMissing) {
+    alerts.push({
+      id: "inquiries_table_missing",
+      severity: "critical",
+      title: "The contact form cannot save anything",
+      message:
+        "The platform_inquiries table does not exist, so every visitor who uses " +
+        "the contact form gets an error and nothing is recorded.",
+      action:
+        "Apply db/migrations/150_platform_inquiries.sql to this database.",
+    });
+  }
+  if (!input.inquiryRecipientSet) {
+    alerts.push({
+      id: "inquiry_recipient_missing",
+      severity: input.unnotifiedInquiries > 0 ? "critical" : "warning",
+      title: "Contact-form inquiries are not being emailed to anyone",
+      message:
+        input.unnotifiedInquiries > 0
+          ? `${pluralInquiries(input.unnotifiedInquiries)} ${input.unnotifiedInquiries === 1 ? "is" : "are"} sitting in the database and nobody has been told.`
+          : "The contact form stores inquiries, but no address is configured to " +
+            "receive them, so the first one to arrive will go unseen.",
+      action:
+        "Set TECHCLAVE_INQUIRY_EMAIL to the inbox that should receive them.",
+    });
+  } else if (input.unnotifiedInquiries > 0) {
+    alerts.push({
+      id: "inquiries_unnotified",
+      severity: "critical",
+      title: `${pluralInquiries(input.unnotifiedInquiries)} nobody was told about`,
+      message:
+        "These people used the contact form and the notification email failed. " +
+        "They are waiting on a reply that nobody knows to write.",
+      action:
+        "Read them in platform_inquiries, reply, and check the Resend API key.",
     });
   }
 
@@ -98,12 +238,13 @@ export function buildPlatformAlerts(input: PlatformAlertInputs): PlatformAlert[]
   // activation still succeeds.
   if (!input.gatewayPhoneSet) {
     alerts.push({
-      id: 'gateway_phone_missing',
-      severity: 'warning',
-      title: 'No gateway phone number configured',
-      message: 'Tenants finishing chat onboarding are activated without a booking link. '
-        + 'Their routing code still works, but they have nothing to share or print.',
-      action: 'Set BOOKA_GATEWAY_PHONE to the number customers message.',
+      id: "gateway_phone_missing",
+      severity: "warning",
+      title: "No gateway phone number configured",
+      message:
+        "Tenants finishing chat onboarding are activated without a booking link. " +
+        "Their routing code still works, but they have nothing to share or print.",
+      action: "Set BOOKA_GATEWAY_PHONE to the number customers message.",
     });
   }
 
@@ -112,20 +253,26 @@ export function buildPlatformAlerts(input: PlatformAlertInputs): PlatformAlert[]
     alerts.push({
       id: `rate_card_${w.kind}`,
       // A quarter boundary is a deadline; the others are drift.
-      severity: w.kind === 'quarter_unconfirmed' ? 'warning' : 'warning',
-      title: w.kind === 'quarter_unconfirmed'
-        ? `Meta can change prices on ${w.effectiveOn}`
-        : w.kind === 'fx_stale'
-          ? 'The naira rate is stale'
-          : 'No rate card — pricing is on fallback constants',
+      severity: w.kind === "quarter_unconfirmed" ? "warning" : "warning",
+      title:
+        w.kind === "quarter_unconfirmed"
+          ? `Meta can change prices on ${w.effectiveOn}`
+          : w.kind === "fx_stale"
+            ? "The naira rate is stale"
+            : "No rate card — pricing is on fallback constants",
       message: w.message,
-      action: w.kind === 'fx_stale'
-        ? 'Check the fx-rate worker is scheduled.'
-        : 'Add the confirmed rates to message_rate_card.',
+      action:
+        w.kind === "fx_stale"
+          ? "Check the fx-rate worker is scheduled."
+          : "Add the confirmed rates to message_rate_card.",
     });
   }
 
-  const rank: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 };
+  const rank: Record<AlertSeverity, number> = {
+    critical: 0,
+    warning: 1,
+    info: 2,
+  };
   return alerts.sort((a, b) => rank[a.severity] - rank[b.severity]);
 }
 
@@ -135,13 +282,55 @@ export async function getPlatformAlerts(
   now: Date = new Date(),
 ): Promise<PlatformAlert[]> {
   const rateCard = await checkRateCard(admin, now);
+
+  // head+count: the number is all that matters, so no rows cross the wire.
+  const { count, error: countError } = await admin
+    .from("whatsapp_message_charges")
+    .select("id", { count: "exact", head: true });
+  if (countError) {
+    console.warn(
+      "[platformAlerts] could not count message charges",
+      countError,
+    );
+  }
+  // On a failed count assume there IS data, so a transient read error cannot
+  // manufacture a critical alert.
+  const meteredMessageCount = countError ? 1 : (count ?? 0);
+
+  // Shared (tenant_id IS NULL) templates are the floor every tenant falls back
+  // to. A read error reports nothing missing, so a transient failure cannot
+  // manufacture a critical alert.
+  const { data: templateRows, error: templateError } = await admin
+    .from("message_templates")
+    .select("message_type")
+    .is("tenant_id", null)
+    .eq("status", "approved")
+    .in("message_type", OUT_OF_WINDOW_MESSAGE_TYPES as unknown as string[]);
+  if (templateError) {
+    console.warn(
+      "[platformAlerts] could not read message templates",
+      templateError,
+    );
+  }
+  const inquiries = await countUnnotifiedInquiries(admin);
+  const approved = new Set(
+    (templateRows ?? []).map((r) => r.message_type as string),
+  );
+  const missingTemplateTypes = templateError
+    ? []
+    : OUT_OF_WINDOW_MESSAGE_TYPES.filter((t) => !approved.has(t));
   const attested = process.env.BOOKA_META_PAYMENT_METHOD_ON_FILE;
   return buildPlatformAlerts({
     gatewayPhoneSet: !!getBookaGatewayPhone(),
+    meteredMessageCount,
+    missingTemplateTypes,
+    unnotifiedInquiries: inquiries.count,
+    inquiriesTableMissing: inquiries.tableMissing,
+    inquiryRecipientSet: !!inquiryRecipient(),
     rateCard,
     meteringMode: getMeteringMode(),
     rateConfigured: !!process.env.BOOKA_MESSAGE_RATE_CREDITS,
-    paymentMethodOnFile: !!attested && attested !== 'false',
+    paymentMethodOnFile: !!attested && attested !== "false",
     now,
   });
 }

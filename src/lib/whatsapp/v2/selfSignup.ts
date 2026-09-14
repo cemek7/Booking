@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * The way a new business gets into Booka over chat.
@@ -20,7 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  */
 
 /** Placeholder until step 1 of onboarding learns the real name. */
-export const PENDING_TENANT_NAME = 'New Booka business';
+export const PENDING_TENANT_NAME = "New Booka business";
 
 /**
  * Deliberately narrow. A customer asking "what time do you start?" or "can you
@@ -28,22 +28,22 @@ export const PENDING_TENANT_NAME = 'New Booka business';
  * and not a substring of it.
  */
 const SIGNUP_PHRASES = [
-  'start',
-  'signup',
-  'sign up',
-  'register',
-  'new business',
-  'set up my business',
-  'setup my business',
-  'i want to use booka',
-  'create account',
+  "start",
+  "signup",
+  "sign up",
+  "register",
+  "new business",
+  "set up my business",
+  "setup my business",
+  "i want to use booka",
+  "create account",
 ];
 
 export function isSignupIntent(text: string): boolean {
-  const t = String(text ?? '')
+  const t = String(text ?? "")
     .trim()
     .toLowerCase()
-    .replace(/[.!?,]+$/, '');
+    .replace(/[.!?,]+$/, "");
   if (!t) return false;
   return SIGNUP_PHRASES.includes(t);
 }
@@ -73,10 +73,10 @@ export async function startSelfSignup(
   // nothing, and the resolver checks this same table — but a duplicate tenant
   // is expensive enough to be worth the extra read.
   const { data: existing } = await admin
-    .from('tenant_users')
-    .select('tenant_id')
-    .eq('phone', phone)
-    .eq('role', 'owner')
+    .from("tenant_users")
+    .select("tenant_id")
+    .eq("phone", phone)
+    .eq("role", "owner")
     .limit(1);
 
   const already = (existing ?? []) as Array<{ tenant_id: string }>;
@@ -85,21 +85,23 @@ export async function startSelfSignup(
   }
 
   const { data: tenant, error: tenantError } = await admin
-    .from('tenants')
+    .from("tenants")
     .insert({ name: PENDING_TENANT_NAME, v2_enabled: false })
-    .select('id')
+    .select("id")
     .single();
 
   if (tenantError || !tenant) {
-    console.error('[selfSignup] could not create the tenant', { error: tenantError });
+    console.error("[selfSignup] could not create the tenant", {
+      error: tenantError,
+    });
     return null;
   }
 
   const tenantId = (tenant as { id: string }).id;
 
-  const { error: ownerError } = await admin.from('tenant_users').insert({
+  const { error: ownerError } = await admin.from("tenant_users").insert({
     tenant_id: tenantId,
-    role: 'owner',
+    role: "owner",
     phone,
     services_all: true,
   });
@@ -107,10 +109,11 @@ export async function startSelfSignup(
   if (ownerError) {
     // Without the owner row they cannot be resolved next message and would be
     // asked for a business code again, stranded beside an orphan tenant. Undo.
-    console.error('[selfSignup] owner row failed, removing the orphan tenant', {
-      tenantId, error: ownerError,
+    console.error("[selfSignup] owner row failed, removing the orphan tenant", {
+      tenantId,
+      error: ownerError,
     });
-    await admin.from('tenants').delete().eq('id', tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
     return null;
   }
 
@@ -119,23 +122,26 @@ export async function startSelfSignup(
   // the pipeline only routes to handleOnboarding when current_flow is
   // 'onboarding' or the sender is an owner — so without this the person who
   // just asked to sign up would be handled as one of their own customers.
-  const { error: convError } = await admin.from('whatsapp_conversations').upsert(
-    {
-      channel: 'whatsapp',
-      external_id: phone,
-      phone_number: phone,
-      tenant_id: tenantId,
-      role: 'owner',
-      current_flow: 'onboarding',
-      flow_step: 0,
-      flow_data: { onboarding_step: 0 },
-    },
-    { onConflict: 'phone_number,tenant_id' },
-  );
+  const { error: convError } = await admin
+    .from("whatsapp_conversations")
+    .upsert(
+      {
+        channel: "whatsapp",
+        external_id: phone,
+        phone_number: phone,
+        tenant_id: tenantId,
+        role: "owner",
+        current_flow: "onboarding",
+        flow_step: 0,
+        flow_data: { onboarding_step: 0 },
+      },
+      { onConflict: "phone_number,tenant_id" },
+    );
 
   if (convError) {
-    console.error('[selfSignup] could not open the onboarding conversation', {
-      tenantId, error: convError,
+    console.error("[selfSignup] could not open the onboarding conversation", {
+      tenantId,
+      error: convError,
     });
     // The tenant and owner row are sound, so do not delete them — the next
     // message resolves by phone and the pipeline opens a conversation itself.

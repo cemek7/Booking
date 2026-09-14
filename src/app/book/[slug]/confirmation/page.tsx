@@ -1,6 +1,7 @@
-export const dynamic = 'force-dynamic';
-import Link from 'next/link';
-import ReviewPrompt from '../components/ReviewPrompt';
+export const dynamic = "force-dynamic";
+import Link from "next/link";
+import { LEGAL } from "@/lib/legal/constants";
+import ReviewPrompt from "../components/ReviewPrompt";
 
 interface ConfirmationPageProps {
   // Next 16: params and searchParams are async.
@@ -13,8 +14,8 @@ interface ConfirmationPageProps {
 }
 
 export const metadata = {
-  title: 'Booking Confirmed',
-  description: 'Your appointment has been successfully booked',
+  title: "Booking Confirmed",
+  description: "Your appointment has been successfully booked",
 };
 
 export default async function ConfirmationPage({
@@ -49,7 +50,9 @@ export default async function ConfirmationPage({
 
           {/* Title */}
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">Booking Confirmed!</h1>
+            <h1 className="text-3xl font-bold text-slate-900">
+              Booking Confirmed!
+            </h1>
             <p className="text-slate-600 mt-2">
               Your appointment has been successfully scheduled.
             </p>
@@ -94,7 +97,12 @@ export default async function ConfirmationPage({
 
           {/* Help Text */}
           <div className="text-sm text-slate-600 pt-4">
-            <p>Have questions? Contact us at support@booka.io</p>
+            <p>
+              Have questions? Contact us at{" "}
+              <a href={`mailto:${LEGAL.supportEmail}`} className="underline">
+                {LEGAL.supportEmail}
+              </a>
+            </p>
           </div>
         </div>
       </div>

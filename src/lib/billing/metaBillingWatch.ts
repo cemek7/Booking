@@ -1,6 +1,9 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { deliverWalletAlert } from '@/lib/billing/walletAlerts';
-import { META_PAYMENT_DEADLINE, daysBetween } from '@/lib/billing/platformAlerts';
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { deliverWalletAlert } from "@/lib/billing/walletAlerts";
+import {
+  META_PAYMENT_DEADLINE,
+  daysBetween,
+} from "@/lib/billing/platformAlerts";
 
 /**
  * Warns tenants who own their own Meta billing relationship.
@@ -22,7 +25,7 @@ import { META_PAYMENT_DEADLINE, daysBetween } from '@/lib/billing/platformAlerts
  * the one path that reaches an owner who has only ever used chat.
  */
 
-const NOTIFICATION_KIND = 'meta_payment_method';
+const NOTIFICATION_KIND = "meta_payment_method";
 
 export interface AtRiskTenant {
   tenantId: string;
@@ -53,17 +56,24 @@ export async function findTenantsOwningMetaBilling(
   admin: SupabaseClient,
 ): Promise<AtRiskTenant[]> {
   const { data, error } = await admin
-    .from('whatsapp_configurations')
-    .select('tenant_id, meta_billing_owner, meta_connection_source, meta_phone_number_id')
-    .eq('provider', 'meta')
-    .eq('active', true);
+    .from("whatsapp_configurations")
+    .select(
+      "tenant_id, meta_billing_owner, meta_connection_source, meta_phone_number_id",
+    )
+    .eq("provider", "meta")
+    .eq("active", true);
 
   if (error) {
-    console.error('[metaBillingWatch] could not read whatsapp_configurations', error);
+    console.error(
+      "[metaBillingWatch] could not read whatsapp_configurations",
+      error,
+    );
     return [];
   }
 
-  const sharedGatewayId = (process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID || '').trim();
+  const sharedGatewayId = (
+    process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID || ""
+  ).trim();
 
   const rows = (data ?? []) as Array<{
     tenant_id: string;
@@ -75,18 +85,24 @@ export async function findTenantsOwningMetaBilling(
   return rows
     .filter((r) => {
       // Explicit records first.
-      if (r.meta_billing_owner === 'booka') return false;
-      if (r.meta_billing_owner === 'client') return true;
-      if (r.meta_connection_source === 'embedded_signup' || r.meta_connection_source === 'direct') {
+      if (r.meta_billing_owner === "booka") return false;
+      if (r.meta_billing_owner === "client") return true;
+      if (
+        r.meta_connection_source === "embedded_signup" ||
+        r.meta_connection_source === "direct"
+      ) {
         return true;
       }
       // Nothing recorded: the number itself says who owns the account.
-      const own = (r.meta_phone_number_id || '').trim();
-      if (!own) return false;                       // no number of their own
-      if (sharedGatewayId && own === sharedGatewayId) return false;  // Booka's gateway
+      const own = (r.meta_phone_number_id || "").trim();
+      if (!own) return false; // no number of their own
+      if (sharedGatewayId && own === sharedGatewayId) return false; // Booka's gateway
       return true;
     })
-    .map((r) => ({ tenantId: r.tenant_id, connectionSource: r.meta_connection_source }));
+    .map((r) => ({
+      tenantId: r.tenant_id,
+      connectionSource: r.meta_connection_source,
+    }));
 }
 
 /** True when this tenant already got the warning today. */
@@ -95,44 +111,56 @@ async function alreadyWarnedToday(
   tenantId: string,
   now: Date,
 ): Promise<boolean> {
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dayStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
   const { data, error } = await admin
-    .from('notifications')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('meta->>kind', NOTIFICATION_KIND)
-    .gte('created_at', dayStart.toISOString())
+    .from("notifications")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("meta->>kind", NOTIFICATION_KIND)
+    .gte("created_at", dayStart.toISOString())
     .limit(1);
 
   if (error) {
     // Fail toward NOT sending: a duplicate warning every hour would train the
     // owner to ignore the one that matters.
-    console.warn('[metaBillingWatch] dedupe check failed, skipping', { tenantId, error });
+    console.warn("[metaBillingWatch] dedupe check failed, skipping", {
+      tenantId,
+      error,
+    });
     return true;
   }
   return (data ?? []).length > 0;
 }
 
-export function buildWarning(daysLeft: number): { title: string; message: string } {
+export function buildWarning(daysLeft: number): {
+  title: string;
+  message: string;
+} {
   if (daysLeft < 0) {
     return {
-      title: 'Your WhatsApp account needs a payment method',
+      title: "Your WhatsApp account needs a payment method",
       message:
-        'WhatsApp now charges per message, and your business has its own WhatsApp Business '
-        + 'account. Without a payment method on it, Meta stops delivering your replies — your '
-        + 'assistant may already be silent. Add a card in Meta Business Manager to restore it.',
+        "WhatsApp now charges per message, and your business has its own WhatsApp Business " +
+        "account. Without a payment method on it, Meta stops delivering your replies — your " +
+        "assistant may already be silent. Add a card in Meta Business Manager to restore it.",
     };
   }
   return {
-    title: `Add a payment method to your WhatsApp account (${daysLeft} day${daysLeft === 1 ? '' : 's'} left)`,
+    title: `Add a payment method to your WhatsApp account (${daysLeft} day${daysLeft === 1 ? "" : "s"} left)`,
     message:
-      'From 1 October WhatsApp charges per message, and your business has its own WhatsApp '
-      + 'Business account. If there is no payment method on it by 30 September, Meta stops '
-      + 'delivering your replies and your assistant goes quiet. Add a card in Meta Business Manager.',
+      "From 1 October WhatsApp charges per message, and your business has its own WhatsApp " +
+      "Business account. If there is no payment method on it by 30 September, Meta stops " +
+      "delivering your replies and your assistant goes quiet. Add a card in Meta Business Manager.",
   };
 }
 
-export interface WatchResult { checked: number; warned: number; skipped: number }
+export interface WatchResult {
+  checked: number;
+  warned: number;
+  skipped: number;
+}
 
 /**
  * Warns every at-risk tenant, at most once a day each. Never throws: this runs
@@ -151,20 +179,30 @@ export async function runMetaPaymentWatch(
 
   for (const t of tenants) {
     try {
-      if (await alreadyWarnedToday(admin, t.tenantId, now)) { skipped += 1; continue; }
+      if (await alreadyWarnedToday(admin, t.tenantId, now)) {
+        skipped += 1;
+        continue;
+      }
       await deliverWalletAlert(admin, {
         tenantId: t.tenantId,
-        kind: 'wallet_handoff',
+        kind: "wallet_handoff",
         title,
         message,
-        meta: { kind: NOTIFICATION_KIND, days_left: daysLeft, connection_source: t.connectionSource },
+        meta: {
+          kind: NOTIFICATION_KIND,
+          days_left: daysLeft,
+          connection_source: t.connectionSource,
+        },
         // Their assistant stops entirely if this is missed, and the owners most
         // likely to miss it are the ones who never open the dashboard.
         whatsappOwner: true,
       });
       warned += 1;
     } catch (error) {
-      console.error('[metaBillingWatch] failed for tenant', { tenantId: t.tenantId, error });
+      console.error("[metaBillingWatch] failed for tenant", {
+        tenantId: t.tenantId,
+        error,
+      });
     }
   }
 

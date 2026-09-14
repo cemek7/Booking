@@ -1,9 +1,9 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   type MessageCategory,
   resolveMessageCostCredits,
   getMessageMarkup,
-} from '@/lib/billing/messageRates';
+} from "@/lib/billing/messageRates";
 
 /**
  * The cost basis for a WhatsApp message: Meta's USD price times the naira rate.
@@ -18,8 +18,8 @@ import {
  * bad afternoon must not add latency to an inbound reply.
  */
 
-const RATE_TABLE = 'message_rate_card';
-const FX_TABLE = 'platform_fx_rates';
+const RATE_TABLE = "message_rate_card";
+const FX_TABLE = "platform_fx_rates";
 
 /** How long a loaded rate card is trusted before re-reading. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -40,10 +40,21 @@ export interface RateBasis {
   fallback: boolean;
 }
 
-interface CardRow { category: string; cost_usd: number | string; effective_from: string }
-interface FxRow { rate: number | string; as_of: string }
+interface CardRow {
+  category: string;
+  cost_usd: number | string;
+  effective_from: string;
+}
+interface FxRow {
+  rate: number | string;
+  as_of: string;
+}
 
-interface CacheEntry { at: number; card: CardRow[]; fx: FxRow | null }
+interface CacheEntry {
+  at: number;
+  card: CardRow[];
+  fx: FxRow | null;
+}
 let cache: CacheEntry | null = null;
 
 /** Drops the cache. Used by the FX worker after it writes, and by tests. */
@@ -55,18 +66,29 @@ async function load(admin: SupabaseClient): Promise<CacheEntry> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache;
 
   const [cardRes, fxRes] = await Promise.all([
-    admin.from(RATE_TABLE).select('category, cost_usd, effective_from')
-      .eq('country_code', 'NG').order('effective_from', { ascending: false }),
-    admin.from(FX_TABLE).select('rate, as_of')
-      .eq('base', 'USD').eq('quote', 'NGN')
-      .order('as_of', { ascending: false }).limit(1).maybeSingle(),
+    admin
+      .from(RATE_TABLE)
+      .select("category, cost_usd, effective_from")
+      .eq("country_code", "NG")
+      .order("effective_from", { ascending: false }),
+    admin
+      .from(FX_TABLE)
+      .select("rate, as_of")
+      .eq("base", "USD")
+      .eq("quote", "NGN")
+      .order("as_of", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   if (cardRes.error) {
-    console.warn('[rateCard] rate card read failed, using constants', cardRes.error);
+    console.warn(
+      "[rateCard] rate card read failed, using constants",
+      cardRes.error,
+    );
   }
   if (fxRes.error) {
-    console.warn('[rateCard] fx read failed, using constants', fxRes.error);
+    console.warn("[rateCard] fx read failed, using constants", fxRes.error);
   }
 
   // On error treat the source as empty rather than trusting `data` to be null:
@@ -79,10 +101,16 @@ async function load(admin: SupabaseClient): Promise<CacheEntry> {
   return cache;
 }
 
-function pickRate(rows: CardRow[], category: MessageCategory, at: Date): number | null {
+function pickRate(
+  rows: CardRow[],
+  category: MessageCategory,
+  at: Date,
+): number | null {
   // Rows arrive newest-first, so the first one already in effect is the answer.
   const onDate = at.toISOString().slice(0, 10);
-  const hit = rows.find((r) => r.category === category && r.effective_from <= onDate);
+  const hit = rows.find(
+    (r) => r.category === category && r.effective_from <= onDate,
+  );
   if (!hit) return null;
   const n = Number(hit.cost_usd);
   return Number.isFinite(n) && n >= 0 ? n : null;
@@ -100,7 +128,7 @@ export async function resolveCostBasis(
   category: MessageCategory | null,
   at: Date = new Date(),
 ): Promise<RateBasis> {
-  const cat = category ?? 'service';
+  const cat = category ?? "service";
   try {
     const { card, fx } = await load(admin);
     const costUsd = pickRate(card, cat, at);
@@ -108,7 +136,8 @@ export async function resolveCostBasis(
 
     if (costUsd === null || !Number.isFinite(fxRate) || fxRate <= 0) {
       return {
-        costUsd: 0, fxRate: 0,
+        costUsd: 0,
+        fxRate: 0,
         costCredits: resolveMessageCostCredits(cat),
         fxAsOf: fx?.as_of ?? null,
         fallback: true,
@@ -116,15 +145,20 @@ export async function resolveCostBasis(
     }
 
     return {
-      costUsd, fxRate,
+      costUsd,
+      fxRate,
       costCredits: costUsd * fxRate,
       fxAsOf: fx?.as_of ?? null,
       fallback: false,
     };
   } catch (error) {
-    console.warn('[rateCard] cost basis lookup threw, using constants', { category: cat, error });
+    console.warn("[rateCard] cost basis lookup threw, using constants", {
+      category: cat,
+      error,
+    });
     return {
-      costUsd: 0, fxRate: 0,
+      costUsd: 0,
+      fxRate: 0,
       costCredits: resolveMessageCostCredits(cat),
       fxAsOf: null,
       fallback: true,
@@ -149,13 +183,18 @@ export async function resolveSellCredits(
   const basis = await resolveCostBasis(admin, category, at);
   const listPrice = basis.costCredits * getMessageMarkup();
 
-  const hasOverride = typeof tenantRate === 'number' && Number.isFinite(tenantRate) && tenantRate > 0;
-  if (!hasOverride || category === 'marketing') return listPrice;
+  const hasOverride =
+    typeof tenantRate === "number" &&
+    Number.isFinite(tenantRate) &&
+    tenantRate > 0;
+  if (!hasOverride || category === "marketing") return listPrice;
 
   const floor = basis.costCredits * MIN_MARKUP;
   if (tenantRate < floor) {
-    console.warn('[rateCard] tenant rate is below the margin floor, clamping', {
-      tenantRate, floor, category,
+    console.warn("[rateCard] tenant rate is below the margin floor, clamping", {
+      tenantRate,
+      floor,
+      category,
     });
     return floor;
   }
