@@ -225,7 +225,9 @@ describe('Email Service - Integration', () => {
 
       const payload = getPayload();
       expect(payload.from).toBe('support@mail.techclave.cloud');
-      expect(payload.reply_to).toBe('support@mail.techclave.cloud');
+      // The sending subdomain cannot receive mail; replies must go to the apex,
+      // where Cloudflare Email Routing delivers them.
+      expect(payload.reply_to).toBe('support@techclave.cloud');
       expect(String(payload.html)).toContain('accept-invite?token=abc');
       expect(String(payload.html)).toContain('Booka HQ');
     });
