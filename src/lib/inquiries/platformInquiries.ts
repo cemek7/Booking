@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { BlockList, isIP } from "net";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { defaultLogger } from "@/lib/logger";
@@ -53,22 +54,92 @@ export type InquiryResult =
 /**
  * IP is needed to throttle a flood and for nothing else, so only a salted hash
  * is kept. Without a salt the hash of an IPv4 address is trivially reversible —
- * the whole space is four billion entries.
+ * the whole space is four billion entries — so the fallback is a secret every
+ * deployment is guaranteed to have, never an empty string.
  */
 export function hashIp(ip: string | null | undefined): string | null {
   if (!ip) return null;
-  const salt = process.env.INQUIRY_IP_SALT ?? process.env.NEXTAUTH_SECRET ?? "";
+  const salt =
+    process.env.INQUIRY_IP_SALT ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
   return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
 }
 
-/** First hop in X-Forwarded-For is the client; the rest are proxies. */
+/**
+ * Cloudflare's published edge ranges (cloudflare.com/ips). These change rarely;
+ * an outdated list fails safe, falling back to the edge address rather than
+ * trusting a header an attacker could have written.
+ */
+const CLOUDFLARE_RANGES: Array<[string, number, "ipv4" | "ipv6"]> = [
+  ["173.245.48.0", 20, "ipv4"],
+  ["103.21.244.0", 22, "ipv4"],
+  ["103.22.200.0", 22, "ipv4"],
+  ["103.31.4.0", 22, "ipv4"],
+  ["141.101.64.0", 18, "ipv4"],
+  ["108.162.192.0", 18, "ipv4"],
+  ["190.93.240.0", 20, "ipv4"],
+  ["188.114.96.0", 20, "ipv4"],
+  ["197.234.240.0", 22, "ipv4"],
+  ["198.41.128.0", 17, "ipv4"],
+  ["162.158.0.0", 15, "ipv4"],
+  ["104.16.0.0", 13, "ipv4"],
+  ["104.24.0.0", 14, "ipv4"],
+  ["172.64.0.0", 13, "ipv4"],
+  ["131.0.72.0", 22, "ipv4"],
+  ["2400:cb00::", 32, "ipv6"],
+  ["2606:4700::", 32, "ipv6"],
+  ["2803:f800::", 32, "ipv6"],
+  ["2405:b500::", 32, "ipv6"],
+  ["2405:8100::", 32, "ipv6"],
+  ["2a06:98c0::", 29, "ipv6"],
+  ["2c0f:f248::", 32, "ipv6"],
+];
+
+const cloudflareEdges = new BlockList();
+for (const [network, prefix, family] of CLOUDFLARE_RANGES) {
+  cloudflareEdges.addSubnet(network, prefix, family);
+}
+
+function normaliseIp(raw: string | null | undefined): string | null {
+  const ip = raw?.trim().replace(/^::ffff:/i, "");
+  return ip && isIP(ip) ? ip : null;
+}
+
+function isCloudflareEdge(ip: string): boolean {
+  const family = isIP(ip) === 6 ? "ipv6" : "ipv4";
+  return cloudflareEdges.check(ip, family);
+}
+
+/**
+ * The address to rate-limit on.
+ *
+ * The public site reaches the app two ways: techclave.cloud through
+ * Cloudflare's proxy, and the app hostnames straight to nginx. So:
+ *
+ *   - The peer is what our own nginx saw: X-Real-IP, which it overwrites, or
+ *     failing that the last X-Forwarded-For hop, which it appends. The FIRST
+ *     X-Forwarded-For hop is whatever the client chose to send, so it is never
+ *     used — trusting it would let anyone dodge the limit with a made-up header.
+ *   - If that peer is a Cloudflare edge, every visitor behind the same edge
+ *     would share one address and one visitor's messages would lock out the
+ *     rest. Only then is CF-Connecting-IP used, because only then did Cloudflare
+ *     write it. A request that went straight to nginx cannot use a forged
+ *     CF-Connecting-IP to change its identity.
+ */
 export function clientIpFrom(headers: Headers): string | null {
-  const forwarded = headers.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+  const forwardedHops = (headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((hop) => hop.trim())
+    .filter(Boolean);
+
+  const peer =
+    normaliseIp(headers.get("x-real-ip")) ??
+    normaliseIp(forwardedHops[forwardedHops.length - 1]);
+  if (!peer) return null;
+
+  if (isCloudflareEdge(peer)) {
+    return normaliseIp(headers.get("cf-connecting-ip")) ?? peer;
   }
-  return headers.get("x-real-ip");
+  return peer;
 }
 
 /**
@@ -128,6 +199,11 @@ function inquiryEmailHtml(input: InquiryInput, id: string | null): string {
     `<p style="white-space:pre-wrap">${esc(input.message)}</p>`,
     id ? `<p style="color:#8a8f8c;font-size:12px">Inquiry ${esc(id)}</p>` : "",
   ].join("");
+}
+
+/** Subjects are a single header line; visitor text must not break it. */
+function oneLine(text: string): string {
+  return text.replace(/[\r\n]+/g, " ").slice(0, 200);
 }
 
 /** Where inquiry notifications go. Without it nobody is told. */
@@ -222,7 +298,9 @@ export async function submitInquiry(
   if (to) {
     const sent = await sendTransactionalEmail({
       to,
-      subject: `Techclave inquiry — ${input.name}${input.company ? ` (${input.company})` : ""}`,
+      subject: oneLine(
+        `Techclave inquiry — ${input.name}${input.company ? ` (${input.company})` : ""}`,
+      ),
       html: inquiryEmailHtml(input, id),
       // So hitting reply in the inbox answers the person, not the mailer.
       replyTo: input.email,
@@ -247,10 +325,23 @@ export async function submitInquiry(
   return { ok: true, id };
 }
 
+export interface UnnotifiedInquiries {
+  count: number;
+  /**
+   * The table does not exist, so migration 150 has not been applied. The
+   * contact form fails for every visitor in that state, which is worth saying
+   * out loud rather than reporting a reassuring zero.
+   */
+  tableMissing: boolean;
+}
+
+/** PostgREST and Postgres codes for "no such table". */
+const MISSING_TABLE_CODES = new Set(["PGRST205", "42P01"]);
+
 /** Inquiries nobody has been told about. Drives the superadmin alert. */
 export async function countUnnotifiedInquiries(
   admin: SupabaseClient,
-): Promise<number> {
+): Promise<UnnotifiedInquiries> {
   const { count, error } = await admin
     .from("platform_inquiries")
     .select("id", { count: "exact", head: true })
@@ -258,11 +349,16 @@ export async function countUnnotifiedInquiries(
     .is("handled_at", null);
 
   if (error) {
+    if (MISSING_TABLE_CODES.has(String(error.code))) {
+      return { count: 0, tableMissing: true };
+    }
+    // Any other read error is treated as transient and reports nothing, so a
+    // blip cannot manufacture a critical alert.
     defaultLogger.warn(
       "[inquiries] could not count unnotified inquiries",
       error,
     );
-    return 0;
+    return { count: 0, tableMissing: false };
   }
-  return count ?? 0;
+  return { count: count ?? 0, tableMissing: false };
 }

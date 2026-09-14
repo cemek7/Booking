@@ -8,6 +8,7 @@
  * after the email really went out.
  */
 
+import { createHash } from "crypto";
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -22,6 +23,7 @@ jest.mock("@/lib/logger", () => ({
 
 import {
   clientIpFrom,
+  countUnnotifiedInquiries,
   hashIp,
   publicContactEmail,
   RATE_LIMIT_MAX,
@@ -247,21 +249,106 @@ describe("IP handling", () => {
     expect(hashIp("")).toBeNull();
   });
 
-  it("takes the client from the first X-Forwarded-For hop, not the proxy", () => {
+  it("is salted even when no dedicated salt is configured", () => {
+    const savedSalt = process.env.INQUIRY_IP_SALT;
+    const savedKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.INQUIRY_IP_SALT;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-secret";
+    const unsalted = createHash("sha256").update(":102.89.1.4").digest("hex");
+    // An unsalted IPv4 hash is reversible by enumerating the address space.
+    expect(hashIp("102.89.1.4")).not.toBe(unsalted);
+    if (savedSalt === undefined) delete process.env.INQUIRY_IP_SALT;
+    else process.env.INQUIRY_IP_SALT = savedSalt;
+    if (savedKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = savedKey;
+  });
+
+  it("uses the address our nginx saw, not the first X-Forwarded-For hop", () => {
+    // The first hop is whatever the client sent. Trusting it would let anyone
+    // dodge the rate limit with a fresh made-up header on every request.
     const headers = new Headers({
-      "x-forwarded-for": "102.89.1.4, 10.0.0.1, 10.0.0.2",
+      "x-forwarded-for": "6.6.6.6, 102.89.1.4",
+      "x-real-ip": "102.89.1.4",
     });
     expect(clientIpFrom(headers)).toBe("102.89.1.4");
   });
 
-  it("falls back to X-Real-IP", () => {
-    expect(clientIpFrom(new Headers({ "x-real-ip": "102.89.1.4" }))).toBe(
-      "102.89.1.4",
-    );
+  it("falls back to the last X-Forwarded-For hop, which nginx appended", () => {
+    const headers = new Headers({ "x-forwarded-for": "6.6.6.6, 102.89.1.4" });
+    expect(clientIpFrom(headers)).toBe("102.89.1.4");
+  });
+
+  it("uses CF-Connecting-IP when the request really came through Cloudflare", () => {
+    // Otherwise every visitor behind one Cloudflare edge shares a rate limit.
+    const headers = new Headers({
+      "x-real-ip": "172.70.10.20",
+      "cf-connecting-ip": "102.89.1.4",
+    });
+    expect(clientIpFrom(headers)).toBe("102.89.1.4");
+  });
+
+  it("ignores a forged CF-Connecting-IP on a request that bypassed Cloudflare", () => {
+    const headers = new Headers({
+      "x-real-ip": "102.89.1.4",
+      "cf-connecting-ip": "1.2.3.4",
+    });
+    expect(clientIpFrom(headers)).toBe("102.89.1.4");
+  });
+
+  it("recognises Cloudflare's IPv6 edges too", () => {
+    const headers = new Headers({
+      "x-real-ip": "2606:4700:10::6816:1",
+      "cf-connecting-ip": "2c0f:2a80::1",
+    });
+    expect(clientIpFrom(headers)).toBe("2c0f:2a80::1");
+  });
+
+  it("rejects header values that are not addresses", () => {
+    expect(clientIpFrom(new Headers({ "x-real-ip": "not-an-ip" }))).toBeNull();
   });
 
   it("is null when the request carries no address at all", () => {
     expect(clientIpFrom(new Headers())).toBeNull();
+  });
+});
+
+describe("countUnnotifiedInquiries", () => {
+  function countingAdmin(result: {
+    count?: number;
+    error?: { code: string } | null;
+  }) {
+    const chain: Record<string, unknown> = {};
+    Object.assign(chain, {
+      select: () => chain,
+      is: () => chain,
+      then: (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({
+          count: result.count ?? null,
+          error: result.error ?? null,
+        }).then(resolve),
+    });
+    return { from: () => chain } as unknown as SupabaseClient;
+  }
+
+  it("reports the table missing rather than a reassuring zero", async () => {
+    await expect(
+      countUnnotifiedInquiries(countingAdmin({ error: { code: "PGRST205" } })),
+    ).resolves.toEqual({ count: 0, tableMissing: true });
+  });
+
+  it("treats other read errors as transient", async () => {
+    await expect(
+      countUnnotifiedInquiries(countingAdmin({ error: { code: "57014" } })),
+    ).resolves.toEqual({ count: 0, tableMissing: false });
+  });
+
+  it("returns the count when the read succeeds", async () => {
+    await expect(
+      countUnnotifiedInquiries(countingAdmin({ count: 4 })),
+    ).resolves.toEqual({
+      count: 4,
+      tableMissing: false,
+    });
   });
 });
 

@@ -16,6 +16,7 @@ const BASE = {
   meteredMessageCount: 42,
   missingTemplateTypes: [] as string[],
   unnotifiedInquiries: 0,
+  inquiriesTableMissing: false,
   inquiryRecipientSet: true,
   now: new Date("2026-09-08T00:00:00Z"),
 };
@@ -222,5 +223,16 @@ describe("metering actually recording", () => {
     expect(a.id).toBe("inquiry_recipient_missing");
     expect(a.severity).toBe("critical");
     expect(a.message).toContain("2 inquiries are");
+  });
+
+  it("is critical when the inquiries table has not been migrated", () => {
+    const alerts = buildPlatformAlerts({
+      ...BASE,
+      inquiriesTableMissing: true,
+    });
+    const a = alerts.find((x) => x.id === "inquiries_table_missing");
+    // Every visitor gets an error; the fix is one migration, so name it.
+    expect(a?.severity).toBe("critical");
+    expect(a?.action).toContain("150_platform_inquiries.sql");
   });
 });
