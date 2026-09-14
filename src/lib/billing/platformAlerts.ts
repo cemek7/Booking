@@ -73,6 +73,8 @@ export interface PlatformAlertInputs {
   missingTemplateTypes: string[];
   /** Contact-form inquiries stored but never announced to anyone. */
   unnotifiedInquiries: number;
+  /** platform_inquiries does not exist: migration 150 is not applied. */
+  inquiriesTableMissing: boolean;
   /** Whether TECHCLAVE_INQUIRY_EMAIL is set at all. */
   inquiryRecipientSet: boolean;
   now: Date;
@@ -191,6 +193,18 @@ export function buildPlatformAlerts(
   // contact form that posts nowhere: someone asked to talk to us and nobody
   // knows. The row is stamped only when a notification actually went out, so
   // anything unstamped means the mail failed or no recipient is configured.
+  if (input.inquiriesTableMissing) {
+    alerts.push({
+      id: "inquiries_table_missing",
+      severity: "critical",
+      title: "The contact form cannot save anything",
+      message:
+        "The platform_inquiries table does not exist, so every visitor who uses " +
+        "the contact form gets an error and nothing is recorded.",
+      action:
+        "Apply db/migrations/150_platform_inquiries.sql to this database.",
+    });
+  }
   if (!input.inquiryRecipientSet) {
     alerts.push({
       id: "inquiry_recipient_missing",
@@ -298,6 +312,7 @@ export async function getPlatformAlerts(
       templateError,
     );
   }
+  const inquiries = await countUnnotifiedInquiries(admin);
   const approved = new Set(
     (templateRows ?? []).map((r) => r.message_type as string),
   );
@@ -309,7 +324,8 @@ export async function getPlatformAlerts(
     gatewayPhoneSet: !!getBookaGatewayPhone(),
     meteredMessageCount,
     missingTemplateTypes,
-    unnotifiedInquiries: await countUnnotifiedInquiries(admin),
+    unnotifiedInquiries: inquiries.count,
+    inquiriesTableMissing: inquiries.tableMissing,
     inquiryRecipientSet: !!inquiryRecipient(),
     rateCard,
     meteringMode: getMeteringMode(),

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { getTenantWhatsAppProviderClient } from "@/lib/whatsapp/providers/providerSelection";
 import { defaultLogger } from "@/lib/logger";
 import { siasOperations } from "@/lib/sias-operations";
@@ -47,16 +48,22 @@ interface ReminderOutcome {
  * template outside it, and holds when neither is available.
  */
 async function sendGovernedReminder(
-  supabase: SupabaseClient,
   tenantId: string,
   client: WhatsAppProviderClient,
   recipient: string,
   messageType: string,
   text: string,
 ): Promise<ReminderOutcome> {
-  const conv = await loadConversationFlags(supabase, tenantId, recipient);
+  // The gate reads and writes platform infrastructure — send-governor counters,
+  // number quality, the shared template registry — so it always runs on the
+  // service-role client, exactly as every other governed sender does. The
+  // manual /api/reminders/run path hands this runner a user's RLS-scoped
+  // session client; passing that through would let row-level security quietly
+  // hide the shared templates and drop the governor's writes.
+  const admin = createSupabaseAdminClient();
+  const conv = await loadConversationFlags(admin, tenantId, recipient);
 
-  const result = await sendGovernedInitiated(supabase, {
+  const result = await sendGovernedInitiated(admin, {
     tenantId,
     recipient,
     messageType,
@@ -97,7 +104,6 @@ async function sendGovernedReminder(
  * would strand that reminder permanently. Any error is a transient failure.
  */
 async function trySendGovernedReminder(
-  supabase: SupabaseClient,
   tenantId: string,
   client: WhatsAppProviderClient,
   recipient: string,
@@ -106,7 +112,6 @@ async function trySendGovernedReminder(
 ): Promise<ReminderOutcome> {
   try {
     return await sendGovernedReminder(
-      supabase,
       tenantId,
       client,
       recipient,
@@ -150,9 +155,10 @@ async function fetchCustomerNames(
  * Every send goes through the Meta send gate, so a reminder is only ever marked
  * delivered when the provider actually accepted it.
  *
- * Tenant scoping is enforced by the explicit `.eq('tenant_id', tenantId)` on every query, so this is
- * safe to call with either an RLS-scoped route client (session path: /api/reminders/run) or a
- * service-role admin client (cron path: /api/cron/reminders iterating all tenants).
+ * Tenant scoping is enforced by the explicit `.eq('tenant_id', tenantId)` on every query, so the
+ * reminder and reservation reads are safe with either an RLS-scoped route client (session path:
+ * /api/reminders/run) or a service-role admin client (cron path: /api/cron/reminders). The send
+ * gate itself always uses the service-role client; see sendGovernedReminder.
  */
 export async function runRemindersForTenant(
   supabase: SupabaseClient,
@@ -177,7 +183,18 @@ export async function runRemindersForTenant(
   let processed = 0;
   let held = 0;
 
-  const client = await getTenantWhatsAppProviderClient(tenantId);
+  // Resolved after the claim, so it must not throw: an exception here would
+  // abort the run with every claimed row stranded at 'processing'. A failure is
+  // treated as "no provider", which returns those rows to pending.
+  let client: WhatsAppProviderClient | null = null;
+  try {
+    client = await getTenantWhatsAppProviderClient(tenantId);
+  } catch (err) {
+    defaultLogger.error(
+      "Could not resolve WhatsApp provider for reminders",
+      err,
+    );
+  }
 
   for (const r of rows ?? []) {
     try {
@@ -202,7 +219,6 @@ export async function runRemindersForTenant(
 
       const outcome: ReminderOutcome = client
         ? await trySendGovernedReminder(
-            supabase,
             tenantId,
             client,
             toNumber,
@@ -355,7 +371,6 @@ export async function runRemindersForTenant(
       const msg = `Hi ${name}, your appointment is tomorrow (${apptDate}) at ${apptTime}. Reply YES to confirm or CHANGE to reschedule.`;
       try {
         const outcome = await sendGovernedReminder(
-          supabase,
           tenantId,
           client,
           r.customer_number,
@@ -421,7 +436,6 @@ export async function runRemindersForTenant(
       const msg = `Reminder: your appointment is in 2 hours at ${apptTime}. Can't make it? Reply CANCEL to free your slot.`;
       try {
         const outcome = await sendGovernedReminder(
-          supabase,
           tenantId,
           client,
           r.customer_number,

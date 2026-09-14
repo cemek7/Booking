@@ -4,6 +4,11 @@ import BrandMark from "@/components/brand/BrandMark";
 import { ContactForm } from "@/components/contact/ContactForm";
 import { publicContactEmail } from "@/lib/inquiries/platformInquiries";
 
+// Rendered per request, not at build time. The published address comes from an
+// environment variable set on the server, and the image is built in CI where it
+// is not set — a prerendered page would ship without it forever.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Contact — Techclave",
   description:

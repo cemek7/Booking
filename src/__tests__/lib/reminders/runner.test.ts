@@ -30,6 +30,16 @@ jest.mock("@/lib/whatsapp/v2/outboundBranding", () => ({
     async (_t: string, _p: string, text: string) => text,
   ),
 }));
+const mockAdminClient = { __admin: true };
+jest.mock("@/lib/supabase/server", () => ({
+  createSupabaseAdminClient: () => mockAdminClient,
+}));
+jest.mock("@/lib/whatsapp/v2/deliverability/conversationFlags", () => ({
+  loadConversationFlags: jest.fn(async () => ({
+    last_inbound_at: null,
+    opted_out_at: null,
+  })),
+}));
 jest.mock("@/lib/logger", () => ({
   defaultLogger: { error: jest.fn(), warn: jest.fn(), info: jest.fn() },
 }));
@@ -267,6 +277,31 @@ describe("runRemindersForTenant — 24h reservation reminders", () => {
   });
 });
 
+describe("runRemindersForTenant — client scope", () => {
+  it("runs the send gate on the service-role client, never the caller's session client", async () => {
+    // /api/reminders/run passes a user's RLS-scoped client. The gate reads the
+    // shared template registry and writes governor counters; under RLS those
+    // reads come back empty and the writes are dropped without an error.
+    mockGovernedSend.mockResolvedValue({
+      sent: true,
+      mode: "template",
+      reason: "sent",
+    });
+    const { client } = makeSupabase({ due24h: [reservationDue24h()] });
+
+    await runRemindersForTenant(client, TENANT);
+
+    expect(mockGovernedSend).toHaveBeenCalledWith(
+      mockAdminClient,
+      expect.anything(),
+    );
+    expect(mockGovernedSend).not.toHaveBeenCalledWith(
+      client,
+      expect.anything(),
+    );
+  });
+});
+
 describe("runRemindersForTenant — queued reminders table", () => {
   const queued = {
     id: "rem-1",
@@ -346,6 +381,25 @@ describe("runRemindersForTenant — queued reminders table", () => {
 
     expect(result.processed).toBe(0);
     expect(result.held).toBe(0);
+    expect(writes).toContainEqual(
+      expect.objectContaining({
+        table: "reminders",
+        values: { attempts: 1, status: "pending" },
+        id: "rem-1",
+      }),
+    );
+  });
+
+  it("returns claimed rows to pending when resolving the provider throws", async () => {
+    // Resolution happens after the claim. Letting it throw would abort the run
+    // with every claimed row stuck at 'processing', invisible to the next pass.
+    mockGetClient.mockRejectedValue(new Error("config table unreachable"));
+    const { client, writes } = makeSupabase({ reminders: [queued] });
+
+    const result = await runRemindersForTenant(client, TENANT);
+
+    expect(result.processed).toBe(0);
+    expect(mockGovernedSend).not.toHaveBeenCalled();
     expect(writes).toContainEqual(
       expect.objectContaining({
         table: "reminders",
