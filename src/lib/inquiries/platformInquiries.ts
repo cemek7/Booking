@@ -296,6 +296,10 @@ export async function submitInquiry(
   const to = inquiryRecipient();
 
   if (to) {
+    // The email helper THROWS when Resend rejects a send — over the free plan's
+    // daily cap, or from an unverified domain. The inquiry is already stored at
+    // this point, so a throw escaping here would show the visitor an error for a
+    // message we have, and they would send it again. Treat it as not notified.
     const sent = await sendTransactionalEmail({
       to,
       subject: oneLine(
@@ -304,7 +308,10 @@ export async function submitInquiry(
       html: inquiryEmailHtml(input, id),
       // So hitting reply in the inbox answers the person, not the mailer.
       replyTo: input.email,
-    });
+    }).catch((err: unknown) => ({
+      success: false as const,
+      error: err instanceof Error ? err.message : String(err),
+    }));
 
     if (sent.success) {
       await admin
