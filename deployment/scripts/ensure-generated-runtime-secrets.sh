@@ -19,6 +19,7 @@ fi
 
 TARGET_DIR="$STACK_ROOT/$([[ "$TARGET" == "production" ]] && echo prod || echo staging)"
 SECRET_FILE="$TARGET_DIR/.secrets.env"
+ENV_FILE="$TARGET_DIR/.env"
 
 if [[ ! -d "$TARGET_DIR" ]]; then
   echo "Deployment directory does not exist: $TARGET_DIR" >&2
@@ -31,15 +32,25 @@ TEMP_FILE="$(mktemp "$TARGET_DIR/.secrets.env.tmp.XXXXXX")"
 trap 'rm -f "$TEMP_FILE"' EXIT
 cp "$SECRET_FILE" "$TEMP_FILE"
 
-has_value() {
-  awk -F= -v key="$1" '$1 == key && length($2) > 0 { found=1 } END { exit !found }' "$TEMP_FILE"
+has_value_in() {
+  [[ -f "$2" ]] || return 1
+  awk -F= -v key="$1" '$1 == key && length($2) > 0 { found=1 } END { exit !found }' "$2"
 }
 
+# A secret already set in .env counts as present. Compose reads .env first and
+# .secrets.env second, so a value generated here OVERRIDES the one in .env. This
+# used to check .secrets.env alone, so on a box whose secrets had been set by
+# hand in .env, the first run silently rotated every one of them: the app came
+# back with a new REDIS_PASSWORD while Redis still held the old one, and every
+# page returned 503. A rotated ENCRYPTION_KEY is worse — stored Meta credentials
+# can no longer be decrypted. Generating only what is missing from BOTH files
+# is the only safe reading of "never overwrite an existing secret".
 append_generated() {
   local key="$1"
-  if ! has_value "$key"; then
-    printf '%s=%s\n' "$key" "$(openssl rand -hex 32)" >> "$TEMP_FILE"
+  if has_value_in "$key" "$TEMP_FILE" || has_value_in "$key" "$ENV_FILE"; then
+    return
   fi
+  printf '%s=%s\n' "$key" "$(openssl rand -hex 32)" >> "$TEMP_FILE"
 }
 
 # These secrets are owned exclusively by this Booka deployment. Keeping them in
