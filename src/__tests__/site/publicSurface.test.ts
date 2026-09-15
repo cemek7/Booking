@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
+import { PUBLIC_ROUTES } from "@/lib/site/publicRoutes";
 
 /**
  * The public site kept growing pages nobody could reach.
@@ -23,30 +24,6 @@ import { join } from "path";
 
 const APP_DIR = join(process.cwd(), "src", "app");
 const SRC_DIR = join(process.cwd(), "src");
-
-/**
- * Pages a visitor must be able to reach by clicking, and where entry is
- * expected from. Adding a public page means adding it here — which is the
- * point: the registry is what forces someone to answer "how does anyone find
- * this?" at the time they build it.
- */
-const PUBLIC_ROUTES = [
-  "/",
-  "/contact",
-  "/products",
-  "/showcase",
-  "/booka",
-  "/privacy",
-  "/terms",
-  "/cookies",
-  "/refunds",
-  "/acceptable-use",
-  "/accessibility",
-  "/data-retention",
-  "/dpa",
-  "/sub-processors",
-  "/ugc-policy",
-];
 
 /**
  * Top-level routes that are NOT part of the public surface: reached after
