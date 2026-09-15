@@ -32,7 +32,8 @@ if [[ "$SCRIPT_DIR" != "$(dirname "$INSTALLED_WRAPPER")" ]]; then
   for pair in \
     "${BASH_SOURCE[0]}:$INSTALLED_WRAPPER" \
     "$SCRIPT_DIR/ensure-generated-runtime-secrets.sh:/usr/local/bin/techclave-ensure-runtime-secrets" \
-    "$SCRIPT_DIR/check-public-routes.sh:/usr/local/bin/techclave-check-public-routes"
+    "$SCRIPT_DIR/check-public-routes.sh:/usr/local/bin/techclave-check-public-routes" \
+    "$SCRIPT_DIR/../vps/refresh-image.sh:/usr/local/bin/techclave-refresh-image"
   do
     src="${pair%%:*}"; dest="${pair##*:}"
     [[ -f "$src" ]] || continue
@@ -190,9 +191,12 @@ wait_for_health() {
   local checker="/usr/local/bin/techclave-check-public-routes"
   [[ -x "$checker" ]] || checker="$SCRIPT_DIR/check-public-routes.sh"
 
+  # MARKETING_PUBLIC_URL may list several hosts, separated by spaces or commas.
   local bases=("$APP_PUBLIC_URL")
   if [[ -n "${MARKETING_PUBLIC_URL:-}" ]]; then
-    bases+=("$MARKETING_PUBLIC_URL")
+    local marketing_hosts
+    read -ra marketing_hosts <<<"${MARKETING_PUBLIC_URL//,/ }"
+    bases+=("${marketing_hosts[@]}")
   fi
 
   if ! "$checker" "${bases[@]}"; then
