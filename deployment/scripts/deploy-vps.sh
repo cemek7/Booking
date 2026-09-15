@@ -31,7 +31,8 @@ if [[ "$SCRIPT_DIR" != "$(dirname "$INSTALLED_WRAPPER")" ]]; then
   # file that happened to change.
   for pair in \
     "${BASH_SOURCE[0]}:$INSTALLED_WRAPPER" \
-    "$SCRIPT_DIR/ensure-generated-runtime-secrets.sh:/usr/local/bin/techclave-ensure-runtime-secrets"
+    "$SCRIPT_DIR/ensure-generated-runtime-secrets.sh:/usr/local/bin/techclave-ensure-runtime-secrets" \
+    "$SCRIPT_DIR/check-public-routes.sh:/usr/local/bin/techclave-check-public-routes"
   do
     src="${pair%%:*}"; dest="${pair##*:}"
     [[ -f "$src" ]] || continue
@@ -176,23 +177,28 @@ EOF
 
 wait_for_health() {
   if [[ -z "${APP_PUBLIC_URL:-}" ]]; then
-    echo "APP_PUBLIC_URL is empty; skipping remote health check."
+    echo "APP_PUBLIC_URL is empty; skipping the public route check."
     return
   fi
 
-  local attempts=30
-  local url="${APP_PUBLIC_URL%/}/api/health"
+  # This used to poll /api/health, which only proves the process is alive. On
+  # 2026-09-14 it kept returning 200 while Redis rejected the app's password and
+  # every page returned 503. The route check waits for /api/ready, which covers
+  # Redis and the database, and then fetches every public page on each host a
+  # visitor can arrive at — including techclave.cloud, whose nginx block once
+  # served 404 for everything but the home page.
+  local checker="/usr/local/bin/techclave-check-public-routes"
+  [[ -x "$checker" ]] || checker="$SCRIPT_DIR/check-public-routes.sh"
 
-  for ((i=1; i<=attempts; i+=1)); do
-    if curl -fsS "$url" >/dev/null; then
-      echo "Health check passed for $TARGET at $url"
-      return
-    fi
-    sleep 5
-  done
+  local bases=("$APP_PUBLIC_URL")
+  if [[ -n "${MARKETING_PUBLIC_URL:-}" ]]; then
+    bases+=("$MARKETING_PUBLIC_URL")
+  fi
 
-  echo "Health check failed for $TARGET at $url" >&2
-  exit 1
+  if ! "$checker" "${bases[@]}"; then
+    echo "Public route check failed for $TARGET." >&2
+    exit 1
+  fi
 }
 
 install_cron
