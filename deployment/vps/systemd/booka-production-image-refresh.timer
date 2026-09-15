@@ -1,0 +1,13 @@
+# Versioned copy of the timer installed at /etc/systemd/system/.
+[Unit]
+Description=Poll for newly published Booka production images
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=booka-production-image-refresh.service
+
+[Install]
+WantedBy=timers.target

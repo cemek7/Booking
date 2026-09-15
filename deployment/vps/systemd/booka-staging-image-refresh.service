@@ -1,0 +1,20 @@
+# Versioned copy of the unit installed at /etc/systemd/system/. Install with:
+#   sudo install -m 644 deployment/vps/systemd/booka-staging-image-refresh.* /etc/systemd/system/
+#   sudo systemctl daemon-reload
+[Unit]
+Description=Refresh Booka staging from the latest published immutable staging image
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment=STACK_ROOT=/opt/techclave
+Environment=DEPLOY_TARGET=staging
+Environment=STACK_SUBDIR=staging
+Environment=CONTAINER_NAME=booka-staging-app
+Environment=REPO_DIR=/opt/Booking
+Environment=BRANCH_NAME=staging
+Environment=IMAGE_CHANNEL=staging
+Environment=CLEANUP_DOCKER=true
+ExecStart=/usr/bin/flock -n /run/booka-staging-image-refresh.lock /usr/local/bin/techclave-refresh-image --remote
