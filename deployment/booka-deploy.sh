@@ -29,7 +29,13 @@ bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 line()  { printf -- '---------------------------------------------\n'; }
 short() { printf '%s' "${1:-}" | grep -oE 'sha256:[0-9a-f]{12}' | head -1 || printf 'none'; }
 
-dc() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
+# Both files, in this order, every time. Compose fills the app's REDIS_URL by
+# substitution from the --env-file list, while the Redis container reads its
+# password from env_file. With .env alone the two disagree whenever .secrets.env
+# holds the live value — on 2026-09-14 that took every production page down
+# with a 503 (see deployment/scripts/deploy-vps.sh). A rollback through this
+# helper would have done the same.
+dc() { docker compose --env-file "$ENV_FILE" --env-file "$STACK_DIR/.secrets.env" -f "$COMPOSE_FILE" "$@"; }
 
 app_image() { grep -E '^APP_IMAGE=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"'"'"' '; }
 port_val()  { grep -E '^APP_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d '"'"'"' '; }
@@ -83,17 +89,20 @@ health() {
   bold "Container status:"; dc ps; line
   if [ -n "$port" ]; then
     printf 'Local  health (127.0.0.1:%s): ' "$port"
-    if curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1; then green "OK"; else red "FAIL"; fi
+    if curl -fsS "http://127.0.0.1:${port}/api/ready" >/dev/null 2>&1; then green "OK"; else red "FAIL"; fi
   fi
   printf 'Public health (%s): ' "$url"
-  if curl -fsS "${url%/}/api/health" >/dev/null 2>&1; then green "OK"; else red "FAIL (check Nginx/TLS/DNS)"; fi
+  if curl -fsS "${url%/}/api/ready" >/dev/null 2>&1; then green "OK"; else red "FAIL (check Nginx/TLS/DNS)"; fi
 }
 
+# Readiness, not liveness. /api/health only proves the process answers; it stayed
+# 200 through the 2026-09-14 Redis outage while every page returned 503.
+# /api/ready returns 503 until Redis and the database are reachable.
 wait_health() {
   local port; port="$(port_val)"
   [ -z "$port" ] && return 0
   for _ in $(seq 1 24); do
-    curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1 && return 0
+    curl -fsS "http://127.0.0.1:${port}/api/ready" >/dev/null 2>&1 && return 0
     sleep 5
   done
 }
