@@ -15,6 +15,15 @@ import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 import PaymentService from '@/lib/paymentService';
 import { resolveCustomer } from '@/lib/customers/identity';
+import {
+  businessDayKey,
+  localDateTimeToUtc,
+  resolveBusinessHours,
+  utcDayBounds,
+  type BusinessHours,
+  type DayKey,
+  type LegacyBusinessHoursRow,
+} from '@/lib/booking/businessHours';
 
 export interface BookingDepositInfo {
   depositRequired: boolean;
@@ -98,6 +107,16 @@ async function maybeCreateBookingDeposit(input: {
 
 const SLOT_INTERVAL_MINUTES = 30;
 
+const DAY_INDEX: Record<DayKey, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+
 function parseAvailabilityDate(date: string): Date {
   const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (isoDateMatch) {
@@ -111,6 +130,51 @@ function parseAvailabilityDate(date: string): Date {
   }
 
   throw ApiErrorFactory.badRequest('Invalid date format');
+}
+
+async function getTenantBookingContext(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  tenantId: string,
+  date: string,
+): Promise<{ timezone: string; hours: BusinessHours; dayKey: DayKey }> {
+  const { data: tenant, error: tenantError } = await supabase
+    .from('tenants')
+    .select('settings, metadata, timezone')
+    .eq('id', tenantId)
+    .maybeSingle();
+
+  if (tenantError) throw ApiErrorFactory.databaseError(new Error(tenantError.message));
+  if (!tenant) throw ApiErrorFactory.notFound('Tenant');
+
+  const timezone = typeof tenant.timezone === 'string' ? tenant.timezone : 'Africa/Lagos';
+  const dayKey = businessDayKey(date, timezone);
+  let legacyRows: LegacyBusinessHoursRow[] = [];
+
+  try {
+    const { data: legacy } = await supabase
+      .from('business_hours')
+      .select('day_of_week, start_time, end_time')
+      .eq('tenant_id', tenantId)
+      .eq('day_of_week', DAY_INDEX[dayKey])
+      .maybeSingle();
+    if (legacy) legacyRows = [legacy as LegacyBusinessHoursRow];
+  } catch {
+    // A missing legacy table must not override canonical tenant settings.
+  }
+
+  return {
+    timezone,
+    dayKey,
+    hours: resolveBusinessHours({
+      settings: tenant.settings && typeof tenant.settings === 'object'
+        ? tenant.settings as Record<string, unknown>
+        : null,
+      metadata: tenant.metadata && typeof tenant.metadata === 'object'
+        ? tenant.metadata as Record<string, unknown>
+        : null,
+      legacyRows,
+    }),
+  };
 }
 
 /**
@@ -209,12 +273,7 @@ export async function getAvailability(
   void _staffId;
   const supabase = createSupabaseAdminClient();
 
-  // Date is interpreted in the server timezone. Clients should send YYYY-MM-DD in the tenant's timezone.
-  const targetDate = parseAvailabilityDate(date);
-  const dayStart = new Date(targetDate);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(targetDate);
-  dayEnd.setHours(23, 59, 59, 999);
+  parseAvailabilityDate(date);
 
   // Get service duration
   const { data: service, error: serviceError } = await supabase
@@ -233,37 +292,18 @@ export async function getAvailability(
 
   const durationMinutes = service.duration_minutes || 60;
 
-  // Business hours: the `business_hours` table is not present in the deployed
-  // schema yet. Read it if it exists, otherwise fall back to a sensible default
-  // window so customers can still book (a 500 here would block all bookings).
-  // TODO(launch-follow-up): create business_hours + a settings UI for real hours.
-  const DEFAULT_START = '09:00:00';
-  const DEFAULT_END = '17:00:00';
-  let startTime = DEFAULT_START;
-  let endTime = DEFAULT_END;
-  try {
-    const { data: hours, error: hoursError } = await supabase
-      .from('business_hours')
-      .select('start_time, end_time')
-      .eq('tenant_id', tenantId)
-      .eq('day_of_week', targetDate.getDay())
-      .maybeSingle();
-    if (!hoursError && hours?.start_time && hours?.end_time) {
-      startTime = hours.start_time;
-      endTime = hours.end_time;
-    }
-    // hoursError (e.g. table missing) or no row -> keep the default window.
-  } catch {
-    // keep the default window
-  }
+  const context = await getTenantBookingContext(supabase, tenantId, date);
+  const dayHours = context.hours[context.dayKey];
+  if (dayHours.closed || !dayHours.open || !dayHours.close) return [];
+  const { startUtc, endUtc } = utcDayBounds(date, context.timezone);
 
   // Get existing reservations
   const { data: reservations, error: reservationsError } = await supabase
     .from('reservations')
     .select('start_at, end_at')
     .eq('tenant_id', tenantId)
-    .lte('start_at', dayEnd.toISOString())
-    .gte('end_at', dayStart.toISOString())
+    .lt('start_at', endUtc)
+    .gt('end_at', startUtc)
     .in('status', ['confirmed', 'pending']);
 
   if (reservationsError) {
@@ -272,11 +312,12 @@ export async function getAvailability(
 
   // Generate slots
   const slots = generateTimeSlots(
-    startTime,
-    endTime,
+    dayHours.open,
+    dayHours.close,
     durationMinutes,
     reservations || [],
-    targetDate
+    date,
+    context.timezone,
   );
 
   return slots;
@@ -324,16 +365,7 @@ export async function createPublicBooking(
   opts?: { callbackUrl?: string | null }
 ) {
   const supabase = createSupabaseAdminClient();
-
-  // Get or create customer
-  const customer = await getCustomer(tenantId, payload);
-
-  // Parse start time and validate
-  const startTime = new Date(`${payload.date}T${payload.time}`);
-  
-  if (isNaN(startTime.getTime())) {
-    throw ApiErrorFactory.badRequest('Invalid date or time format');
-  }
+  parseAvailabilityDate(payload.date);
   
   const { data: service, error: serviceError } = await supabase
     .from('services')
@@ -349,7 +381,27 @@ export async function createPublicBooking(
     throw ApiErrorFactory.notFound('Service');
   }
 
+  const context = await getTenantBookingContext(supabase, tenantId, payload.date);
+  const dayHours = context.hours[context.dayKey];
+  if (dayHours.closed || !dayHours.open || !dayHours.close) {
+    throw ApiErrorFactory.badRequest('Business is closed on the selected day');
+  }
+
+  let startTime: Date;
+  try {
+    startTime = new Date(localDateTimeToUtc(payload.date, payload.time, context.timezone));
+  } catch {
+    throw ApiErrorFactory.badRequest('Invalid date or time for this business timezone');
+  }
   const endTime = new Date(startTime.getTime() + (service.duration_minutes || 60) * 60000);
+  const openingTime = new Date(localDateTimeToUtc(payload.date, dayHours.open, context.timezone));
+  const closingTime = new Date(localDateTimeToUtc(payload.date, dayHours.close, context.timezone));
+  if (startTime < openingTime || endTime > closingTime) {
+    throw ApiErrorFactory.badRequest('Selected time is outside business hours');
+  }
+
+  // Resolve the customer only after the requested local time has passed validation.
+  const customer = await getCustomer(tenantId, payload);
 
   // Use DoubleBookingPrevention service for transactionally safe conflict detection
   // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint
@@ -468,22 +520,26 @@ function generateTimeSlots(
   endTime: string,
   durationMinutes: number,
   existingReservations: Array<{ start_at: string; end_at: string }>,
-  targetDate: Date
+  date: string,
+  timezone: string,
 ): TimeSlot[] {
   const slots: TimeSlot[] = [];
 
-  // Parse business hours
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
-
-  let current = new Date(targetDate);
-  current.setHours(startHour, startMin, 0, 0);
-
-  const dayEnd = new Date(targetDate);
-  dayEnd.setHours(endHour, endMin, 0, 0);
+  let currentMinutes = startHour * 60 + startMin;
+  const endMinutes = endHour * 60 + endMin;
 
   // Generate 30-minute intervals
-  while (current < dayEnd) {
+  while (currentMinutes + durationMinutes <= endMinutes) {
+    const label = `${String(Math.floor(currentMinutes / 60)).padStart(2, '0')}:${String(currentMinutes % 60).padStart(2, '0')}`;
+    let current: Date;
+    try {
+      current = new Date(localDateTimeToUtc(date, label, timezone));
+    } catch {
+      currentMinutes += SLOT_INTERVAL_MINUTES;
+      continue;
+    }
     const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
 
     // Check if slot overlaps with any reservation
@@ -494,11 +550,11 @@ function generateTimeSlots(
     });
 
     slots.push({
-      time: current.toTimeString().substring(0, 5),
-      available: !isBooked && slotEnd <= dayEnd,
+      time: label,
+      available: !isBooked,
     });
 
-    current = new Date(current.getTime() + SLOT_INTERVAL_MINUTES * 60000);
+    currentMinutes += SLOT_INTERVAL_MINUTES;
   }
 
   return slots;

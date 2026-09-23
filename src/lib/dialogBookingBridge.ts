@@ -9,6 +9,13 @@ import { z } from 'zod';
 import { BookingStep } from '../types/shared';
 import { PaymentsAdapter } from './paymentsAdapter';
 import { generateCalendarLinks, bookingToCalendarEvent } from './integrations/universalCalendar';
+import {
+  DAY_KEYS,
+  type BusinessHours,
+  type DayKey,
+  normalizeTimezone,
+  resolveBusinessHours,
+} from './booking/businessHours';
 
 // Dialog state for booking flow
 export interface BookingDialogState {
@@ -1365,7 +1372,7 @@ export class DialogBookingBridge {
     try {
       const { data, error } = await this.supabase
         .from('tenants')
-        .select('name, industry, phone, metadata, tone_config')
+        .select('name, industry, phone, settings, metadata, tone_config')
         .eq('id', tenantId)
         .single();
 
@@ -1375,6 +1382,7 @@ export class DialogBookingBridge {
 
       // Extract additional details from metadata
       const metadata = data.metadata || {};
+      const settings = data.settings || {};
 
       return {
         name: data.name,
@@ -1382,7 +1390,7 @@ export class DialogBookingBridge {
         address: metadata.address || metadata.location,
         phone: data.phone || metadata.phone,
         email: metadata.email,
-        businessHours: this.formatBusinessHours(metadata.business_hours || metadata.hours),
+        businessHours: this.formatBusinessHours(resolveBusinessHours({ settings, metadata })),
         industry: data.industry
       };
     } catch (error) {
@@ -1394,20 +1402,25 @@ export class DialogBookingBridge {
   /**
    * Format business hours for display
    */
-  private formatBusinessHours(hours: any): string | undefined {
+  private formatBusinessHours(hours: BusinessHours | string | null | undefined): string | undefined {
     if (!hours) return undefined;
 
     if (typeof hours === 'string') {
       return hours;
     }
 
-    // Handle object format { monday: '9am-5pm', ... }
+    // Handle the canonical object format used by booking and AI paths.
     if (typeof hours === 'object') {
-      const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-      const formatted = days
-        .filter(day => hours[day])
-        .map(day => `${day.charAt(0).toUpperCase() + day.slice(1)}: ${hours[day]}`)
-        .join('\n  ');
+      const labels: Record<DayKey, string> = {
+        mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday',
+        fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
+      };
+      const formatted = DAY_KEYS.map((day) => {
+        const config = hours[day];
+        return config.closed || !config.open || !config.close
+          ? `${labels[day]}: Closed`
+          : `${labels[day]}: ${config.open}-${config.close}`;
+      }).join('\n  ');
       return formatted || undefined;
     }
 
@@ -1425,19 +1438,18 @@ export class DialogBookingBridge {
     try {
       const { data: tenant } = await this.supabase
         .from('tenants')
-        .select('metadata, timezone')
+        .select('settings, metadata, timezone')
         .eq('id', tenantId)
         .maybeSingle();
 
       if (!tenant) return null;
 
       const meta = (tenant.metadata ?? {}) as Record<string, unknown>;
-      const businessHours = meta['business_hours'] as Record<string, { open: string | null; close: string | null; closed: boolean }> | undefined;
-      const captureLeads = meta['capture_leads'] as boolean | undefined;
+      const settings = (tenant.settings ?? {}) as Record<string, unknown>;
+      const businessHours = resolveBusinessHours({ settings, metadata: meta });
+      const captureLeads = (settings['capture_leads'] ?? meta['capture_leads']) as boolean | undefined;
 
-      if (!businessHours) return null;
-
-      const tz = tenant.timezone ?? 'UTC';
+      const tz = normalizeTimezone(tenant.timezone);
       const now = new Date();
       const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
       const parts = formatter.formatToParts(now);
@@ -1446,8 +1458,7 @@ export class DialogBookingBridge {
       const minute = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
       const currentMinutes = hour * 60 + minute;
 
-      const DAY_MAP: Record<string, string> = { sun: 'sun', mon: 'mon', tue: 'tue', wed: 'wed', thu: 'thu', fri: 'fri', sat: 'sat' };
-      const dayKey = DAY_MAP[weekday] ?? weekday;
+      const dayKey = weekday as DayKey;
       const dayConfig = businessHours[dayKey];
 
       if (!dayConfig) return null;
@@ -1478,10 +1489,10 @@ export class DialogBookingBridge {
   }
 
   private findNextOpenDay(
-    businessHours: Record<string, { open: string | null; close: string | null; closed: boolean }>,
-    fromDay: string
+    businessHours: BusinessHours,
+    fromDay: DayKey
   ): { day: string; time: string } | null {
-    const order = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const order: DayKey[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const idx = order.indexOf(fromDay);
     for (let i = 1; i <= 7; i++) {
       const candidate = order[(idx + i) % 7];

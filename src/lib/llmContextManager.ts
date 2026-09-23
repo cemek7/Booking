@@ -21,6 +21,7 @@ import type { LlmContext, LlmContextMessage, GetContextOpts } from '@/types/llm'
 import { redactAndTruncate } from './pii';
 import redisLib from './redis';
 import summarizer from './summarizer';
+import { resolveBusinessHours } from './booking/businessHours';
 
 export async function getContextForTenant(
   tenantId: string,
@@ -163,6 +164,7 @@ export async function getContextForTenant(
 
   // Extract agent-config fields from metadata
   const meta = (tenantData?.metadata ?? {}) as Record<string, unknown>;
+  const settings = (tenantData?.settings ?? {}) as Record<string, unknown>;
   const toneConfig = (meta['tone_config'] ?? {}) as Record<string, unknown>;
 
   const tenantContext = {
@@ -170,7 +172,7 @@ export async function getContextForTenant(
     ...(tenantData ?? {}),
     services: servicesData ?? [],
     preferred_language: (meta['preferred_language'] as string | undefined) ?? undefined,
-    business_hours: (meta['business_hours'] as Record<string, { open: string | null; close: string | null; closed: boolean }> | undefined) ?? undefined,
+    business_hours: resolveBusinessHours({ settings, metadata: meta }),
     greeting: (toneConfig['greeting'] as string | undefined) ?? undefined,
     signature: (toneConfig['signature'] as string | undefined) ?? undefined,
     verticalPackage: (meta['verticalPackage'] as string | undefined) ?? undefined,
