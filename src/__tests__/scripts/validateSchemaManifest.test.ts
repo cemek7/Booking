@@ -50,6 +50,8 @@ const RELATIONSHIP_VIEWS = [
   'tenant_revenue_view',
 ];
 
+const BOOKING_SAFETY_TABLES = ['business_hours', 'slot_locks'];
+
 describe('db:validate manifest', () => {
   it('covers every table the metering path writes to', () => {
     METERED_TABLES.forEach((table) => {
@@ -63,7 +65,28 @@ describe('db:validate manifest', () => {
     });
   });
 
-  describe.each([...METERED_TABLES, ...RELATIONSHIP_VIEWS])('%s', (table) => {
+  it('covers the schedule fallback and WhatsApp hold tables', () => {
+    BOOKING_SAFETY_TABLES.forEach((table) => {
+      expect(Object.keys(REQUIRED_SCHEMA)).toContain(table);
+    });
+    expect(REQUIRED_SCHEMA.business_hours).toEqual(
+      expect.arrayContaining(['tenant_id', 'day_of_week', 'start_time', 'end_time']),
+    );
+    expect(REQUIRED_SCHEMA.slot_locks).toEqual(
+      expect.arrayContaining(['tenant_id', 'tenant_staff_id', 'date', 'start_time', 'end_time', 'expires_at']),
+    );
+  });
+
+  it('pins the database concurrency boundary to migration 152', () => {
+    const sql = readFileSync(
+      join(MIGRATIONS_DIR, '152_booking_hours_reservation_safety.sql'),
+      'utf8',
+    );
+    expect(sql).toContain('reservations_no_active_overlap');
+    expect(sql).toMatch(/EXCLUDE\s+USING\s+gist/i);
+  });
+
+  describe.each([...METERED_TABLES, ...RELATIONSHIP_VIEWS, ...BOOKING_SAFETY_TABLES])('%s', (table) => {
     it('lists only columns a migration actually creates', () => {
       const sql = migrationsMentioning(table);
       expect(sql).not.toBe('');

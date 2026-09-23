@@ -32,23 +32,19 @@ GitHub, define severity labels + intake template, import the launch-readiness it
 
 ---
 
-## #7 — Counsel review + fill legal constants
+## #7 — Counsel review + legal/contact verification
 
-The 10 legal/policy pages (`/privacy /terms /cookies /refunds /acceptable-use /ugc-policy /dpa
-/sub-processors /accessibility /data-retention`) are **drafts** with a visible "pending legal review"
-banner. Two steps:
+The verified operator identity is now published from `src/lib/legal/constants.ts` as **Techclave Ltd**, **RC 8489929**, **25, Ndola Crescent, Wuse Zone 5, FCT, Nigeria**. The policy set remains a draft with a visible "pending legal review" banner until counsel signs off. Two operator steps remain:
 
-1. **Fill `src/lib/legal/constants.ts`** (a dev change, ~5 min): replace the `TODO` placeholders —
-   `entity` (registered legal entity name + form), registered address, and the `privacy@ / legal@ /
-   support@` email addresses (confirm these mailboxes exist and are monitored).
-2. **Counsel review** — have qualified counsel (or a reputable generator: Termly/iubenda/Osano) review,
+1. **Verify contact routes end to end** — send a unique test message to `privacy@techclave.cloud`, `legal@techclave.cloud`, and `support@techclave.cloud`; confirm each arrives in a monitored destination inbox and record the UTC timestamp. A DNS or routing dashboard status alone is not delivery proof.
+2. **Counsel review** — have qualified counsel review,
    focusing on: the tenant-as-Merchant-of-Record framing (refunds/tax on the tenant), the prepaid
    non-refundable AI-credit terms, GDPR/NDPA obligations, the DPA + sub-processor list, and the
    "no EU Art. 27 representative yet" statement. Confirm whether an EU/UK representative is now needed.
 3. When approved, **remove the draft banner** (`src/components/legal/LegalDocument.tsx`, the amber
    `role="note"` block).
 
-**Done when:** constants filled, counsel sign-off, banner removed.
+**Done when:** all three contact routes have delivery evidence, counsel signs off, and the draft banner is removed.
 
 ---
 
@@ -126,7 +122,7 @@ personal data was affected, run the breach-notification steps.
 | Item | Owner | Blocker |
 |---|---|---|
 | #6 accounts/keys | you | accounts |
-| #7 counsel + constants | you + counsel | legal sign-off |
+| #7 counsel + contact routes | you + counsel | delivery evidence + legal sign-off |
 | 8a pricing surfacing | eng | billing UI (other session) |
 | 8b vendor DPAs | ops/legal | execution |
 | 8c backup/DR | you | confirm PITR + fill RPO/RTO (this doc) |

@@ -51,6 +51,15 @@ const REQUIRED_SCHEMA = {
     'id', 'tenant_id', 'status', 'start_at', 'end_at',
     'customer_number', 'metadata', 'staff_id', 'service_id', 'price_cents_snapshot',
   ],
+  // Business-wide fallback hours remain readable while tenant settings are
+  // backfilled by migration 152.
+  business_hours: ['id', 'tenant_id', 'day_of_week', 'start_time', 'end_time'],
+  // WhatsApp's three-minute conversational holds are intentionally separate
+  // from the final reservations exclusion constraint.
+  slot_locks: [
+    'id', 'tenant_id', 'tenant_staff_id', 'date', 'start_time', 'end_time',
+    'customer_phone', 'expires_at',
+  ],
   transactions: [
     'id', 'tenant_id', 'amount', 'currency', 'type', 'status',
     'provider_reference', 'subject_type', 'subject_id', 'reconciliation_status',
