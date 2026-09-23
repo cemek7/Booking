@@ -115,7 +115,7 @@ export class DoubleBookingPrevention {
       const expiresAt = new Date(Date.now() + lockDuration).toISOString();
       const lockId = crypto.randomUUID();
 
-      const { data: newLock, error: insertError } = await this.supabase
+      const { error: insertError } = await this.supabase
         .from('reservation_locks')
         .insert([{
           id: lockId,
@@ -212,11 +212,11 @@ export class DoubleBookingPrevention {
         `)
         .eq('tenant_id', params.tenantId)
         .neq('status', 'cancelled')
-        // Overlap check: start_at <= endAt AND end_at >= startAt. A single top-level
-        // and() is just default filter chaining, so bind the values instead of
-        // interpolating them into an .or() expression string.
-        .lte('start_at', params.endAt)
-        .gte('end_at', params.startAt);
+        // Half-open overlap check: [existing start, existing end) intersects
+        // [requested start, requested end). Adjacent bookings are allowed and
+        // this exactly mirrors migration 152's tstzrange('[)') constraint.
+        .lt('start_at', params.endAt)
+        .gt('end_at', params.startAt);
 
       // Exclude current reservation if updating
       if (params.excludeReservationId) {

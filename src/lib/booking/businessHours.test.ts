@@ -32,10 +32,10 @@ describe('business hours domain', () => {
   });
 
   it.each([
-    [{ mon: { open: '9am', close: '17:00', closed: false } }, 'invalid time'],
-    [{ mon: { open: '17:00', close: '09:00', closed: false } }, 'reversed time'],
-    [{ mon: { open: '09:00', close: null, closed: false } }, 'missing close'],
-  ])('rejects an %s schedule', (value) => {
+    { mon: { open: '9am', close: '17:00', closed: false } },
+    { mon: { open: '17:00', close: '09:00', closed: false } },
+    { mon: { open: '09:00', close: null, closed: false } },
+  ])('rejects an invalid schedule: %p', (value) => {
     expect(normalizeBusinessHours(value)).toBeNull();
   });
 

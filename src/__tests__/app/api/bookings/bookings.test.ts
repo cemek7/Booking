@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
 
-// POST no longer inserts through ctx.supabase. It builds its own admin client,
-// takes a slot lock via DoubleBookingPrevention, then delegates the write to
-// createReservation(). Injecting ctx.supabase alone leaves all three of those
-// real, so the lock fails and the route throws before reaching the insert.
+// POST no longer inserts through ctx.supabase. It builds its own admin client
+// and delegates the write to createReservation(), where the database exclusion
+// constraint is the final concurrency boundary.
 const mockAcquireSlotLock = jest.fn();
 const mockCreateReservation = jest.fn();
 
@@ -58,7 +57,7 @@ const createMockContext = (overrides = {}) => ({
 });
 
 beforeEach(() => {
-  // Default happy path: lock granted, reservation written.
+  // Default happy path: reservation written.
   mockAcquireSlotLock.mockResolvedValue({ success: true, isConflict: false });
   mockCreateReservation.mockResolvedValue({
     id: 'booking-1',
@@ -66,6 +65,26 @@ beforeEach(() => {
     start_at: '2024-01-15T10:00:00Z',
     end_at: '2024-01-15T11:00:00Z',
     customer_name: 'John Doe',
+  });
+});
+
+describe('reservation concurrency boundary', () => {
+  it('does not use the legacy reservation_locks table during creation', async () => {
+    const ctx = createMockContext({
+      request: new NextRequest('http://localhost:3000/api/bookings', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_name: 'John Doe',
+          service_id: '123e4567-e89b-12d3-a456-426614174000',
+          start_at: '2026-09-24T10:00:00Z',
+          end_at: '2026-09-24T11:00:00Z',
+        }),
+      }),
+    });
+
+    await POST(asPostContext(ctx));
+
+    expect(mockAcquireSlotLock).not.toHaveBeenCalled();
   });
 });
 

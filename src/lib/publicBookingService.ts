@@ -403,113 +403,62 @@ export async function createPublicBooking(
   // Resolve the customer only after the requested local time has passed validation.
   const customer = await getCustomer(tenantId, payload);
 
-  // Use DoubleBookingPrevention service for transactionally safe conflict detection
-  // Use admin client to bypass RLS on reservation_locks table, as this is a public endpoint
-  // operating with anon role which would otherwise fail on RLS policies.
-  // SECURITY NOTE: The admin client bypasses ALL RLS policies, but DoubleBookingPrevention
-  // is designed to only access reservation_locks and reservations tables. Future: consider
-  // creating a more restricted service role or using function-level RLS bypass.
-  const adminClient = createSupabaseAdminClient();
-  const bookingPrevention = new DoubleBookingPrevention(adminClient);
-  
-  // Acquire slot lock to prevent race conditions
-  const lockResult = await bookingPrevention.acquireSlotLock({
+  const bookingPrevention = new DoubleBookingPrevention(supabase);
+
+  // Perform a friendly conflict pre-check. Migration 152's exclusion constraint
+  // is the final authority if two requests pass this check concurrently.
+  // When staff_id is absent, only other unassigned bookings conflict; assigned
+  // staff may still have capacity.
+  const conflictCheck = await bookingPrevention.checkBookingConflicts({
     tenantId,
     startAt: startTime.toISOString(),
     endAt: endTime.toISOString(),
-    resourceId: payload.staff_id,
-    lockDurationMinutes: 2, // Short lock for public booking
+    resourceIds: payload.staff_id ? [payload.staff_id] : undefined,
+    checkUnassignedOnly: !payload.staff_id,
   });
 
-  if (!lockResult.success) {
-    if (lockResult.isConflict) {
-      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
-    }
-    // The reservation_locks table is absent in the deployed schema, so the
-    // distributed lock is unavailable. Do NOT fail the booking — the
-    // reservations-based conflict check below still guards against double
-    // bookings (slightly wider race window until reservation_locks exists).
-    // TODO(launch-follow-up): create reservation_locks for full race safety.
-    defaultLogger.warn('createPublicBooking: slot lock unavailable, proceeding with conflict check only', {
-      error: lockResult.error,
-    });
+  if (conflictCheck.hasConflict) {
+    throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
   }
 
-  try {
-    // Perform comprehensive conflict check with proper overlap detection.
-    // 
-    // BUSINESS LOGIC: Conflict scope behavior
-    // - When staff_id IS provided: Checks conflicts only for that specific staff member,
-    //   allowing multiple staff to be booked simultaneously.
-    // 
-    // - When staff_id IS NOT provided: Checks conflicts only with OTHER unassigned bookings
-    //   (where staff_id IS NULL). This allows unassigned bookings even when some staff members
-    //   are busy, since the booking can later be assigned to any available staff member.
-    //   This is more permissive than a tenant-wide check and appropriate for multi-staff systems.
-    const conflictCheck = await bookingPrevention.checkBookingConflicts({
-      tenantId,
-      startAt: startTime.toISOString(),
-      endAt: endTime.toISOString(),
-      resourceIds: payload.staff_id ? [payload.staff_id] : undefined,
-      checkUnassignedOnly: !payload.staff_id, // Only check unassigned when no staff specified
-    });
+  const { data: booking, error: bookingErr } = await supabase
+    .from('reservations')
+    .insert({
+      tenant_id: tenantId,
+      customer_id: customer.id,
+      service_id: payload.service_id,
+      staff_id: payload.staff_id || null,
+      start_at: startTime.toISOString(),
+      end_at: endTime.toISOString(),
+      status: 'pending',
+      notes: payload.notes,
+      source: 'public_booking',
+      metadata: {
+        booking_source: 'public_booking',
+        timestamp: new Date().toISOString(),
+      },
+    })
+    .select('id')
+    .single();
 
-    if (conflictCheck.hasConflict) {
-      throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
-    }
-
-    // Create booking atomically after conflict check passes
-    // Use adminClient (same client as lock/conflict check) for atomicity
-    const { data: booking, error: bookingErr } = await adminClient
-      .from('reservations')
-      .insert({
-        tenant_id: tenantId,
-        customer_id: customer.id,
-        service_id: payload.service_id,
-        staff_id: payload.staff_id || null,
-        start_at: startTime.toISOString(),
-        end_at: endTime.toISOString(),
-        status: 'pending',
-        notes: payload.notes,
-        source: 'public_booking',
-        metadata: {
-          booking_source: 'public_booking',
-          timestamp: new Date().toISOString(),
-        },
-      })
-      .select('id')
-      .single();
-
-    if (bookingErr || !booking) {
-      throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
-    }
-
-    // If the tenant requires a deposit, mint a Paystack checkout for it. The
-    // reservation stays 'pending' until the webhook confirms payment.
-    const deposit = await maybeCreateBookingDeposit({
-      tenantId,
-      reservationId: booking.id,
-      serviceId: payload.service_id,
-      email: payload.customer_email,
-      callbackUrl: opts?.callbackUrl ?? null,
-    });
-
-    return { id: booking.id, ...deposit };
-  } finally {
-    // Always release the lock, even if an error occurs
-    // Wrap in try/catch to prevent lock release errors from masking the original exception
-    if (lockResult.lockId) {
-      try {
-        await bookingPrevention.releaseSlotLock(lockResult.lockId);
-      } catch (releaseError) {
-        // Log the release error but don't throw to preserve the original error
-        defaultLogger.error('Failed to release slot lock:', {
-          lockId: lockResult.lockId,
-          error: releaseError instanceof Error ? releaseError.message : String(releaseError)
-        });
-      }
-    }
+  if (bookingErr?.code === '23P01') {
+    throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
   }
+  if (bookingErr || !booking) {
+    throw ApiErrorFactory.databaseError(new Error(bookingErr?.message || 'Failed to create booking'));
+  }
+
+  // If the tenant requires a deposit, mint a Paystack checkout for it. The
+  // reservation stays 'pending' until the webhook confirms payment.
+  const deposit = await maybeCreateBookingDeposit({
+    tenantId,
+    reservationId: booking.id,
+    serviceId: payload.service_id,
+    email: payload.customer_email,
+    callbackUrl: opts?.callbackUrl ?? null,
+  });
+
+  return { id: booking.id, ...deposit };
 }
 
 /**

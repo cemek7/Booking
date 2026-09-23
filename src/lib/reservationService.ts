@@ -13,6 +13,19 @@ import { resolveCustomer } from '@/lib/customers/identity';
 type ReservationActor = { id: string | null; role?: Role | null };
 type ReservationConflict = { conflict_type: string };
 
+function normalizeReservationWriteError(error: { code?: string; message?: string }): never {
+  if (error.code === '23P01') {
+    const conflictError = new Error('Time slot unavailable - another booking was created first') as Error & {
+      code?: string;
+      cause?: unknown;
+    };
+    conflictError.code = 'conflict';
+    conflictError.cause = error;
+    throw conflictError;
+  }
+  throw error;
+}
+
 function deriveDateParts(startAt: string, endAt: string): {
   date: string;
   time: string;
@@ -148,7 +161,7 @@ export async function createReservation(
     .insert(record)
     .select('*')
     .maybeSingle();
-  if (insertErr) throw insertErr;
+  if (insertErr) normalizeReservationWriteError(insertErr);
   if (!inserted) {
     defaultLogger.warn('reservationService: insert returned no row — skipping post-insert steps');
     return null;
@@ -276,7 +289,7 @@ export async function cancelReservation(
     .select('*')
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) normalizeReservationWriteError(error);
   if (!data) return null;
 
   try {
@@ -354,7 +367,7 @@ export async function rescheduleReservation(
     .select('*')
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) normalizeReservationWriteError(error);
   if (!data) return null;
 
   try {

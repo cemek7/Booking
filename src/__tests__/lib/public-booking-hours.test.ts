@@ -39,6 +39,7 @@ function createMockAdmin(options: {
   settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   reservations?: Array<{ start_at: string; end_at: string }>;
+  reservationInsertError?: { code: string; message: string };
 } = {}) {
   const filters: Array<[string, string, unknown]> = [];
   const inserts: Array<{ table: string; payload: Record<string, unknown> }> = [];
@@ -74,7 +75,9 @@ function createMockAdmin(options: {
       inserts.push({ table, payload });
       return chain;
     });
-    chain.single = jest.fn(async () => ({ data: { id: 'reservation-1' }, error: null }));
+    chain.single = jest.fn(async () => table === 'reservations' && options.reservationInsertError
+      ? { data: null, error: options.reservationInsertError }
+      : { data: { id: 'reservation-1' }, error: null });
     return chain;
   });
 
@@ -138,5 +141,34 @@ describe('public booking business hours', () => {
 
     expect(mockAdmin.inserts.find((entry) => entry.table === 'reservations')?.payload.start_at)
       .toBe('2026-09-21T14:00:00.000Z');
+  });
+
+  it('returns conflict semantics when the database wins a concurrent insert race', async () => {
+    mockAdmin = createMockAdmin({
+      reservationInsertError: { code: '23P01', message: 'exclusion constraint violation' },
+    });
+
+    await expect(createPublicBooking('tenant-1', {
+      service_id: 'service-1',
+      date: '2026-09-21',
+      time: '10:00',
+      customer_name: 'Ada',
+      customer_email: 'ada@example.com',
+      customer_phone: '+2348000000000',
+    })).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it('does not use reservation_locks during public booking creation', async () => {
+    await createPublicBooking('tenant-1', {
+      service_id: 'service-1',
+      date: '2026-09-21',
+      time: '10:00',
+      customer_name: 'Ada',
+      customer_email: 'ada@example.com',
+      customer_phone: '+2348000000000',
+    });
+
+    expect(mockAcquireSlotLock).not.toHaveBeenCalled();
+    expect(mockReleaseSlotLock).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,6 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createReservation } from '@/lib/reservationService';
 import { routeStaff } from '@/lib/staffRouting';
@@ -137,25 +136,9 @@ export const POST = createHttpHandler(
 
     let resolvedStaffId = staff_id ?? null;
 
-    // Use the admin client for locking so reservation_locks RLS does not block the operation.
-    // tenantId is already server-verified from the authenticated session — no spoofing risk.
+    // Tenant identity is already server-verified. The service keeps a friendly
+    // conflict pre-check; PostgreSQL owns the final concurrent-write decision.
     const adminClient = createSupabaseAdminClient();
-    const bookingPrevention = new DoubleBookingPrevention(adminClient);
-
-    const lockResult = await bookingPrevention.acquireSlotLock({
-      tenantId,
-      startAt: start_at,
-      endAt: end_at,
-      resourceId: staff_id,
-      lockDurationMinutes: 2,
-    });
-
-    if (!lockResult.success) {
-      if (lockResult.isConflict) {
-        throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
-      }
-      throw ApiErrorFactory.internalServerError(new Error(lockResult.error || 'Failed to acquire booking lock'));
-    }
 
     // Auto-assign staff if not provided
     if (!resolvedStaffId) {
@@ -165,92 +148,84 @@ export const POST = createHttpHandler(
       if (assigned) resolvedStaffId = assigned;
     }
 
+    // Delegate to reservationService which handles conflict detection,
+    // event emission, usage metrics, audit logs, and reminder scheduling.
+    let reservation: ReservationResult;
     try {
-      // Delegate to reservationService which handles conflict detection,
-      // event emission, usage metrics, audit logs, and reminder scheduling.
-      let reservation: ReservationResult;
-      try {
-        reservation = await createReservation(
-          adminClient,
-          {
-            tenant_id: tenantId,
-            customer_id: bookingData.customer_id ?? null,
-            customer_name: bookingData.customer_name,
-            phone: bookingData.phone,
-            service_id: bookingData.service_id,
-            service: bookingData.service_id,
-            start_at,
-            end_at,
-            staff_id: resolvedStaffId,
-            status: 'confirmed',
-          },
-          { id: ctx.user!.id, role: ctx.user!.role as UserRole }
-        );
-      } catch (err: unknown) {
-        if (getErrorCode(err) === 'conflict') {
-          await siasOperations.createEscalationTicket({
-            tenantId,
-            customerPhone: bookingData.phone ?? bookingData.customer_number ?? 'unknown',
-            sessionId: `${tenantId}:${start_at}`,
-            reason: 'double booking conflict',
-            conversationSnapshot: [
-              {
-                event: 'booking.conflict',
-                customer_name: bookingData.customer_name,
-                phone: bookingData.phone ?? bookingData.customer_number ?? null,
-                service_id: bookingData.service_id,
-                start_at,
-                end_at,
-              },
-            ],
-          }).catch(() => undefined);
-          throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
-        }
-        if (getErrorCode(err) === '23505') {
-          await siasOperations.createEscalationTicket({
-            tenantId,
-            customerPhone: bookingData.phone ?? bookingData.customer_number ?? 'unknown',
-            sessionId: `${tenantId}:${start_at}`,
-            reason: 'duplicate booking detected',
-            conversationSnapshot: [
-              {
-                event: 'booking.conflict',
-                customer_name: bookingData.customer_name,
-                phone: bookingData.phone ?? bookingData.customer_number ?? null,
-                service_id: bookingData.service_id,
-                start_at,
-                end_at,
-              },
-            ],
-          }).catch(() => undefined);
-          throw ApiErrorFactory.conflict('A conflicting booking already exists for this staff member at the selected time.');
-        }
-        throw err;
+      reservation = await createReservation(
+        adminClient,
+        {
+          tenant_id: tenantId,
+          customer_id: bookingData.customer_id ?? null,
+          customer_name: bookingData.customer_name,
+          phone: bookingData.phone,
+          service_id: bookingData.service_id,
+          service: bookingData.service_id,
+          start_at,
+          end_at,
+          staff_id: resolvedStaffId,
+          status: 'confirmed',
+        },
+        { id: ctx.user!.id, role: ctx.user!.role as UserRole }
+      );
+    } catch (err: unknown) {
+      if (getErrorCode(err) === 'conflict') {
+        await siasOperations.createEscalationTicket({
+          tenantId,
+          customerPhone: bookingData.phone ?? bookingData.customer_number ?? 'unknown',
+          sessionId: `${tenantId}:${start_at}`,
+          reason: 'double booking conflict',
+          conversationSnapshot: [
+            {
+              event: 'booking.conflict',
+              customer_name: bookingData.customer_name,
+              phone: bookingData.phone ?? bookingData.customer_number ?? null,
+              service_id: bookingData.service_id,
+              start_at,
+              end_at,
+            },
+          ],
+        }).catch(() => undefined);
+        throw ApiErrorFactory.conflict('Selected time slot is no longer available.');
       }
-
-      if (!reservation) {
-        throw ApiErrorFactory.internalServerError(new Error('Failed to create booking'));
+      if (getErrorCode(err) === '23505') {
+        await siasOperations.createEscalationTicket({
+          tenantId,
+          customerPhone: bookingData.phone ?? bookingData.customer_number ?? 'unknown',
+          sessionId: `${tenantId}:${start_at}`,
+          reason: 'duplicate booking detected',
+          conversationSnapshot: [
+            {
+              event: 'booking.conflict',
+              customer_name: bookingData.customer_name,
+              phone: bookingData.phone ?? bookingData.customer_number ?? null,
+              service_id: bookingData.service_id,
+              start_at,
+              end_at,
+            },
+          ],
+        }).catch(() => undefined);
+        throw ApiErrorFactory.conflict('A conflicting booking already exists for this staff member at the selected time.');
       }
-
-      let calendarLinks: ReturnType<typeof generateCalendarLinks> | undefined;
-      try {
-        const calEvent: BookingEvent = {
-          title: reservation.service || 'Booking',
-          startTime: new Date(reservation.start_at),
-          endTime: new Date(reservation.end_at),
-          description: reservation.customer_name ? `Customer: ${reservation.customer_name}` : undefined,
-        };
-        calendarLinks = generateCalendarLinks(calEvent);
-      } catch {}
-
-      return NextResponse.json({ reservation, calendarLinks }, { status: 201 });
-    } finally {
-      if (lockResult.lockId) {
-        await bookingPrevention.releaseSlotLock(lockResult.lockId).catch((e) => {
-          defaultLogger.error('Failed to release booking lock:', e);
-        });
-      }
+      throw err;
     }
+
+    if (!reservation) {
+      throw ApiErrorFactory.internalServerError(new Error('Failed to create booking'));
+    }
+
+    let calendarLinks: ReturnType<typeof generateCalendarLinks> | undefined;
+    try {
+      const calEvent: BookingEvent = {
+        title: reservation.service || 'Booking',
+        startTime: new Date(reservation.start_at),
+        endTime: new Date(reservation.end_at),
+        description: reservation.customer_name ? `Customer: ${reservation.customer_name}` : undefined,
+      };
+      calendarLinks = generateCalendarLinks(calEvent);
+    } catch {}
+
+    return NextResponse.json({ reservation, calendarLinks }, { status: 201 });
   },
   'POST',
   { auth: true }

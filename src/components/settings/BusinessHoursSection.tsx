@@ -3,6 +3,7 @@
 import {
   DEFAULT_BUSINESS_HOURS,
   type BusinessHours,
+  type DayKey,
   type DayHours,
 } from '@/lib/booking/businessHours';
 
@@ -22,13 +23,13 @@ interface Props {
 export function BusinessHoursSection({ value, onChange }: Props) {
   const hours: BusinessHours = value ?? DEFAULT_BUSINESS_HOURS;
 
-  function updateDay(day: string, patch: Partial<DayHours>) {
+  function updateDay(day: DayKey, patch: Partial<DayHours>) {
     const updated: BusinessHours = { ...hours, [day]: { ...hours[day], ...patch } };
     onChange(updated);
   }
 
   function applyTemplate(template: 'weekdays' | 'everyday' | 'weekends-closed') {
-    const base: BusinessHours = {};
+    const base: BusinessHours = structuredClone(DEFAULT_BUSINESS_HOURS);
     for (const d of DAYS) {
       if (template === 'weekdays') {
         base[d] = ['mon', 'tue', 'wed', 'thu', 'fri'].includes(d)
