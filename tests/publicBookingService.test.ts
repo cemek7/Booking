@@ -1,140 +1,87 @@
-/**
- * Tests for publicBookingService fixes
- * Focus on the specific issues that were addressed
- */
+/** Tests public availability validation and tenant-local reservation bounds. */
 
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-
-// Mock the Supabase client. getAvailability runs unauthenticated on the public
-// booking path, so it uses the admin client rather than the route handler client.
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: jest.fn(),
 }));
 
-// Import after mocking
 import { getAvailability } from '@/lib/publicBookingService';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
-describe('publicBookingService - getAvailability fixes', () => {
-  let mockSupabase: { from: jest.Mock } & Record<string, unknown>;
+function createAvailabilityClient(options: {
+  service?: { data: unknown; error: unknown };
+} = {}) {
+  const calls: Array<[string, string, unknown]> = [];
+  const from = jest.fn((table: string) => {
+    const chain: Record<string, jest.Mock> = {};
+    const fluent = (operation: string) => jest.fn((column: string, value: unknown) => {
+      calls.push([operation, column, value]);
+      return chain;
+    });
+    chain.select = jest.fn(() => chain);
+    chain.eq = fluent('eq');
+    chain.lt = fluent('lt');
+    chain.gt = fluent('gt');
+    chain.maybeSingle = jest.fn(async () => {
+      if (table === 'services') {
+        return options.service ?? { data: { duration_minutes: 60 }, error: null };
+      }
+      if (table === 'tenants') {
+        return {
+          data: { settings: {}, metadata: {}, timezone: 'Africa/Lagos' },
+          error: null,
+        };
+      }
+      return { data: null, error: null };
+    });
+    chain.in = jest.fn(async () => ({ data: [], error: null }));
+    return chain;
+  });
+  return { client: { from }, calls };
+}
 
-  beforeEach(() => {
-    mockSupabase = {
-      from: jest.fn(),
-    };
-    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
+describe('publicBookingService getAvailability', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('rejects invalid date strings before querying', async () => {
+    await expect(getAvailability('tenant-id', 'service-id', 'invalid-date'))
+      .rejects.toThrow('Invalid date format');
   });
 
-  afterEach(() => {
-    jest.clearAllMocks();
+  it('accepts valid dates and uses safe default hours for legacy tenants', async () => {
+    const mock = createAvailabilityClient();
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mock.client);
+
+    const result = await getAvailability('tenant-id', 'service-id', '2026-09-24');
+
+    expect(result[0]).toEqual({ time: '09:00', available: true });
+    expect(result.at(-1)).toEqual({ time: '16:00', available: true });
   });
 
-  describe('Issue 1: Date Validation', () => {
-    it('should reject invalid date strings', async () => {
-      await expect(
-        getAvailability('tenant-id', 'service-id', 'invalid-date')
-      ).rejects.toThrow('Invalid date format');
-    });
+  it('uses strict half-open UTC day bounds for reservation lookup', async () => {
+    const mock = createAvailabilityClient();
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mock.client);
 
-    it('should accept valid date strings', async () => {
-      const mockChain = {
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValueOnce({
-          data: { duration_minutes: 60 },
-          error: null,
-        }).mockResolvedValueOnce({
-          data: null,
-          error: null,
-        }),
-        lte: jest.fn().mockReturnThis(),
-        gte: jest.fn().mockReturnThis(),
-        in: jest.fn().mockResolvedValue({
-          data: [],
-          error: null,
-        }),
-      };
+    await getAvailability('tenant-id', 'service-id', '2026-09-24');
 
-      mockSupabase.from.mockReturnValue(mockChain);
-
-      const result = await getAvailability('tenant-id', 'service-id', '2024-03-15');
-      // A valid date is accepted. With no configured business hours (and no
-      // business_hours table in the deployed schema), the service falls back to
-      // a default window and still returns bookable slots (rather than 500ing).
-      expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBeGreaterThan(0);
-      expect(result[0]).toMatchObject({ available: true });
-    });
+    expect(mock.calls).toContainEqual(['lt', 'start_at', '2026-09-24T23:00:00.000Z']);
+    expect(mock.calls).toContainEqual(['gt', 'end_at', '2026-09-23T23:00:00.000Z']);
   });
 
-  describe('Issue 2: Reservation Query Logic', () => {
-    it('should use gte for end_at to catch multi-day reservations', async () => {
-      const mockChain = {
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValueOnce({
-          data: { duration_minutes: 60 },
-          error: null,
-        }).mockResolvedValueOnce({
-          data: {
-            start_time: '09:00',
-            end_time: '17:00',
-          },
-          error: null,
-        }),
-        lte: jest.fn().mockReturnThis(),
-        gte: jest.fn().mockReturnThis(),
-        in: jest.fn().mockResolvedValue({
-          data: [],
-          error: null,
-        }),
-      };
-
-      mockSupabase.from.mockReturnValue(mockChain);
-
-      await getAvailability('tenant-id', 'service-id', '2024-03-15');
-
-      // Verify that gte was called with 'end_at' (issue fix)
-      const gteCall = mockChain.gte.mock.calls.find(
-        (call: unknown[]) => call[0] === 'end_at'
-      );
-      expect(gteCall).toBeDefined();
+  it('checks a service query error before treating the service as missing', async () => {
+    const mock = createAvailabilityClient({
+      service: { data: null, error: { message: 'Database error' } },
     });
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mock.client);
+
+    await expect(getAvailability('tenant-id', 'service-id', '2026-09-24'))
+      .rejects.toThrow();
   });
 
-  describe('Issue 5: Error Handling Order', () => {
-    it('should check service error before data', async () => {
-      const mockChain = {
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValue({
-          data: null,
-          error: { message: 'Database error' },
-        }),
-      };
+  it('returns not found for a missing service', async () => {
+    const mock = createAvailabilityClient({ service: { data: null, error: null } });
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mock.client);
 
-      mockSupabase.from.mockReturnValue(mockChain);
-
-      await expect(
-        getAvailability('tenant-id', 'service-id', '2024-03-15')
-      ).rejects.toThrow();
-    });
-
-    it('should return 404 for missing service (not database error)', async () => {
-      const mockChain = {
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValue({
-          data: null,
-          error: null,
-        }),
-      };
-
-      mockSupabase.from.mockReturnValue(mockChain);
-
-      await expect(
-        getAvailability('tenant-id', 'service-id', '2024-03-15')
-      ).rejects.toThrow('Service');
-    });
+    await expect(getAvailability('tenant-id', 'service-id', '2026-09-24'))
+      .rejects.toThrow('Service');
   });
 });
