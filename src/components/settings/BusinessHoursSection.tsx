@@ -1,27 +1,18 @@
 "use client";
 
+import {
+  DEFAULT_BUSINESS_HOURS,
+  type BusinessHours,
+  type DayHours,
+} from '@/lib/booking/businessHours';
+
+export type { BusinessHours, DayHours } from '@/lib/booking/businessHours';
+
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 const DAY_LABELS: Record<string, string> = {
   mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday',
   fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
 };
-
-export type DayHours = {
-  open: string | null;
-  close: string | null;
-  closed: boolean;
-};
-
-export type BusinessHours = Record<string, DayHours>;
-
-const DEFAULT_HOURS: BusinessHours = Object.fromEntries(
-  DAYS.map((d) => [
-    d,
-    d === 'sat' || d === 'sun'
-      ? { open: null, close: null, closed: true }
-      : { open: '09:00', close: '17:00', closed: false },
-  ])
-);
 
 interface Props {
   value: BusinessHours | null | undefined;
@@ -29,7 +20,7 @@ interface Props {
 }
 
 export function BusinessHoursSection({ value, onChange }: Props) {
-  const hours: BusinessHours = value ?? DEFAULT_HOURS;
+  const hours: BusinessHours = value ?? DEFAULT_BUSINESS_HOURS;
 
   function updateDay(day: string, patch: Partial<DayHours>) {
     const updated: BusinessHours = { ...hours, [day]: { ...hours[day], ...patch } };

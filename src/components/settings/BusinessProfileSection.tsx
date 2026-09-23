@@ -10,7 +10,6 @@ export interface BusinessProfileValues {
   defaultCurrency?: string;
   depositPercent?: number;
   cancellationPolicy?: string;
-  businessHours?: Record<string, { open?: string; close?: string; closed?: boolean }>;
   staffAssignmentStrategy?: 'round_robin' | 'preferred' | 'skill_based';
   allowOverbooking?: boolean;
 }
@@ -85,10 +84,6 @@ export function BusinessProfileSection({ values, onChange }: { values: BusinessP
           <textarea className="border rounded px-2 py-1 text-sm h-20" value={local.cancellationPolicy || ''} onChange={e=>update('cancellationPolicy', e.target.value)} placeholder="24h notice required..." />
         </label>
       </FormSection>
-      <FormSection title="Business Hours" description="Set open/close times per day. Use bulk shortcuts for speed." aside={<button type="button" className="px-2 py-1 rounded border text-[11px]" onClick={()=>update('businessHours', {})}>Clear All</button>}>
-        <BusinessHoursGrid value={local.businessHours || {}} onChange={(v)=>update('businessHours', v)} />
-        <HoursSummary value={local.businessHours || {}} />
-      </FormSection>
       <FormSection title="Services Catalog" description="Manage offerings, pricing, and required staff skills." aside={<button onClick={addService} className="px-2 py-1 rounded border text-xs" type="button">Add Service</button>}>
         {(local.services||[]).length === 0 && <div className="text-xs text-gray-500">No services defined.</div>}
         <ul className="space-y-3">
@@ -145,61 +140,4 @@ export function BusinessProfileSection({ values, onChange }: { values: BusinessP
       </FormSection>
     </div>
   );
-}
-
-function BusinessHoursGrid({ value, onChange }: { value: Record<string, { open?: string; close?: string; closed?: boolean }>; onChange: (v: Record<string, { open?: string; close?: string; closed?: boolean }>) => void }) {
-  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  function mutate(day: string, patch: Partial<{ open?: string; close?: string; closed?: boolean }>) {
-    onChange({ ...value, [day]: { ...(value[day]||{}), ...patch } });
-  }
-  function applyTemplate(templateDay: string) {
-    const base = value[templateDay] || {};
-    const next: Record<string, { open?: string; close?: string; closed?: boolean }> = {};
-    for (const d of days) next[d] = { ...base };
-    onChange(next);
-  }
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-2 text-[11px]">
-        <button type="button" className="px-2 py-1 rounded border" onClick={()=>applyTemplate('Mon')}>Copy Mon to all</button>
-        <button type="button" className="px-2 py-1 rounded border" onClick={()=>applyTemplate('Sat')}>Copy Sat to weekend</button>
-      </div>
-      <div className="divide-y border rounded">
-        {days.map(d => {
-          const v = value[d] || {};
-          return (
-            <div key={d} className="grid grid-cols-[60px_1fr_1fr_70px] items-center gap-2 p-2 text-[11px]">
-              <span className="font-medium">{d}</span>
-              <label className="flex items-center gap-1">Open
-                <input type="time" className="border rounded px-1 py-0.5" value={v.open || ''} disabled={v.closed} onChange={e=>mutate(d,{ open: e.target.value })} />
-              </label>
-              <label className="flex items-center gap-1">Close
-                <input type="time" className="border rounded px-1 py-0.5" value={v.close || ''} disabled={v.closed} onChange={e=>mutate(d,{ close: e.target.value })} />
-              </label>
-              <label className="flex items-center gap-1">Closed
-                <input type="checkbox" checked={!!v.closed} onChange={e=>mutate(d,{ closed: e.target.checked })} />
-              </label>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function HoursSummary({ value }: { value: Record<string, { open?: string; close?: string; closed?: boolean }> }) {
-  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const first = value['Mon'] || {};
-  const uniform = days.every(d => JSON.stringify(value[d]||{}) === JSON.stringify(first||{}));
-  if (uniform && first && (first.closed || (first.open && first.close))) {
-    if (first.closed) return <div className="text-[11px] text-gray-600">Closed all week</div>;
-    return <div className="text-[11px] text-gray-600">{first.open}–{first.close}, all week</div>;
-  }
-  const parts = days.map(d => {
-    const v = value[d] || {};
-    if (v.closed) return `${d}: closed`;
-    if (v.open && v.close) return `${d}: ${v.open}–${v.close}`;
-    return `${d}: —`;
-  });
-  return <div className="text-[11px] text-gray-600 wrap-break-word">{parts.join(' · ')}</div>;
 }

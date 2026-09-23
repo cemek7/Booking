@@ -3,7 +3,14 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { auditSuperadminAction } from '@/types/unified-permissions';
+import { normalizeBusinessHours } from '@/lib/booking/businessHours';
 import { z } from 'zod';
+
+const DayHoursSchema = z.object({
+  open: z.string().nullable().optional(),
+  close: z.string().nullable().optional(),
+  closed: z.boolean().optional(),
+});
 
 const SettingsSchemaBase = z.object({
   displayName: z.string().min(1).optional(),
@@ -50,8 +57,8 @@ const SettingsSchemaBase = z.object({
   defaultCurrency: z.string().length(3).optional(),
   depositPercent: z.number().min(0).max(100).optional(),
   cancellationPolicy: z.string().optional(),
-  businessHours: z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() })).optional(),
-  business_hours: z.record(z.string(), z.object({ open: z.string().nullable().optional(), close: z.string().nullable().optional(), closed: z.boolean().optional() })).optional(),
+  businessHours: z.record(z.string(), DayHoursSchema).optional(),
+  business_hours: z.record(z.string(), DayHoursSchema).optional(),
   staffAssignmentStrategy: z.enum(['round_robin','preferred','skill_based']).optional(),
   allowOverbooking: z.boolean().optional(),
   reminderLead: z.number().int().min(0).optional(),
@@ -143,19 +150,13 @@ const SettingsSchema = SettingsSchemaBase.superRefine((val, ctx) => {
   if (val.requireDeposit && (val.depositPercent === undefined || val.depositPercent <= 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'depositPercent is required when requireDeposit is true and must be > 0', path: ['depositPercent'] });
   }
-  if (val.businessHours) {
-    for (const [day, hours] of Object.entries(val.businessHours)) {
-      if (hours && hours.closed) continue;
-      const open = hours?.open; const close = hours?.close;
-      if ((open && !close) || (!open && close)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Both open and close required when day is not closed', path: ['businessHours', day] });
-      }
-      if (open && close) {
-        if (open >= close) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Open time must be earlier than close time', path: ['businessHours', day] });
-        }
-      }
-    }
+  const hoursField = val.business_hours ?? val.businessHours;
+  if (hoursField && !normalizeBusinessHours(hoursField)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Business hours require valid HH:MM open/close times with open earlier than close',
+      path: [val.business_hours ? 'business_hours' : 'businessHours'],
+    });
   }
   if ((val.tone || val.styleGuidelines) && (!val.samplePhrases || val.samplePhrases.length === 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Add at least one sample phrase when specifying tone or style guidelines', path: ['samplePhrases'] });
@@ -201,6 +202,9 @@ export const GET = createHttpHandler(
     if (typeof resolved.allowInvitesFromStaffPage !== 'boolean') {
       resolved.allowInvitesFromStaffPage = true;
     }
+    const canonicalHours = normalizeBusinessHours(resolved.business_hours ?? resolved.businessHours);
+    if (canonicalHours) resolved.business_hours = canonicalHours;
+    delete resolved.businessHours;
     return resolved;
   },
   'GET',
@@ -233,6 +237,15 @@ export const PATCH = createHttpHandler(
       );
     }
     const patchObj = parsed.data as Record<string, unknown>;
+    const suppliedHours = patchObj.business_hours ?? patchObj.businessHours;
+    if (suppliedHours !== undefined) {
+      const canonicalHours = normalizeBusinessHours(suppliedHours);
+      if (!canonicalHours) {
+        throw ApiErrorFactory.validationError({ business_hours: 'Invalid business hours' });
+      }
+      patchObj.business_hours = canonicalHours;
+      delete patchObj.businessHours;
+    }
 
     // Audit superadmin actions
     if (ctx.user!.role === 'superadmin') {
@@ -275,6 +288,7 @@ export const PATCH = createHttpHandler(
 
     const currWrap = (current ?? {}) as { settings?: Record<string, unknown> | null };
     const currSettings: Record<string, unknown> = currWrap.settings && typeof currWrap.settings === 'object' ? currWrap.settings : {};
+    delete currSettings.businessHours;
     const merged: Record<string, unknown> = { ...currSettings, ...patchObj };
 
     const { error: updateErr } = await ctx.supabase

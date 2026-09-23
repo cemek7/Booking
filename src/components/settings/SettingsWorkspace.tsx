@@ -54,7 +54,6 @@ interface TenantSettings {
   defaultCurrency?: string;
   depositPercent?: number;
   cancellationPolicy?: string;
-  businessHours?: Record<string, { open?: string; close?: string; closed?: boolean }>;
   staffAssignmentStrategy?: 'round_robin' | 'preferred' | 'skill_based';
   allowOverbooking?: boolean;
   reminderLead?: number;
@@ -231,14 +230,6 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
       if (local.requireDeposit && (!local.depositPercent || local.depositPercent <= 0)) {
         toast.error('Deposit percent is required and must be > 0');
         return;
-      }
-      const hours = local.businessHours as Record<string, { open?: string; close?: string; closed?: boolean }> | undefined;
-      if (hours) {
-        for (const [day, h] of Object.entries(hours)) {
-          if (h?.closed) continue;
-          if ((h?.open && !h?.close) || (!h?.open && h?.close)) { toast.error(`Set both open and close for ${day}`); return; }
-          if (h?.open && h?.close && h.open >= h.close) { toast.error(`${day}: open must be earlier than close`); return; }
-        }
       }
     }
     onSave(local);
