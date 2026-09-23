@@ -8,10 +8,13 @@
 -- message_templates table means reminders never reach anyone.
 --
 -- BEFORE RUNNING:
---  1. Create and get each template APPROVED in Meta Business Manager.
+--  1. Create and get each template APPROVED in Meta Business Manager. The exact
+--     bodies to paste are in docs/runbooks/meta-message-templates.md.
 --  2. Replace every template_name below with the exact approved name.
---  3. Set param_mapping to the positional variables the approved body uses,
---     e.g. '[{"default":"there"}]'::jsonb for a one-variable template.
+--  3. Leave param_mapping as '[]'. Template parameters are read from THIS row,
+--     not from the message being sent, so a '{{1}}' would carry the same stored
+--     value to every customer. The suggested bodies contain no variables for
+--     exactly that reason.
 --  4. Each tenant must also switch on templateMessagingEnabled and
 --     paidTemplateConsent in Settings → WhatsApp; both fail closed.
 --
