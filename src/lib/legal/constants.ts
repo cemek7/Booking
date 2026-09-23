@@ -1,13 +1,13 @@
 // Centralized legal-document constants. Keep page copy DRY.
-// TODO (owner): confirm legal entity name, registered address, and contact emails
-// before these pages are published / reviewed by counsel.
+// Verified against Techclave's CAC certificate and status report.
 
 export const LEGAL = {
   /** Operating product/company name shown in legal copy. */
   company: "Techclave",
   product: "Boka",
-  /** TODO: confirm registered legal entity + address. */
-  entity: "Techclave (legal entity to be confirmed)",
+  entity: "Techclave Ltd",
+  registrationNumber: "RC 8489929",
+  registeredAddress: "25, Ndola Crescent, Wuse Zone 5, FCT, Nigeria",
   /**
    * Mailboxes on techclave.cloud, received through Cloudflare Email Routing.
    *
@@ -31,7 +31,7 @@ export const LEGAL = {
     "conversations — answering questions, qualifying and capturing leads, recommending and selling " +
     "services and products, and booking appointments",
   /** Single source of truth for the "last updated" date across all pages. */
-  lastUpdated: "2026-07-03",
+  lastUpdated: "2026-09-23",
 } as const;
 
 /** Third parties that may process personal data on Boka's behalf. */

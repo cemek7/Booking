@@ -19,6 +19,10 @@ export default function TermsPage() {
           who book or message a tenant through the platform. By using {LEGAL.product} you agree to the
           applicable part.
         </p>
+        <p>
+          {LEGAL.product} is operated by {LEGAL.entity} ({LEGAL.registrationNumber}), registered at{' '}
+          {LEGAL.registeredAddress}.
+        </p>
       </LegalSection>
 
       <LegalSection heading="Part A — Business (tenant) terms" id="tenant">

@@ -15,8 +15,11 @@ export default function DpaPage() {
       <LegalSection heading="Roles">
         <p>
           This DPA applies where a business customer (&quot;tenant&quot;) uses {LEGAL.product} to process personal
-          data of its own customers. The <strong>tenant is the data controller</strong> and {LEGAL.company}{' '}
+          data of its own customers. The <strong>tenant is the data controller</strong> and {LEGAL.entity}{' '}
           is the <strong>processor</strong>, acting on the tenant&apos;s documented instructions.
+        </p>
+        <p>
+          The processor is {LEGAL.entity} ({LEGAL.registrationNumber}), registered at {LEGAL.registeredAddress}.
         </p>
       </LegalSection>
 

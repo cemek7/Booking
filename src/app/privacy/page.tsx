@@ -14,7 +14,8 @@ export default function PrivacyPage() {
     <LegalDocument title="Privacy Policy" lastUpdated={LEGAL.lastUpdated}>
       <LegalSection heading="Who we are">
         <p>
-          {LEGAL.product} is {LEGAL.descriptor}, operated by {LEGAL.company} ({LEGAL.entity}).
+          {LEGAL.product} is {LEGAL.descriptor}, operated by {LEGAL.entity} ({LEGAL.registrationNumber}),
+          registered at {LEGAL.registeredAddress}.
           This policy explains how we handle personal data. We aim to comply with the EU/UK GDPR and
           the Nigeria Data Protection Act (NDPA). Contact us at{' '}
           <a href={`mailto:${LEGAL.privacyEmail}`}>{LEGAL.privacyEmail}</a>.
