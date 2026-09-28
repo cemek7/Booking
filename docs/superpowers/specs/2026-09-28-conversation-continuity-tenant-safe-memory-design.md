@@ -307,8 +307,8 @@ customer_memory_facts
   fact_key             text
   fact_value           jsonb
   status               text          -- active | superseded | revoked | expired
-  source_type          text          -- explicit_message | booking | payment | operator
-  source_message_id    uuid null
+  source_type          text          -- explicit_message | operator
+  source_message_id    text null      -- messages.id is text in the current schema
   source_record_id     uuid null
   confidence           numeric
   consent_basis        text null
@@ -322,7 +322,8 @@ customer_memory_facts
 Rules:
 
 - facts are always tenant-scoped;
-- explicit statements, completed transactions, or authorized operator actions may create facts;
+- explicit customer statements or authorized operator actions may create facts;
+- completed transactions update deterministic customer history and profile aggregates; a purchase alone never proves a preference;
 - model inference alone cannot create an active long-term fact;
 - contradictions create a new fact and supersede the old fact rather than silently rewriting history;
 - sensitive health, biometric, financial credential, authentication, and free-form medical details are blocked from the general fact store;
