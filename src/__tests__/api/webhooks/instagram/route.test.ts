@@ -10,6 +10,7 @@ jest.mock('@/lib/instagram/secrets', () => ({
 const mockEnsureConversation = jest.fn();
 const mockAppendPending = jest.fn();
 const mockResolveIncoming = jest.fn();
+const mockEnsureCustomerIdentity = jest.fn();
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   ensureConversation: (...a: unknown[]) => mockEnsureConversation(...a),
 }));
@@ -18,6 +19,9 @@ jest.mock('@/lib/whatsapp/v2/messageBatcher', () => ({
 }));
 jest.mock('@/lib/whatsapp/v2/identityResolver', () => ({
   resolveIncoming: (...a: unknown[]) => mockResolveIncoming(...a),
+}));
+jest.mock('@/lib/customers/channelIdentity', () => ({
+  ensureCustomerChannelIdentity: (...a: unknown[]) => mockEnsureCustomerIdentity(...a),
 }));
 
 let queueInserts: Array<Record<string, unknown>> = [];
@@ -88,6 +92,9 @@ beforeEach(() => {
     routingCodeFound: false,
     strippedMessage: 'hello',
   });
+  mockEnsureCustomerIdentity.mockResolvedValue({
+    identityId: 'identity-ig', customerId: 'customer-ig', created: true,
+  });
 });
 
 describe('GET /api/webhooks/instagram (verification)', () => {
@@ -144,7 +151,12 @@ describe('POST /api/webhooks/instagram', () => {
 
     expect(mockFindTenant).toHaveBeenCalledWith(expect.anything(), 'IG_ACCT');
     // ensureConversation + appendPendingMessage threaded with the instagram channel
-    expect(mockEnsureConversation).toHaveBeenCalledWith('CUSTOMER_IGSID', 'tenant-1', 'customer', 'instagram');
+    expect(mockEnsureCustomerIdentity).toHaveBeenCalledWith({
+      tenantId: 'tenant-1', channel: 'instagram', externalId: 'CUSTOMER_IGSID',
+    });
+    expect(mockEnsureConversation).toHaveBeenCalledWith(
+      'CUSTOMER_IGSID', 'tenant-1', 'customer', 'instagram', 'customer-ig',
+    );
     expect(mockAppendPending).toHaveBeenCalledWith('CUSTOMER_IGSID', 'tenant-1', 'hello', 'msg-1', 'instagram');
 
     expect(queueInserts).toHaveLength(1);

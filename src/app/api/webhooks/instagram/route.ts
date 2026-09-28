@@ -249,8 +249,20 @@ async function routeMessage(
   const resolvedTenantId = tenantId;
   const role = identity.role;
   const text = identity.strippedMessage || content;
+  const { ensureCustomerChannelIdentity } = await import('@/lib/customers/channelIdentity');
+  const customerIdentity = await ensureCustomerChannelIdentity({
+    tenantId: resolvedTenantId,
+    channel: 'instagram',
+    externalId: senderId,
+  });
 
-  await ensureConversation(senderId, resolvedTenantId, role, 'instagram');
+  await ensureConversation(
+    senderId,
+    resolvedTenantId,
+    role,
+    'instagram',
+    customerIdentity.customerId,
+  );
   await appendPendingMessage(senderId, resolvedTenantId, text, messageRowId, 'instagram');
 
   await supabase.from('whatsapp_message_queue').insert({

@@ -14,6 +14,7 @@ type MockChain = {
   lte: FluentMethod;
   gte: FluentMethod;
   not: FluentMethod;
+  is: FluentMethod;
   order: FluentMethod;
   limit: FluentMethod;
   maybeSingle: () => Promise<DbResponse>;
@@ -24,13 +25,14 @@ type MockChain = {
 };
 const responses: DbResponse[] = [];
 const upsertCalls: Array<{ values: Record<string, unknown>; opts: Record<string, unknown> }> = [];
+const updateCalls: Array<Record<string, unknown>> = [];
 
 function pushDb(data: DbRow) { responses.push({ data, error: null }); }
 
 function makeChain() {
   const chain = {} as MockChain;
   const fluentMethods: Array<keyof Pick<MockChain, 'select' | 'eq' | 'neq' | 'ilike' | 'in' | 'lt' | 'gt' | 'lte' | 'gte' | 'not' | 'order' | 'limit' | 'update'>> = [
-    'select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'order', 'limit', 'update',
+    'select', 'eq', 'neq', 'ilike', 'in', 'lt', 'gt', 'lte', 'gte', 'not', 'is', 'order', 'limit',
   ];
   fluentMethods.forEach(method => {
     chain[method] = jest.fn().mockReturnValue(chain);
@@ -39,6 +41,10 @@ function makeChain() {
   chain.single = jest.fn().mockImplementation(() => Promise.resolve(responses.shift() ?? { data: null, error: null }));
   chain.upsert = jest.fn().mockImplementation((values: Record<string, unknown>, opts: Record<string, unknown>) => {
     upsertCalls.push({ values, opts });
+    return chain;
+  });
+  chain.update = jest.fn().mockImplementation((values: Record<string, unknown>) => {
+    updateCalls.push(values);
     return chain;
   });
   chain.insert = jest.fn().mockResolvedValue({ data: null, error: null });
@@ -55,16 +61,16 @@ jest.mock('@/lib/supabase/server', () => ({
 
 import { ensureConversation } from '@/lib/whatsapp/v2/conversationState';
 
-beforeEach(() => { responses.length = 0; upsertCalls.length = 0; });
+beforeEach(() => { responses.length = 0; upsertCalls.length = 0; updateCalls.length = 0; });
 
 describe('ensureConversation channel-awareness', () => {
   it('writes an Instagram row keyed on (channel, external_id) with null phone', async () => {
     // M2: capture the return value and assert it matches the DB row
-    const igRow = { id: 'c1', tenant_id: 't1', phone_number: null, external_id: 'IGSID_1', channel: 'instagram', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null };
+    const igRow = { id: 'c1', tenant_id: 't1', customer_id: 'customer-ig', active_thread_id: null, state_version: 0, phone_number: null, external_id: 'IGSID_1', channel: 'instagram', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null };
     pushDb(igRow);
-    const result = await ensureConversation('IGSID_1', 't1', 'customer', 'instagram');
+    const result = await ensureConversation('IGSID_1', 't1', 'customer', 'instagram', 'customer-ig');
     expect(upsertCalls).toHaveLength(1);
-    expect(upsertCalls[0].values).toMatchObject({ channel: 'instagram', external_id: 'IGSID_1', phone_number: null, tenant_id: 't1' });
+    expect(upsertCalls[0].values).toMatchObject({ channel: 'instagram', external_id: 'IGSID_1', phone_number: null, tenant_id: 't1', customer_id: 'customer-ig' });
     expect(upsertCalls[0].opts).toMatchObject({ onConflict: 'tenant_id,channel,external_id' });
     // M2: assert the returned row has the right channel and external_id
     expect(result).toMatchObject({ channel: 'instagram', external_id: 'IGSID_1' });
@@ -90,5 +96,26 @@ describe('ensureConversation channel-awareness', () => {
     expect(upsertCalls).toHaveLength(1);
     // Should return the row fetched by the fallback getConversation
     expect(result).toMatchObject({ channel: 'instagram', external_id: 'IGSID_2' });
+  });
+
+  it('attaches a customer only when the existing conversation customer is null', async () => {
+    pushDb(null); // ignored upsert
+    pushDb({ id: 'c4', tenant_id: 't1', customer_id: null, active_thread_id: null, state_version: 0, phone_number: '+2348000000000', external_id: '+2348000000000', channel: 'whatsapp', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null });
+    pushDb({ id: 'c4', tenant_id: 't1', customer_id: 'customer-new', active_thread_id: null, state_version: 0, phone_number: '+2348000000000', external_id: '+2348000000000', channel: 'whatsapp', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null });
+
+    const result = await ensureConversation('+2348000000000', 't1', 'customer', 'whatsapp', 'customer-new');
+
+    expect(updateCalls).toEqual([{ customer_id: 'customer-new' }]);
+    expect(result.customer_id).toBe('customer-new');
+  });
+
+  it('never overwrites a non-null customer on an existing conversation', async () => {
+    pushDb(null); // ignored upsert
+    pushDb({ id: 'c5', tenant_id: 't1', customer_id: 'customer-original', active_thread_id: null, state_version: 0, phone_number: '+2348000000000', external_id: '+2348000000000', channel: 'whatsapp', role: 'customer', current_flow: 'idle', flow_step: 0, flow_data: {}, last_inbound_at: null, opted_out_at: null });
+
+    const result = await ensureConversation('+2348000000000', 't1', 'customer', 'whatsapp', 'customer-other');
+
+    expect(updateCalls).toHaveLength(0);
+    expect(result.customer_id).toBe('customer-original');
   });
 });

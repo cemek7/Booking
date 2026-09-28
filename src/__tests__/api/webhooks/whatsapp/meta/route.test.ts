@@ -4,6 +4,7 @@ const mockResolveRoute = jest.fn();
 const mockResolveIncoming = jest.fn();
 const mockEnsureConversation = jest.fn();
 const mockAppendPending = jest.fn();
+const mockEnsureCustomerIdentity = jest.fn();
 
 jest.mock('@/lib/whatsapp/v2/routeSession', () => ({
   resolveWhatsAppRoute: (...args: unknown[]) => mockResolveRoute(...args),
@@ -16,6 +17,9 @@ jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
 }));
 jest.mock('@/lib/whatsapp/v2/messageBatcher', () => ({
   appendPendingMessage: (...args: unknown[]) => mockAppendPending(...args),
+}));
+jest.mock('@/lib/customers/channelIdentity', () => ({
+  ensureCustomerChannelIdentity: (...args: unknown[]) => mockEnsureCustomerIdentity(...args),
 }));
 jest.mock('@/lib/whatsapp/v2/deliverability/metaQualityWebhook', () => ({ ingestQualityWebhook: jest.fn() }));
 jest.mock('@/lib/billing/messageWallet', () => ({
@@ -79,6 +83,9 @@ describe('Meta shared-gateway routing', () => {
       tenantId: 'tenant-b', role: 'customer', routingCodeFound: false,
       tenantUserId: null, userId: null, strippedMessage: 'I need braids',
     });
+    mockEnsureCustomerIdentity.mockResolvedValue({
+      identityId: 'identity-wa', customerId: 'customer-wa', created: true,
+    });
   });
 
   it('routes before tenant-scoped conversation and queue writes', async () => {
@@ -100,7 +107,12 @@ describe('Meta shared-gateway routing', () => {
     expect(mockResolveIncoming).toHaveBeenCalledWith(
       'whatsapp', '+2348111111111', 'I need braids', 'tenant-b',
     );
-    expect(mockEnsureConversation).toHaveBeenCalledWith('+2348111111111', 'tenant-b', 'customer');
+    expect(mockEnsureCustomerIdentity).toHaveBeenCalledWith({
+      tenantId: 'tenant-b', channel: 'whatsapp', externalId: '+2348111111111',
+    });
+    expect(mockEnsureConversation).toHaveBeenCalledWith(
+      '+2348111111111', 'tenant-b', 'customer', 'whatsapp', 'customer-wa',
+    );
     expect(operations.find((entry) => entry.table === 'whatsapp_message_queue')?.payload).toMatchObject({
       tenant_id: 'tenant-b', content: 'I need braids',
     });

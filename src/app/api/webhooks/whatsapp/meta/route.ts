@@ -501,8 +501,18 @@ async function routeMessage(
     const identity = await resolveIncoming('whatsapp', fromNumber, content, tenantId);
     const resolvedTenantId = tenantId;
     const role = identity.role;
+    let customerId: string | null = null;
+    if (role === 'customer') {
+      const { ensureCustomerChannelIdentity } = await import('@/lib/customers/channelIdentity');
+      const customerIdentity = await ensureCustomerChannelIdentity({
+        tenantId: resolvedTenantId,
+        channel: 'whatsapp',
+        externalId: fromNumber,
+      });
+      customerId = customerIdentity.customerId;
+    }
 
-    await ensureConversation(fromNumber, resolvedTenantId, role);
+    await ensureConversation(fromNumber, resolvedTenantId, role, 'whatsapp', customerId);
     await appendPendingMessage(fromNumber, resolvedTenantId, identity.strippedMessage || content, messageRowId);
 
     await supabase.from('whatsapp_message_queue').insert({

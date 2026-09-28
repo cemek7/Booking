@@ -17,6 +17,9 @@ export type ConvChannel = 'whatsapp' | 'instagram';
 export interface ConvState {
   id: string;
   tenant_id: string;
+  customer_id: string | null;
+  active_thread_id: string | null;
+  state_version: number;
   /** WhatsApp rows carry the E.164 phone here; Instagram rows are genuinely null. */
   phone_number: string | null;
   external_id: string;
@@ -36,6 +39,8 @@ export type ConvStatePatch = Partial<
   Pick<ConvState, 'role' | 'current_flow' | 'flow_step' | 'flow_data'>
 >;
 
+const CONVERSATION_SELECT = 'id, tenant_id, customer_id, active_thread_id, state_version, phone_number, external_id, channel, role, current_flow, flow_step, flow_data, last_inbound_at, opted_out_at';
+
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -51,7 +56,7 @@ export async function getConversation(
   const supabaseAdmin = createSupabaseAdminClient();
   const { data, error } = await supabaseAdmin
     .from('whatsapp_conversations')
-    .select('id, tenant_id, phone_number, external_id, channel, role, current_flow, flow_step, flow_data, last_inbound_at, opted_out_at')
+    .select(CONVERSATION_SELECT)
     .eq('channel', channel)
     .eq('external_id', externalId)
     .eq('tenant_id', tenantId)
@@ -79,7 +84,8 @@ export async function ensureConversation(
   externalId: string,
   tenantId: string,
   role: ConvRole = 'unknown',
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  customerId?: string | null,
 ): Promise<ConvState> {
   const supabaseAdmin = createSupabaseAdminClient();
   const isWhatsApp = channel === 'whatsapp';
@@ -91,6 +97,7 @@ export async function ensureConversation(
         external_id: externalId,
         phone_number: isWhatsApp ? externalId : null,
         tenant_id: tenantId,
+        customer_id: customerId ?? null,
         role,
         current_flow: 'idle',
         flow_step: 0,
@@ -101,13 +108,31 @@ export async function ensureConversation(
         ignoreDuplicates: true, // don't overwrite existing row
       }
     )
-    .select('id, tenant_id, phone_number, external_id, channel, role, current_flow, flow_step, flow_data, last_inbound_at, opted_out_at')
+    .select(CONVERSATION_SELECT)
     .single();
 
   if (error || !data) {
     // Row already existed and ignoreDuplicates skipped the insert — fetch it
     const existing = await getConversation(externalId, tenantId, channel);
     if (!existing) throw new Error(`[conversationState] ensureConversation failed: ${error?.message}`);
+    if (!existing.customer_id && customerId) {
+      const { data: attached, error: attachError } = await supabaseAdmin
+        .from('whatsapp_conversations')
+        .update({ customer_id: customerId })
+        .eq('tenant_id', tenantId)
+        .eq('channel', channel)
+        .eq('external_id', externalId)
+        .is('customer_id', null)
+        .select(CONVERSATION_SELECT)
+        .maybeSingle();
+      if (attachError) throw attachError;
+      if (attached) return attached as ConvState;
+
+      // Another worker may have attached the customer first. Re-read and keep
+      // the winner; never overwrite a non-null association.
+      const winner = await getConversation(externalId, tenantId, channel);
+      if (winner) return winner;
+    }
     return existing;
   }
 
