@@ -67,7 +67,7 @@ const REQUIRED_SCHEMA = {
   // media_url / media_info are the columns the WhatsApp media handler writes
   // (the admin-client fix in PR #100 / #91).
   messages: [
-    'id', 'tenant_id', 'direction', 'message_type', 'content', 'created_at',
+    'id', 'tenant_id', 'direction', 'channel', 'message_type', 'content', 'created_at',
     'media_url', 'media_info', 'conversation_thread_id', 'provider_message_id',
     'delivery_status', 'idempotency_key',
   ],

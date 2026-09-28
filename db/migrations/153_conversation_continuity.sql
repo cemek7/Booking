@@ -94,6 +94,7 @@ ALTER TABLE public.whatsapp_conversations
   ADD COLUMN IF NOT EXISTS state_version bigint NOT NULL DEFAULT 0;
 
 ALTER TABLE public.messages
+  ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'whatsapp',
   ADD COLUMN IF NOT EXISTS conversation_thread_id uuid REFERENCES public.conversation_threads(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS provider_message_id text,
   ADD COLUMN IF NOT EXISTS delivery_status text,
