@@ -68,7 +68,41 @@ const REQUIRED_SCHEMA = {
   // (the admin-client fix in PR #100 / #91).
   messages: [
     'id', 'tenant_id', 'direction', 'message_type', 'content', 'created_at',
-    'media_url', 'media_info',
+    'media_url', 'media_info', 'conversation_thread_id', 'provider_message_id',
+    'delivery_status', 'idempotency_key',
+  ],
+  whatsapp_conversations: [
+    'id', 'tenant_id', 'channel', 'external_id', 'customer_id',
+    'active_thread_id', 'state_version',
+  ],
+  whatsapp_message_queue: [
+    'id', 'tenant_id', 'channel', 'message_id', 'conversation_id',
+    'conversation_thread_id', 'provider_timestamp', 'lease_owner',
+    'lease_expires_at', 'batch_id',
+  ],
+  shared_channel_route_sessions: [
+    'id', 'tenant_id', 'channel', 'gateway_scope', 'external_id', 'source',
+    'expires_at', 'last_routed_at', 'created_at', 'updated_at',
+  ],
+  customer_channel_identities: [
+    'id', 'tenant_id', 'customer_id', 'channel', 'external_id',
+    'verification_state', 'verified_at', 'metadata', 'created_at', 'updated_at',
+  ],
+  conversation_threads: [
+    'id', 'tenant_id', 'customer_id', 'channel_identity_id', 'channel', 'status',
+    'structured_state', 'rolling_summary', 'summary_through_message_at',
+    'state_version', 'human_handling_until', 'last_inbound_at', 'last_outbound_at',
+    'completed_at', 'created_at', 'updated_at',
+  ],
+  customer_memory_facts: [
+    'id', 'tenant_id', 'customer_id', 'namespace', 'fact_key', 'fact_value',
+    'status', 'source_type', 'source_message_id', 'source_record_id',
+    'confidence', 'consent_basis', 'verified_at', 'expires_at', 'superseded_by',
+    'created_at', 'updated_at',
+  ],
+  conversation_effects: [
+    'id', 'tenant_id', 'thread_id', 'idempotency_key', 'effect_type', 'status',
+    'result_ref', 'metadata', 'created_at', 'updated_at',
   ],
   // The event bus outbox (PR #94 now publishes background-context events here).
   event_outbox: ['id', 'type', 'tenant_id', 'payload', 'hash', 'delivered_at', 'created_at'],

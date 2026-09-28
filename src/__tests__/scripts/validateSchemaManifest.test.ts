@@ -52,6 +52,16 @@ const RELATIONSHIP_VIEWS = [
 
 const BOOKING_SAFETY_TABLES = ['business_hours', 'slot_locks'];
 
+const CONVERSATION_CONTINUITY_TABLES = [
+  'shared_channel_route_sessions',
+  'customer_channel_identities',
+  'conversation_threads',
+  'customer_memory_facts',
+  'conversation_effects',
+  'whatsapp_conversations',
+  'whatsapp_message_queue',
+];
+
 describe('db:validate manifest', () => {
   it('covers every table the metering path writes to', () => {
     METERED_TABLES.forEach((table) => {
@@ -116,5 +126,39 @@ describe('db:validate manifest', () => {
     expect(REQUIRED_SCHEMA.wallet_topup_intents).toEqual(
       expect.arrayContaining(['reference', 'status', 'amount_credits', 'amount_minor']),
     );
+  });
+
+  it('covers the tenant-safe conversation continuity boundary', () => {
+    CONVERSATION_CONTINUITY_TABLES.forEach((table) => {
+      expect(Object.keys(REQUIRED_SCHEMA)).toContain(table);
+    });
+    expect(REQUIRED_SCHEMA.shared_channel_route_sessions).toEqual(expect.arrayContaining([
+      'tenant_id', 'channel', 'gateway_scope', 'external_id', 'source', 'expires_at',
+    ]));
+    expect(REQUIRED_SCHEMA.customer_channel_identities).toEqual(expect.arrayContaining([
+      'tenant_id', 'customer_id', 'channel', 'external_id', 'verification_state',
+    ]));
+    expect(REQUIRED_SCHEMA.conversation_threads).toEqual(expect.arrayContaining([
+      'tenant_id', 'customer_id', 'channel_identity_id', 'status', 'structured_state',
+      'rolling_summary', 'state_version', 'human_handling_until',
+    ]));
+    expect(REQUIRED_SCHEMA.customer_memory_facts).toEqual(expect.arrayContaining([
+      'tenant_id', 'customer_id', 'namespace', 'fact_key', 'fact_value', 'status',
+      'source_type', 'source_message_id', 'source_record_id', 'consent_basis',
+      'verified_at', 'expires_at', 'superseded_by',
+    ]));
+    expect(REQUIRED_SCHEMA.conversation_effects).toEqual(expect.arrayContaining([
+      'tenant_id', 'thread_id', 'idempotency_key', 'effect_type', 'status',
+    ]));
+    expect(REQUIRED_SCHEMA.whatsapp_conversations).toEqual(expect.arrayContaining([
+      'customer_id', 'active_thread_id', 'state_version',
+    ]));
+    expect(REQUIRED_SCHEMA.messages).toEqual(expect.arrayContaining([
+      'conversation_thread_id', 'provider_message_id', 'delivery_status', 'idempotency_key',
+    ]));
+    expect(REQUIRED_SCHEMA.whatsapp_message_queue).toEqual(expect.arrayContaining([
+      'conversation_id', 'conversation_thread_id', 'provider_timestamp',
+      'lease_owner', 'lease_expires_at', 'batch_id',
+    ]));
   });
 });
