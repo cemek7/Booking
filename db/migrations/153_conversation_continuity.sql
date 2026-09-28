@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS public.customer_memory_facts (
   status text NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'superseded', 'revoked', 'expired')),
   source_type text NOT NULL CHECK (source_type IN ('explicit_message', 'operator')),
-  source_message_id text REFERENCES public.messages(id) ON DELETE SET NULL,
+  source_message_id uuid REFERENCES public.messages(id) ON DELETE SET NULL,
   source_record_id uuid,
   confidence numeric(4,3) NOT NULL DEFAULT 1 CHECK (confidence >= 0 AND confidence <= 1),
   consent_basis text,
@@ -246,7 +246,7 @@ CREATE OR REPLACE FUNCTION public.ingest_conversation_message(
   p_webhook_provider text,
   p_webhook_external_id text,
   p_webhook_payload jsonb,
-  p_message_id text,
+  p_message_id uuid,
   p_tenant_id uuid,
   p_conversation_id uuid,
   p_thread_id uuid,
@@ -287,7 +287,7 @@ BEGIN
   IF inserted_event_count = 0 THEN
     SELECT id INTO queue_id
     FROM public.whatsapp_message_queue
-    WHERE tenant_id = p_tenant_id AND channel = p_channel AND message_id = p_message_id;
+    WHERE tenant_id = p_tenant_id AND channel = p_channel AND message_id = p_message_id::text;
     IF queue_id IS NULL THEN
       RAISE EXCEPTION 'webhook replay exists without an ingested queue row';
     END IF;
@@ -309,7 +309,7 @@ BEGIN
     tenant_id, message_id, from_number, to_number, content, status, priority,
     channel, conversation_id, conversation_thread_id, provider_timestamp
   ) VALUES (
-    p_tenant_id, p_message_id, p_from_number, p_to_number, COALESCE(p_content, ''),
+    p_tenant_id, p_message_id::text, p_from_number, p_to_number, COALESCE(p_content, ''),
     'pending', 'normal', p_channel, p_conversation_id, p_thread_id,
     COALESCE(p_provider_timestamp, now())
   )
@@ -438,14 +438,14 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.claim_whatsapp_conversation_batch(uuid, timestamptz, integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.ingest_conversation_message(text, text, jsonb, text, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, jsonb, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.ingest_conversation_message(text, text, jsonb, uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, jsonb, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.update_conversation_thread_state(uuid, uuid, bigint, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.update_conversation_thread_summary(uuid, uuid, timestamptz, text, timestamptz) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.merge_customers_tx(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.merge_customers_core_tx(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.claim_whatsapp_conversation_batch(uuid, timestamptz, integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.ingest_conversation_message(text, text, jsonb, text, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, jsonb, jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.ingest_conversation_message(text, text, jsonb, uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, jsonb, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.update_conversation_thread_state(uuid, uuid, bigint, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.update_conversation_thread_summary(uuid, uuid, timestamptz, text, timestamptz) TO service_role;
 GRANT EXECUTE ON FUNCTION public.merge_customers_tx(uuid, uuid, uuid) TO service_role;

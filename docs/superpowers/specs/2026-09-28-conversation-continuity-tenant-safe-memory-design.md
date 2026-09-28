@@ -308,7 +308,7 @@ customer_memory_facts
   fact_value           jsonb
   status               text          -- active | superseded | revoked | expired
   source_type          text          -- explicit_message | operator
-  source_message_id    text null      -- messages.id is text in the current schema
+  source_message_id    uuid null
   source_record_id     uuid null
   confidence           numeric
   consent_basis        text null

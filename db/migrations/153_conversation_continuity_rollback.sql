@@ -24,7 +24,7 @@ END
 $rollback_guard$;
 
 DROP FUNCTION IF EXISTS public.claim_whatsapp_conversation_batch(uuid, timestamptz, integer);
-DROP FUNCTION IF EXISTS public.ingest_conversation_message(text, text, jsonb, text, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, jsonb, jsonb);
+DROP FUNCTION IF EXISTS public.ingest_conversation_message(text, text, jsonb, uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, jsonb, jsonb);
 DROP FUNCTION IF EXISTS public.update_conversation_thread_state(uuid, uuid, bigint, jsonb);
 DROP FUNCTION IF EXISTS public.update_conversation_thread_summary(uuid, uuid, timestamptz, text, timestamptz);
 DROP FUNCTION IF EXISTS public.merge_customers_tx(uuid, uuid, uuid);

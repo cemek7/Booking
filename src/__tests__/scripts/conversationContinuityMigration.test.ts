@@ -24,6 +24,7 @@ describe('conversation continuity migration', () => {
     expect(sql).toMatch(/UNIQUE\s*\(tenant_id,\s*channel,\s*external_id\)/i);
     expect(sql).toMatch(/UNIQUE\s*\(channel,\s*gateway_scope,\s*external_id\)/i);
     expect(sql).toMatch(/UNIQUE\s*\(tenant_id,\s*idempotency_key\)/i);
+    expect(sql).toMatch(/source_message_id\s+uuid\s+REFERENCES\s+public\.messages\(id\)/i);
     expect(sql).toContain('claim_whatsapp_conversation_batch');
     expect(sql).toContain('ingest_conversation_message');
     expect(sql).toContain('update_conversation_thread_state');

@@ -117,7 +117,7 @@ Read the SQL as text and assert it contains:
 - a unique active route-session index on `(channel, gateway_scope, external_id)`.
 - a unique effect key on `(tenant_id, idempotency_key)`.
 - `claim_whatsapp_conversation_batch(uuid,timestamptz,integer)`.
-- `ingest_conversation_message(text,text,jsonb,text,uuid,uuid,uuid,text,text,text,text,text,text,timestamptz,jsonb,jsonb)` atomically persists the webhook event, raw inbound message, and queue row.
+- `ingest_conversation_message(text,text,jsonb,uuid,uuid,uuid,uuid,text,text,text,text,text,text,timestamptz,jsonb,jsonb)` atomically persists the webhook event, raw inbound message, and queue row.
 - `update_conversation_thread_state(uuid,uuid,bigint,jsonb)` performs a tenant-scoped optimistic state update and returns the new version.
 - `update_conversation_thread_summary(uuid,uuid,timestamptz,text,timestamptz)` prevents an older summary job from overwriting a newer summary.
 - the replacement `merge_customers_tx(uuid,uuid,uuid)` updates channel identities, threads, and memory facts before marking the losing customer merged.
@@ -189,7 +189,7 @@ CREATE TABLE public.customer_memory_facts (
   status text NOT NULL DEFAULT 'active'
     CHECK (status IN ('active','superseded','revoked','expired')),
   source_type text NOT NULL CHECK (source_type IN ('explicit_message','operator')),
-  source_message_id text REFERENCES public.messages(id) ON DELETE SET NULL,
+  source_message_id uuid REFERENCES public.messages(id) ON DELETE SET NULL,
   source_record_id uuid,
   confidence numeric(4,3) NOT NULL DEFAULT 1 CHECK (confidence >= 0 AND confidence <= 1),
   consent_basis text,
@@ -272,7 +272,7 @@ public.ingest_conversation_message(
   p_webhook_provider text,
   p_webhook_external_id text,
   p_webhook_payload jsonb,
-  p_message_id text,
+  p_message_id uuid,
   p_tenant_id uuid,
   p_conversation_id uuid,
   p_thread_id uuid,
