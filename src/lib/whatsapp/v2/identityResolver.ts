@@ -3,10 +3,9 @@
  *
  * Implements the full routing decision tree:
  *
- *   1. Phone already has a whatsapp_conversations row → use stored tenant_id
- *   2. Phone matches tenant_users.phone → owner or staff shortcut
- *   3. Message contains routing code pattern [A-Z]{4}\d{2} → look up tenants
- *   4. Everything else → unknown, needs routing code
+ * Tenant routing is deliberately completed before this module is called. This
+ * resolver may determine the role/customer identity inside one tenant, but it
+ * must never choose or change the tenant from conversation history or text.
  *
  * Returns tenantId, role, and whether a routing code was found in the message.
  */
@@ -25,16 +24,15 @@ export type ResolvedIdentity = {
   strippedMessage: string; // message with routing code removed (if found)
 };
 
-const ROUTING_CODE_PATTERN = /\b([A-Z]{4}\d{2})\b/;
-
 export async function resolveIncoming(
   channel: ConvChannel,
   externalId: string,
-  messageText: string
+  messageText: string,
+  routedTenantId: string
 ): Promise<ResolvedIdentity> {
   const baseResult: ResolvedIdentity = {
-    tenantId: null,
-    role: 'unknown',
+    tenantId: routedTenantId,
+    role: 'customer',
     tenantUserId: null,
     userId: null,
     routingCodeFound: false,
@@ -48,7 +46,7 @@ export async function resolveIncoming(
     .select('tenant_id, role')
     .eq('channel', channel)
     .eq('external_id', externalId)
-    .not('tenant_id', 'is', null)
+    .eq('tenant_id', routedTenantId)
     .order('updated_at', { ascending: false })
     .limit(1);
 
@@ -59,12 +57,12 @@ export async function resolveIncoming(
 
     if (channel === 'whatsapp') {
       // Check if phone is actually an owner/staff (takes precedence over stored role)
-      const staffIdentity = await resolveStaffRole(externalId, conv.tenant_id);
+      const staffIdentity = await resolveStaffRole(externalId, routedTenantId);
       if (staffIdentity) {
         resolvedRole = staffIdentity.role;
         return {
           ...baseResult,
-          tenantId: conv.tenant_id,
+          tenantId: routedTenantId,
           role: resolvedRole,
           tenantUserId: staffIdentity.tenantUserId,
           userId: staffIdentity.userId,
@@ -74,55 +72,32 @@ export async function resolveIncoming(
 
     return {
       ...baseResult,
-      tenantId: conv.tenant_id,
+      tenantId: routedTenantId,
       role: resolvedRole,
     };
   }
 
-  // ── WhatsApp-only: owner/staff phone shortcut + routing code ──────────────
+  // ── WhatsApp-only: owner/staff phone shortcut inside the routed tenant ───
   if (channel === 'whatsapp') {
-    // Check if this phone belongs to an owner or staff member regardless of message
-    const staffResult = await resolveByPhone(externalId);
+    const staffResult = await resolveByPhone(externalId, routedTenantId);
     if (staffResult) return { ...baseResult, ...staffResult };
-
-    // Routing code in message
-    const codeMatch = messageText.match(ROUTING_CODE_PATTERN);
-    if (codeMatch) {
-      const code = codeMatch[1];
-      const { data: tenant } = await supabaseAdmin
-        .from('tenants')
-        .select('id')
-        .eq('routing_code', code)
-        .eq('v2_enabled', true)
-        .maybeSingle();
-
-      if (tenant) {
-        const stripped = messageText.replace(codeMatch[0], '').trim();
-        return {
-          tenantId: tenant.id,
-          role: 'customer',
-          tenantUserId: null,
-          userId: null,
-          routingCodeFound: true,
-          strippedMessage: stripped || messageText.trim(),
-        };
-      }
-    }
   }
 
-  // ── No match ───────────────────────────────────────────────────────────────
+  // A new customer in an already-routed tenant is still a valid identity.
   return baseResult;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function resolveByPhone(
-  phone: string
+  phone: string,
+  tenantId: string
 ): Promise<Omit<ResolvedIdentity, 'strippedMessage'> | null> {
   const { data: staffRow } = await supabaseAdmin
     .from('tenant_users')
     .select('id, user_id, tenant_id, role')
     .eq('phone', phone)
+    .eq('tenant_id', tenantId)
     .in('role', ['owner', 'staff', 'manager'])
     .maybeSingle();
 

@@ -245,8 +245,8 @@ async function routeMessage(
   const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
   // recipient mapping already gave us the tenant; identity fills role for known convos.
-  const identity = await resolveIncoming('instagram', senderId, content);
-  const resolvedTenantId = identity.tenantId ?? tenantId;
+  const identity = await resolveIncoming('instagram', senderId, content, tenantId);
+  const resolvedTenantId = tenantId;
   const role = identity.role;
   const text = identity.strippedMessage || content;
 

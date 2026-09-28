@@ -270,13 +270,18 @@ export async function POST(request: NextRequest) {
         );
         if (isDuplicate) continue;
 
-        let tenantId = configuredTenantId;
         let routedContent = extractMetaMessageContent(message);
+        const { resolveWhatsAppRoute } = await import('@/lib/whatsapp/v2/routeSession');
+        const route = await resolveWhatsAppRoute({
+          externalId: message.from,
+          gatewayPhoneNumberId: metaPhoneNumberId,
+          messageText: routedContent,
+          dedicatedTenantId: configuredTenantId,
+        });
+        let tenantId = route.status === 'routed' ? route.tenantId : undefined;
+        routedContent = route.strippedMessage || routedContent;
+
         if (!tenantId && isSharedGateway) {
-          const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
-          const identity = await resolveIncoming('whatsapp', message.from, routedContent);
-          tenantId = identity.tenantId ?? undefined;
-          routedContent = identity.strippedMessage || routedContent;
 
           if (!tenantId) {
             // A prospective owner has no routing code — they have not signed up
@@ -323,8 +328,7 @@ export async function POST(request: NextRequest) {
           instanceName,
           parsed.from_number as string,
           parsed.content as string,
-          messageRowId,
-          isSharedGateway
+          messageRowId
         );
       }
     }
@@ -481,8 +485,7 @@ async function routeMessage(
   instance: string,
   fromNumber: string,
   content: string,
-  messageRowId: string,
-  tenantAlreadyRouted = false
+  messageRowId: string
 ): Promise<void> {
   const { data: tenantRow } = await supabase
     .from('tenants')
@@ -495,10 +498,8 @@ async function routeMessage(
     const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
     const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
-    const identity = tenantAlreadyRouted
-      ? { tenantId, role: 'customer' as const, routingCodeFound: false, strippedMessage: content }
-      : await resolveIncoming('whatsapp', fromNumber, content);
-    const resolvedTenantId = identity.tenantId ?? tenantId;
+    const identity = await resolveIncoming('whatsapp', fromNumber, content, tenantId);
+    const resolvedTenantId = tenantId;
     const role = identity.role;
 
     await ensureConversation(fromNumber, resolvedTenantId, role);

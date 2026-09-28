@@ -106,7 +106,7 @@ describe('resolveIncoming Instagram', () => {
     // Only one DB query should happen: the existing-conversation lookup
     pushList([{ tenant_id: 't9', role: 'customer' }]);
 
-    const r = await resolveIncoming('instagram', 'IGSID_9', 'hi do you have space saturday');
+    const r = await resolveIncoming('instagram', 'IGSID_9', 'hi do you have space saturday', 't9');
 
     expect(r.tenantId).toBe('t9');
     expect(r.role).toBe('customer');
@@ -119,6 +119,7 @@ describe('resolveIncoming Instagram', () => {
     expect(convChain.eqCalls).toContainEqual(['channel', 'instagram']);
     // …and on external_id='IGSID_9'
     expect(convChain.eqCalls).toContainEqual(['external_id', 'IGSID_9']);
+    expect(convChain.eqCalls).toContainEqual(['tenant_id', 't9']);
 
     // phone_number must NEVER appear in any eq() filter
     const allEqCalls = chains.flatMap((c) => c.eqCalls);
@@ -129,37 +130,13 @@ describe('resolveIncoming Instagram', () => {
     expect(fromCalls).toHaveLength(1);
   });
 
-  it('routing codes are WhatsApp-only: IG skips tenants lookup; WhatsApp queries it', async () => {
-    // ── Instagram with no existing conversation + routing-code-shaped message ──
+  it('does not use message text to reroute a tenant-scoped identity lookup', async () => {
     pushList([]); // no existing conversation
-    const igResult = await resolveIncoming('instagram', 'IGSID_NEW', 'GLOW12 hello');
+    const igResult = await resolveIncoming('instagram', 'IGSID_NEW', 'GLOW12 hello', 'tenant-ig');
 
-    expect(igResult.tenantId).toBeNull();
+    expect(igResult.tenantId).toBe('tenant-ig');
     expect(igResult.routingCodeFound).toBe(false);
-
-    // IG must NOT have queried the tenants table
     expect(fromCalls).not.toContain('tenants');
-
-    // Reset for the WhatsApp call
-    fromCalls = [];
-    chains = [];
-    mockClient.from.mockClear();
-    mockClient.from.mockImplementation((table: string) => {
-      fromCalls.push(table);
-      return makeChain();
-    });
-
-    // ── WhatsApp with no existing conversation + routing code → queries tenants ──
-    pushList([]); // no existing conversation (terminates with .limit())
-    pushNone();   // resolveByPhone → tenant_users.maybeSingle() → no match
-    // tenants routing-code lookup → push a matching tenant so the code path executes
-    responses.push({ data: { id: 'tenant-glow', routing_code: 'GLOW12' } as DbRow, error: null });
-
-    const waResult = await resolveIncoming('whatsapp', '+2348000000001', 'GLOW12 hello');
-
-    // WhatsApp DID query tenants for the routing code
-    expect(fromCalls).toContain('tenants');
-    expect(waResult.routingCodeFound).toBe(true);
-    expect(waResult.tenantId).toBe('tenant-glow');
+    expect(chains[0].eqCalls).toContainEqual(['tenant_id', 'tenant-ig']);
   });
 });

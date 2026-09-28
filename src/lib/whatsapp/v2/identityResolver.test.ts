@@ -54,7 +54,7 @@ describe('resolveIncoming', () => {
       },
     ]);
 
-    const identity = await resolveIncoming('whatsapp', '+2348000000000', 'refund that order');
+    const identity = await resolveIncoming('whatsapp', '+2348000000000', 'refund that order', 'tenant-1');
 
     expect(identity).toEqual(
       expect.objectContaining({
@@ -67,12 +67,10 @@ describe('resolveIncoming', () => {
     );
   });
 
-  it('keeps tenant_user_id null when routing by code as a customer', async () => {
+  it('keeps tenant_user_id null for a new customer inside the routed tenant', async () => {
     responseMap.set('whatsapp_conversations', [{ data: [], error: null }]);
     responseMap.set('tenant_users:maybeSingle', [{ data: null, error: null }]);
-    responseMap.set('tenants:maybeSingle', [{ data: { id: 'tenant-2' }, error: null }]);
-
-    const identity = await resolveIncoming('whatsapp', '+2348000000001', 'BOOK12 I need help');
+    const identity = await resolveIncoming('whatsapp', '+2348000000001', 'I need help', 'tenant-2');
 
     expect(identity).toEqual(
       expect.objectContaining({
@@ -80,7 +78,7 @@ describe('resolveIncoming', () => {
         role: 'customer',
         tenantUserId: null,
         userId: null,
-        routingCodeFound: true,
+        routingCodeFound: false,
       })
     );
   });

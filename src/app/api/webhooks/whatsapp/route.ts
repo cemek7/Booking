@@ -197,8 +197,8 @@ async function routeMessage(
     const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
     const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
-    const identity = await resolveIncoming('whatsapp', fromNumber, content);
-    const resolvedTenantId = identity.tenantId ?? tenantId;
+    const identity = await resolveIncoming('whatsapp', fromNumber, content, tenantId);
+    const resolvedTenantId = tenantId;
     const role = identity.role;
 
     await ensureConversation(fromNumber, resolvedTenantId, role);
