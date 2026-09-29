@@ -42,6 +42,14 @@ const mockGetProviderClient = jest.fn();
 jest.mock('@/lib/whatsapp/providers', () => ({
   getProviderClient: mockGetProviderClient,
 }));
+jest.mock('@/lib/whatsapp/v2/outboundDelivery', () => ({
+  sendOutboundOnce: jest.fn(async (input: { send: () => Promise<{ success: boolean; messageId?: string; reason?: string }> }) => {
+    const result = await input.send();
+    return result.success
+      ? { status: 'sent', providerMessageId: result.messageId, replayed: false }
+      : { status: 'failed', reason: result.reason, replayed: false };
+  }),
+}));
 
 // Supabase — minimal stub
 jest.mock('@supabase/supabase-js', () => ({

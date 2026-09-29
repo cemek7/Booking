@@ -9,6 +9,7 @@
  * Called by the Vercel cron worker (src/app/api/worker/whatsapp/route.ts).
  */
 
+import { createHash } from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { normalizePidgin, matchRule } from '@/lib/ai/rulesEngine';
 import { isQuotaExceeded, recordAIUsage } from '@/lib/ai/quotaTracker';
@@ -45,6 +46,7 @@ import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 import { getInstagramSecret } from '@/lib/instagram/secrets';
 import { consumeStorefrontContextMarker } from '@/lib/storefront/context';
+import { sendOutboundOnce } from './outboundDelivery';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -96,10 +98,19 @@ export interface BatchProcessResult {
   correlationKey: string;
 }
 
+export interface ConversationExecutionContext {
+  correlationKey: string;
+  threadId: string;
+}
+
 export async function processConversationBatch(
   batch: ClaimedConversationBatch,
 ): Promise<BatchProcessResult> {
   const { externalId, tenantId, channel } = batch;
+  const executionContext: ConversationExecutionContext = {
+    correlationKey: batch.correlationKey,
+    threadId: batch.threadId,
+  };
   const messageId = batch.rows[batch.rows.length - 1]?.messageId;
   if (!messageId) throw new Error('Conversation batch has no message identity');
   const completed = (): BatchProcessResult => ({
@@ -160,18 +171,18 @@ export async function processConversationBatch(
     // and threw it away, so an owner saying "hi" got nothing back.
     if (onboardingReply) {
       const onboardingConfig = await resolveProviderConfig(tenantId, channel);
-      await sendReplyByChannel(onboardingConfig, tenantId, externalId, onboardingReply, channel);
+      await sendReplyByChannel(onboardingConfig, tenantId, externalId, onboardingReply, channel, { executionContext });
     }
     return completed();
   }
 
   if (conv.role === 'owner' || conv.role === 'staff') {
-    await handleOwnerOrStaffMessage(externalId, tenantId, normalized, conv, messageId, channel);
+    await handleOwnerOrStaffMessage(externalId, tenantId, normalized, conv, messageId, channel, executionContext);
     return completed();
   }
 
   // Customer path
-  await handleCustomerMessage(externalId, tenantId, normalized, conv, messageId, channel);
+  await handleCustomerMessage(externalId, tenantId, normalized, conv, messageId, channel, executionContext);
   return completed();
 }
 
@@ -183,7 +194,8 @@ async function handleOwnerOrStaffMessage(
   message: string,
   conv: Awaited<ReturnType<typeof getConversation>> & object,
   messageId: string,
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  executionContext?: ConversationExecutionContext,
 ): Promise<void> {
   const providerConfig = await resolveProviderConfig(tenantId, channel);
 
@@ -193,7 +205,7 @@ async function handleOwnerOrStaffMessage(
   // step, so the code the owner types next lands in handleStep7.
   const emailUpdateReply = await handleOwnerEmailUpdate(externalId, tenantId, message, conv!);
   if (emailUpdateReply) {
-    await sendReplyByChannel(providerConfig, tenantId, externalId, emailUpdateReply, channel);
+    await sendReplyByChannel(providerConfig, tenantId, externalId, emailUpdateReply, channel, { executionContext });
     return;
   }
 
@@ -207,7 +219,7 @@ async function handleOwnerOrStaffMessage(
   if (l1Match) {
     const reply = await handleOwnerCommand(externalId, tenantId, l1Match, conv!, message);
     if (reply) {
-      await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
+      await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { executionContext });
     }
     return;
   }
@@ -220,14 +232,15 @@ async function handleOwnerOrStaffMessage(
       tenantId,
       externalId,
       'Sorry, I had trouble understanding that. Try again or type *help* for options.',
-      channel
+      channel,
+      { executionContext },
     );
     return;
   }
 
   const reply = await handleOwnerCommand(externalId, tenantId, aiReply, conv!, message);
   if (reply) {
-    await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
+    await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { executionContext });
   }
 
 }
@@ -240,7 +253,8 @@ async function handleCustomerMessage(
   message: string,
   conv: Awaited<ReturnType<typeof getConversation>> & object,
   messageId: string,
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  executionContext?: ConversationExecutionContext,
 ): Promise<void> {
   const analyticsState = (conv!.flow_data?.analytics ?? {}) as Record<string, unknown>;
 
@@ -265,7 +279,7 @@ async function handleCustomerMessage(
   if (providerConfig) {
     await sendDisclosureIfNeeded({
       flowData: conv!.flow_data,
-      send: (text) => sendReplyByChannel(providerConfig, tenantId, externalId, text, channel),
+      send: (text) => sendReplyByChannel(providerConfig, tenantId, externalId, text, channel, { executionContext }),
       persist: async (patch) => {
         const merged = { ...(conv!.flow_data ?? {}), ...patch };
         await updateConversation(externalId, tenantId, { flow_data: merged }, channel);
@@ -311,6 +325,7 @@ async function handleCustomerMessage(
       externalId,
       "Got it — I've passed this to a team member who'll get back to you shortly. 🙌",
       channel,
+      { executionContext },
     );
     return;
   }
@@ -365,8 +380,8 @@ async function handleCustomerMessage(
   });
 
   if (l1Match) {
-    const reply = await handleCustomerBooking(externalId, tenantId, l1Match, conv!, message);
-    if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv });
+    const reply = await handleCustomerBooking(externalId, tenantId, l1Match, conv!, message, executionContext);
+    if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv, executionContext });
     return;
   }
 
@@ -386,13 +401,13 @@ async function handleCustomerMessage(
       externalId,
       'Sorry, I didn\'t get that. Type *help* to see what I can do.',
       channel,
-      { brand: true, conv }
+      { brand: true, conv, executionContext }
     );
     return;
   }
 
-  const reply = await handleCustomerBooking(externalId, tenantId, aiReply, conv!, message);
-  if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv });
+  const reply = await handleCustomerBooking(externalId, tenantId, aiReply, conv!, message, executionContext);
+  if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv, executionContext });
 
 }
 
@@ -770,7 +785,12 @@ async function sendReplyByChannel(
   externalId: string,
   reply: string,
   channel: ConvChannel,
-  opts?: { brand?: boolean; initiated?: boolean; conv?: ConvState | null }
+  opts?: {
+    brand?: boolean;
+    initiated?: boolean;
+    conv?: ConvState | null;
+    executionContext?: ConversationExecutionContext;
+  }
 ): Promise<void> {
   if (!providerContext) {
     // No config — skip outbound (already warned in resolveProviderConfig)
@@ -793,21 +813,51 @@ async function sendReplyByChannel(
     finalText = branded;
   }
 
-  const sendResult = await client.sendTextMessage(externalId, finalText);
+  if (!opts?.executionContext) {
+    throw new Error('Outbound conversation reply is missing its execution context');
+  }
 
-  if (!sendResult.success) {
-    if (sendResult.reason === 'wallet_exhausted') {
-      // A DESIGNED outcome, not a failure: the wallet could not fund this reply,
-      // so withMetering already sent the customer a handoff message instead.
-      // A wallet-exhausted response is a completed business outcome: the
-      // metering layer already sent the customer a handoff, so retrying this
-      // leased batch would only duplicate that handoff.
-      console.warn('[pipeline] reply not sent: message wallet exhausted, handoff issued', {
-        tenantId,
-        channel,
-      });
-      return;
-    }
+  const { data: chat } = await supabaseAdmin
+    .from('chats')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('customer_phone', externalId)
+    .maybeSingle();
+
+  const instanceName = (config as EvolutionAPIConfig).instanceName ?? (config as ProviderConfig).instanceName;
+  const digest = createHash('sha256')
+    .update(`${channel}\u0000${externalId}\u0000${finalText}`)
+    .digest('hex');
+  const sendResult = await sendOutboundOnce({
+    tenantId,
+    threadId: opts.executionContext.threadId,
+    idempotencyKey: `${opts.executionContext.correlationKey}:outbound:${digest}`,
+    channel,
+    chatId: chat?.id ?? null,
+    from: instanceName,
+    to: externalId,
+    content: finalText,
+    send: () => client.sendTextMessage(externalId, finalText),
+  });
+
+  if (sendResult.status === 'delivery_unknown') {
+    console.warn('[pipeline] outbound delivery is unknown; automatic resend suppressed', {
+      tenantId,
+      channel,
+      replayed: sendResult.replayed,
+    });
+    return;
+  }
+
+  if (sendResult.reason === 'wallet_exhausted') {
+    console.warn('[pipeline] message wallet exhausted; alternate handoff completed', {
+      tenantId,
+      channel,
+    });
+    return;
+  }
+
+  if (sendResult.status === 'failed') {
     if (channel === 'instagram') {
       // Instagram sends are best-effort for now — log and continue
       console.error(`[pipeline] Outbound Instagram send failed (tenant=${tenantId}, to=${externalId})`);
@@ -818,28 +868,6 @@ async function sendReplyByChannel(
     throw new Error(`Outbound WhatsApp send failed (provider=${waConfig.provider ?? 'evolution'}, tenant=${tenantId}, to=${externalId})`);
   }
 
-  // Persist outbound message row (same for both channels)
-  const { data: chat } = await supabaseAdmin
-    .from('chats')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('customer_phone', externalId)
-    .maybeSingle();
-
-  const instanceName = (config as EvolutionAPIConfig).instanceName ?? (config as ProviderConfig).instanceName;
-
-  await supabaseAdmin.from('messages').insert({
-    tenant_id: tenantId,
-    chat_id: chat?.id ?? null,
-    from_number: instanceName,
-    to_number: externalId,
-    content: finalText,
-    direction: 'outbound',
-    message_type: 'text',
-    channel,
-    evolution_message_id: sendResult.messageId ?? null,
-    timestamp: new Date().toISOString(),
-  });
 }
 
 async function isTenantActivated(tenantId: string): Promise<boolean> {

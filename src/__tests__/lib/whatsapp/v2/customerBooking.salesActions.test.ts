@@ -28,6 +28,11 @@ jest.mock('@/lib/whatsapp/v2/slotEngine', () => ({
 jest.mock('@/lib/whatsapp/v2/waitlist', () => ({
   addToWaitlist: jest.fn(),
 }));
+const mockRunIdempotentEffect = jest.fn(async (input: { execute: () => Promise<unknown> }) => input.execute());
+jest.mock('@/lib/whatsapp/v2/conversationEffects', () => ({
+  ConversationEffectBlockedError: class ConversationEffectBlockedError extends Error {},
+  runIdempotentEffect: mockRunIdempotentEffect,
+}));
 jest.mock('@/lib/logger', () => ({
   defaultLogger: {
     warn: jest.fn(),
@@ -372,10 +377,16 @@ describe('handleCustomerBooking sales actions', () => {
       },
       conv,
       'send me the payment link',
+      { correlationKey: 'conversation-batch:retail', threadId: 'thread-1' },
     );
 
     expect(reply).toContain('Perfect. I’ll get your payment link ready now.');
     expect(reply).toContain('https://pay.example.com/retail/ref-retail-1');
+    expect(mockRunIdempotentEffect).toHaveBeenCalledWith(expect.objectContaining({
+      effectType: 'create_retail_payment_link',
+      tenantId: 'tenant-1',
+      threadId: 'thread-1',
+    }));
     expect(updateConversation).toHaveBeenCalledWith(
       '+2348000000000',
       'tenant-1',

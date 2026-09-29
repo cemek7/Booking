@@ -55,8 +55,10 @@ export type InteractiveMessagePayload =
   | InteractiveListMessage;
 
 export interface ProviderSendResult {
+  /** True only after the provider acknowledges the send request. */
   success: boolean;
   messageId?: string;
+  /** A returned failure is a definite rejection; thrown errors are ambiguous delivery. */
   reason?: string;
 }
 

@@ -11,6 +11,7 @@
  * enough is known to confirm (create_booking).
  */
 
+import { createHash } from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import PaymentService from '@/lib/paymentService';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
@@ -28,6 +29,11 @@ import { ANALYTICS_EVENTS } from '@/lib/analytics/events';
 import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 import { captureBookaException } from '@/lib/observability/sentry';
 import { findCustomerByPhone, resolveCustomer } from '@/lib/customers/identity';
+import {
+  ConversationEffectBlockedError,
+  runIdempotentEffect,
+} from '../conversationEffects';
+import type { ConversationExecutionContext } from '../pipeline';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -45,7 +51,8 @@ export async function handleCustomerBooking(
   tenantId: string,
   input: RuleMatch | AIResponse,
   conv: ConvState,
-  _rawMessage: string
+  _rawMessage: string,
+  executionContext?: ConversationExecutionContext,
 ): Promise<string> {
   void _rawMessage;
 
@@ -57,7 +64,14 @@ export async function handleCustomerBooking(
 
   // ── L1 match ──────────────────────────────────────────────────────────────
   if (!('reply' in input)) {
-    return handleCustomerRuleMatch(convExternalId, tenantId, input as RuleMatch, conv, convChannel);
+    return handleCustomerRuleMatch(
+      convExternalId,
+      tenantId,
+      input as RuleMatch,
+      conv,
+      convChannel,
+      executionContext,
+    );
   }
 
   // ── AI response ───────────────────────────────────────────────────────────
@@ -71,7 +85,22 @@ export async function handleCustomerBooking(
       return handleCreateBooking(convExternalId, tenantId, aiResp, conv, convChannel);
 
     case 'cancel_booking':
-      return handleCancelBooking(convExternalId, tenantId, aiResp, convChannel);
+      return handleReservationMutation(
+        convExternalId,
+        tenantId,
+        aiResp,
+        convChannel,
+        executionContext,
+      );
+
+    case 'reschedule_booking':
+      return handleReservationMutation(
+        convExternalId,
+        tenantId,
+        aiResp,
+        convChannel,
+        executionContext,
+      );
 
     case 'show_catalog':
       return handleShowCatalog(convExternalId, tenantId, aiResp);
@@ -95,7 +124,14 @@ export async function handleCustomerBooking(
       return handleOfferProducts(convExternalId, tenantId, aiResp, 'cross-sell', conv, convChannel);
 
     case 'create_retail_payment_link':
-      return handleCreateRetailPaymentLink(convExternalId, tenantId, aiResp, conv, convChannel);
+      return handleCreateRetailPaymentLink(
+        convExternalId,
+        tenantId,
+        aiResp,
+        conv,
+        convChannel,
+        executionContext,
+      );
 
     case 'recover_lead':
       return handleRecoverLead(convExternalId, tenantId, aiResp, conv, convChannel);
@@ -131,7 +167,8 @@ async function handleCustomerRuleMatch(
   tenantId: string,
   rule: RuleMatch,
   conv: ConvState,
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  executionContext?: ConversationExecutionContext,
 ): Promise<string> {
   switch (rule.action) {
     case 'greet':
@@ -143,7 +180,7 @@ async function handleCustomerRuleMatch(
     case 'affirm': {
       // Confirm a pending booking (takes priority over an upsell offer)
       if (conv.flow_data?.pending_confirmation) {
-        return confirmBooking(externalId, tenantId, conv, channel);
+        return confirmBooking(externalId, tenantId, conv, channel, executionContext);
       }
       // Accept a pending product upsell/cross-sell → record the conversion
       if (conv.flow_data?.pending_upsell) {
@@ -427,7 +464,8 @@ async function confirmBooking(
   externalId: string,
   tenantId: string,
   conv: ConvState,
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  executionContext?: ConversationExecutionContext,
 ): Promise<string> {
   // For WA, phone === externalId; for IG, externalId is the IGSID.
   // The customer record always uses the phone field for WA. For IG,
@@ -466,26 +504,45 @@ async function confirmBooking(
   const startAt = `${date}T${start_time}:00`;
   const endAt = end_time ? `${date}T${end_time}:00` : startAt;
   const reservationStatus = requiresDeposit ? 'deposit_pending' : 'confirmed';
+  if (!executionContext) {
+    throw new Error('Booking confirmation is missing its conversation execution context');
+  }
+  const effectDigest = createHash('sha256').update(JSON.stringify({
+    externalId,
+    service_id,
+    tenant_staff_id: tenant_staff_id ?? null,
+    startAt,
+    endAt,
+    reservationStatus,
+  })).digest('hex');
 
   let reservation: { id: string } | null = null;
   try {
-    reservation = await createReservation(supabaseAdmin as never, {
-      tenant_id: tenantId,
-      customer_id: customer?.id ?? null,
-      customer_name: customer_name ?? phone,
-      phone,
-      service_id,
-      service: service_id,
-      start_at: startAt,
-      end_at: endAt,
-      status: reservationStatus,
-      metadata: {
-        source: 'whatsapp_v2_confirm',
-        lock_id: lock_id ?? null,
-      },
-      staff_id: tenant_staff_id,
-    }) as { id: string } | null;
+    reservation = await runIdempotentEffect({
+      tenantId,
+      threadId: executionContext.threadId,
+      idempotencyKey: `${executionContext.correlationKey}:create_booking:${effectDigest}`,
+      effectType: 'create_booking',
+      execute: async () => createReservation(supabaseAdmin as never, {
+        tenant_id: tenantId,
+        customer_id: customer?.id ?? null,
+        customer_name: customer_name ?? phone,
+        phone,
+        service_id,
+        service: service_id,
+        start_at: startAt,
+        end_at: endAt,
+        status: reservationStatus,
+        metadata: {
+          source: 'whatsapp_v2_confirm',
+          lock_id: lock_id ?? null,
+        },
+        staff_id: tenant_staff_id,
+      }) as Promise<{ id: string } | null>,
+      resultRef: (value) => value?.id ?? null,
+    });
   } catch (error) {
+    if (error instanceof ConversationEffectBlockedError) throw error;
     console.error('[customerBooking] confirmBooking error', error);
     captureBookaException(error, {
       tenantId,
@@ -570,19 +627,26 @@ async function confirmBooking(
   if (requiresDeposit) {
     const paymentService = new PaymentService(supabaseAdmin);
     const customerEmail = getCustomerEmail(customer?.email ?? null, phone);
-    const paymentResult = await paymentService.initializePayment({
+    const paymentResult = await runIdempotentEffect({
       tenantId,
-      amount: depositAmountCents,
-      currency: 'NGN',
-      email: customerEmail,
-      reservationId: reservation?.id ?? `${tenantId}_${phone}_${startAt}`,
-      provider: 'paystack',
-      metadata: {
-        type: 'deposit',
-        reservation_id: reservation?.id,
-        booking_noun: 'appointment',
-      },
-      bearer: 'account',
+      threadId: executionContext.threadId,
+      idempotencyKey: `${executionContext.correlationKey}:initialize_deposit:${effectDigest}`,
+      effectType: 'initialize_deposit',
+      execute: () => paymentService.initializePayment({
+        tenantId,
+        amount: depositAmountCents,
+        currency: 'NGN',
+        email: customerEmail,
+        reservationId: reservation?.id ?? `${tenantId}_${phone}_${startAt}`,
+        provider: 'paystack',
+        metadata: {
+          type: 'deposit',
+          reservation_id: reservation?.id,
+          booking_noun: 'appointment',
+        },
+        bearer: 'account',
+      }),
+      resultRef: (value) => value.transactionId ?? null,
     });
 
     if (!paymentResult.success || !paymentResult.authorizationUrl) {
@@ -688,21 +752,52 @@ async function confirmBooking(
 
 // ─── Cancel booking ───────────────────────────────────────────────────────────
 
-async function handleCancelBooking(
+function irreversibleEffectKey(
+  executionContext: ConversationExecutionContext,
+  action: string,
+  params: Record<string, unknown>,
+): string {
+  const canonicalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, nested]) => [key, canonicalize(nested)]),
+      );
+    }
+    return value;
+  };
+  const digest = createHash('sha256').update(JSON.stringify(canonicalize(params))).digest('hex');
+  return `${executionContext.correlationKey}:${action}:${digest}`;
+}
+
+async function handleReservationMutation(
   externalId: string,
   tenantId: string,
   aiResp: AIResponse,
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  executionContext?: ConversationExecutionContext,
 ): Promise<string> {
+  if (!executionContext) {
+    throw new Error(`${aiResp.action} is missing its conversation execution context`);
+  }
   // For the cancel action, customerPhone is used to look up reservations.
   // For IG, the IGSID is stored as the phone identifier in the customer record.
-  const execResult = await executeAction(tenantId, aiResp, {
-    customerPhone: externalId,
-    channel,
-    userRole: 'customer',
+  const execResult = await runIdempotentEffect({
+    tenantId,
+    threadId: executionContext.threadId,
+    idempotencyKey: irreversibleEffectKey(executionContext, aiResp.action, aiResp.params),
+    effectType: aiResp.action,
+    execute: () => executeAction(tenantId, aiResp, {
+      customerPhone: externalId,
+      channel,
+      userRole: 'customer',
+    }),
   });
   await resetConversation(externalId, tenantId, channel);
-  return execResult.success ? aiResp.reply : `Couldn't cancel: ${execResult.error ?? 'unknown error'}`;
+  const verb = aiResp.action === 'reschedule_booking' ? 'reschedule' : 'cancel';
+  return execResult.success ? aiResp.reply : `Couldn't ${verb}: ${execResult.error ?? 'unknown error'}`;
 }
 
 async function handleShowCatalog(
@@ -839,12 +934,22 @@ async function handleCreateRetailPaymentLink(
   tenantId: string,
   aiResp: AIResponse,
   conv: ConvState,
-  channel: ConvChannel = 'whatsapp'
+  channel: ConvChannel = 'whatsapp',
+  executionContext?: ConversationExecutionContext,
 ): Promise<string> {
-  const execResult = await executeAction(tenantId, aiResp, {
-    customerPhone: externalId,
-    channel,
-    userRole: 'customer',
+  if (!executionContext) {
+    throw new Error('Retail payment-link creation is missing its conversation execution context');
+  }
+  const execResult = await runIdempotentEffect({
+    tenantId,
+    threadId: executionContext.threadId,
+    idempotencyKey: irreversibleEffectKey(executionContext, aiResp.action, aiResp.params),
+    effectType: aiResp.action,
+    execute: () => executeAction(tenantId, aiResp, {
+      customerPhone: externalId,
+      channel,
+      userRole: 'customer',
+    }),
   });
   if (!execResult.success) {
     return execResult.error
