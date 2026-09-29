@@ -36,7 +36,7 @@ import {
 import type { ConversationExecutionContext } from '../pipeline';
 import { parseConversationStructuredState } from '../structuredState';
 import { reduceConversationState } from '../stateReducer';
-import { updateThreadState } from '../conversationThread';
+import { transitionThread, updateThreadState } from '../conversationThread';
 import { nextMissingField } from '../missingFields';
 
 const supabaseAdmin = createSupabaseAdminClient();
@@ -614,6 +614,18 @@ async function confirmBooking(
     });
     conv.state_version = updated.stateVersion;
     conv.flow_data = { ...conv.flow_data, structured_state: reduced };
+  }
+
+  // A confirmed booking without an outstanding deposit closes this enquiry.
+  // The next inbound message will therefore get a fresh canonical thread
+  // instead of inheriting service/date details from the completed booking.
+  if (!requiresDeposit) {
+    await transitionThread({
+      tenantId,
+      threadId: executionContext.threadId,
+      from: ['active', 'handed_off'],
+      to: 'completed',
+    });
   }
 
   await recordFrontDeskEvent({

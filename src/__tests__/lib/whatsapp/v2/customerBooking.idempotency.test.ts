@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockCreateReservation = jest.fn();
 const mockInitializePayment = jest.fn();
 const mockExecuteAction = jest.fn();
+const mockUpdateThreadState = jest.fn();
+const mockTransitionThread = jest.fn();
 const effectResults = new Map<string, unknown>();
 const mockRunIdempotentEffect = jest.fn(async (input: { idempotencyKey: string; execute: () => Promise<unknown> }) => {
   if (effectResults.has(input.idempotencyKey)) return effectResults.get(input.idempotencyKey);
@@ -46,6 +48,10 @@ jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   updateConversation: jest.fn(),
   resetConversation: jest.fn(),
 }));
+jest.mock('@/lib/whatsapp/v2/conversationThread', () => ({
+  updateThreadState: (...args: unknown[]) => mockUpdateThreadState(...args),
+  transitionThread: (...args: unknown[]) => mockTransitionThread(...args),
+}));
 jest.mock('@/lib/whatsapp/v2/slotEngine', () => ({
   getAvailableSlots: jest.fn(),
   lockSlot: jest.fn(),
@@ -71,6 +77,8 @@ describe('customer booking idempotency', () => {
       authorizationUrl: 'https://pay.example/deposit-1',
     });
     mockExecuteAction.mockResolvedValue({ success: true, data: { reservationId: 'reservation-1' } });
+    mockUpdateThreadState.mockResolvedValue({ stateVersion: 1 });
+    mockTransitionThread.mockResolvedValue(undefined);
   });
 
   it('creates one reservation and one deposit intent when the same batch is replayed', async () => {
@@ -139,6 +147,34 @@ describe('customer booking idempotency', () => {
       tenantId: 'tenant-1',
       threadId: 'thread-1',
     }));
+  });
+
+  it('completes the enquiry thread after a confirmed booking with no pending deposit', async () => {
+    const conv = {
+      id: 'conversation-1', tenant_id: 'tenant-1', customer_id: 'customer-1',
+      active_thread_id: 'thread-1', state_version: 0,
+      phone_number: '+2348000000000', external_id: '+2348000000000',
+      channel: 'whatsapp' as const, role: 'customer' as const,
+      current_flow: 'booking', flow_step: 4,
+      flow_data: {
+        pending_confirmation: {
+          service_id: 'service-1', tenant_staff_id: 'staff-1', date: '2026-10-01',
+          start_time: '10:00', end_time: '11:00', customer_name: 'Ada',
+          deposit_required: false, deposit_amount_cents: 0,
+        },
+        structured_state: { confirmed: {}, proposed: {}, missing: [] },
+      },
+      last_inbound_at: null, opted_out_at: null,
+    };
+
+    await handleCustomerBooking(
+      '+2348000000000', 'tenant-1', { action: 'affirm' }, conv, 'yes',
+      { correlationKey: 'conversation-batch:no-deposit', threadId: 'thread-1' },
+    );
+
+    expect(mockTransitionThread).toHaveBeenCalledWith({
+      tenantId: 'tenant-1', threadId: 'thread-1', from: ['active', 'handed_off'], to: 'completed',
+    });
   });
 
   it('creates one retail payment-link intent when the same batch is replayed', async () => {

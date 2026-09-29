@@ -54,6 +54,7 @@ export function isConversationStateConflict(error: unknown): boolean {
 
 export interface ConversationThreadStore {
   findUnfinishedThread(input: Pick<EnsureThreadInput, 'tenantId' | 'channelIdentityId'>): Promise<ConversationThread | null>;
+  loadThread(input: { tenantId: string; threadId: string }): Promise<ConversationThread | null>;
   createThread(input: Omit<EnsureThreadInput, 'conversationId'>): Promise<ConversationThread>;
   attachConversation(input: {
     tenantId: string; conversationId: string; threadId: string; stateVersion: number;
@@ -92,6 +93,16 @@ function createConversationThreadStore(): ConversationThreadStore {
         .in('status', ['active', 'handed_off'])
         .order('updated_at', { ascending: false })
         .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? mapThread(data) : null;
+    },
+
+    async loadThread(input) {
+      const { data, error } = await admin.from('conversation_threads')
+        .select(THREAD_SELECT)
+        .eq('tenant_id', input.tenantId)
+        .eq('id', input.threadId)
         .maybeSingle();
       if (error) throw error;
       return data ? mapThread(data) : null;
@@ -172,7 +183,16 @@ function createConversationThreadStore(): ConversationThreadStore {
       }).eq('tenant_id', input.tenantId).eq('id', input.threadId)
         .in('status', input.from).select('id').maybeSingle();
       if (error) throw error;
-      if (!data) throw new Error('conversation_thread_transition_conflict');
+      if (!data) {
+        const { data: current, error: readError } = await admin.from('conversation_threads')
+          .select('status')
+          .eq('tenant_id', input.tenantId)
+          .eq('id', input.threadId)
+          .maybeSingle();
+        if (readError) throw readError;
+        if (current?.status === input.to) return;
+        throw new Error('conversation_thread_transition_conflict');
+      }
     },
   };
 }
@@ -207,6 +227,15 @@ export async function ensureActiveThread(
     threadId: thread.id,
     stateVersion: thread.stateVersion,
   });
+  return thread;
+}
+
+export async function loadCanonicalThread(
+  input: { tenantId: string; threadId: string },
+  store: ConversationThreadStore = createConversationThreadStore(),
+): Promise<ConversationThread> {
+  const thread = await store.loadThread(input);
+  if (!thread) throw new Error('Canonical conversation thread was not found in the tenant');
   return thread;
 }
 

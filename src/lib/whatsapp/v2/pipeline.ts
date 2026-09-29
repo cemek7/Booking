@@ -49,7 +49,7 @@ import { consumeStorefrontContextMarker } from '@/lib/storefront/context';
 import { sendOutboundOnce } from './outboundDelivery';
 import { parseConversationStructuredState } from './structuredState';
 import { parseProposedStatePatch, reduceConversationState } from './stateReducer';
-import { updateThreadState } from './conversationThread';
+import { loadCanonicalThread, updateThreadState } from './conversationThread';
 import { assembleConversationContextForMode } from '@/lib/ai/conversation-context';
 import { maybeScheduleConversationSummary } from './conversationSummary';
 import { extractExplicitMemoryFacts, recordVerifiedMemoryFact } from '@/lib/customers/memoryFacts';
@@ -139,6 +139,20 @@ export async function processConversationBatch(
   if (!conv) {
     conv = await ensureConversation(externalId, tenantId, 'unknown', channel);
   }
+  if (conv.active_thread_id !== batch.threadId) {
+    throw new Error('Leased conversation batch does not match the active tenant thread');
+  }
+  const canonicalThread = await loadCanonicalThread({ tenantId, threadId: batch.threadId });
+  if (canonicalThread.channel !== channel
+      || (conv.customer_id && canonicalThread.customerId !== conv.customer_id)) {
+    throw new Error('Canonical conversation thread identity mismatch');
+  }
+  conv.customer_id = canonicalThread.customerId;
+  conv.state_version = canonicalThread.stateVersion;
+  conv.flow_data = {
+    ...(conv.flow_data ?? {}),
+    structured_state: canonicalThread.structuredState,
+  };
   const storefrontHandoff = consumeStorefrontContextMarker(rawMessage, tenantId);
   rawMessage = storefrontHandoff.message;
   if (storefrontHandoff.context) {

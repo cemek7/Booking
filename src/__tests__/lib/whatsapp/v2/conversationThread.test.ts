@@ -1,6 +1,7 @@
 import {
   ensureActiveThread,
   isConversationStateConflict,
+  loadCanonicalThread,
   transitionThread,
   updateThreadState,
   type ConversationThread,
@@ -25,6 +26,7 @@ function store(overrides: Partial<ConversationThreadStore> = {}): ConversationTh
     findUnfinishedThread: jest.fn().mockResolvedValue(null),
     createThread: jest.fn().mockResolvedValue(baseThread),
     attachConversation: jest.fn().mockResolvedValue(undefined),
+    loadThread: jest.fn().mockResolvedValue(baseThread),
     updateCanonicalState: jest.fn().mockResolvedValue(1),
     projectCompatibilityState: jest.fn().mockResolvedValue(undefined),
     transition: jest.fn().mockResolvedValue(undefined),
@@ -59,6 +61,21 @@ describe('ensureActiveThread', () => {
     expect(threadStore.createThread).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', channelIdentityId: 'identity-1',
     }));
+  });
+});
+
+describe('loadCanonicalThread', () => {
+  it('loads only the exact tenant and thread', async () => {
+    const threadStore = store();
+    await expect(loadCanonicalThread({ tenantId: 'tenant-1', threadId: 'thread-1' }, threadStore))
+      .resolves.toEqual(baseThread);
+    expect(threadStore.loadThread).toHaveBeenCalledWith({ tenantId: 'tenant-1', threadId: 'thread-1' });
+  });
+
+  it('fails closed when the leased thread is missing', async () => {
+    const threadStore = store({ loadThread: jest.fn().mockResolvedValue(null) });
+    await expect(loadCanonicalThread({ tenantId: 'tenant-1', threadId: 'missing' }, threadStore))
+      .rejects.toThrow('Canonical conversation thread was not found in the tenant');
   });
 });
 

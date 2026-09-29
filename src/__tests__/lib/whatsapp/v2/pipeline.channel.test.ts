@@ -55,6 +55,11 @@ jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({
   isThreadHumanHandling: (...args: unknown[]) => mockIsThreadHumanHandling(...args),
   setHumanHandling: jest.fn(async () => undefined),
 }));
+const mockLoadCanonicalThread = jest.fn();
+jest.mock('@/lib/whatsapp/v2/conversationThread', () => ({
+  loadCanonicalThread: (...args: unknown[]) => mockLoadCanonicalThread(...args),
+  updateThreadState: jest.fn(async () => ({ stateVersion: 1 })),
+}));
 
 // Supabase — minimal stub
 jest.mock('@supabase/supabase-js', () => ({
@@ -121,6 +126,9 @@ function makeConv(overrides: Record<string, unknown> = {}) {
     current_flow: 'idle' as const,
     flow_step: 0,
     flow_data: {},
+    customer_id: 'customer-1',
+    active_thread_id: 'thread-1',
+    state_version: 0,
     last_inbound_at: null,
     opted_out_at: null,
     ...overrides,
@@ -145,16 +153,27 @@ function makeBatch(overrides: Partial<ClaimedConversationBatch> = {}): ClaimedCo
   };
 }
 
+function canonicalThread(channel: 'whatsapp' | 'instagram') {
+  return {
+    id: 'thread-1', tenantId: 'tenant-1', customerId: 'customer-1',
+    channelIdentityId: 'identity-1', channel, status: 'active',
+    structuredState: { confirmed: {}, proposed: {}, missing: [] }, stateVersion: 0,
+    updatedAt: '2026-09-29T10:00:00.000Z',
+  };
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(true);
   mockIsThreadHumanHandling.mockResolvedValue(false);
+  mockLoadCanonicalThread.mockResolvedValue(canonicalThread('whatsapp'));
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('processConversationBatch channel=instagram', () => {
   it('uses the exact tenant, identity, and channel from the leased batch', async () => {
+    mockLoadCanonicalThread.mockResolvedValue(canonicalThread('instagram'));
     const conv = makeConv({ flow_data: { human_handling_until: '2999-01-01T00:00:00.000Z' } });
     mockGetConversation.mockResolvedValue(conv);
 
@@ -164,6 +183,7 @@ describe('processConversationBatch channel=instagram', () => {
   });
 
   it('does NOT call getTenantWhatsAppConfig when channel="instagram" (WA send path is bypassed)', async () => {
+    mockLoadCanonicalThread.mockResolvedValue(canonicalThread('instagram'));
     // Conversation exists — customer path, AI quota exhausted → reply falls back to hardcoded message
     const conv = makeConv();
     mockGetConversation.mockResolvedValue(conv);

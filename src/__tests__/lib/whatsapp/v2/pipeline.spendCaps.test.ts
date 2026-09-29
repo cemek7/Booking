@@ -9,6 +9,7 @@ const mockCheckCaps = jest.fn();
 const mockMaybeAlertCap = jest.fn();
 const mockIsQuotaExceeded = jest.fn();
 const mockWithTenantWalletSpend = jest.fn();
+const mockLoadCanonicalThread = jest.fn();
 
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   getConversation: mockGetConversation,
@@ -98,6 +99,10 @@ jest.mock('@/lib/whatsapp/v2/humanHandoff', () => ({
 jest.mock('@/lib/whatsapp/v2/optInProof', () => ({
   buildOptInProofPatch: jest.fn().mockReturnValue(null),
 }));
+jest.mock('@/lib/whatsapp/v2/conversationThread', () => ({
+  loadCanonicalThread: (...args: unknown[]) => mockLoadCanonicalThread(...args),
+  updateThreadState: jest.fn(async () => ({ stateVersion: 1 })),
+}));
 
 jest.mock('@/lib/whatsapp/v2/outboundBranding', () => ({
   brandCustomerText: jest.fn(async (_tenantId: string, _externalId: string, reply: string) => reply),
@@ -141,6 +146,9 @@ function makeConv() {
     current_flow: 'idle' as const,
     flow_step: 0,
     flow_data: {},
+    customer_id: 'customer-1',
+    active_thread_id: 'thread-1',
+    state_version: 0,
     last_inbound_at: null,
     opted_out_at: null,
   };
@@ -174,6 +182,12 @@ describe('pipeline spend-cap gate', () => {
     mockWithTenantWalletSpend.mockResolvedValue({
       json: JSON.stringify({ action: 'answer', reply: 'ok', confidence: 'high' }),
       usage: {},
+    });
+    mockLoadCanonicalThread.mockResolvedValue({
+      id: 'thread-1', tenantId: 'tenant-1', customerId: 'customer-1',
+      channelIdentityId: 'identity-1', channel: 'whatsapp', status: 'active',
+      structuredState: { confirmed: {}, proposed: {}, missing: [] }, stateVersion: 0,
+      updatedAt: '2026-09-29T10:00:00.000Z',
     });
   });
 
