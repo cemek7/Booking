@@ -499,11 +499,12 @@ async function routeMessage(
 ): Promise<boolean> {
   const { data: tenantRow } = await supabase
     .from('tenants')
-    .select('v2_enabled')
+    .select('v2_enabled, settings')
     .eq('id', tenantId)
     .maybeSingle();
 
-  if (tenantRow?.v2_enabled) {
+  const { getContinuityFlags } = await import('@/lib/whatsapp/v2/continuityFlags');
+  if (tenantRow?.v2_enabled && getContinuityFlags(tenantRow).durableBatching) {
     const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
     const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 

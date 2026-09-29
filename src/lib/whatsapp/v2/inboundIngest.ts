@@ -5,6 +5,7 @@ import { ensureConversation } from './conversationState';
 import { ensureActiveThread } from './conversationThread';
 import { resolveIncoming } from './identityResolver';
 import { ingestConversationMessage } from './queueBatch';
+import { getContinuityFlags } from './continuityFlags';
 
 export async function ingestCustomerInboundIfV2(input: {
   tenantId: string;
@@ -22,9 +23,10 @@ export async function ingestCustomerInboundIfV2(input: {
 }): Promise<{ queueId: string; messageId: string } | null> {
   const admin = createSupabaseAdminClient();
   const { data: tenant, error } = await admin.from('tenants')
-    .select('v2_enabled').eq('id', input.tenantId).maybeSingle();
+    .select('v2_enabled, settings').eq('id', input.tenantId).maybeSingle();
   if (error) throw error;
   if (!tenant?.v2_enabled) return null;
+  if (!getContinuityFlags(tenant).durableBatching) return null;
 
   const identity = await resolveIncoming(
     'whatsapp', input.fromNumber, input.content, input.tenantId,

@@ -31,6 +31,7 @@ jest.mock('@/lib/billing/messageWallet', () => ({
 }));
 
 const operations: Array<{ table: string; operation: string; payload?: unknown }> = [];
+let mockTenantRow: Record<string, unknown> = {};
 
 function buildAdmin() {
   let table = '';
@@ -42,7 +43,7 @@ function buildAdmin() {
     upsert(payload: unknown) { operations.push({ table, operation: 'upsert', payload }); return chain; },
     maybeSingle() {
       if (table === 'whatsapp_configurations') return Promise.resolve({ data: null, error: null });
-      if (table === 'tenants') return Promise.resolve({ data: { v2_enabled: true }, error: null });
+      if (table === 'tenants') return Promise.resolve({ data: mockTenantRow, error: null });
       return Promise.resolve({ data: null, error: null });
     },
     single() {
@@ -80,6 +81,10 @@ describe('Meta shared-gateway routing', () => {
     process.env.NODE_ENV = 'production';
     process.env.WHATSAPP_APP_SECRET = APP_SECRET;
     process.env.META_SHARED_GATEWAY_PHONE_NUMBER_ID = 'gateway-phone-id';
+    mockTenantRow = {
+      v2_enabled: true,
+      settings: { conversation_continuity: { durable_batching: true } },
+    };
     mockResolveRoute.mockResolvedValue({
       status: 'routed', tenantId: 'tenant-b', source: 'routing_code', strippedMessage: 'I need braids',
     });
@@ -130,5 +135,22 @@ describe('Meta shared-gateway routing', () => {
       fromNumber: '+2348111111111', content: 'I need braids', providerMessageId: 'wamid.1',
     }));
     expect(operations.find((entry) => entry.table === 'whatsapp_message_queue')).toBeUndefined();
+  });
+
+  it('keeps Meta traffic on the existing path until durable batching is enabled', async () => {
+    mockTenantRow = { v2_enabled: true, settings: {} };
+    const body = JSON.stringify({
+      object: 'whatsapp_business_account',
+      entry: [{ changes: [{ field: 'messages', value: {
+        metadata: { phone_number_id: 'gateway-phone-id' },
+        messages: [{ from: '+2348111111111', id: 'wamid.2', timestamp: '1790596800', type: 'text', text: { body: 'BETY42 hello' } }],
+      } }] }],
+    });
+
+    const response = await POST(request(body));
+
+    expect(response.status).toBe(200);
+    expect(mockIngest).not.toHaveBeenCalled();
+    expect(operations).toContainEqual(expect.objectContaining({ table: 'messages', operation: 'insert' }));
   });
 });

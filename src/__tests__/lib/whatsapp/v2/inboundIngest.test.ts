@@ -3,6 +3,7 @@ const mockEnsureIdentity = jest.fn();
 const mockEnsureConversation = jest.fn();
 const mockEnsureThread = jest.fn();
 const mockIngest = jest.fn();
+let mockTenantRow: Record<string, unknown> = {};
 
 jest.mock('@/lib/whatsapp/v2/identityResolver', () => ({
   resolveIncoming: (...args: unknown[]) => mockResolveIncoming(...args),
@@ -24,7 +25,7 @@ jest.mock('@/lib/supabase/server', () => ({
     from: () => ({
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({ data: { v2_enabled: true }, error: null }),
+      maybeSingle: jest.fn().mockImplementation(async () => ({ data: mockTenantRow, error: null })),
     }),
   }),
 }));
@@ -49,6 +50,10 @@ const input = {
 describe('ingestCustomerInboundIfV2', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTenantRow = {
+      v2_enabled: true,
+      settings: { conversation_continuity: { durable_batching: true } },
+    };
     mockResolveIncoming.mockResolvedValue({ role: 'customer', strippedMessage: 'book me tomorrow' });
     mockEnsureIdentity.mockResolvedValue({ identityId: 'identity-1', customerId: 'customer-1' });
     mockEnsureConversation.mockResolvedValue({ id: 'conversation-1' });
@@ -75,6 +80,13 @@ describe('ingestCustomerInboundIfV2', () => {
     mockResolveIncoming.mockResolvedValue({ role: 'owner', strippedMessage: 'sales today' });
     await expect(ingestCustomerInboundIfV2(input)).resolves.toBeNull();
     expect(mockEnsureIdentity).not.toHaveBeenCalled();
+    expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('leaves the existing ingestion path active until durable batching is enabled for the tenant', async () => {
+    mockTenantRow = { v2_enabled: true, settings: {} };
+    await expect(ingestCustomerInboundIfV2(input)).resolves.toBeNull();
+    expect(mockResolveIncoming).not.toHaveBeenCalled();
     expect(mockIngest).not.toHaveBeenCalled();
   });
 });
