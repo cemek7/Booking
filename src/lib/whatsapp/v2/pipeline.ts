@@ -50,6 +50,8 @@ import { sendOutboundOnce } from './outboundDelivery';
 import { parseConversationStructuredState } from './structuredState';
 import { parseProposedStatePatch, reduceConversationState } from './stateReducer';
 import { updateThreadState } from './conversationThread';
+import { assembleConversationContext } from '@/lib/ai/conversation-context';
+import { maybeScheduleConversationSummary } from './conversationSummary';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -116,9 +118,15 @@ export async function processConversationBatch(
   };
   const messageId = batch.rows[batch.rows.length - 1]?.messageId;
   if (!messageId) throw new Error('Conversation batch has no message identity');
-  const completed = (): BatchProcessResult => ({
-    disposition: 'complete', correlationKey: batch.correlationKey,
-  });
+  const completed = async (): Promise<BatchProcessResult> => {
+    await maybeScheduleConversationSummary({ tenantId, threadId: batch.threadId }).catch((error) => {
+      console.warn('[pipeline] conversation summary scheduling skipped', {
+        tenantId,
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
+    });
+    return { disposition: 'complete', correlationKey: batch.correlationKey };
+  };
   let rawMessage = batch.combinedText;
 
   // ── 2. Load conversation state ─────────────────────────────────────────────
@@ -701,6 +709,13 @@ async function buildPromptContext(
     userRole,
   });
   const grounding = await getGroundingData(tenantId, message, conv, route);
+  const conversationContext = conv.active_thread_id && conv.customer_id
+    ? await assembleConversationContext({
+        tenantId,
+        threadId: conv.active_thread_id,
+        customerId: conv.customer_id,
+      })
+    : null;
 
   return {
     route,
@@ -711,6 +726,7 @@ async function buildPromptContext(
       conv,
       userRole,
       retryContext,
+      conversationContext,
     }),
   };
 }

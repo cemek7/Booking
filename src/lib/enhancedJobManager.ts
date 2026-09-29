@@ -495,6 +495,21 @@ export class EnhancedJobManager {
    * Initialize built-in job handlers
    */
   private initializeBuiltinHandlers(): void {
+    this.registerHandler('summarize_conversation_thread', async (payload) => {
+      try {
+        const tenantId = payload.tenant_id as string;
+        const threadId = payload.thread_id as string;
+        if (!tenantId || !threadId) {
+          return { success: false, error: 'summary job requires tenant_id and thread_id', retry: false };
+        }
+        const { runConversationSummaryJob } = await import('./whatsapp/v2/conversationSummary');
+        await runConversationSummaryJob({ tenantId, threadId });
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: (error as Error).message, retry: true };
+      }
+    });
+
     // payment_retry: re-check transaction status with the provider and update locally
     this.registerHandler('payment_retry', async (payload, _context) => {
       try {
