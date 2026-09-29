@@ -169,10 +169,10 @@ export class ReviewCollectionAgent {
       switch (state.step) {
         case 'initial_request':
         case 'awaiting_rating':
-          return await this.processRatingResponse(state, metadata, message, sessionPhone);
+          return await this.processRatingResponse(tenantId, state, metadata, message, sessionPhone);
 
         case 'awaiting_feedback':
-          return await this.processFeedbackResponse(state, metadata, message, sessionPhone);
+          return await this.processFeedbackResponse(tenantId, state, metadata, message, sessionPhone);
 
         default:
           return {
@@ -263,6 +263,7 @@ export class ReviewCollectionAgent {
    * Process rating response
    */
   private async processRatingResponse(
+    tenantId: string,
     state: ReviewConversationState,
     metadata: ReviewSessionMetadata,
     message: string,
@@ -296,7 +297,7 @@ export class ReviewCollectionAgent {
     state.attempts = 0;
 
     // Update state
-    await this.updateSessionState(customerPhone, state);
+    await this.updateSessionState(tenantId, customerPhone, state);
 
     // Ask for detailed feedback
     const followUpMessage = rating >= 4
@@ -315,6 +316,7 @@ export class ReviewCollectionAgent {
    * Process feedback text response
    */
   private async processFeedbackResponse(
+    tenantId: string,
     state: ReviewConversationState,
     metadata: ReviewSessionMetadata,
     message: string,
@@ -331,10 +333,10 @@ export class ReviewCollectionAgent {
     }
 
     // Save the review to database
-    await this.saveReview(state);
+    await this.saveReview(tenantId, state);
 
     state.step = 'completed';
-    await this.updateSessionState(customerPhone, state);
+    await this.updateSessionState(tenantId, customerPhone, state);
 
     // Send thank you message
     const thankYouMessage = state.ratings.overallRating! >= 4
@@ -350,13 +352,14 @@ export class ReviewCollectionAgent {
   /**
    * Save review to database
    */
-  private async saveReview(state: ReviewConversationState): Promise<void> {
+  private async saveReview(tenantId: string, state: ReviewConversationState): Promise<void> {
     try {
       // Get reservation details
       const { data: reservation } = await this.supabase
         .from('reservations')
         .select('tenant_id, customer_id, staff_id, service_id')
         .eq('id', state.reservationId)
+        .eq('tenant_id', tenantId)
         .single();
 
       if (!reservation) {
@@ -422,6 +425,7 @@ export class ReviewCollectionAgent {
    * Update session state
    */
   private async updateSessionState(
+    tenantId: string,
     customerPhone: string,
     state: ReviewConversationState
   ): Promise<void> {
@@ -429,7 +433,8 @@ export class ReviewCollectionAgent {
       .from('whatsapp_sessions')
       .update({ state: state })
       .eq('phone_number', this.normalizeSessionPhone(customerPhone))
-      .eq('session_type', 'review_collection');
+      .eq('session_type', 'review_collection')
+      .eq('tenant_id', tenantId);
   }
 
   /**
