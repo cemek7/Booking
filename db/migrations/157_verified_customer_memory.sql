@@ -1,4 +1,4 @@
-+-- Migration 157: atomically record source-backed customer memory facts.
+-- Migration 157: atomically record source-backed customer memory facts.
 
 BEGIN;
 

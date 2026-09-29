@@ -5,6 +5,11 @@ const migrationPath = path.join(process.cwd(), 'db/migrations/156_conversation_e
 const releasePath = path.join(process.cwd(), 'db/releases/2026-09-29-conversation-effect-delivery-hardening.sql');
 
 describe.each([migrationPath, releasePath])('%s', (sqlPath) => {
+  it('contains no accidental patch markers', () => {
+    const sql = fs.readFileSync(sqlPath, 'utf8');
+    expect(sql).not.toMatch(/^\+/m);
+  });
+
   it('fails closed on duplicate outbound idempotency keys before adding uniqueness', () => {
     const sql = fs.readFileSync(sqlPath, 'utf8');
     expect(sql).toMatch(/GROUP BY tenant_id, idempotency_key[\s\S]*HAVING count\(\*\) > 1/i);

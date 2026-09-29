@@ -7,6 +7,10 @@ describe.each([
 ])('%s', (relativePath) => {
   const sql = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
+  it('contains no accidental patch markers', () => {
+    expect(sql).not.toMatch(/^\+/m);
+  });
+
   it('validates source ownership and serializes corrections', () => {
     expect(sql).toMatch(/m\.tenant_id = p_tenant_id[\s\S]*ct\.customer_id = p_customer_id/i);
     expect(sql).toMatch(/tu\.tenant_id = p_tenant_id AND tu\.user_id = p_source_record_id/i);

@@ -1,4 +1,4 @@
-+-- Migration 156: make outbound message dispatch idempotent per tenant.
+-- Migration 156: make outbound message dispatch idempotent per tenant.
 -- The application persists a pending intent before calling Meta. This index is
 -- the concurrency boundary that prevents two workers dispatching the same reply.
 
