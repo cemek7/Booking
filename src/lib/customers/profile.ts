@@ -47,6 +47,8 @@ export async function recomputeProfile(
   tenantId: string,
   customerId: string,
 ): Promise<void> {
+  // This profile is deterministic commerce history. Do not copy its aggregates
+  // into customer_memory_facts: observed bookings are not stated preferences.
   const [{ data: reservations, error: reservationsError }, { data: retailOrders, error: retailOrdersError }] =
     await Promise.all([
       admin

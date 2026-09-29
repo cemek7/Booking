@@ -52,6 +52,7 @@ import { parseProposedStatePatch, reduceConversationState } from './stateReducer
 import { updateThreadState } from './conversationThread';
 import { assembleConversationContext } from '@/lib/ai/conversation-context';
 import { maybeScheduleConversationSummary } from './conversationSummary';
+import { extractExplicitMemoryFacts, recordVerifiedMemoryFact } from '@/lib/customers/memoryFacts';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -268,6 +269,25 @@ async function handleCustomerMessage(
   executionContext?: ConversationExecutionContext,
 ): Promise<void> {
   const analyticsState = (conv!.flow_data?.analytics ?? {}) as Record<string, unknown>;
+
+  if (conv!.customer_id) {
+    const explicitFacts = extractExplicitMemoryFacts(message);
+    await Promise.all(explicitFacts.map((fact) => recordVerifiedMemoryFact({
+      tenantId,
+      customerId: conv!.customer_id!,
+      key: fact.key,
+      value: fact.value,
+      sourceType: 'explicit_message',
+      sourceMessageId: messageId,
+      consentBasis: 'explicit_customer_statement',
+      verifiedAt: new Date().toISOString(),
+    }))).catch((error) => {
+      console.warn('[pipeline] explicit customer memory was not persisted', {
+        tenantId,
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
+    });
+  }
 
   // Record customer-initiated opt-in proof once per conversation (flow_data).
   const optInPatch = buildOptInProofPatch(conv!.flow_data, channel);

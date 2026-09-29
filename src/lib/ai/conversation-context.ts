@@ -44,6 +44,7 @@ function defaultStore(): ConversationContextStore {
         .select('fact_key, fact_value, source_type, verified_at')
         .eq('tenant_id', input.tenantId).eq('customer_id', input.customerId)
         .eq('status', 'active').not('verified_at', 'is', null)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
         .order('updated_at', { ascending: false }).limit(input.limit);
       if (error) throw error;
       return data ?? [];
