@@ -2,6 +2,41 @@ export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { isRedisConfigured, pingRedis } from '@/lib/redis';
+import {
+  getContinuityFlags,
+  hasLiveContinuity,
+  type ContinuityFlags,
+} from '@/lib/whatsapp/v2/continuityFlags';
+
+export function continuityReadinessPolicy(flags: ContinuityFlags): {
+  requireSchema: boolean;
+  advisoryWarning: string | null;
+} {
+  if (hasLiveContinuity(flags)) return { requireSchema: true, advisoryWarning: null };
+  return {
+    requireSchema: false,
+    advisoryWarning: `Conversation continuity is ${flags.contextMode}; schema readiness is advisory until a continuity flag is live.`,
+  };
+}
+
+export function continuityReadinessPolicyForTenants(
+  globalFlags: ContinuityFlags,
+  tenantFlags: ContinuityFlags[],
+): ReturnType<typeof continuityReadinessPolicy> {
+  const allFlags = [globalFlags, ...tenantFlags];
+  if (allFlags.some(hasLiveContinuity)) {
+    return { requireSchema: true, advisoryWarning: null };
+  }
+  const advisoryFlags = allFlags.find((flags) => flags.contextMode === 'shadow') ?? globalFlags;
+  return continuityReadinessPolicy(advisoryFlags);
+}
+
+export function isClaimRpcAvailable(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return true;
+  if (error.code === 'PGRST202' || error.code === '42883') return false;
+  return error.code === 'P0001'
+    && (error.message ?? '').toLowerCase().includes('worker id and settle cutoff are required');
+}
 
 interface ReadinessCheck {
   status: 'ready' | 'not_ready';
@@ -30,6 +65,18 @@ export const GET = createHttpHandler(
     const timestamp = new Date().toISOString();
     const isProduction = process.env.NODE_ENV === 'production';
     const supabase = createSupabaseAdminClient();
+    const globalContinuityFlags = getContinuityFlags(null);
+    const { data: continuityTenants, error: continuityTenantError } = await supabase
+      .from('tenants')
+      .select('settings')
+      .eq('lifecycle_state', 'active')
+      .limit(1000);
+    const tenantContinuityFlags = ((continuityTenants ?? []) as Array<{ settings?: Record<string, unknown> | null }>)
+      .map((tenant) => getContinuityFlags(tenant));
+    const continuityPolicy = continuityReadinessPolicyForTenants(
+      globalContinuityFlags,
+      tenantContinuityFlags,
+    );
     const { data: activeMetaConnection } = await supabase
       .from('whatsapp_configurations')
       .select('tenant_id')
@@ -146,7 +193,37 @@ export const GET = createHttpHandler(
       return Boolean(value.error);
     });
 
-    if (!failedMigrations) {
+    let continuitySchemaFailed = false;
+    if (continuityPolicy.requireSchema) {
+      const continuityTableChecks = await Promise.allSettled([
+        supabase.from('shared_channel_route_sessions').select('id', { head: true, count: 'exact' }).limit(1),
+        supabase.from('customer_channel_identities').select('id', { head: true, count: 'exact' }).limit(1),
+        supabase.from('conversation_threads').select('id', { head: true, count: 'exact' }).limit(1),
+        supabase.from('customer_memory_facts').select('id', { head: true, count: 'exact' }).limit(1),
+        supabase.from('conversation_effects').select('id', { head: true, count: 'exact' }).limit(1),
+      ]);
+      continuitySchemaFailed = continuityTableChecks.some((result) =>
+        result.status === 'rejected'
+        || Boolean((result.value as { error?: unknown } | undefined)?.error));
+
+      const { error: claimRpcError } = await supabase.rpc('claim_whatsapp_conversation_batch', {
+        p_worker_id: null,
+        p_settle_before: null,
+        p_lease_seconds: 120,
+      });
+      if (!isClaimRpcAvailable(claimRpcError)) continuitySchemaFailed = true;
+      if (continuitySchemaFailed) {
+        readinessCheck.details.failed_checks?.push('Live conversation continuity schema or claim RPC missing');
+      }
+    } else if (continuityPolicy.advisoryWarning) {
+      readinessCheck.details.warnings?.push(continuityPolicy.advisoryWarning);
+    }
+    if (continuityTenantError) {
+      readinessCheck.details.warnings?.push('Could not inspect tenant continuity overrides');
+      if (hasLiveContinuity(globalContinuityFlags)) continuitySchemaFailed = true;
+    }
+
+    if (!failedMigrations && !continuitySchemaFailed) {
       readinessCheck.checks.database_migrations = true;
     } else {
       readinessCheck.details.failed_checks?.push('Core database tables missing or inaccessible');

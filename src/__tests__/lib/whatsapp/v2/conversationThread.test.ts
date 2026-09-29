@@ -1,5 +1,6 @@
 import {
   ensureActiveThread,
+  isConversationStateConflict,
   transitionThread,
   updateThreadState,
   type ConversationThread,
@@ -62,6 +63,15 @@ describe('ensureActiveThread', () => {
 });
 
 describe('versioned thread updates', () => {
+  it('recognizes Supabase plain-object state conflict errors', () => {
+    expect(isConversationStateConflict({
+      code: 'P0001',
+      message: 'conversation_state_version_conflict',
+    })).toBe(true);
+    expect(isConversationStateConflict({ code: 'P0001', message: 'another database error' })).toBe(false);
+    expect(isConversationStateConflict(new Error('conversation_state_version_conflict'))).toBe(true);
+  });
+
   it('uses the expected version and projects only after the canonical update succeeds', async () => {
     const threadStore = store();
     const state = {
@@ -79,6 +89,16 @@ describe('versioned thread updates', () => {
     expect(threadStore.projectCompatibilityState).toHaveBeenCalledWith({
       tenantId: 'tenant-1', threadId: 'thread-1', stateVersion: 1, state,
     });
+  });
+
+  it('keeps the compatibility projection disabled when rollout is off', async () => {
+    const threadStore = store();
+    await updateThreadState({
+      tenantId: 'tenant-1', threadId: 'thread-1', expectedVersion: 0,
+      state: emptyConversationStructuredState(), projectCompatibility: false,
+    }, threadStore);
+    expect(threadStore.updateCanonicalState).toHaveBeenCalled();
+    expect(threadStore.projectCompatibilityState).not.toHaveBeenCalled();
   });
 
   it('does not overwrite newer state when the expected version is stale', async () => {

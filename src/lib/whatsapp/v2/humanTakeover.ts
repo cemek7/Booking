@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { getConversation, updateConversation } from './conversationState';
 import type { ConvChannel } from './conversationState';
+import { conversationHandoff, safeMetric } from './continuityMetrics';
 
 const HUMAN_HANDLING_UNTIL_KEY = 'human_handling_until';
 
@@ -125,6 +126,7 @@ export async function setHumanHandling(
     fromStatuses: ['active', 'handed_off'],
   });
   await store.projectCompatibility({ ...args, humanHandlingUntil: until });
+  safeMetric(() => conversationHandoff.inc({ channel: args.channel, source: 'takeover' }));
 }
 
 export async function clearHumanHandling(

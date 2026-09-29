@@ -20,10 +20,14 @@ const OPERATIONAL_TABLES = [
   // Staff operational
   'staff_skills', 'staff_services', 'staff_schedules', 'schedule_overrides',
   'availability_slots', 'slot_locks',
-  // Messaging / conversations
-  'whatsapp_media', 'whatsapp_message_queue', 'whatsapp_sessions',
-  'whatsapp_connection_logs', 'whatsapp_connection_metrics', 'messages',
-  'dialog_sessions', 'chats', 'whatsapp_conversations', 'whatsapp_connections',
+  // Messaging / conversations. Continuity-owned children must precede threads,
+  // identities, legacy conversations, and customers.
+  'conversation_effects', 'customer_memory_facts',
+  'whatsapp_media', 'whatsapp_message_queue', 'messages',
+  'whatsapp_sessions', 'whatsapp_connection_logs', 'whatsapp_connection_metrics',
+  'dialog_sessions', 'chats', 'conversation_threads',
+  'customer_channel_identities', 'shared_channel_route_sessions',
+  'whatsapp_conversations', 'whatsapp_connections',
   // Support (support_messages/support_assignments have NO tenant_id — they are
   // scoped via ticket_id and purged separately in purgeSupportChildren below).
   'support_tickets',

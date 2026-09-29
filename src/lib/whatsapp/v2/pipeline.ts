@@ -50,9 +50,10 @@ import { sendOutboundOnce } from './outboundDelivery';
 import { parseConversationStructuredState } from './structuredState';
 import { parseProposedStatePatch, reduceConversationState } from './stateReducer';
 import { updateThreadState } from './conversationThread';
-import { assembleConversationContext } from '@/lib/ai/conversation-context';
+import { assembleConversationContextForMode } from '@/lib/ai/conversation-context';
 import { maybeScheduleConversationSummary } from './conversationSummary';
 import { extractExplicitMemoryFacts, recordVerifiedMemoryFact } from '@/lib/customers/memoryFacts';
+import { getContinuityFlags, type ContinuityFlags } from './continuityFlags';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -107,15 +108,18 @@ export interface BatchProcessResult {
 export interface ConversationExecutionContext {
   correlationKey: string;
   threadId: string;
+  projectCompatibility?: boolean;
 }
 
 export async function processConversationBatch(
   batch: ClaimedConversationBatch,
 ): Promise<BatchProcessResult> {
   const { externalId, tenantId, channel } = batch;
+  const continuityFlags = await loadTenantContinuityFlags(tenantId);
   const executionContext: ConversationExecutionContext = {
     correlationKey: batch.correlationKey,
     threadId: batch.threadId,
+    projectCompatibility: continuityFlags.threadProjection,
   };
   const messageId = batch.rows[batch.rows.length - 1]?.messageId;
   if (!messageId) throw new Error('Conversation batch has no message identity');
@@ -269,8 +273,9 @@ async function handleCustomerMessage(
   executionContext?: ConversationExecutionContext,
 ): Promise<void> {
   const analyticsState = (conv!.flow_data?.analytics ?? {}) as Record<string, unknown>;
+  const continuityFlags = await loadTenantContinuityFlags(tenantId);
 
-  if (conv!.customer_id) {
+  if (conv!.customer_id && continuityFlags.memoryFacts) {
     const explicitFacts = extractExplicitMemoryFacts(message);
     await Promise.all(explicitFacts.map((fact) => recordVerifiedMemoryFact({
       tenantId,
@@ -459,6 +464,7 @@ async function handleCustomerMessage(
       threadId: executionContext.threadId,
       expectedVersion: conv!.state_version,
       state: reduced,
+      projectCompatibility: continuityFlags.threadProjection,
     });
     conv!.state_version = updated.stateVersion;
     conv!.flow_data = { ...conv!.flow_data, structured_state: reduced };
@@ -737,13 +743,18 @@ async function buildPromptContext(
     userRole,
   });
   const grounding = await getGroundingData(tenantId, message, conv, route);
-  const conversationContext = conv.active_thread_id && conv.customer_id
-    ? await assembleConversationContext({
+  const continuityFlags = getContinuityFlags(grounding.tenant);
+  const assembledContext = continuityFlags.contextMode !== 'off'
+    && conv.active_thread_id && conv.customer_id
+    ? await assembleConversationContextForMode({
         tenantId,
         threadId: conv.active_thread_id,
         customerId: conv.customer_id,
+        includeMemoryFacts: continuityFlags.memoryFacts,
+        mode: continuityFlags.contextMode,
       })
     : null;
+  const conversationContext = continuityFlags.contextMode === 'live' ? assembledContext : null;
 
   return {
     route,
@@ -757,6 +768,15 @@ async function buildPromptContext(
       conversationContext,
     }),
   };
+}
+
+async function loadTenantContinuityFlags(tenantId: string): Promise<ContinuityFlags> {
+  const { data, error } = await supabaseAdmin.from('tenants')
+    .select('settings')
+    .eq('id', tenantId)
+    .maybeSingle();
+  if (error) throw error;
+  return getContinuityFlags(data as { settings?: Record<string, unknown> | null } | null);
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { defaultLogger } from '@/lib/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import type { ConvChannel } from './conversationState';
+import { conversationStateConflict, safeMetric } from './continuityMetrics';
 import {
   emptyConversationStructuredState,
   parseConversationStructuredState,
@@ -34,6 +35,7 @@ type UpdateThreadStateInput = {
   threadId: string;
   expectedVersion: number;
   state: ConversationStructuredState;
+  projectCompatibility?: boolean;
 };
 
 type TransitionThreadInput = {
@@ -42,6 +44,13 @@ type TransitionThreadInput = {
   from: ThreadStatus[];
   to: ThreadStatus;
 };
+
+export function isConversationStateConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const message = 'message' in error ? String(error.message ?? '') : '';
+  return message.includes('conversation_state_version_conflict')
+    || message.includes('conversation_state_conflict');
+}
 
 export interface ConversationThreadStore {
   findUnfinishedThread(input: Pick<EnsureThreadInput, 'tenantId' | 'channelIdentityId'>): Promise<ConversationThread | null>;
@@ -205,13 +214,23 @@ export async function updateThreadState(
   input: UpdateThreadStateInput,
   store: ConversationThreadStore = createConversationThreadStore(),
 ): Promise<{ stateVersion: number }> {
-  const stateVersion = await store.updateCanonicalState(input);
-  await store.projectCompatibilityState({
-    tenantId: input.tenantId,
-    threadId: input.threadId,
-    state: input.state,
-    stateVersion,
-  });
+  let stateVersion: number;
+  try {
+    stateVersion = await store.updateCanonicalState(input);
+  } catch (error) {
+    if (isConversationStateConflict(error)) {
+      safeMetric(() => conversationStateConflict.inc({ operation: 'structured_state' }));
+    }
+    throw error;
+  }
+  if (input.projectCompatibility !== false) {
+    await store.projectCompatibilityState({
+      tenantId: input.tenantId,
+      threadId: input.threadId,
+      state: input.state,
+      stateVersion,
+    });
+  }
   return { stateVersion };
 }
 

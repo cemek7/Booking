@@ -1,4 +1,8 @@
-import { assembleConversationContext, type ConversationContextStore } from '@/lib/ai/conversation-context';
+import {
+  assembleConversationContext,
+  assembleConversationContextForMode,
+  type ConversationContextStore,
+} from '@/lib/ai/conversation-context';
 
 describe('assembleConversationContext', () => {
   it('requests only the exact tenant, customer, and thread with a 12-turn bound', async () => {
@@ -22,5 +26,19 @@ describe('assembleConversationContext', () => {
     };
     await assembleConversationContext({ tenantId: 't', threadId: 'x', customerId: 'c', recentTurnLimit: 999 }, store);
     expect(store.loadTurns).toHaveBeenCalledWith({ tenantId: 't', threadId: 'x', limit: 12 });
+  });
+
+  it('keeps shadow mode non-blocking when context storage is unavailable', async () => {
+    const store: ConversationContextStore = {
+      loadThread: jest.fn(async () => { throw new Error('context store unavailable'); }),
+      loadTurns: jest.fn(async () => []),
+      loadFacts: jest.fn(async () => []),
+    };
+    const input = { tenantId: 't', threadId: 'x', customerId: 'c' };
+
+    await expect(assembleConversationContextForMode({ ...input, mode: 'shadow' }, store))
+      .resolves.toBeNull();
+    await expect(assembleConversationContextForMode({ ...input, mode: 'live' }, store))
+      .rejects.toThrow('context store unavailable');
   });
 });

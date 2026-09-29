@@ -610,6 +610,7 @@ async function confirmBooking(
       threadId: conv.active_thread_id,
       expectedVersion: conv.state_version,
       state: reduced,
+      projectCompatibility: executionContext.projectCompatibility,
     });
     conv.state_version = updated.stateVersion;
     conv.flow_data = { ...conv.flow_data, structured_state: reduced };

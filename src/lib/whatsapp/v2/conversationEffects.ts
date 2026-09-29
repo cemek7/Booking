@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { conversationDuplicateEffectPrevented, safeMetric } from './continuityMetrics';
 
 export type ConversationEffectStatus = 'started' | 'succeeded' | 'failed' | 'delivery_unknown';
 
@@ -139,12 +140,20 @@ export async function runIdempotentEffect<T>(input: EffectIdentity & {
       throw new Error('Conversation effect idempotency collision');
     }
     if (reservation.row.status === 'succeeded') {
+      safeMetric(() => conversationDuplicateEffectPrevented.inc({
+        effect_type: input.effectType,
+        status: 'succeeded',
+      }));
       if (!Object.prototype.hasOwnProperty.call(reservation.row.metadata, 'result')) {
         throw new Error('Succeeded conversation effect has no replayable result');
       }
       return reservation.row.metadata.result as T;
     }
     if (reservation.row.status === 'started' || reservation.row.status === 'delivery_unknown') {
+      safeMetric(() => conversationDuplicateEffectPrevented.inc({
+        effect_type: input.effectType,
+        status: reservation.row.status,
+      }));
       throw new ConversationEffectBlockedError(reservation.row.status);
     }
     if (!await store.restartFailed(input)) {

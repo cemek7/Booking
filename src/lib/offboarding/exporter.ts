@@ -4,10 +4,27 @@ import { GRACE_DAYS } from './types';
 
 // Real tenant-scoped tables (verified against live schema). 'staff' is not a
 // table — staff/members live in tenant_users.
-const EXPORT_TABLES = [
-  'reservations', 'customers', 'services', 'tenant_users', 'transactions',
-  'messages', 'chats', 'reviews', 'faqs', 'leads', 'tenants',
-] as const;
+const EXPORT_TABLES: ReadonlyArray<{ table: string; columns: string }> = [
+  { table: 'reservations', columns: '*' },
+  { table: 'customers', columns: '*' },
+  { table: 'services', columns: '*' },
+  { table: 'tenant_users', columns: '*' },
+  { table: 'transactions', columns: '*' },
+  { table: 'messages', columns: '*' },
+  { table: 'chats', columns: '*' },
+  { table: 'reviews', columns: '*' },
+  { table: 'faqs', columns: '*' },
+  { table: 'leads', columns: '*' },
+  { table: 'tenants', columns: '*' },
+  { table: 'shared_channel_route_sessions', columns: '*' },
+  { table: 'customer_channel_identities', columns: '*' },
+  { table: 'conversation_threads', columns: '*' },
+  { table: 'customer_memory_facts', columns: '*' },
+  {
+    table: 'conversation_effects',
+    columns: 'id,tenant_id,thread_id,idempotency_key,effect_type,status,result_ref,created_at,updated_at',
+  },
+];
 
 function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return '';
@@ -18,10 +35,14 @@ function toCsv(rows: Record<string, unknown>[]): string {
 
 export async function generateTenantExport(admin: SupabaseClient, tenantId: string): Promise<{ url: string }> {
   const zip = new JSZip();
-  for (const table of EXPORT_TABLES) {
+  for (const descriptor of EXPORT_TABLES) {
+    const { table, columns } = descriptor;
     const col = table === 'tenants' ? 'id' : 'tenant_id';
-    const { data } = await admin.from(table).select('*').eq(col, tenantId);
-    const rows = (data ?? []) as Record<string, unknown>[];
+    const { data } = await admin.from(table).select(columns).eq(col, tenantId);
+    // Table/column descriptors are deliberately dynamic so one export loop can
+    // cover both full rows and the redacted conversation-effects projection.
+    // Supabase cannot infer that dynamic result shape at compile time.
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
     zip.file(`json/${table}.json`, JSON.stringify(rows, null, 2));
     zip.file(`csv/${table}.csv`, toCsv(rows));
   }

@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import type { ConvChannel } from './conversationState';
+import {
+  conversationQueueClaim,
+  conversationQueueLeaseRecovery,
+  safeMetric,
+} from './continuityMetrics';
 
 export interface QueueRow {
   id: string;
@@ -191,13 +196,20 @@ export async function claimNextConversationBatch(
     settleBefore: input.settleBefore.toISOString(),
     leaseSeconds: input.leaseSeconds,
   });
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    safeMetric(() => conversationQueueClaim.inc({ channel: 'none', outcome: 'empty' }));
+    return null;
+  }
   validateRows(rows, input.workerId);
 
   const ordered = orderRows(rows);
   const first = ordered[0];
   const sortedIds = ordered.map((row) => row.id).sort();
   const digest = createHash('sha256').update(sortedIds.join(',')).digest('hex');
+  safeMetric(() => conversationQueueClaim.inc({ channel: first.channel, outcome: 'claimed' }));
+  if (ordered.some((row) => row.retryCount > 0)) {
+    safeMetric(() => conversationQueueLeaseRecovery.inc({ channel: first.channel }));
+  }
   return {
     batchId: first.batchId,
     workerId: input.workerId,

@@ -67,6 +67,23 @@ describe('runOperationalPurge', () => {
     expect(deletes).not.toContain('tenants');
     expect(deletes).not.toContain('audit_logs');
     expect(updates.at(-1)).toEqual(expect.objectContaining({ lifecycle_state: 'purged' }));
+
+    const position = (table: string) => deletes.indexOf(table);
+    for (const table of [
+      'conversation_effects', 'customer_memory_facts', 'whatsapp_message_queue',
+      'messages', 'conversation_threads', 'customer_channel_identities',
+      'shared_channel_route_sessions', 'whatsapp_conversations', 'customers',
+    ]) {
+      expect(position(table)).toBeGreaterThanOrEqual(0);
+    }
+    expect(position('conversation_effects')).toBeLessThan(position('conversation_threads'));
+    expect(position('customer_memory_facts')).toBeLessThan(position('messages'));
+    expect(position('whatsapp_message_queue')).toBeLessThan(position('conversation_threads'));
+    expect(position('messages')).toBeLessThan(position('conversation_threads'));
+    expect(position('conversation_threads')).toBeLessThan(position('customer_channel_identities'));
+    expect(position('customer_channel_identities')).toBeLessThan(position('customers'));
+    expect(position('shared_channel_route_sessions')).toBeLessThan(position('customers'));
+    expect(position('whatsapp_conversations')).toBeLessThan(position('customers'));
   });
 
   it('purges support_messages + support_assignments by ticket_id (no tenant_id of their own)', async () => {

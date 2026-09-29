@@ -9,6 +9,9 @@ function store(overrides: Partial<RouteSessionStore> = {}): RouteSessionStore {
   return {
     findEnabledTenantByRoutingCode: jest.fn().mockResolvedValue(null),
     findActiveSession: jest.fn().mockResolvedValue(null),
+    loadTenantSettings: jest.fn().mockResolvedValue({
+      conversation_continuity: { routing_sessions: true },
+    }),
     upsertSession: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -80,5 +83,23 @@ describe('resolveWhatsAppRoute', () => {
     }, routeStore);
 
     expect(result).toEqual({ status: 'needs_code', strippedMessage: 'hello' });
+  });
+
+  it('routes an explicit code without persisting and ignores cached sessions when rollout is off', async () => {
+    const routeStore = store({
+      findEnabledTenantByRoutingCode: jest.fn().mockResolvedValue('tenant-a'),
+      findActiveSession: jest.fn().mockResolvedValue({ tenantId: 'tenant-a', expiresAt: '2026-09-29T12:00:00.000Z' }),
+      loadTenantSettings: jest.fn().mockResolvedValue({
+        conversation_continuity: { routing_sessions: false },
+      }),
+    });
+    await expect(resolveWhatsAppRoute({
+      externalId: '+2348000000001', gatewayPhoneNumberId: 'gateway-1', messageText: 'ALPH12 hello', now: NOW,
+    }, routeStore)).resolves.toMatchObject({ status: 'routed', source: 'routing_code' });
+    expect(routeStore.upsertSession).not.toHaveBeenCalled();
+
+    await expect(resolveWhatsAppRoute({
+      externalId: '+2348000000001', gatewayPhoneNumberId: 'gateway-1', messageText: 'hello', now: NOW,
+    }, routeStore)).resolves.toEqual({ status: 'needs_code', strippedMessage: 'hello' });
   });
 });

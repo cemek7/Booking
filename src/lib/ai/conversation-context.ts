@@ -1,5 +1,11 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { parseConversationStructuredState, type ConversationStructuredState } from '@/lib/whatsapp/v2/structuredState';
+import {
+  conversationContextAssemblyDuration,
+  conversationContextIsolationFailure,
+  conversationContextTokenEstimate,
+  safeMetric,
+} from '@/lib/whatsapp/v2/continuityMetrics';
 
 export interface MemoryFact {
   key: string;
@@ -18,6 +24,15 @@ export interface ConversationContextStore {
   loadThread(input: { tenantId: string; threadId: string; customerId: string }): Promise<Record<string, unknown> | null>;
   loadTurns(input: { tenantId: string; threadId: string; limit: number }): Promise<Array<Record<string, unknown>>>;
   loadFacts(input: { tenantId: string; customerId: string; limit: number }): Promise<Array<Record<string, unknown>>>;
+}
+
+export interface ConversationContextInput {
+  tenantId: string;
+  threadId: string;
+  customerId: string;
+  recentTurnLimit?: number;
+  includeMemoryFacts?: boolean;
+  mode?: 'shadow' | 'live';
 }
 
 function defaultStore(): ConversationContextStore {
@@ -53,28 +68,57 @@ function defaultStore(): ConversationContextStore {
 }
 
 export async function assembleConversationContext(
-  input: { tenantId: string; threadId: string; customerId: string; recentTurnLimit?: number },
+  input: ConversationContextInput,
   store: ConversationContextStore = defaultStore(),
 ): Promise<ConversationContext> {
+  const startedAt = process.hrtime.bigint();
+  const mode = input.mode ?? 'live';
   const limit = Math.min(12, Math.max(1, input.recentTurnLimit ?? 12));
-  const [thread, turns, facts] = await Promise.all([
-    store.loadThread(input),
-    store.loadTurns({ tenantId: input.tenantId, threadId: input.threadId, limit }),
-    store.loadFacts({ tenantId: input.tenantId, customerId: input.customerId, limit: 20 }),
-  ]);
-  if (!thread) throw new Error('Conversation thread not found for tenant/customer');
-  return {
-    threadId: input.threadId,
-    structuredState: parseConversationStructuredState(thread.structured_state),
-    rollingSummary: typeof thread.rolling_summary === 'string' ? thread.rolling_summary : null,
-    recentTurns: turns.map((row) => ({
-      direction: row.direction === 'outbound' ? 'outbound' : 'inbound',
-      content: String(row.content ?? '').slice(0, 2000),
-      at: String(row.timestamp ?? ''),
-    })),
-    verifiedFacts: facts.map((row) => ({
-      key: String(row.fact_key), value: row.fact_value, sourceType: String(row.source_type),
-      verifiedAt: typeof row.verified_at === 'string' ? row.verified_at : null,
-    })),
-  };
+  let outcome = 'success';
+  try {
+    const [thread, turns, facts] = await Promise.all([
+      store.loadThread(input),
+      store.loadTurns({ tenantId: input.tenantId, threadId: input.threadId, limit }),
+      input.includeMemoryFacts === false
+        ? Promise.resolve([])
+        : store.loadFacts({ tenantId: input.tenantId, customerId: input.customerId, limit: 20 }),
+    ]);
+    if (!thread) throw new Error('Conversation thread not found for tenant/customer');
+    const context: ConversationContext = {
+      threadId: input.threadId,
+      structuredState: parseConversationStructuredState(thread.structured_state),
+      rollingSummary: typeof thread.rolling_summary === 'string' ? thread.rolling_summary : null,
+      recentTurns: turns.map((row) => ({
+        direction: row.direction === 'outbound' ? 'outbound' : 'inbound',
+        content: String(row.content ?? '').slice(0, 2000),
+        at: String(row.timestamp ?? ''),
+      })),
+      verifiedFacts: facts.map((row) => ({
+        key: String(row.fact_key), value: row.fact_value, sourceType: String(row.source_type),
+        verifiedAt: typeof row.verified_at === 'string' ? row.verified_at : null,
+      })),
+    };
+    const estimatedTokens = Math.ceil(JSON.stringify(context).length / 4);
+    safeMetric(() => conversationContextTokenEstimate.observe({ mode }, estimatedTokens));
+    return context;
+  } catch (error) {
+    outcome = 'isolation_failure';
+    safeMetric(() => conversationContextIsolationFailure.inc({ stage: 'assembly' }));
+    throw error;
+  } finally {
+    const seconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+    safeMetric(() => conversationContextAssemblyDuration.observe({ mode, outcome }, seconds));
+  }
+}
+
+export async function assembleConversationContextForMode(
+  input: ConversationContextInput & { mode: 'shadow' | 'live' },
+  store?: ConversationContextStore,
+): Promise<ConversationContext | null> {
+  try {
+    return await assembleConversationContext(input, store);
+  } catch (error) {
+    if (input.mode === 'live') throw error;
+    return null;
+  }
 }

@@ -1,4 +1,6 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { conversationRouteChanged, conversationRouteNeedsCode, safeMetric } from './continuityMetrics';
+import { getContinuityFlags } from './continuityFlags';
 
 const ROUTING_CODE_PATTERN = /\b([A-Z]{4}\d{2})\b/i;
 const ROUTE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -12,6 +14,7 @@ export interface RouteSessionStore {
   findActiveSession(input: {
     channel: 'whatsapp'; gatewayScope: string; externalId: string; now: Date;
   }): Promise<{ tenantId: string; expiresAt: string } | null>;
+  loadTenantSettings(tenantId: string): Promise<Record<string, unknown> | null>;
   upsertSession(input: {
     tenantId: string; channel: 'whatsapp'; gatewayScope: string; externalId: string;
     source: 'routing_code'; expiresAt: string; routedAt: string;
@@ -37,6 +40,14 @@ function createRouteSessionStore(): RouteSessionStore {
         .maybeSingle();
       if (error) throw error;
       return data ? { tenantId: data.tenant_id, expiresAt: data.expires_at } : null;
+    },
+    async loadTenantSettings(tenantId) {
+      const { data, error } = await admin.from('tenants').select('settings')
+        .eq('id', tenantId).maybeSingle();
+      if (error) throw error;
+      return data?.settings && typeof data.settings === 'object'
+        ? data.settings as Record<string, unknown>
+        : null;
     },
     async upsertSession(input) {
       const { error } = await admin.from('shared_channel_route_sessions').upsert({
@@ -71,16 +82,20 @@ export async function resolveWhatsAppRoute(
   if (codeMatch) {
     const tenantId = await store.findEnabledTenantByRoutingCode(codeMatch[1].toUpperCase());
     if (tenantId) {
-      const expiresAt = new Date(now.getTime() + ROUTE_TTL_MS).toISOString();
-      await store.upsertSession({
-        tenantId,
-        channel: 'whatsapp',
-        gatewayScope: input.gatewayPhoneNumberId,
-        externalId: input.externalId,
-        source: 'routing_code',
-        expiresAt,
-        routedAt: now.toISOString(),
-      });
+      const flags = getContinuityFlags({ settings: await store.loadTenantSettings(tenantId) });
+      if (flags.routingSessions) {
+        const expiresAt = new Date(now.getTime() + ROUTE_TTL_MS).toISOString();
+        await store.upsertSession({
+          tenantId,
+          channel: 'whatsapp',
+          gatewayScope: input.gatewayPhoneNumberId,
+          externalId: input.externalId,
+          source: 'routing_code',
+          expiresAt,
+          routedAt: now.toISOString(),
+        });
+        safeMetric(() => conversationRouteChanged.inc({ channel: 'whatsapp', source: 'routing_code' }));
+      }
       const stripped = trimmed.replace(codeMatch[0], '').trim();
       return { status: 'routed', tenantId, source: 'routing_code', strippedMessage: stripped || trimmed };
     }
@@ -98,8 +113,12 @@ export async function resolveWhatsAppRoute(
     externalId: input.externalId, now,
   });
   if (session) {
-    return { status: 'routed', tenantId: session.tenantId, source: 'session', strippedMessage: trimmed };
+    const flags = getContinuityFlags({ settings: await store.loadTenantSettings(session.tenantId) });
+    if (flags.routingSessions) {
+      return { status: 'routed', tenantId: session.tenantId, source: 'session', strippedMessage: trimmed };
+    }
   }
 
+  safeMetric(() => conversationRouteNeedsCode.inc({ channel: 'whatsapp' }));
   return { status: 'needs_code', strippedMessage: trimmed };
 }

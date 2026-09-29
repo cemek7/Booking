@@ -46,6 +46,11 @@ interface EnvConfig {
   ENABLE_ANALYTICS_DASHBOARD?: string;
   ENABLE_MESSAGING_ADAPTER?: string;
   ENABLE_ADVANCED_SCHEDULER?: string;
+  BOOKA_CONTINUITY_ROUTING_SESSIONS?: string;
+  BOOKA_CONTINUITY_DURABLE_BATCHING?: string;
+  BOOKA_CONTINUITY_THREAD_PROJECTION?: string;
+  BOOKA_CONTINUITY_CONTEXT_MODE?: string;
+  BOOKA_CONTINUITY_MEMORY_FACTS?: string;
 }
 
 const requiredEnvVars = [
@@ -118,6 +123,22 @@ export function validateEnvironment(): EnvConfig {
   }
   warnings.push(...featureFlagValidation.warnings);
 
+  for (const name of [
+    'BOOKA_CONTINUITY_ROUTING_SESSIONS',
+    'BOOKA_CONTINUITY_DURABLE_BATCHING',
+    'BOOKA_CONTINUITY_THREAD_PROJECTION',
+    'BOOKA_CONTINUITY_MEMORY_FACTS',
+  ]) {
+    const value = process.env[name];
+    if (value && value !== 'true' && value !== 'false') {
+      missing.push(`${name} must be true or false`);
+    }
+  }
+  const continuityContextMode = process.env.BOOKA_CONTINUITY_CONTEXT_MODE;
+  if (continuityContextMode && !['off', 'shadow', 'live'].includes(continuityContextMode)) {
+    missing.push('BOOKA_CONTINUITY_CONTEXT_MODE must be off, shadow, or live');
+  }
+
   // Re-throw error if we have missing vars after feature flag validation
   if (missing.length > 0) {
     throw new EnvValidationError(
@@ -169,6 +190,11 @@ export function validateEnvironment(): EnvConfig {
     ENABLE_ANALYTICS_DASHBOARD: process.env.ENABLE_ANALYTICS_DASHBOARD,
     ENABLE_MESSAGING_ADAPTER: process.env.ENABLE_MESSAGING_ADAPTER,
     ENABLE_ADVANCED_SCHEDULER: process.env.ENABLE_ADVANCED_SCHEDULER,
+    BOOKA_CONTINUITY_ROUTING_SESSIONS: process.env.BOOKA_CONTINUITY_ROUTING_SESSIONS,
+    BOOKA_CONTINUITY_DURABLE_BATCHING: process.env.BOOKA_CONTINUITY_DURABLE_BATCHING,
+    BOOKA_CONTINUITY_THREAD_PROJECTION: process.env.BOOKA_CONTINUITY_THREAD_PROJECTION,
+    BOOKA_CONTINUITY_CONTEXT_MODE: process.env.BOOKA_CONTINUITY_CONTEXT_MODE,
+    BOOKA_CONTINUITY_MEMORY_FACTS: process.env.BOOKA_CONTINUITY_MEMORY_FACTS,
   } as EnvConfig;
 }
 
