@@ -16,6 +16,7 @@ export interface OutboundDeliveryRow {
   deliveryStatus: OutboundDeliveryStatus;
   providerMessageId: string | null;
   chatId?: string | null;
+  userId?: string | null;
 }
 
 type OutboundIntent = Omit<OutboundDeliveryRow, 'id' | 'deliveryStatus' | 'providerMessageId'>;
@@ -34,6 +35,7 @@ export interface OutboundDeliveryResult {
   providerMessageId?: string;
   reason?: string;
   replayed: boolean;
+  messageId: string;
 }
 
 function mapRow(row: Record<string, unknown>): OutboundDeliveryRow {
@@ -49,6 +51,7 @@ function mapRow(row: Record<string, unknown>): OutboundDeliveryRow {
     deliveryStatus: row.delivery_status as OutboundDeliveryStatus,
     providerMessageId: typeof row.provider_message_id === 'string' ? row.provider_message_id : null,
     chatId: typeof row.chat_id === 'string' ? row.chat_id : null,
+    userId: typeof row.user_id === 'string' ? row.user_id : null,
   };
 }
 
@@ -68,6 +71,7 @@ function defaultStore(): OutboundDeliveryStore {
       const { data, error } = await admin.from('messages').insert({
         tenant_id: input.tenantId,
         chat_id: input.chatId ?? null,
+        user_id: input.userId ?? null,
         conversation_thread_id: input.threadId,
         from_number: input.from,
         to_number: input.to,
@@ -130,13 +134,14 @@ export async function sendOutboundOnce(input: OutboundIntent & {
         status: 'sent',
         providerMessageId: reservation.row.providerMessageId ?? undefined,
         replayed: true,
+        messageId: reservation.row.id,
       };
     }
     if (reservation.row.deliveryStatus === 'pending' || reservation.row.deliveryStatus === 'delivery_unknown') {
-      return { status: 'delivery_unknown', replayed: true };
+      return { status: 'delivery_unknown', replayed: true, messageId: reservation.row.id };
     }
     if (!await store.restartFailed(input)) {
-      return { status: 'delivery_unknown', replayed: true };
+      return { status: 'delivery_unknown', replayed: true, messageId: reservation.row.id };
     }
   }
 
@@ -149,6 +154,7 @@ export async function sendOutboundOnce(input: OutboundIntent & {
       status: 'delivery_unknown',
       reason: error instanceof Error ? error.message : String(error),
       replayed: false,
+      messageId: reservation.row.id,
     };
   }
 
@@ -158,10 +164,10 @@ export async function sendOutboundOnce(input: OutboundIntent & {
       // message. Treat that alternate response as the completed delivery so a
       // queue replay cannot emit it twice.
       await store.update({ ...input, deliveryStatus: 'sent' });
-      return { status: 'sent', reason: providerResult.reason, replayed: false };
+      return { status: 'sent', reason: providerResult.reason, replayed: false, messageId: reservation.row.id };
     }
     await store.update({ ...input, deliveryStatus: 'failed' });
-    return { status: 'failed', reason: providerResult.reason, replayed: false };
+    return { status: 'failed', reason: providerResult.reason, replayed: false, messageId: reservation.row.id };
   }
 
   await store.update({
@@ -173,5 +179,6 @@ export async function sendOutboundOnce(input: OutboundIntent & {
     status: 'sent',
     providerMessageId: providerResult.messageId,
     replayed: false,
+    messageId: reservation.row.id,
   };
 }

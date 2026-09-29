@@ -332,7 +332,7 @@ export class SiasOperationsService {
       .update(updates)
       .eq('id', input.escalationId)
       .eq('tenant_id', input.tenantId)
-      .select('id, status, assigned_agent_id, resolved_at')
+      .select('id, tenant_id, customer_phone, conversation_thread_id, status, assigned_agent_id, resolved_at')
       .maybeSingle();
 
     if (error) {

@@ -17,7 +17,7 @@ import { getConversation, ensureConversation, updateConversation } from './conve
 import type { ConvChannel } from './conversationState';
 import { sendDisclosureIfNeeded } from './aiDisclosure';
 import { wantsHuman, createHumanHandoff } from './humanHandoff';
-import { isHumanHandling } from './humanTakeover';
+import { isThreadHumanHandling, setHumanHandling } from './humanTakeover';
 import { buildOptInProofPatch } from './optInProof';
 import type { ClaimedConversationBatch } from './queueBatch';
 import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
@@ -299,7 +299,7 @@ async function handleCustomerMessage(
 
   // A human is handling this conversation from the dashboard, so store inbound
   // messages but do not let the AI send disclosures or replies.
-  if (isHumanHandling(conv!.flow_data)) {
+  if (await isThreadHumanHandling({ tenantId, threadId: executionContext!.threadId })) {
     return;
   }
 
@@ -344,10 +344,18 @@ async function handleCustomerMessage(
       },
       distinctId: externalId,
     });
-    await createHumanHandoff(supabaseAdmin, {
+    await setHumanHandling({
+      tenantId,
+      threadId: executionContext!.threadId,
+      externalId,
+      channel,
+      minutes: 30,
+    });
+    await createHumanHandoff({
       tenantId,
       customerPhone: externalId,
       sessionId: conv!.id,
+      threadId: executionContext!.threadId,
       reason: 'customer requested human',
     });
     await sendReplyByChannel(

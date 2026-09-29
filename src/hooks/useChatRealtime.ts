@@ -111,6 +111,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
   const msgChannel = useRef<RealtimeChannel | null>(null);
   const chatChannel = useRef<RealtimeChannel | null>(null);
+  const pendingSendKeys = useRef(new Map<string, string>());
 
   const loadChats = useCallback(async () => {
     if (!supabase || !tenantId) { setChats([]); return; }
@@ -328,27 +329,40 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   }, [supabase, activeId, loadMessages, loadOutboundReadiness]);
 
   const send = useCallback(async (text: string) => {
-    if (!activeId) return;
+    if (!activeId || !tenantId) return;
+    const pendingKey = `${activeId}\u0000${text}`;
+    const idempotencyKey = pendingSendKeys.current.get(pendingKey) ?? crypto.randomUUID();
+    pendingSendKeys.current.set(pendingKey, idempotencyKey);
     const response = await fetch(`/api/chats/${encodeURIComponent(activeId)}/messages`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+        'x-tenant-id': tenantId,
+      },
+      body: JSON.stringify({ text, idempotencyKey }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
       throw new Error(payload?.message || payload?.error || 'Failed to send message');
     }
+    pendingSendKeys.current.delete(pendingKey);
     await loadChats();
     await loadOutboundReadiness(activeId);
-  }, [activeId, loadChats]);
+  }, [activeId, loadChats, loadOutboundReadiness, tenantId]);
 
   const release = useCallback(async () => {
-    if (!activeId) return;
-    const response = await fetch(`/api/chats/${encodeURIComponent(activeId)}/release`, { method: 'POST' });
+    if (!activeId || !tenantId) return;
+    const response = await fetch(`/api/chats/${encodeURIComponent(activeId)}/release`, {
+      method: 'POST',
+      headers: { 'x-tenant-id': tenantId },
+    });
     if (!response.ok) {
       const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
       throw new Error(payload?.message || payload?.error || 'Failed to release chat to AI');
     }
     await loadChats();
-  }, [activeId, loadChats]);
+  }, [activeId, loadChats, tenantId]);
 
   const updateChatState = useCallback(async (payload: Record<string, unknown>) => {
     if (!activeId) return;

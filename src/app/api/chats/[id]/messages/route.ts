@@ -4,13 +4,15 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { chatMessagesSent } from '@/lib/metrics';
 import { trace } from '@opentelemetry/api';
-import { defaultLogger } from '@/lib/logger';
 import { getTenantChannelProviderClient } from '@/lib/whatsapp/providers/providerSelection';
 import { setHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
 import { computeOutboundReadiness } from '@/lib/chats/outboundReadiness';
+import { sendOutboundOnce } from '@/lib/whatsapp/v2/outboundDelivery';
+import { createHash, randomUUID } from 'crypto';
 
 const PostMessageBodySchema = z.object({
   text: z.string().trim().min(1, 'Message text cannot be empty'),
+  idempotencyKey: z.string().trim().min(8).max(200).optional(),
 });
 
 /**
@@ -71,56 +73,55 @@ export const POST = createHttpHandler(
         throw ApiErrorFactory.accountLocked(readiness.reason);
       }
 
-      // Insert the outbound message
-      const { data: newMessage, error: insertError } = await ctx.supabase
-        .from('messages')
-        .insert({
-          chat_id: chatId,
-          tenant_id: chat.tenant_id,
-          user_id: ctx.user?.id,
-          content: text,
-          direction: 'outbound',
-          to_number: chat.customer_phone,
-        })
-        .select('id, created_at')
-        .single();
+      const { data: conversation, error: conversationError } = await ctx.supabase
+        .from('whatsapp_conversations')
+        .select('active_thread_id')
+        .eq('tenant_id', chat.tenant_id)
+        .eq('channel', channel)
+        .eq('external_id', chat.customer_phone)
+        .maybeSingle();
+      if (conversationError) throw ApiErrorFactory.databaseError(conversationError);
+      if (!conversation?.active_thread_id) {
+        throw ApiErrorFactory.validationError({ conversation: 'Chat has no active conversation thread' });
+      }
+      const threadId = String(conversation.active_thread_id);
 
-      if (insertError) {
-        span.recordException(insertError);
-        throw ApiErrorFactory.databaseError(insertError);
+      await setHumanHandling({
+        externalId: chat.customer_phone,
+        tenantId: chat.tenant_id,
+        threadId,
+        channel,
+        minutes: 30,
+      });
+
+      const client = await getTenantChannelProviderClient(chat.tenant_id, channel);
+      if (!client) throw ApiErrorFactory.internalServerError(new Error('Channel provider is not configured'));
+
+      const suppliedKey = bodyValidation.data.idempotencyKey
+        ?? ctx.request.headers.get('idempotency-key')
+        ?? randomUUID();
+      const digest = createHash('sha256')
+        .update(`${chatId}\u0000${ctx.user?.id ?? ''}\u0000${suppliedKey}`)
+        .digest('hex');
+      const delivery = await sendOutboundOnce({
+        tenantId: chat.tenant_id,
+        threadId,
+        idempotencyKey: `operator:${digest}`,
+        channel,
+        chatId,
+        userId: ctx.user?.id ?? null,
+        from: `operator:${ctx.user?.id ?? 'unknown'}`,
+        to: chat.customer_phone,
+        content: text,
+        send: () => client.sendTextMessage(chat.customer_phone, text),
+      });
+      if (delivery.status === 'failed') {
+        throw ApiErrorFactory.internalServerError(new Error(delivery.reason ?? 'Provider rejected message'));
       }
 
       try { chatMessagesSent.inc({ tenant: chat.tenant_id }); } catch { /* ignore metrics errors */ }
-      span.addEvent('Message inserted into DB');
-
-      if (chat.customer_phone) {
-        await setHumanHandling({
-          externalId: chat.customer_phone,
-          tenantId: chat.tenant_id,
-          channel,
-          minutes: 30,
-        }).catch((e) => defaultLogger.warn('setHumanHandling failed', { error: String(e) }));
-      }
-
-      // Fire-and-forget handoff to external messaging provider
-      (async () => {
-        try {
-          const client = await getTenantChannelProviderClient(chat.tenant_id, channel);
-          const number = chat.customer_phone;
-
-          if (client && number) {
-            await client.sendTextMessage(number, text);
-            span.addEvent('Handoff to channel provider successful');
-          } else {
-            span.addEvent('Handoff to channel provider skipped: missing config');
-          }
-        } catch (e) {
-          span.recordException(e as Error);
-          defaultLogger.error('Channel provider handoff failed:', e);
-        }
-      })();
-
-      return { ok: true, id: newMessage.id, createdAt: newMessage.created_at };
+      span.addEvent('Operator message persisted and handed to channel provider');
+      return { ok: true, id: delivery.messageId, deliveryStatus: delivery.status };
     } finally {
       span.end();
     }

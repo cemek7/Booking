@@ -16,7 +16,7 @@ jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({
   setHumanHandling: jest.fn(async () => undefined),
 }));
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
-  getConversation: jest.fn(async () => ({ role: 'customer', flow_data: {} })),
+  getConversation: jest.fn(async () => ({ role: 'customer', flow_data: {}, active_thread_id: 'thread-1' })),
 }));
 
 import { triggerWalletHandoff } from '@/lib/billing/messageHandoff';
@@ -462,7 +462,7 @@ describe('triggerWalletHandoff — routing the promise to a human', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetConversation.mockResolvedValue(
-      { role: 'customer', flow_data: {} } as unknown as Awaited<ReturnType<typeof getConversation>>,
+      { role: 'customer', flow_data: {}, active_thread_id: 'thread-1' } as unknown as Awaited<ReturnType<typeof getConversation>>,
     );
   });
 

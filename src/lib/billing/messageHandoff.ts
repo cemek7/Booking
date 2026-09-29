@@ -520,11 +520,12 @@ async function routeToInbox(
     // to an owner or staff member is their own command thread — flagging it
     // would silence the assistant for the very person trying to fix the wallet.
     const conv = await getConversation(toNumber, tenantId, 'whatsapp');
-    if (!conv || conv.role === 'owner' || conv.role === 'staff') return;
+    if (!conv || !conv.active_thread_id || conv.role === 'owner' || conv.role === 'staff') return;
 
     await setHumanHandling({
       externalId: toNumber,
       tenantId,
+      threadId: conv.active_thread_id,
       channel: 'whatsapp',
       minutes: getHandoffHumanHandlingMinutes(),
     });

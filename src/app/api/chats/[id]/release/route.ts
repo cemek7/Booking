@@ -4,6 +4,11 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { clearHumanHandling } from '@/lib/whatsapp/v2/humanTakeover';
+import { z } from 'zod';
+
+const ReleaseSchema = z.object({
+  action: z.enum(['release', 'close']).default('release'),
+});
 
 export const POST = createHttpHandler(
   async (ctx) => {
@@ -31,10 +36,30 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.validationError({ chat: 'chat has no linked customer identity' });
     }
 
+    let body: unknown = {};
+    try { body = await ctx.request.json(); } catch { /* empty body means release */ }
+    const parsed = ReleaseSchema.safeParse(body);
+    if (!parsed.success) throw ApiErrorFactory.validationError(parsed.error.flatten().fieldErrors);
+    const channel = chat.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp';
+
+    const { data: conversation, error: conversationError } = await admin
+      .from('whatsapp_conversations')
+      .select('active_thread_id')
+      .eq('tenant_id', chat.tenant_id)
+      .eq('channel', channel)
+      .eq('external_id', chat.customer_phone)
+      .maybeSingle();
+    if (conversationError) throw ApiErrorFactory.databaseError(conversationError);
+    if (!conversation?.active_thread_id) {
+      throw ApiErrorFactory.validationError({ conversation: 'Chat has no active conversation thread' });
+    }
+
     await clearHumanHandling({
       externalId: chat.customer_phone,
       tenantId: chat.tenant_id,
-      channel: chat.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
+      threadId: String(conversation.active_thread_id),
+      channel,
+      close: parsed.data.action === 'close',
     });
 
     return { success: true };

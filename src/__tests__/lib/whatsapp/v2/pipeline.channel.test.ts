@@ -50,6 +50,11 @@ jest.mock('@/lib/whatsapp/v2/outboundDelivery', () => ({
       : { status: 'failed', reason: result.reason, replayed: false };
   }),
 }));
+const mockIsThreadHumanHandling = jest.fn();
+jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({
+  isThreadHumanHandling: (...args: unknown[]) => mockIsThreadHumanHandling(...args),
+  setHumanHandling: jest.fn(async () => undefined),
+}));
 
 // Supabase — minimal stub
 jest.mock('@supabase/supabase-js', () => ({
@@ -143,6 +148,7 @@ function makeBatch(overrides: Partial<ClaimedConversationBatch> = {}): ClaimedCo
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(true);
+  mockIsThreadHumanHandling.mockResolvedValue(false);
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -220,6 +226,7 @@ describe('processConversationBatch channel=instagram', () => {
   });
 
   it('pauses AI replies when a human is handling the conversation', async () => {
+    mockIsThreadHumanHandling.mockResolvedValue(true);
     const conv = makeConv({
       flow_data: { human_handling_until: '2999-01-01T00:00:00.000Z' },
       channel: 'whatsapp',

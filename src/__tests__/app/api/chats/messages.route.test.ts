@@ -4,12 +4,17 @@ import { ApiError } from '@/lib/error-handling/api-error';
 
 const mockGetTenantChannelProviderClient = jest.fn();
 const mockHasMessagingConsent = jest.fn();
+const mockSendOutboundOnce = jest.fn();
+const mockSetHumanHandling = jest.fn();
 
 jest.mock('@/lib/whatsapp/providers/providerSelection', () => ({
   getTenantChannelProviderClient: (...args: unknown[]) => mockGetTenantChannelProviderClient(...args),
 }));
 jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({
-  setHumanHandling: jest.fn().mockResolvedValue(undefined),
+  setHumanHandling: (...args: unknown[]) => mockSetHumanHandling(...args),
+}));
+jest.mock('@/lib/whatsapp/v2/outboundDelivery', () => ({
+  sendOutboundOnce: (...args: unknown[]) => mockSendOutboundOnce(...args),
 }));
 jest.mock('@/lib/optin/messagingConsent', () => ({
   hasMessagingConsent: (...args: unknown[]) => mockHasMessagingConsent(...args),
@@ -18,6 +23,7 @@ jest.mock('@/lib/optin/messagingConsent', () => ({
 type MockOptions = {
   chatMetadata?: { channel?: 'whatsapp' | 'instagram' } | null;
   lastInboundAt?: string | null;
+  threadId?: string | null;
 };
 
 function createMockSupabase(options: MockOptions = {}) {
@@ -33,7 +39,13 @@ function createMockSupabase(options: MockOptions = {}) {
     eq: jest.fn(() => builder),
     maybeSingle: jest.fn(async () => {
       if (table === 'whatsapp_conversations') {
-        return { data: { last_inbound_at: options.lastInboundAt ?? null }, error: null };
+        return {
+          data: {
+            last_inbound_at: options.lastInboundAt ?? null,
+            active_thread_id: options.threadId === undefined ? 'thread-1' : options.threadId,
+          },
+          error: null,
+        };
       }
       return { data: null, error: null };
     }),
@@ -46,13 +58,6 @@ function createMockSupabase(options: MockOptions = {}) {
             customer_phone: options.chatMetadata?.channel === 'instagram' ? 'IGSID_123' : '+2348000000000',
             metadata: options.chatMetadata ?? null,
           },
-          error: null,
-        };
-      }
-
-      if (table === 'messages') {
-        return {
-          data: { id: 'msg-1', created_at: '2026-06-25T12:00:00.000Z' },
           error: null,
         };
       }
@@ -92,13 +97,18 @@ describe('POST /api/chats/[id]/messages', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockHasMessagingConsent.mockResolvedValue(false);
+    mockSetHumanHandling.mockResolvedValue(undefined);
+    mockSendOutboundOnce.mockImplementation(async (input: { send: () => Promise<unknown> }) => {
+      await input.send();
+      return { status: 'sent', replayed: false, messageId: 'msg-1' };
+    });
     mockGetTenantChannelProviderClient.mockResolvedValue({
       sendTextMessage: jest.fn().mockResolvedValue({ success: true }),
     });
   });
 
   it('blocks Instagram replies outside the 24-hour window', async () => {
-    const { builder, inserts } = createMockSupabase({
+    const { builder } = createMockSupabase({
       chatMetadata: { channel: 'instagram' },
       lastInboundAt: '2026-06-20T12:00:00.000Z',
     });
@@ -107,7 +117,7 @@ describe('POST /api/chats/[id]/messages', () => {
       statusCode: 423,
       message: expect.stringContaining('Instagram replies are only allowed within 24 hours'),
     });
-    expect(inserts.find((entry) => entry.table === 'messages')).toBeUndefined();
+    expect(mockSendOutboundOnce).not.toHaveBeenCalled();
     expect(mockGetTenantChannelProviderClient).not.toHaveBeenCalled();
   });
 
@@ -115,7 +125,7 @@ describe('POST /api/chats/[id]/messages', () => {
     const sendTextMessage = jest.fn().mockResolvedValue({ success: true });
     mockGetTenantChannelProviderClient.mockResolvedValue({ sendTextMessage });
 
-    const { builder, inserts } = createMockSupabase({
+    const { builder } = createMockSupabase({
       chatMetadata: { channel: 'instagram' },
       lastInboundAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     });
@@ -124,16 +134,14 @@ describe('POST /api/chats/[id]/messages', () => {
 
     expect(response).toMatchObject({ ok: true, id: 'msg-1' });
     expect(mockGetTenantChannelProviderClient).toHaveBeenCalledWith('tenant-1', 'instagram');
-    expect(inserts.find((entry) => entry.table === 'messages')?.payload).toMatchObject({
-      tenant_id: 'tenant-1',
-      chat_id: 'chat-1',
-      to_number: 'IGSID_123',
-      direction: 'outbound',
-    });
+    expect(mockSendOutboundOnce).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1', threadId: 'thread-1', chatId: 'chat-1', channel: 'instagram', to: 'IGSID_123',
+    }));
+    expect(mockSetHumanHandling).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-1' }));
   });
 
   it('blocks WhatsApp follow-up outside the reply window without consent', async () => {
-    const { builder, inserts } = createMockSupabase({
+    const { builder } = createMockSupabase({
       chatMetadata: { channel: 'whatsapp' },
       lastInboundAt: '2026-06-20T12:00:00.000Z',
     });
@@ -142,7 +150,7 @@ describe('POST /api/chats/[id]/messages', () => {
       statusCode: 423,
       message: expect.stringContaining('requires explicit messaging consent'),
     });
-    expect(inserts.find((entry) => entry.table === 'messages')).toBeUndefined();
+    expect(mockSendOutboundOnce).not.toHaveBeenCalled();
     expect(mockGetTenantChannelProviderClient).not.toHaveBeenCalled();
   });
 
@@ -151,7 +159,7 @@ describe('POST /api/chats/[id]/messages', () => {
     const sendTextMessage = jest.fn().mockResolvedValue({ success: true });
     mockGetTenantChannelProviderClient.mockResolvedValue({ sendTextMessage });
 
-    const { builder, inserts } = createMockSupabase({
+    const { builder } = createMockSupabase({
       chatMetadata: { channel: 'whatsapp' },
       lastInboundAt: '2026-06-20T12:00:00.000Z',
     });
@@ -160,11 +168,15 @@ describe('POST /api/chats/[id]/messages', () => {
 
     expect(response).toMatchObject({ ok: true, id: 'msg-1' });
     expect(mockGetTenantChannelProviderClient).toHaveBeenCalledWith('tenant-1', 'whatsapp');
-    expect(inserts.find((entry) => entry.table === 'messages')?.payload).toMatchObject({
-      tenant_id: 'tenant-1',
-      chat_id: 'chat-1',
-      to_number: '+2348000000000',
-      direction: 'outbound',
+  });
+
+  it('rejects a chat without an active canonical thread', async () => {
+    const { builder } = createMockSupabase({
+      lastInboundAt: new Date().toISOString(),
+      threadId: null,
     });
+    await expect(POST(createContext(builder) as unknown as Parameters<typeof POST>[0]))
+      .rejects.toMatchObject<ApiError>({ statusCode: 400 });
+    expect(mockSendOutboundOnce).not.toHaveBeenCalled();
   });
 });

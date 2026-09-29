@@ -39,7 +39,7 @@ export const PATCH = createHttpHandler(
       throw ApiErrorFactory.internalServerError(new Error('Failed to update escalation'));
     }
 
-    if (parsed.data.action === 'claim' && escalation.customer_phone) {
+    if (parsed.data.action === 'claim' && escalation.customer_phone && escalation.conversation_thread_id) {
       const admin = createSupabaseAdminClient();
       const { data: chat } = await admin
         .from('chats')
@@ -52,6 +52,7 @@ export const PATCH = createHttpHandler(
         await setHumanHandling({
           externalId: chat.customer_phone,
           tenantId,
+          threadId: String(escalation.conversation_thread_id),
           channel: chat.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
           minutes: 30,
         }).catch(() => null);

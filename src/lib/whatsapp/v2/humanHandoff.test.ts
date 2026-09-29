@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { wantsHuman, createHumanHandoff } from '@/lib/whatsapp/v2/humanHandoff';
+import { wantsHuman, createHumanHandoff, type HumanHandoffStore } from '@/lib/whatsapp/v2/humanHandoff';
 
 describe('wantsHuman', () => {
   it.each(['agent', 'I want a HUMAN', 'can I talk to a person?', 'speak with someone', 'real person please'])(
@@ -13,40 +13,35 @@ describe('wantsHuman', () => {
   );
 });
 
-function makeAdmin(existing: unknown) {
+function makeStore(existing: { id: string; status?: string } | null) {
   const inserted: unknown[] = [];
-  const admin = {
-    from() {
-      const builder: Record<string, unknown> = {
-        select() { return builder; },
-        insert(payload: unknown) { inserted.push(payload); return builder; },
-        eq() { return builder; },
-        gte() { return builder; },
-        in() { return builder; },
-        limit() { return builder; },
-        maybeSingle() {
-          if (inserted.length > 0) return Promise.resolve({ data: { id: 'new-ticket' }, error: null });
-          return Promise.resolve({ data: existing, error: null });
-        },
-      };
-      return builder;
-    },
+  const store: HumanHandoffStore = {
+    loadCanonicalThread: async () => ({
+      id: 'thread-1', status: 'active', state_version: 1,
+      structured_state: { confirmed: {}, proposed: {}, missing: [] }, rolling_summary: null,
+    }),
+    findOpen: async () => existing,
+    insert: async (payload) => { inserted.push(payload); return { id: 'new-ticket' }; },
   };
-  return { admin: admin as never, inserted };
+  return { store, inserted };
 }
 
 describe('createHumanHandoff', () => {
   it('inserts a pending ticket when none is open', async () => {
-    const { admin, inserted } = makeAdmin(null);
-    const result = await createHumanHandoff(admin, { tenantId: 't1', customerPhone: '234800', sessionId: 's1' });
+    const { store, inserted } = makeStore(null);
+    const result = await createHumanHandoff({
+      tenantId: 't1', customerPhone: '234800', sessionId: 's1', threadId: 'thread-1',
+    }, store);
     expect(result).toEqual({ id: 'new-ticket' });
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({ tenant_id: 't1', customer_phone: '234800', status: 'pending' });
   });
 
   it('returns the existing open ticket without inserting (dedup)', async () => {
-    const { admin, inserted } = makeAdmin({ id: 'existing-ticket', status: 'pending' });
-    const result = await createHumanHandoff(admin, { tenantId: 't1', customerPhone: '234800', sessionId: 's1' });
+    const { store, inserted } = makeStore({ id: 'existing-ticket', status: 'pending' });
+    const result = await createHumanHandoff({
+      tenantId: 't1', customerPhone: '234800', sessionId: 's1', threadId: 'thread-1',
+    }, store);
     expect(result).toEqual({ id: 'existing-ticket', status: 'pending' });
     expect(inserted).toHaveLength(0);
   });
