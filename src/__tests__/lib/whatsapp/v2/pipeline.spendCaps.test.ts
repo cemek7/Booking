@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const mockClaimBatch = jest.fn();
 const mockGetConversation = jest.fn();
 const mockEnsureConversation = jest.fn();
 const mockGetTenantWhatsAppConfig = jest.fn();
@@ -10,11 +9,6 @@ const mockCheckCaps = jest.fn();
 const mockMaybeAlertCap = jest.fn();
 const mockIsQuotaExceeded = jest.fn();
 const mockWithTenantWalletSpend = jest.fn();
-
-jest.mock('@/lib/whatsapp/v2/messageBatcher', () => ({
-  claimBatch: mockClaimBatch,
-  appendPendingMessage: jest.fn(),
-}));
 
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   getConversation: mockGetConversation,
@@ -127,7 +121,8 @@ jest.mock('@/lib/ai/training-events', () => ({
   recordAITrainingEvent: jest.fn(),
 }));
 
-import { processMessageV2 } from '@/lib/whatsapp/v2/pipeline';
+import { processConversationBatch } from '@/lib/whatsapp/v2/pipeline';
+import type { ClaimedConversationBatch } from '@/lib/whatsapp/v2/queueBatch';
 
 function makeConv() {
   return {
@@ -143,10 +138,23 @@ function makeConv() {
   };
 }
 
+function makeBatch(): ClaimedConversationBatch {
+  return {
+    batchId: 'batch-1', workerId: 'worker-1', tenantId: 'tenant-1', channel: 'whatsapp',
+    externalId: '+2348000000000', conversationId: 'conv-1', threadId: 'thread-1',
+    combinedText: 'book me', correlationKey: 'conversation-batch:test',
+    rows: [{
+      id: 'queue-1', tenantId: 'tenant-1', channel: 'whatsapp', externalId: '+2348000000000',
+      conversationId: 'conv-1', threadId: 'thread-1', content: 'book me', messageId: 'msg-1',
+      providerTimestamp: '2026-09-28T12:00:00.000Z', createdAt: '2026-09-28T12:00:00.100Z',
+      batchId: 'batch-1', leaseOwner: 'worker-1', retryCount: 0, maxRetries: 3,
+    }],
+  };
+}
+
 describe('pipeline spend-cap gate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockClaimBatch.mockResolvedValue({ combined: 'book me', messageIds: ['msg-1'] });
     mockGetConversation.mockResolvedValue(makeConv());
     mockEnsureConversation.mockResolvedValue(makeConv());
     mockGetTenantWhatsAppConfig.mockResolvedValue({ provider: 'evolution', instanceName: 'inst' });
@@ -170,9 +178,9 @@ describe('pipeline spend-cap gate', () => {
       dailyBudgetCredits: 200,
     });
 
-    const result = await processMessageV2('+2348000000000', 'tenant-1', 'book me', 'msg-1');
+    const result = await processConversationBatch(makeBatch());
 
-    expect(result).toBe(true);
+    expect(result).toEqual({ disposition: 'complete', correlationKey: 'conversation-batch:test' });
     expect(mockMaybeAlertCap).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'daily_cap');
     expect(mockIsQuotaExceeded).not.toHaveBeenCalled();
     expect(mockWithTenantWalletSpend).not.toHaveBeenCalled();
@@ -187,7 +195,7 @@ describe('pipeline spend-cap gate', () => {
       dailyBudgetCredits: 200,
     });
 
-    await processMessageV2('+2348000000000', 'tenant-1', 'book me', 'msg-1');
+    await processConversationBatch(makeBatch());
 
     expect(mockWithTenantWalletSpend).toHaveBeenCalled();
     const options = mockWithTenantWalletSpend.mock.calls[0]?.[2] as Record<string, unknown>;

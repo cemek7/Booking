@@ -118,7 +118,7 @@ export async function startSelfSignup(
   }
 
   // The conversation must exist as an OWNER already in the onboarding flow.
-  // processMessageV2 creates a missing conversation with role 'unknown', and
+  // The conversation pipeline creates a missing conversation with role 'unknown', and
   // the pipeline only routes to handleOnboarding when current_flow is
   // 'onboarding' or the sender is an owner — so without this the person who
   // just asked to sign up would be handled as one of their own customers.

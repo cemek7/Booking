@@ -266,7 +266,7 @@ Return JSON only:
     }
   } else {
     // The tenant already exists, which in the live pipeline is ALWAYS the case:
-    // processMessageV2 is only ever called with a resolved tenant id, so the
+    // The conversation pipeline is only called with a resolved tenant id, so the
     // branch above never runs there. Without this the owner's answer to "what
     // kind of business do you run" was parsed and then dropped — no name, no
     // vertical, no timezone, no business_type, and no owner tenant_users row,

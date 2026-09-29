@@ -267,6 +267,29 @@ async function handleEvolution(
     return NextResponse.json({ error: 'Invalid payload: missing data.key.id' }, { status: 400 });
   }
 
+  const parsedMessage = parseEvolutionMessage(raw, tenantId);
+  if (!parsedMessage) {
+    return NextResponse.json({ error: 'Could not parse message' }, { status: 400 });
+  }
+  const { ingestCustomerInboundIfV2 } = await import('@/lib/whatsapp/v2/inboundIngest');
+  const v2Ingest = await ingestCustomerInboundIfV2({
+    tenantId,
+    provider: 'evolution',
+    webhookExternalId: `${tenantId}:${instance}:${messageId}`,
+    webhookPayload: raw,
+    fromNumber: parsedMessage.from_number as string,
+    toNumber: instance,
+    content: parsedMessage.content as string,
+    messageType: parsedMessage.message_type as string,
+    providerMessageId: messageId,
+    providerTimestamp: parsedMessage.timestamp as string,
+    raw,
+    mediaInfo: parsedMessage.media_info,
+  });
+  if (v2Ingest) {
+    return NextResponse.json({ status: 'accepted_v2', messageId: v2Ingest.messageId }, { status: 202 });
+  }
+
   const isDuplicate = await handleIdempotency(
     supabase,
     'evolution',
@@ -276,11 +299,6 @@ async function handleEvolution(
     span
   );
   if (isDuplicate) return NextResponse.json({ status: 'duplicate', replay: true }, { status: 200 });
-
-  const parsedMessage = parseEvolutionMessage(raw, tenantId);
-  if (!parsedMessage) {
-    return NextResponse.json({ error: 'Could not parse message' }, { status: 400 });
-  }
 
   const chatId = await upsertChat(supabase, tenantId, parsedMessage.from_number as string);
   if (chatId) parsedMessage.chat_id = chatId;
@@ -298,9 +316,6 @@ async function handleEvolution(
   return routeMessage(
     supabase,
     tenantId,
-    instance,
-    parsedMessage.from_number as string,
-    parsedMessage.content as string,
     messageRowId
   );
 }
@@ -383,6 +398,29 @@ async function handleWaha(
       return NextResponse.json({ error: 'Missing message id' }, { status: 400 });
     }
 
+    const fromNumber = p.from?.replace(/@c\.us/, '') ?? '';
+    const messageContent = p.body ?? '';
+    const messageType = p.type === 'chat' ? 'text' : (p.type ?? 'unknown');
+    const providerTimestamp = new Date((p.timestamp ?? Date.now() / 1000) * 1000).toISOString();
+    const { ingestCustomerInboundIfV2 } = await import('@/lib/whatsapp/v2/inboundIngest');
+    const v2Ingest = await ingestCustomerInboundIfV2({
+      tenantId,
+      provider: 'waha',
+      webhookExternalId: `${tenantId}:${instance}:${messageId}`,
+      webhookPayload: raw,
+      fromNumber,
+      toNumber: instance,
+      content: messageContent,
+      messageType,
+      providerMessageId: messageId,
+      providerTimestamp,
+      raw,
+      mediaInfo: p.mediaUrl ? { url: p.mediaUrl, caption: p.caption } : null,
+    });
+    if (v2Ingest) {
+      return NextResponse.json({ status: 'accepted_v2', messageId: v2Ingest.messageId }, { status: 202 });
+    }
+
     const isDuplicate = await handleIdempotency(
       supabase,
       'waha',
@@ -392,10 +430,6 @@ async function handleWaha(
       span
     );
     if (isDuplicate) return NextResponse.json({ status: 'duplicate' }, { status: 200 });
-
-    const fromNumber = p.from?.replace(/@c\.us/, '') ?? '';
-    const messageContent = p.body ?? '';
-    const messageType = p.type === 'chat' ? 'text' : (p.type ?? 'unknown');
 
     const parsedMessage: Record<string, unknown> = {
       tenant_id: tenantId,
@@ -407,7 +441,7 @@ async function handleWaha(
       raw,
       media_info: p.mediaUrl ? { url: p.mediaUrl, caption: p.caption } : null,
       evolution_message_id: messageId,
-      timestamp: new Date((p.timestamp ?? Date.now() / 1000) * 1000).toISOString(),
+      timestamp: providerTimestamp,
     };
 
     const chatId = await upsertChat(supabase, tenantId, fromNumber);
@@ -419,7 +453,7 @@ async function handleWaha(
     }
     span.setAttribute('message.id', messageRowId);
 
-    return routeMessage(supabase, tenantId, instance, fromNumber, messageContent, messageRowId);
+    return routeMessage(supabase, tenantId, messageRowId);
   }
 
   defaultLogger.warn(`[WEBHOOK-WAHA] Unknown event: ${event}`);
@@ -464,6 +498,25 @@ async function handleMeta(
       for (const message of value.messages ?? []) {
         if (!message.id || !message.from) continue;
 
+        const parsed = parseMetaMessage(message, value.metadata?.display_phone_number ?? metaPhoneNumberId, tenantId);
+        if (!parsed) continue;
+        const { ingestCustomerInboundIfV2 } = await import('@/lib/whatsapp/v2/inboundIngest');
+        const v2Ingest = await ingestCustomerInboundIfV2({
+          tenantId,
+          provider: 'meta',
+          webhookExternalId: `${tenantId}:${metaPhoneNumberId}:${message.id}`,
+          webhookPayload: { type: 'message', message, value },
+          fromNumber: parsed.from_number as string,
+          toNumber: parsed.to_number as string,
+          content: parsed.content as string,
+          messageType: parsed.message_type as string,
+          providerMessageId: message.id,
+          providerTimestamp: parsed.timestamp as string,
+          raw: message,
+          mediaInfo: parsed.media_info,
+        });
+        if (v2Ingest) continue;
+
         const isDuplicate = await handleIdempotency(
           supabase,
           'meta',
@@ -473,9 +526,6 @@ async function handleMeta(
           span
         );
         if (isDuplicate) continue;
-
-        const parsed = parseMetaMessage(message, value.metadata?.display_phone_number ?? metaPhoneNumberId, tenantId);
-        if (!parsed) continue;
 
         const chatId = await upsertChat(supabase, tenantId, parsed.from_number as string);
         if (chatId) parsed.chat_id = chatId;
@@ -487,9 +537,6 @@ async function handleMeta(
         await routeMessage(
           supabase,
           tenantId,
-          metaPhoneNumberId,
-          parsed.from_number as string,
-          parsed.content as string,
           messageRowId
         );
       }
@@ -622,49 +669,8 @@ function parseMetaMessage(message: MetaIncomingMessage, toNumber: string, tenant
 async function routeMessage(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   tenantId: string,
-  instance: string,
-  fromNumber: string,
-  content: string,
   messageRowId: string
 ): Promise<NextResponse> {
-  const { data: tenantRow } = await supabase
-    .from('tenants')
-    .select('v2_enabled')
-    .eq('id', tenantId)
-    .maybeSingle();
-
-  if (tenantRow?.v2_enabled) {
-    const { appendPendingMessage } = await import('@/lib/whatsapp/v2/messageBatcher');
-    const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
-    const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
-
-    const identity = await resolveIncoming('whatsapp', fromNumber, content, tenantId);
-    const resolvedTenantId = tenantId;
-    const role = identity.role;
-
-    await ensureConversation(fromNumber, resolvedTenantId, role);
-    await appendPendingMessage(fromNumber, resolvedTenantId, identity.strippedMessage || content, messageRowId);
-
-    await supabase.from('whatsapp_message_queue').insert({
-      tenant_id: resolvedTenantId,
-      message_id: messageRowId,
-      from_number: fromNumber,
-      to_number: instance,
-      content: identity.strippedMessage || content,
-      status: 'pending',
-      priority: 'normal',
-    });
-
-    if (process.env.NODE_ENV !== 'production') {
-      const workerBase = process.env.APP_URL || 'http://localhost:3000';
-      fetch(`${workerBase}/api/worker/whatsapp`, {
-        headers: { Authorization: `Bearer ${process.env.CRON_SECRET || 'dev-cron-secret'}` },
-      }).catch(() => {});
-    }
-
-    return NextResponse.json({ status: 'accepted_v2', messageId: messageRowId }, { status: 202 });
-  }
-
   await enqueueJob(supabase, 'process_whatsapp_message', {
     message_id: messageRowId,
     tenant_id: tenantId,

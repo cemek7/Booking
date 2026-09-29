@@ -3,8 +3,9 @@ import { createHmac } from 'crypto';
 const mockResolveRoute = jest.fn();
 const mockResolveIncoming = jest.fn();
 const mockEnsureConversation = jest.fn();
-const mockAppendPending = jest.fn();
 const mockEnsureCustomerIdentity = jest.fn();
+const mockEnsureThread = jest.fn();
+const mockIngest = jest.fn();
 
 jest.mock('@/lib/whatsapp/v2/routeSession', () => ({
   resolveWhatsAppRoute: (...args: unknown[]) => mockResolveRoute(...args),
@@ -15,11 +16,14 @@ jest.mock('@/lib/whatsapp/v2/identityResolver', () => ({
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   ensureConversation: (...args: unknown[]) => mockEnsureConversation(...args),
 }));
-jest.mock('@/lib/whatsapp/v2/messageBatcher', () => ({
-  appendPendingMessage: (...args: unknown[]) => mockAppendPending(...args),
-}));
 jest.mock('@/lib/customers/channelIdentity', () => ({
   ensureCustomerChannelIdentity: (...args: unknown[]) => mockEnsureCustomerIdentity(...args),
+}));
+jest.mock('@/lib/whatsapp/v2/conversationThread', () => ({
+  ensureActiveThread: (...args: unknown[]) => mockEnsureThread(...args),
+}));
+jest.mock('@/lib/whatsapp/v2/queueBatch', () => ({
+  ingestConversationMessage: (...args: unknown[]) => mockIngest(...args),
 }));
 jest.mock('@/lib/whatsapp/v2/deliverability/metaQualityWebhook', () => ({ ingestQualityWebhook: jest.fn() }));
 jest.mock('@/lib/billing/messageWallet', () => ({
@@ -86,6 +90,9 @@ describe('Meta shared-gateway routing', () => {
     mockEnsureCustomerIdentity.mockResolvedValue({
       identityId: 'identity-wa', customerId: 'customer-wa', created: true,
     });
+    mockEnsureConversation.mockResolvedValue({ id: 'conversation-wa' });
+    mockEnsureThread.mockResolvedValue({ id: 'thread-wa' });
+    mockIngest.mockResolvedValue('queue-wa');
   });
 
   it('routes before tenant-scoped conversation and queue writes', async () => {
@@ -113,8 +120,15 @@ describe('Meta shared-gateway routing', () => {
     expect(mockEnsureConversation).toHaveBeenCalledWith(
       '+2348111111111', 'tenant-b', 'customer', 'whatsapp', 'customer-wa',
     );
-    expect(operations.find((entry) => entry.table === 'whatsapp_message_queue')?.payload).toMatchObject({
-      tenant_id: 'tenant-b', content: 'I need braids',
+    expect(mockEnsureThread).toHaveBeenCalledWith({
+      tenantId: 'tenant-b', customerId: 'customer-wa', channelIdentityId: 'identity-wa',
+      channel: 'whatsapp', conversationId: 'conversation-wa',
     });
+    expect(mockIngest).toHaveBeenCalledWith(expect.objectContaining({
+      webhookProvider: 'meta', webhookExternalId: 'gateway-phone-id:wamid.1', tenantId: 'tenant-b',
+      conversationId: 'conversation-wa', threadId: 'thread-wa', channel: 'whatsapp',
+      fromNumber: '+2348111111111', content: 'I need braids', providerMessageId: 'wamid.1',
+    }));
+    expect(operations.find((entry) => entry.table === 'whatsapp_message_queue')).toBeUndefined();
   });
 });

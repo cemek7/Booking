@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
@@ -118,32 +118,8 @@ export async function POST(request: NextRequest) {
       // Ignore self (recipient === sender shouldn't happen for inbound, but guard anyway).
       if (senderId === igAccountId) continue;
 
-      const isDuplicate = await handleIdempotency(supabase, igAccountId, mid, { event });
-      if (isDuplicate) continue;
-
       const content = extractContent(msg);
-
-      const parsed = {
-        tenant_id: tenantId,
-        from_number: senderId,
-        to_number: igAccountId,
-        content,
-        direction: 'inbound',
-        message_type: msg.text ? 'text' : 'attachment',
-        raw: event,
-        evolution_message_id: mid,
-        timestamp: event.timestamp
-          ? new Date(event.timestamp).toISOString()
-          : new Date().toISOString(),
-      } as Record<string, unknown>;
-
-      const chatId = await upsertChat(supabase, tenantId, senderId);
-      if (chatId) parsed.chat_id = chatId;
-
-      const messageRowId = await persistMessage(supabase, parsed);
-      if (!messageRowId) continue;
-
-      await routeMessage(supabase, tenantId, igAccountId, senderId, content, messageRowId);
+      await routeMessage(supabase, tenantId, igAccountId, senderId, content, mid, event);
     }
   }
 
@@ -159,72 +135,14 @@ function extractContent(msg: NonNullable<IgMessaging['message']>): string {
   return '';
 }
 
-async function handleIdempotency(
-  supabase: SupabaseClient,
-  igAccountId: string,
-  messageId: string,
-  payload: unknown
-): Promise<boolean> {
-  try {
-    const externalId = `${igAccountId}:${messageId}`;
-    const { error } = await supabase.from('webhook_events').insert({
-      provider: 'instagram',
-      external_id: externalId,
-      payload,
-      processed_at: new Date().toISOString(),
-    });
-    if (error?.code === '23505') return true; // already seen (UNIQUE(provider, external_id))
-    if (error) throw error;
-  } catch (e) {
-    defaultLogger.error('[WEBHOOK-IG] Idempotency check error', e);
-  }
-  return false;
-}
-
-async function persistMessage(
-  supabase: SupabaseClient,
-  message: Record<string, unknown>
-): Promise<string | null> {
-  const { data, error } = await supabase.from('messages').insert(message).select('id').single();
-  if (error) {
-    defaultLogger.error('[WEBHOOK-IG] Failed to persist message', error);
-    return null;
-  }
-  return data.id as string;
-}
-
-async function upsertChat(
-  supabase: SupabaseClient,
-  tenantId: string,
-  externalId: string
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('chats')
-    .upsert(
-      {
-        tenant_id: tenantId,
-        customer_phone: externalId,
-        metadata: { channel: 'instagram' },
-        last_message_at: new Date().toISOString(),
-      },
-      { onConflict: 'tenant_id,customer_phone' }
-    )
-    .select('id')
-    .single();
-  if (error) {
-    defaultLogger.error('[WEBHOOK-IG] Failed to upsert chat', error);
-    return null;
-  }
-  return data.id as string;
-}
-
 async function routeMessage(
   supabase: SupabaseClient,
   tenantId: string,
   igAccountId: string,
   senderId: string,
   content: string,
-  messageRowId: string
+  providerMessageId: string,
+  event: IgMessaging,
 ): Promise<void> {
   const { data: tenantRow } = await supabase
     .from('tenants')
@@ -240,7 +158,6 @@ async function routeMessage(
     return;
   }
 
-  const { appendPendingMessage } = await import('@/lib/whatsapp/v2/messageBatcher');
   const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
   const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
@@ -256,24 +173,42 @@ async function routeMessage(
     externalId: senderId,
   });
 
-  await ensureConversation(
+  const conversation = await ensureConversation(
     senderId,
     resolvedTenantId,
     role,
     'instagram',
     customerIdentity.customerId,
   );
-  await appendPendingMessage(senderId, resolvedTenantId, text, messageRowId, 'instagram');
-
-  await supabase.from('whatsapp_message_queue').insert({
-    tenant_id: resolvedTenantId,
-    message_id: messageRowId,
-    from_number: senderId,
-    to_number: igAccountId,
-    content: text,
-    status: 'pending',
-    priority: 'normal',
+  const { ensureActiveThread } = await import('@/lib/whatsapp/v2/conversationThread');
+  const thread = await ensureActiveThread({
+    tenantId: resolvedTenantId,
+    customerId: customerIdentity.customerId,
+    channelIdentityId: customerIdentity.identityId,
     channel: 'instagram',
+    conversationId: conversation.id,
+  });
+  const providerTimestamp = event.timestamp
+    ? new Date(event.timestamp).toISOString()
+    : new Date().toISOString();
+  const { ingestConversationMessage } = await import('@/lib/whatsapp/v2/queueBatch');
+  await ingestConversationMessage({
+    webhookProvider: 'instagram',
+    webhookExternalId: `${igAccountId}:${providerMessageId}`,
+    webhookPayload: { event },
+    messageId: randomUUID(),
+    tenantId: resolvedTenantId,
+    conversationId: conversation.id,
+    threadId: thread.id,
+    channel: 'instagram',
+    fromNumber: senderId,
+    toNumber: igAccountId,
+    content: text,
+    messageType: event.message?.text ? 'text' : 'attachment',
+    providerMessageId,
+    providerTimestamp,
+    raw: event,
+    mediaInfo: event.message?.attachments ?? null,
   });
 
   if (process.env.NODE_ENV !== 'production') {

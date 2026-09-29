@@ -18,7 +18,7 @@ import { sendDisclosureIfNeeded } from './aiDisclosure';
 import { wantsHuman, createHumanHandoff } from './humanHandoff';
 import { isHumanHandling } from './humanTakeover';
 import { buildOptInProofPatch } from './optInProof';
-import { claimBatch } from './messageBatcher';
+import type { ClaimedConversationBatch } from './queueBatch';
 import { validateAction, type AIResponse } from '@/lib/booking/action-validator';
 import { getTenantWhatsAppConfig, isTenantWhatsAppAgentEnabled } from '@/lib/whatsapp/evolutionClient';
 import { getProviderClient } from '@/lib/whatsapp/providers';
@@ -91,18 +91,21 @@ function walletModel(googleModel: string): string {
  * (IGSID) rather than a phone number, and outbound replies are routed through
  * the Instagram adapter (getTenantInstagramConfig + getProviderClient).
  */
-export async function processMessageV2(
-  externalId: string,
-  tenantId: string,
-  message: string,
-  messageId: string,
-  channel: ConvChannel = 'whatsapp'
-): Promise<boolean> {
-  // ── 1. Check if more messages are still arriving ───────────────────────────
-  const batch = await claimBatch(externalId, tenantId, channel);
-  if (!batch) return false; // Still accumulating — skip this cycle
+export interface BatchProcessResult {
+  disposition: 'complete';
+  correlationKey: string;
+}
 
-  let rawMessage = batch.combined;
+export async function processConversationBatch(
+  batch: ClaimedConversationBatch,
+): Promise<BatchProcessResult> {
+  const { externalId, tenantId, channel } = batch;
+  const messageId = batch.rows[batch.rows.length - 1]?.messageId;
+  if (!messageId) throw new Error('Conversation batch has no message identity');
+  const completed = (): BatchProcessResult => ({
+    disposition: 'complete', correlationKey: batch.correlationKey,
+  });
+  let rawMessage = batch.combinedText;
 
   // ── 2. Load conversation state ─────────────────────────────────────────────
   let conv = await getConversation(externalId, tenantId, channel);
@@ -128,16 +131,14 @@ export async function processMessageV2(
     conv.role !== 'staff' &&
     !await isTenantWhatsAppAgentEnabled(tenantId)
   ) {
-    await markMessagesProcessed(batch.messageIds);
-    return true;
+    return completed();
   }
 
   // ── Opt-out keyword (customers only) ──────────────────────────────────────
   const optSignal: OptOutSignal = detectOptOutKeyword(rawMessage);
   if (optSignal && conv.role !== 'owner' && conv.role !== 'staff') {
     await handleOptOutSignal(externalId, tenantId, optSignal);
-    await markMessagesProcessed(batch.messageIds);
-    return true;
+    return completed();
   }
 
   // ── Record inbound time AFTER capturing the prior value in `conv` ──────────
@@ -147,7 +148,8 @@ export async function processMessageV2(
     .from('whatsapp_conversations')
     .update({ last_inbound_at: new Date().toISOString() })
     .eq('tenant_id', tenantId)
-    .eq('phone_number', externalId);
+    .eq('channel', channel)
+    .eq('external_id', externalId);
 
   // ── 3. Route to appropriate flow handler ──────────────────────────────────
   // Owner onboarding is handled separately from the main pipeline
@@ -160,18 +162,17 @@ export async function processMessageV2(
       const onboardingConfig = await resolveProviderConfig(tenantId, channel);
       await sendReplyByChannel(onboardingConfig, tenantId, externalId, onboardingReply, channel);
     }
-    await markMessagesProcessed(batch.messageIds);
-    return true;
+    return completed();
   }
 
   if (conv.role === 'owner' || conv.role === 'staff') {
-    await handleOwnerOrStaffMessage(externalId, tenantId, normalized, conv, messageId, batch.messageIds, channel);
-    return true;
+    await handleOwnerOrStaffMessage(externalId, tenantId, normalized, conv, messageId, channel);
+    return completed();
   }
 
   // Customer path
-  await handleCustomerMessage(externalId, tenantId, normalized, conv, messageId, batch.messageIds, channel);
-  return true;
+  await handleCustomerMessage(externalId, tenantId, normalized, conv, messageId, channel);
+  return completed();
 }
 
 // ─── Owner / staff message handler ───────────────────────────────────────────
@@ -182,7 +183,6 @@ async function handleOwnerOrStaffMessage(
   message: string,
   conv: Awaited<ReturnType<typeof getConversation>> & object,
   messageId: string,
-  allMessageIds: string[],
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const providerConfig = await resolveProviderConfig(tenantId, channel);
@@ -194,7 +194,6 @@ async function handleOwnerOrStaffMessage(
   const emailUpdateReply = await handleOwnerEmailUpdate(externalId, tenantId, message, conv!);
   if (emailUpdateReply) {
     await sendReplyByChannel(providerConfig, tenantId, externalId, emailUpdateReply, channel);
-    await markMessagesProcessed(allMessageIds);
     return;
   }
 
@@ -209,7 +208,6 @@ async function handleOwnerOrStaffMessage(
     const reply = await handleOwnerCommand(externalId, tenantId, l1Match, conv!, message);
     if (reply) {
       await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
-      await markMessagesProcessed(allMessageIds);
     }
     return;
   }
@@ -232,7 +230,6 @@ async function handleOwnerOrStaffMessage(
     await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel);
   }
 
-  await markMessagesProcessed(allMessageIds);
 }
 
 // ─── Customer message handler ─────────────────────────────────────────────────
@@ -243,7 +240,6 @@ async function handleCustomerMessage(
   message: string,
   conv: Awaited<ReturnType<typeof getConversation>> & object,
   messageId: string,
-  allMessageIds: string[],
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
   const analyticsState = (conv!.flow_data?.analytics ?? {}) as Record<string, unknown>;
@@ -259,7 +255,6 @@ async function handleCustomerMessage(
   // A human is handling this conversation from the dashboard, so store inbound
   // messages but do not let the AI send disclosures or replies.
   if (isHumanHandling(conv!.flow_data)) {
-    await markMessagesProcessed(allMessageIds);
     return;
   }
 
@@ -317,7 +312,6 @@ async function handleCustomerMessage(
       "Got it — I've passed this to a team member who'll get back to you shortly. 🙌",
       channel,
     );
-    await markMessagesProcessed(allMessageIds);
     return;
   }
 
@@ -373,14 +367,12 @@ async function handleCustomerMessage(
   if (l1Match) {
     const reply = await handleCustomerBooking(externalId, tenantId, l1Match, conv!, message);
     if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv });
-    await markMessagesProcessed(allMessageIds);
     return;
   }
 
   if (looksLikeShowcaseRequest(message)) {
     const showcase = await sendShowcasePack(tenantId, externalId, undefined, message);
     if (showcase.success) {
-      await markMessagesProcessed(allMessageIds);
       return;
     }
   }
@@ -402,7 +394,6 @@ async function handleCustomerMessage(
   const reply = await handleCustomerBooking(externalId, tenantId, aiReply, conv!, message);
   if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv });
 
-  await markMessagesProcessed(allMessageIds);
 }
 
 // ─── Opt-out handler ──────────────────────────────────────────────────────────
@@ -687,17 +678,6 @@ async function buildPromptContext(
   };
 }
 
-async function buildPrompt(
-  tenantId: string,
-  message: string,
-  conv: NonNullable<Awaited<ReturnType<typeof getConversation>>>,
-  userRole: 'owner' | 'customer',
-  retryContext: string | null
-): Promise<string> {
-  const context = await buildPromptContext(tenantId, message, conv, userRole, retryContext);
-  return context.prompt;
-}
-
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function parseAIResponse(raw: unknown): AIResponse | null {
@@ -729,14 +709,6 @@ async function recordUsage(
   const usage = result.usage as Record<string, number> | null;
   const tokens = (usage?.total_tokens ?? usage?.completion_tokens ?? 0) as number;
   await recordAIUsage(messageId, layer, tokens);
-}
-
-async function markMessagesProcessed(messageIds: string[]): Promise<void> {
-  if (messageIds.length === 0) return;
-  await supabaseAdmin
-    .from('whatsapp_message_queue')
-    .update({ status: 'completed', processed_at: new Date().toISOString() })
-    .in('id', messageIds);
 }
 
 /**
@@ -827,12 +799,9 @@ async function sendReplyByChannel(
     if (sendResult.reason === 'wallet_exhausted') {
       // A DESIGNED outcome, not a failure: the wallet could not fund this reply,
       // so withMetering already sent the customer a handoff message instead.
-      // Throwing here would skip markMessagesProcessed, and the queue row's
-      // pending_messages have already been drained by claimBatch — so the retry
-      // finds nothing to do, returns false, and the worker resets it to
-      // 'pending' without incrementing retry_count. That row then cycles
-      // forever, and once ~20 accumulate they fill the LIMIT 20 claim batch and
-      // starve inbound messages for every other tenant.
+      // A wallet-exhausted response is a completed business outcome: the
+      // metering layer already sent the customer a handoff, so retrying this
+      // leased batch would only duplicate that handoff.
       console.warn('[pipeline] reply not sent: message wallet exhausted, handoff issued', {
         tenantId,
         channel,
@@ -871,18 +840,6 @@ async function sendReplyByChannel(
     evolution_message_id: sendResult.messageId ?? null,
     timestamp: new Date().toISOString(),
   });
-}
-
-/** @deprecated Use sendReplyByChannel instead. Kept for any external callers. */
-async function sendReplyAndPersistOutbound(
-  waConfig: EvolutionAPIConfig,
-  client: ReturnType<typeof getProviderClient>,
-  tenantId: string,
-  phone: string,
-  reply: string,
-  opts?: { brand?: boolean; initiated?: boolean; conv?: ConvState | null }
-): Promise<void> {
-  await sendReplyByChannel({ config: waConfig, client }, tenantId, phone, reply, 'whatsapp', opts);
 }
 
 async function isTenantActivated(tenantId: string): Promise<boolean> {

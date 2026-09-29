@@ -8,20 +8,24 @@ jest.mock('@/lib/instagram/secrets', () => ({
 }));
 
 const mockEnsureConversation = jest.fn();
-const mockAppendPending = jest.fn();
 const mockResolveIncoming = jest.fn();
 const mockEnsureCustomerIdentity = jest.fn();
+const mockEnsureThread = jest.fn();
+const mockIngest = jest.fn();
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
   ensureConversation: (...a: unknown[]) => mockEnsureConversation(...a),
-}));
-jest.mock('@/lib/whatsapp/v2/messageBatcher', () => ({
-  appendPendingMessage: (...a: unknown[]) => mockAppendPending(...a),
 }));
 jest.mock('@/lib/whatsapp/v2/identityResolver', () => ({
   resolveIncoming: (...a: unknown[]) => mockResolveIncoming(...a),
 }));
 jest.mock('@/lib/customers/channelIdentity', () => ({
   ensureCustomerChannelIdentity: (...a: unknown[]) => mockEnsureCustomerIdentity(...a),
+}));
+jest.mock('@/lib/whatsapp/v2/conversationThread', () => ({
+  ensureActiveThread: (...a: unknown[]) => mockEnsureThread(...a),
+}));
+jest.mock('@/lib/whatsapp/v2/queueBatch', () => ({
+  ingestConversationMessage: (...a: unknown[]) => mockIngest(...a),
 }));
 
 let queueInserts: Array<Record<string, unknown>> = [];
@@ -95,6 +99,9 @@ beforeEach(() => {
   mockEnsureCustomerIdentity.mockResolvedValue({
     identityId: 'identity-ig', customerId: 'customer-ig', created: true,
   });
+  mockEnsureConversation.mockResolvedValue({ id: 'conversation-ig' });
+  mockEnsureThread.mockResolvedValue({ id: 'thread-ig' });
+  mockIngest.mockResolvedValue('queue-ig');
 });
 
 describe('GET /api/webhooks/instagram (verification)', () => {
@@ -150,23 +157,22 @@ describe('POST /api/webhooks/instagram', () => {
     expect(res.status).toBe(200);
 
     expect(mockFindTenant).toHaveBeenCalledWith(expect.anything(), 'IG_ACCT');
-    // ensureConversation + appendPendingMessage threaded with the instagram channel
+    // Tenant-scoped identity, conversation, thread, then atomic ingestion.
     expect(mockEnsureCustomerIdentity).toHaveBeenCalledWith({
       tenantId: 'tenant-1', channel: 'instagram', externalId: 'CUSTOMER_IGSID',
     });
     expect(mockEnsureConversation).toHaveBeenCalledWith(
       'CUSTOMER_IGSID', 'tenant-1', 'customer', 'instagram', 'customer-ig',
     );
-    expect(mockAppendPending).toHaveBeenCalledWith('CUSTOMER_IGSID', 'tenant-1', 'hello', 'msg-1', 'instagram');
-
-    expect(queueInserts).toHaveLength(1);
-    expect(queueInserts[0]).toMatchObject({
-      tenant_id: 'tenant-1',
-      from_number: 'CUSTOMER_IGSID',
-      to_number: 'IG_ACCT',
-      channel: 'instagram',
-      status: 'pending',
+    expect(mockEnsureThread).toHaveBeenCalledWith({
+      tenantId: 'tenant-1', customerId: 'customer-ig', channelIdentityId: 'identity-ig',
+      channel: 'instagram', conversationId: 'conversation-ig',
     });
+    expect(mockIngest).toHaveBeenCalledWith(expect.objectContaining({
+      webhookProvider: 'instagram', webhookExternalId: 'IG_ACCT:mid-1', tenantId: 'tenant-1',
+      conversationId: 'conversation-ig', threadId: 'thread-ig', channel: 'instagram',
+      fromNumber: 'CUSTOMER_IGSID', toNumber: 'IG_ACCT', content: 'hello',
+    }));
   });
 
   it('skips echo messages (our own sends)', async () => {

@@ -286,9 +286,16 @@ BEGIN
   GET DIAGNOSTICS inserted_event_count = ROW_COUNT;
 
   IF inserted_event_count = 0 THEN
-    SELECT id INTO queue_id
-    FROM public.whatsapp_message_queue
-    WHERE tenant_id = p_tenant_id AND channel = p_channel AND message_id = p_message_id::text;
+    SELECT q.id INTO queue_id
+    FROM public.whatsapp_message_queue q
+    JOIN public.messages m ON m.id::text = q.message_id
+    WHERE q.tenant_id = p_tenant_id
+      AND q.channel = p_channel
+      AND m.tenant_id = p_tenant_id
+      AND m.channel = p_channel
+      AND m.provider_message_id = p_provider_message_id
+    ORDER BY q.created_at
+    LIMIT 1;
     IF queue_id IS NULL THEN
       RAISE EXCEPTION 'webhook replay exists without an ingested queue row';
     END IF;

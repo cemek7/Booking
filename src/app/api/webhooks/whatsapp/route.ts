@@ -145,13 +145,30 @@ async function handleEvolution(
     defaultLogger.warn('[WEBHOOK-EVO] Missing message key.id after validation');
     return NextResponse.json({ error: 'Invalid payload: missing data.key.id' }, { status: 400 });
   }
-  const isDuplicate = await handleIdempotency(supabase, 'evolution', instance, messageId, payload, span);
-  if (isDuplicate) return NextResponse.json({ status: 'duplicate', replay: true }, { status: 200 });
-
   const parsedMessage = parseEvolutionMessage(payload, tenantId);
   if (!parsedMessage) {
     return NextResponse.json({ error: 'Could not parse message' }, { status: 400 });
   }
+  const { ingestCustomerInboundIfV2 } = await import('@/lib/whatsapp/v2/inboundIngest');
+  const v2Ingest = await ingestCustomerInboundIfV2({
+    tenantId,
+    provider: 'evolution',
+    webhookExternalId: `${instance}:${messageId}`,
+    webhookPayload: payload,
+    fromNumber: parsedMessage.from_number as string,
+    toNumber: instance,
+    content: parsedMessage.content as string,
+    messageType: parsedMessage.message_type as string,
+    providerMessageId: messageId,
+    providerTimestamp: parsedMessage.timestamp as string,
+    raw: payload,
+    mediaInfo: parsedMessage.media_info,
+  });
+  if (v2Ingest) {
+    return NextResponse.json({ status: 'accepted_v2', messageId: v2Ingest.messageId }, { status: 202 });
+  }
+  const isDuplicate = await handleIdempotency(supabase, 'evolution', instance, messageId, payload, span);
+  if (isDuplicate) return NextResponse.json({ status: 'duplicate', replay: true }, { status: 200 });
 
   const chatId = await upsertChat(supabase, tenantId, parsedMessage.from_number as string);
   if (chatId) parsedMessage.chat_id = chatId;
@@ -169,9 +186,6 @@ async function handleEvolution(
   return routeMessage(
     supabase,
     tenantId,
-    instance,
-    parsedMessage.from_number as string,
-    parsedMessage.content as string,
     messageRowId
   );
 }
@@ -181,49 +195,8 @@ async function handleEvolution(
 async function routeMessage(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   tenantId: string,
-  instance: string,
-  fromNumber: string,
-  content: string,
   messageRowId: string
 ): Promise<NextResponse> {
-  const { data: tenantRow } = await supabase
-    .from('tenants')
-    .select('v2_enabled')
-    .eq('id', tenantId)
-    .maybeSingle();
-
-  if (tenantRow?.v2_enabled) {
-    const { appendPendingMessage } = await import('@/lib/whatsapp/v2/messageBatcher');
-    const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
-    const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
-
-    const identity = await resolveIncoming('whatsapp', fromNumber, content, tenantId);
-    const resolvedTenantId = tenantId;
-    const role = identity.role;
-
-    await ensureConversation(fromNumber, resolvedTenantId, role);
-    await appendPendingMessage(fromNumber, resolvedTenantId, identity.strippedMessage || content, messageRowId);
-
-    await supabase.from('whatsapp_message_queue').insert({
-      tenant_id: resolvedTenantId,
-      message_id: messageRowId,
-      from_number: fromNumber,
-      to_number: instance,
-      content: identity.strippedMessage || content,
-      status: 'pending',
-      priority: 'normal',
-    });
-
-    if (process.env.NODE_ENV !== 'production') {
-      const workerBase = process.env.APP_URL || 'http://localhost:3000';
-      fetch(`${workerBase}/api/worker/whatsapp`, {
-        headers: { Authorization: `Bearer ${process.env.CRON_SECRET || 'dev-cron-secret'}` },
-      }).catch(() => {});
-    }
-
-    return NextResponse.json({ status: 'accepted_v2', messageId: messageRowId }, { status: 202 });
-  }
-
   await enqueueJob(supabase, 'process_whatsapp_message', {
     message_id: messageRowId,
     tenant_id: tenantId,

@@ -52,4 +52,19 @@ describe('conversation continuity migration', () => {
     const sql = readMigration();
     expect(sql).not.toMatch(/DROP\s+(TABLE|COLUMN)\b/i);
   });
+
+  it('resolves webhook replay by stable provider identity inside the tenant', () => {
+    const sql = readMigration();
+    const ingestStart = sql.indexOf('CREATE OR REPLACE FUNCTION public.ingest_conversation_message');
+    const ingestEnd = sql.indexOf('CREATE OR REPLACE FUNCTION public.update_conversation_thread_state');
+    const ingestSql = sql.slice(ingestStart, ingestEnd);
+
+    expect(ingestSql).toMatch(/m\.provider_message_id\s*=\s*p_provider_message_id/i);
+    expect(ingestSql).toMatch(/q\.tenant_id\s*=\s*p_tenant_id/i);
+    expect(ingestSql).toMatch(/m\.channel\s*=\s*p_channel/i);
+    expect(ingestSql).not.toMatch(/message_id\s*=\s*p_message_id::text/i);
+    expect(ingestSql.indexOf('UPDATE public.webhook_events')).toBeGreaterThan(
+      ingestSql.indexOf('INSERT INTO public.whatsapp_message_queue'),
+    );
+  });
 });

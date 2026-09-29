@@ -1,11 +1,11 @@
 /**
  * pipeline channel-awareness tests
  *
- * Strategy note: processMessageV2 is deeply integrated (DB + AI + billing).
+ * Strategy note: processConversationBatch is deeply integrated (DB + AI + billing).
  * Rather than mocking every dependency for a full integration test, we test
  * at the key seams that were refactored:
  *
- *   1. claimBatch is called with the correct channel arg.
+ *   1. The leased batch channel is used for conversation lookup.
  *   2. When channel='instagram' and the pipeline would send a reply,
  *      it does NOT call getTenantWhatsAppConfig (WA send path is skipped).
  *   3. getTenantInstagramConfig is called instead for IG channel.
@@ -18,13 +18,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
-
-// claimBatch spy — we'll assert it was called with the right channel
-const mockClaimBatch = jest.fn();
-jest.mock('@/lib/whatsapp/v2/messageBatcher', () => ({
-  claimBatch: mockClaimBatch,
-  appendPendingMessage: jest.fn(),
-}));
 
 // conversationState spies
 const mockGetConversation = jest.fn();
@@ -99,7 +92,8 @@ jest.mock('@/lib/whatsapp/v2/flows/ownerOnboarding', () => ({
   handleOnboarding: jest.fn().mockResolvedValue('onboarding reply'),
 }));
 
-import { processMessageV2 } from '@/lib/whatsapp/v2/pipeline';
+import { processConversationBatch } from '@/lib/whatsapp/v2/pipeline';
+import type { ClaimedConversationBatch } from '@/lib/whatsapp/v2/queueBatch';
 
 // ── Shared conv fixture ───────────────────────────────────────────────────────
 
@@ -120,6 +114,24 @@ function makeConv(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeBatch(overrides: Partial<ClaimedConversationBatch> = {}): ClaimedConversationBatch {
+  const channel = overrides.channel ?? 'whatsapp';
+  const externalId = overrides.externalId ?? (channel === 'instagram' ? 'IGSID_42' : '+2348000000000');
+  return {
+    batchId: 'batch-1', workerId: 'worker-1', tenantId: 'tenant-1', channel,
+    externalId, conversationId: 'conv-1', threadId: 'thread-1',
+    combinedText: 'book me', correlationKey: 'conversation-batch:test',
+    rows: [{
+      id: 'queue-1', tenantId: 'tenant-1', channel, externalId,
+      conversationId: 'conv-1', threadId: 'thread-1', content: 'book me',
+      messageId: 'msg-1', providerTimestamp: '2026-09-28T12:00:00.000Z',
+      createdAt: '2026-09-28T12:00:00.100Z', batchId: 'batch-1', leaseOwner: 'worker-1',
+      retryCount: 0, maxRetries: 3,
+    }],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(true);
@@ -127,22 +139,17 @@ beforeEach(() => {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('processMessageV2 channel=instagram', () => {
-  it('passes channel="instagram" to claimBatch', async () => {
-    // claimBatch returns null → pipeline returns false (still accumulating)
-    mockClaimBatch.mockResolvedValue(null);
+describe('processConversationBatch channel=instagram', () => {
+  it('uses the exact tenant, identity, and channel from the leased batch', async () => {
+    const conv = makeConv({ flow_data: { human_handling_until: '2999-01-01T00:00:00.000Z' } });
+    mockGetConversation.mockResolvedValue(conv);
 
-    await processMessageV2('IGSID_42', 'tenant-1', 'book me', 'msg-1', 'instagram');
+    await processConversationBatch(makeBatch({ channel: 'instagram', externalId: 'IGSID_42' }));
 
-    expect(mockClaimBatch).toHaveBeenCalledTimes(1);
-    const args = mockClaimBatch.mock.calls[0] as unknown[];
-    // third arg must be the channel
-    expect(args[2]).toBe('instagram');
+    expect(mockGetConversation).toHaveBeenCalledWith('IGSID_42', 'tenant-1', 'instagram');
   });
 
   it('does NOT call getTenantWhatsAppConfig when channel="instagram" (WA send path is bypassed)', async () => {
-    // Batch is settled
-    mockClaimBatch.mockResolvedValue({ combined: 'book me', messageIds: ['msg-1'] });
     // Conversation exists — customer path, AI quota exhausted → reply falls back to hardcoded message
     const conv = makeConv();
     mockGetConversation.mockResolvedValue(conv);
@@ -154,32 +161,17 @@ describe('processMessageV2 channel=instagram', () => {
 
     // Run — even though a reply would be generated, the IG send path should
     // NOT throw (it logs and skips when no IG config is found).
-    await processMessageV2('IGSID_42', 'tenant-1', 'book me', 'msg-1', 'instagram');
+    await processConversationBatch(makeBatch({ channel: 'instagram', externalId: 'IGSID_42' }));
 
     // Key assertion: the WhatsApp config loader must NOT be called
     expect(mockGetTenantWhatsAppConfig).not.toHaveBeenCalled();
   });
 
-  it('defaults to channel="whatsapp" when no channel arg is passed (backward compat)', async () => {
-    mockClaimBatch.mockResolvedValue(null);
-
-    // Call WITHOUT the channel arg — must not throw and must pass 'whatsapp' to claimBatch
-    await processMessageV2('+2348000000000', 'tenant-1', 'hello', 'msg-2');
-
-    expect(mockClaimBatch).toHaveBeenCalledTimes(1);
-    const args = mockClaimBatch.mock.calls[0] as unknown[];
-    expect(args[2]).toBe('whatsapp');
-  });
-
   it('does not throw when the message wallet is exhausted', async () => {
     // withMetering returns { success: false, reason: 'wallet_exhausted' } after
     // it has already sent the customer a handoff. That is a DESIGNED outcome.
-    // Throwing skips markMessagesProcessed, and claimBatch has already drained
-    // pending_messages — so the retry finds nothing, returns false, and the
-    // worker resets the row to 'pending' without incrementing retry_count. It
-    // then cycles forever, and ~20 such rows fill the LIMIT 20 claim batch and
-    // starve inbound messages for every other tenant.
-    mockClaimBatch.mockResolvedValue({ combined: 'book me', messageIds: ['msg-9'] });
+    // Wallet exhaustion is a completed handoff outcome, not a retryable
+    // pipeline error for the leased conversation batch.
     const conv = makeConv({
       channel: 'whatsapp',
       phone_number: '+2348000000000',
@@ -195,12 +187,11 @@ describe('processMessageV2 channel=instagram', () => {
     });
 
     await expect(
-      processMessageV2('+2348000000000', 'tenant-1', 'book me', 'msg-9'),
+      processConversationBatch(makeBatch()),
     ).resolves.not.toThrow();
   });
 
   it('still throws on a genuine send failure, so the worker can retry', async () => {
-    mockClaimBatch.mockResolvedValue({ combined: 'book me', messageIds: ['msg-10'] });
     const conv = makeConv({
       channel: 'whatsapp',
       phone_number: '+2348000000000',
@@ -216,20 +207,11 @@ describe('processMessageV2 channel=instagram', () => {
     });
 
     await expect(
-      processMessageV2('+2348000000000', 'tenant-1', 'book me', 'msg-10'),
+      processConversationBatch(makeBatch()),
     ).rejects.toThrow();
   });
 
-  it('returns false when claimBatch returns null (still accumulating)', async () => {
-    mockClaimBatch.mockResolvedValue(null);
-
-    const result = await processMessageV2('IGSID_42', 'tenant-1', 'hello', 'msg-3', 'instagram');
-
-    expect(result).toBe(false);
-  });
-
   it('pauses AI replies when a human is handling the conversation', async () => {
-    mockClaimBatch.mockResolvedValue({ combined: 'need help', messageIds: ['msg-4'] });
     const conv = makeConv({
       flow_data: { human_handling_until: '2999-01-01T00:00:00.000Z' },
       channel: 'whatsapp',
@@ -239,26 +221,20 @@ describe('processMessageV2 channel=instagram', () => {
     mockGetConversation.mockResolvedValue(conv);
     mockEnsureConversation.mockResolvedValue(conv);
 
-    const result = await processMessageV2(
-      '+2348000000000',
-      'tenant-1',
-      'need help',
-      'msg-4'
-    );
+    const result = await processConversationBatch(makeBatch({ combinedText: 'need help' }));
 
-    expect(result).toBe(true);
+    expect(result).toEqual({ disposition: 'complete', correlationKey: 'conversation-batch:test' });
     expect(mockGetTenantWhatsAppConfig).not.toHaveBeenCalled();
     expect(mockHandleCustomerBooking).not.toHaveBeenCalled();
   });
 
   it('does not run customer automation when the tenant agent is paused', async () => {
-    mockClaimBatch.mockResolvedValue({ combined: 'need help', messageIds: ['msg-5'] });
     mockGetConversation.mockResolvedValue(makeConv({ channel: 'whatsapp', phone_number: '+2348000000000', external_id: '+2348000000000' }));
     mockIsTenantWhatsAppAgentEnabled.mockResolvedValue(false);
 
-    const result = await processMessageV2('+2348000000000', 'tenant-1', 'need help', 'msg-5');
+    const result = await processConversationBatch(makeBatch({ combinedText: 'need help' }));
 
-    expect(result).toBe(true);
+    expect(result).toEqual({ disposition: 'complete', correlationKey: 'conversation-batch:test' });
     expect(mockIsTenantWhatsAppAgentEnabled).toHaveBeenCalledWith('tenant-1');
     expect(mockGetTenantWhatsAppConfig).not.toHaveBeenCalled();
     expect(mockHandleCustomerBooking).not.toHaveBeenCalled();

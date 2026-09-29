@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueueJob } from '@/lib/webhooks';
@@ -261,15 +261,6 @@ export async function POST(request: NextRequest) {
       for (const message of value.messages ?? []) {
         if (!message.id || !message.from) continue;
 
-        const isDuplicate = await handleIdempotency(
-          supabase,
-          'meta',
-          metaPhoneNumberId,
-          message.id,
-          { type: 'message', message, value }
-        );
-        if (isDuplicate) continue;
-
         let routedContent = extractMetaMessageContent(message);
         const { resolveWhatsAppRoute } = await import('@/lib/whatsapp/v2/routeSession');
         const route = await resolveWhatsAppRoute({
@@ -316,20 +307,37 @@ export async function POST(request: NextRequest) {
         if (!parsed) continue;
         parsed.content = routedContent;
 
+        const handledV2 = await routeMessage(
+          supabase,
+          tenantId,
+          instanceName,
+          metaPhoneNumberId,
+          parsed.from_number as string,
+          parsed.content as string,
+          message,
+          value,
+        );
+        if (handledV2) continue;
+
+        const isDuplicate = await handleIdempotency(
+          supabase,
+          'meta',
+          metaPhoneNumberId,
+          message.id,
+          { type: 'message', message, value }
+        );
+        if (isDuplicate) continue;
+
         const chatId = await upsertChat(supabase, tenantId, parsed.from_number as string);
         if (chatId) parsed.chat_id = chatId;
 
         const messageRowId = await persistMessage(supabase, parsed);
         if (!messageRowId) continue;
 
-        await routeMessage(
-          supabase,
-          tenantId,
-          instanceName,
-          parsed.from_number as string,
-          parsed.content as string,
-          messageRowId
-        );
+        await enqueueJob(supabase, 'process_whatsapp_message', {
+          message_id: messageRowId,
+          tenant_id: tenantId,
+        });
       }
     }
   }
@@ -483,10 +491,12 @@ async function routeMessage(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   tenantId: string,
   instance: string,
+  metaPhoneNumberId: string,
   fromNumber: string,
   content: string,
-  messageRowId: string
-): Promise<void> {
+  message: MetaIncomingMessage,
+  webhookPayload: unknown,
+): Promise<boolean> {
   const { data: tenantRow } = await supabase
     .from('tenants')
     .select('v2_enabled')
@@ -494,7 +504,6 @@ async function routeMessage(
     .maybeSingle();
 
   if (tenantRow?.v2_enabled) {
-    const { appendPendingMessage } = await import('@/lib/whatsapp/v2/messageBatcher');
     const { resolveIncoming } = await import('@/lib/whatsapp/v2/identityResolver');
     const { ensureConversation } = await import('@/lib/whatsapp/v2/conversationState');
 
@@ -502,6 +511,7 @@ async function routeMessage(
     const resolvedTenantId = tenantId;
     const role = identity.role;
     let customerId: string | null = null;
+    let channelIdentityId: string | null = null;
     if (role === 'customer') {
       const { ensureCustomerChannelIdentity } = await import('@/lib/customers/channelIdentity');
       const customerIdentity = await ensureCustomerChannelIdentity({
@@ -510,19 +520,45 @@ async function routeMessage(
         externalId: fromNumber,
       });
       customerId = customerIdentity.customerId;
+      channelIdentityId = customerIdentity.identityId;
     }
 
-    await ensureConversation(fromNumber, resolvedTenantId, role, 'whatsapp', customerId);
-    await appendPendingMessage(fromNumber, resolvedTenantId, identity.strippedMessage || content, messageRowId);
-
-    await supabase.from('whatsapp_message_queue').insert({
-      tenant_id: resolvedTenantId,
-      message_id: messageRowId,
-      from_number: fromNumber,
-      to_number: instance,
+    const conversation = await ensureConversation(
+      fromNumber, resolvedTenantId, role, 'whatsapp', customerId,
+    );
+    if (!customerId || !channelIdentityId) {
+      // Owner/staff traffic still uses the compatibility conversation and does
+      // not create customer memory. It remains on the legacy operational path.
+      return false;
+    }
+    const { ensureActiveThread } = await import('@/lib/whatsapp/v2/conversationThread');
+    const thread = await ensureActiveThread({
+      tenantId: resolvedTenantId,
+      customerId,
+      channelIdentityId,
+      channel: 'whatsapp',
+      conversationId: conversation.id,
+    });
+    const parsed = parseMetaMessage(message, instance, resolvedTenantId);
+    if (!parsed || !message.id) return false;
+    const { ingestConversationMessage } = await import('@/lib/whatsapp/v2/queueBatch');
+    await ingestConversationMessage({
+      webhookProvider: 'meta',
+      webhookExternalId: `${metaPhoneNumberId}:${message.id}`,
+      webhookPayload,
+      messageId: randomUUID(),
+      tenantId: resolvedTenantId,
+      conversationId: conversation.id,
+      threadId: thread.id,
+      channel: 'whatsapp',
+      fromNumber,
+      toNumber: instance,
       content: identity.strippedMessage || content,
-      status: 'pending',
-      priority: 'normal',
+      messageType: String(parsed.message_type ?? 'text'),
+      providerMessageId: message.id,
+      providerTimestamp: String(parsed.timestamp),
+      raw: parsed.raw,
+      mediaInfo: parsed.media_info,
     });
 
     if (process.env.NODE_ENV !== 'production') {
@@ -531,11 +567,7 @@ async function routeMessage(
         headers: { Authorization: `Bearer ${process.env.CRON_SECRET || 'dev-cron-secret'}` },
       }).catch(() => {});
     }
-    return;
+    return true;
   }
-
-  await enqueueJob(supabase, 'process_whatsapp_message', {
-    message_id: messageRowId,
-    tenant_id: tenantId,
-  });
+  return false;
 }
