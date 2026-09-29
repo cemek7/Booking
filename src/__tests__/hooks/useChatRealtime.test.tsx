@@ -632,14 +632,21 @@ describe('useChatRealtime', () => {
         await result.current.send('Test message');
       });
 
-      expect(global.fetch).toHaveBeenCalledWith(
-        '/api/chats/chat-1/messages',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: 'Test message' }),
-        })
+      const messageCall = (global.fetch as jest.Mock).mock.calls.find(
+        ([url, options]) => url === '/api/chats/chat-1/messages' && options?.method === 'POST',
       );
+      expect(messageCall).toBeDefined();
+      const options = messageCall?.[1] as { headers: Record<string, string>; body: string };
+      const payload = JSON.parse(options.body) as { text: string; idempotencyKey: string };
+      expect(payload).toEqual({
+        text: 'Test message',
+        idempotencyKey: expect.any(String),
+      });
+      expect(options.headers).toEqual({
+        'Content-Type': 'application/json',
+        'Idempotency-Key': payload.idempotencyKey,
+        'x-tenant-id': 'tenant-123',
+      });
     });
 
     it('should not send when activeId is null', async () => {
