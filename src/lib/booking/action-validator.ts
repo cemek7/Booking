@@ -21,6 +21,7 @@ import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
 import { createRetailOrderPaymentLinkForCustomer } from '@/lib/commerce/retail-orders';
 import { dispatchExecute, dispatchValidate } from '@/lib/booking/handlers/registry';
 import type { Product } from '@/types/product-catalogue';
+import type { ProposedStatePatch } from '@/lib/whatsapp/v2/stateReducer';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -85,6 +86,7 @@ export interface AIResponse {
   params: Record<string, unknown>;
   reply: string;
   confidence: 'high' | 'medium' | 'low';
+  state_patch?: ProposedStatePatch;
 }
 
 export interface ValidationResult {

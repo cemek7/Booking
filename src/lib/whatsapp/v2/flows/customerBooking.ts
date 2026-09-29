@@ -34,6 +34,10 @@ import {
   runIdempotentEffect,
 } from '../conversationEffects';
 import type { ConversationExecutionContext } from '../pipeline';
+import { parseConversationStructuredState } from '../structuredState';
+import { reduceConversationState } from '../stateReducer';
+import { updateThreadState } from '../conversationThread';
+import { nextMissingField } from '../missingFields';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -155,6 +159,11 @@ export async function handleCustomerBooking(
             awaiting_selection: aiResp.action === 'list_services' || aiResp.action === 'list_staff',
           },
         }, convChannel);
+      }
+      if (aiResp.action === 'needs_info') {
+        const state = parseConversationStructuredState(conv.flow_data?.structured_state);
+        const missing = nextMissingField(state);
+        if (missing) return questionForMissingField(missing);
       }
       return aiResp.reply;
   }
@@ -582,6 +591,28 @@ async function confirmBooking(
       distinctId: externalId,
     });
     return 'Sorry, something went wrong confirming your booking. Please try again.';
+  }
+
+  if (conv.active_thread_id) {
+    const previous = parseConversationStructuredState(conv.flow_data?.structured_state);
+    const reduced = reduceConversationState({
+      previous,
+      extracted: {},
+      sourceMessageId: reservation.id,
+      observedAt: new Date().toISOString(),
+      operationResult: {
+        success: true,
+        reservation: { id: reservation.id, startAt, endAt, status: reservationStatus },
+      },
+    });
+    const updated = await updateThreadState({
+      tenantId,
+      threadId: conv.active_thread_id,
+      expectedVersion: conv.state_version,
+      state: reduced,
+    });
+    conv.state_version = updated.stateVersion;
+    conv.flow_data = { ...conv.flow_data, structured_state: reduced };
   }
 
   await recordFrontDeskEvent({
@@ -1233,6 +1264,17 @@ function formatTime(time: string): string {
   const period = h >= 12 ? 'pm' : 'am';
   const hour12 = h % 12 || 12;
   return `${hour12}:${String(m).padStart(2, '0')}${period}`;
+}
+
+function questionForMissingField(field: string): string {
+  const questions: Record<string, string> = {
+    service: 'What service or type of appointment would you like?',
+    date: 'What date would work best for you?',
+    reservation_id: 'Which booking would you like to change?',
+    product: 'Which product are you interested in?',
+    quantity: 'How many would you like?',
+  };
+  return questions[field] ?? `Could you confirm your ${field.replaceAll('_', ' ')}?`;
 }
 
 function getDepositConfig(settings: Record<string, unknown> | undefined): { enabled?: boolean; amount_cents?: number } | null {

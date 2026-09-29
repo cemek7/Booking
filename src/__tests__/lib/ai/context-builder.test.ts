@@ -78,6 +78,9 @@ describe('buildFrontDeskPrompt', () => {
     expect(prompt).toContain('recommend_products');
     expect(prompt).toContain('create_retail_payment_link');
     expect(prompt).toContain('Retail order:');
+    expect(prompt).toContain('Confirmed enquiry state:');
+    expect(prompt).toContain('"state_patch"');
+    expect(prompt).toContain('Never omit or overwrite prior confirmed enquiry facts.');
     expect(prompt).toContain('Use "show_showcase" when the customer explicitly wants a portfolio');
   });
 

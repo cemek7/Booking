@@ -177,9 +177,11 @@ export async function resetConversation(
   tenantId: string,
   channel: ConvChannel = 'whatsapp'
 ): Promise<void> {
+  const current = await getConversation(externalId, tenantId, channel);
+  const structuredState = current?.flow_data?.structured_state;
   await updateConversation(externalId, tenantId, {
     current_flow: 'idle',
     flow_step: 0,
-    flow_data: {},
+    flow_data: structuredState ? { structured_state: structuredState } : {},
   }, channel);
 }

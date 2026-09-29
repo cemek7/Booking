@@ -59,7 +59,7 @@ jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: jest.fn(() => mockClient),
 }));
 
-import { ensureConversation } from '@/lib/whatsapp/v2/conversationState';
+import { ensureConversation, resetConversation } from '@/lib/whatsapp/v2/conversationState';
 
 beforeEach(() => { responses.length = 0; upsertCalls.length = 0; updateCalls.length = 0; });
 
@@ -117,5 +117,25 @@ describe('ensureConversation channel-awareness', () => {
 
     expect(updateCalls).toHaveLength(0);
     expect(result.customer_id).toBe('customer-original');
+  });
+});
+
+describe('resetConversation', () => {
+  it('clears transient flow data but preserves canonical structured state projection', async () => {
+    const structuredState = {
+      intent: 'booking_request', confirmed: {}, proposed: {}, missing: ['service'], nextAction: 'ask:service',
+    };
+    pushDb({
+      id: 'c6', tenant_id: 't1', customer_id: 'customer-1', active_thread_id: 'thread-1', state_version: 2,
+      phone_number: '+2348000000000', external_id: '+2348000000000', channel: 'whatsapp', role: 'customer',
+      current_flow: 'booking', flow_step: 4, flow_data: { structured_state: structuredState, pending_confirmation: { id: 'x' } },
+      last_inbound_at: null, opted_out_at: null,
+    });
+
+    await resetConversation('+2348000000000', 't1');
+
+    expect(updateCalls).toContainEqual({
+      current_flow: 'idle', flow_step: 0, flow_data: { structured_state: structuredState },
+    });
   });
 });

@@ -47,6 +47,9 @@ import { captureServerAnalyticsEvent } from '@/lib/analytics/server';
 import { getInstagramSecret } from '@/lib/instagram/secrets';
 import { consumeStorefrontContextMarker } from '@/lib/storefront/context';
 import { sendOutboundOnce } from './outboundDelivery';
+import { parseConversationStructuredState } from './structuredState';
+import { parseProposedStatePatch, reduceConversationState } from './stateReducer';
+import { updateThreadState } from './conversationThread';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -406,6 +409,25 @@ async function handleCustomerMessage(
     return;
   }
 
+  if (aiReply.state_patch) {
+    const previous = parseConversationStructuredState(conv!.flow_data?.structured_state);
+    const reduced = reduceConversationState({
+      previous,
+      extracted: aiReply.state_patch,
+      sourceMessageId: messageId,
+      observedAt: new Date().toISOString(),
+    });
+    if (!executionContext?.threadId) throw new Error('Structured state update is missing its thread context');
+    const updated = await updateThreadState({
+      tenantId,
+      threadId: executionContext.threadId,
+      expectedVersion: conv!.state_version,
+      state: reduced,
+    });
+    conv!.state_version = updated.stateVersion;
+    conv!.flow_data = { ...conv!.flow_data, structured_state: reduced };
+  }
+
   const reply = await handleCustomerBooking(externalId, tenantId, aiReply, conv!, message, executionContext);
   if (reply) await sendReplyByChannel(providerConfig, tenantId, externalId, reply, channel, { brand: true, conv, executionContext });
 
@@ -710,6 +732,9 @@ function parseAIResponse(raw: unknown): AIResponse | null {
     const parsed = JSON.parse(cleaned);
 
     if (!parsed.action || !parsed.reply) return null;
+    if (parsed.state_patch !== undefined) {
+      parsed.state_patch = parseProposedStatePatch(parsed.state_patch);
+    }
     return parsed as AIResponse;
   } catch {
     return null;

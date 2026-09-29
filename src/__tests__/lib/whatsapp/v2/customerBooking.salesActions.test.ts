@@ -112,6 +112,34 @@ describe('handleCustomerBooking sales actions', () => {
     expect(reply).toContain('₦120');
   });
 
+  it('asks only for the highest-priority missing field without losing confirmed modality', async () => {
+    const conv = makeConv();
+    conv.flow_data = {
+      structured_state: {
+        intent: 'booking_request',
+        confirmed: {
+          modality: {
+            value: 'video_call', source: 'customer_explicit', sourceId: 'message-1', observedAt: '2026-09-29T10:00:00.000Z',
+          },
+        },
+        proposed: {},
+        missing: ['service', 'date'],
+        nextAction: 'ask:service',
+      },
+    };
+
+    const reply = await handleCustomerBooking(
+      '+2348000000000',
+      'tenant-1',
+      { action: 'needs_info', params: {}, reply: 'Please resend your details.', confidence: 'high' },
+      conv,
+      'I want a video call',
+    );
+
+    expect(reply).toBe('What service or type of appointment would you like?');
+    expect(conv.flow_data.structured_state.confirmed.modality.value).toBe('video_call');
+  });
+
   it('returns an empty string when interactive catalog delivery succeeds', async () => {
     mockExecuteAction.mockResolvedValueOnce({
       success: true,
