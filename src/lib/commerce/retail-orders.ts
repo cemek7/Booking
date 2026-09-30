@@ -5,6 +5,14 @@ import { siasOperations } from '@/lib/sias-operations';
 import { defaultLogger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { resolveCustomer } from '@/lib/customers/identity';
+import {
+  RetailFulfillmentSettingsSchema,
+  RetailOrderFulfillmentContextSchema,
+  emptyRetailOrderFulfillmentContext,
+  resolveRetailFulfillment,
+} from '@/lib/commerce/retail-fulfillment';
+import { resolveRetailFulfillmentRollout } from '@/lib/commerce/retail-fulfillment-rollout';
+import { createRetailFulfillmentEscalation } from '@/lib/commerce/retail-fulfillment-escalation';
 
 type ProductSnapshot = {
   id: string;
@@ -398,7 +406,11 @@ export async function createRetailOrderPaymentLink(input: {
     source_chat_id: string | null;
     status: RetailOrderStatus;
     payment_status: RetailPaymentStatus;
+    fulfillment_status: RetailFulfillmentStatus;
     currency: string;
+    subtotal_cents: number;
+    discount_cents: number;
+    delivery_fee_cents: number;
     total_cents: number;
     metadata: Record<string, unknown> | null;
     customer?: { email?: string | null; phone?: string | null; name?: string | null } | null;
@@ -411,23 +423,126 @@ export async function createRetailOrderPaymentLink(input: {
     throw new Error('Retail order total must be greater than zero');
   }
 
-  const paymentMetadata = getRetailOrderMetadata(order.metadata).payment as Record<string, unknown> | undefined;
+  let effectiveTotalCents = Number(order.total_cents ?? 0);
+  let workingMetadata = getRetailOrderMetadata(order.metadata);
+
+  const { data: tenantRow, error: tenantError } = await admin
+    .from('tenants')
+    .select('metadata, settings')
+    .eq('id', order.tenant_id)
+    .maybeSingle();
+  if (tenantError) throw new Error(`Failed to load tenant fulfillment settings: ${tenantError.message}`);
+
+  const tenantSettings = tenantRow?.settings && typeof tenantRow.settings === 'object'
+    ? tenantRow.settings as Record<string, unknown>
+    : {};
+  const rolloutMode = resolveRetailFulfillmentRollout({
+    globalMode: process.env.BOOKA_RETAIL_FULFILLMENT_MODE,
+    tenantSettings,
+  });
+
+  if (rolloutMode === 'live') {
+    const parsedContext = RetailOrderFulfillmentContextSchema.safeParse(workingMetadata.retailFulfillment);
+    const context = parsedContext.success
+      ? parsedContext.data
+      : emptyRetailOrderFulfillmentContext();
+    const parsedSettings = RetailFulfillmentSettingsSchema.safeParse(tenantSettings.retailFulfillment);
+    const settings = parsedSettings.success ? parsedSettings.data : null;
+    const decision = resolveRetailFulfillment({ settings, context });
+
+    if (decision.status === 'awaiting_human' && decision.reasonCode) {
+      const handoffContext = { ...context, arrangementStatus: 'awaiting_human' as const };
+      workingMetadata = { ...workingMetadata, retailFulfillment: handoffContext };
+      const { error: contextError } = await admin.from('retail_orders').update({
+        metadata: workingMetadata,
+        updated_at: new Date().toISOString(),
+      }).eq('tenant_id', order.tenant_id).eq('id', order.id);
+      if (contextError) throw new Error(`Failed to store retail fulfillment context: ${contextError.message}`);
+
+      await createRetailFulfillmentEscalation({
+        tenantId: order.tenant_id,
+        orderId: order.id,
+        reasonCode: decision.reasonCode,
+        context: handoffContext,
+      });
+      await updateChatJourneyForOrder(order, {
+        type: 'retail',
+        stage: 'awaiting_fulfillment_handoff',
+        orderId: order.id,
+        orderTotalCents: effectiveTotalCents,
+      });
+      throw new Error('Delivery arrangement needs a teammate before payment can be collected');
+    }
+
+    if (decision.status === 'awaiting_customer') {
+      await updateChatJourneyForOrder(order, {
+        type: 'retail',
+        stage: 'awaiting_fulfillment_details',
+        orderId: order.id,
+        orderTotalCents: effectiveTotalCents,
+      });
+      throw new Error('Delivery details must be completed before payment can be collected');
+    }
+
+    const deliveryFeeCents = Number(decision.deliveryFeeCents ?? 0);
+    const method = context.method ?? (settings?.methods.length === 1 ? settings.methods[0] : null);
+    const readyContext = {
+      ...context,
+      method,
+      feeStatus: method === 'customer_pickup' || settings?.feePolicy === 'included'
+        ? 'not_required' as const
+        : 'known' as const,
+      deliveryFeeCents,
+      arrangementStatus: 'arranged' as const,
+    };
+    effectiveTotalCents = Math.max(
+      0,
+      Number(order.subtotal_cents ?? 0) + deliveryFeeCents - Number(order.discount_cents ?? 0),
+    );
+    workingMetadata = { ...workingMetadata, retailFulfillment: readyContext };
+    const { error: fulfillmentError } = await admin.from('retail_orders').update({
+      delivery_fee_cents: deliveryFeeCents,
+      total_cents: effectiveTotalCents,
+      metadata: workingMetadata,
+      updated_at: new Date().toISOString(),
+    }).eq('tenant_id', order.tenant_id).eq('id', order.id);
+    if (fulfillmentError) {
+      throw new Error(`Failed to apply retail fulfillment: ${fulfillmentError.message}`);
+    }
+  }
+
+  if (effectiveTotalCents <= 0) {
+    throw new Error('Retail order total must be greater than zero');
+  }
+
+  const paymentMetadata = workingMetadata.payment as Record<string, unknown> | undefined;
   const existingReference = typeof paymentMetadata?.reference === 'string' ? paymentMetadata.reference : null;
+  const existingUrl = typeof paymentMetadata?.url === 'string' ? paymentMetadata.url : null;
+  if (existingReference && existingUrl) {
+    const existingAmountCents = typeof paymentMetadata?.amountCents === 'number'
+      ? paymentMetadata.amountCents
+      : null;
+    if (rolloutMode === 'live' && existingAmountCents !== effectiveTotalCents) {
+      throw new Error('The existing payment link amount is stale; create a replacement after confirming delivery');
+    }
+    return {
+      provider: typeof paymentMetadata?.provider === 'string' ? paymentMetadata.provider : 'unknown',
+      reference: existingReference,
+      paymentUrl: existingUrl,
+      orderId: order.id,
+      totalCents: effectiveTotalCents,
+    };
+  }
   const referenceKey = existingReference || `retail_${order.id.replace(/-/g, '').slice(0, 24)}_${randomUUID().slice(0, 8)}`;
 
   // Split settlement to the tenant's bank (Paystack subaccount), not the platform.
-  const { data: tenantRow } = await admin
-    .from('tenants')
-    .select('metadata')
-    .eq('id', order.tenant_id)
-    .maybeSingle();
   const subaccountCode = (tenantRow?.metadata as { paystack_subaccount_code?: string } | null)?.paystack_subaccount_code;
 
   const adapter = new PaymentsAdapter();
   const result = await adapter.createStandalonePaymentLink({
     tenant_id: order.tenant_id,
     reference_key: referenceKey,
-    amount_minor_units: Number(order.total_cents ?? 0),
+    amount_minor_units: effectiveTotalCents,
     currency: order.currency || 'NGN',
     customer_email: order.customer?.email ?? null,
     customer_phone: order.customer?.phone ?? order.external_customer_ref ?? null,
@@ -448,12 +563,13 @@ export async function createRetailOrderPaymentLink(input: {
   }
 
   const nextMetadata = {
-    ...getRetailOrderMetadata(order.metadata),
+    ...workingMetadata,
     payment: {
       provider: result.provider || 'unknown',
       reference: result.id,
       url: result.payment_url,
       channel: input.channel ?? null,
+      amountCents: effectiveTotalCents,
       createdAt: new Date().toISOString(),
       createdBy: input.actorUserId,
     },
@@ -476,7 +592,7 @@ export async function createRetailOrderPaymentLink(input: {
 
   const transactionPayload = {
     tenant_id: order.tenant_id,
-    amount: Number(order.total_cents ?? 0) / 100,
+    amount: effectiveTotalCents / 100,
     currency: order.currency || 'NGN',
     type: 'retail_order',
     status: 'initiated',
@@ -506,7 +622,7 @@ export async function createRetailOrderPaymentLink(input: {
     type: 'retail',
     stage: 'pending_payment',
     orderId: order.id,
-    orderTotalCents: Number(order.total_cents ?? 0),
+    orderTotalCents: effectiveTotalCents,
   });
 
   return {
@@ -514,7 +630,7 @@ export async function createRetailOrderPaymentLink(input: {
     reference: result.id,
     paymentUrl: result.payment_url,
     orderId: order.id,
-    totalCents: Number(order.total_cents ?? 0),
+    totalCents: effectiveTotalCents,
   };
 }
 

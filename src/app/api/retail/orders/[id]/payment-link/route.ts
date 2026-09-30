@@ -31,6 +31,9 @@ export const POST = createHttpHandler(
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create retail order payment link';
       if (/not found/i.test(message)) throw ApiErrorFactory.notFound('Retail order');
+      if (/delivery arrangement|delivery details|payment link amount is stale/i.test(message)) {
+        throw ApiErrorFactory.conflict(message);
+      }
       if (/already paid|greater than zero|failed to create retail order payment link/i.test(message)) {
         throw ApiErrorFactory.badRequest(message);
       }

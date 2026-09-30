@@ -73,33 +73,57 @@ export type RetailFulfillmentProvider = z.infer<typeof RetailFulfillmentProvider
 export type RetailDeliveryFeePolicy = z.infer<typeof RetailDeliveryFeePolicySchema>;
 export type RetailFulfillmentSettings = z.infer<typeof RetailFulfillmentSettingsSchema>;
 
-export interface RetailOrderFulfillmentContext {
-  method: RetailFulfillmentMethod | null;
-  provider: RetailFulfillmentProvider | null;
-  deliveryAddress: string | null;
-  serviceArea: string | null;
-  feeStatus: 'not_required' | 'known' | 'quote_required' | 'confirmed';
-  deliveryFeeCents: number | null;
-  arrangementStatus:
-    | 'not_started'
-    | 'awaiting_customer_choice'
-    | 'awaiting_human'
-    | 'arranged'
-    | 'completed';
-  conversationThreadId: string | null;
+export const RetailOrderFulfillmentContextSchema = z.object({
+  method: RetailFulfillmentMethodSchema.nullable(),
+  provider: RetailFulfillmentProviderSchema.nullable(),
+  deliveryAddress: z.string().trim().min(1).max(500).nullable(),
+  serviceArea: z.string().trim().min(1).max(80).nullable(),
+  feeStatus: z.enum(['not_required', 'known', 'quote_required', 'confirmed']),
+  deliveryFeeCents: z.number().int().min(0).max(100_000_000).nullable(),
+  arrangementStatus: z.enum([
+    'not_started',
+    'awaiting_customer_choice',
+    'awaiting_human',
+    'arranged',
+    'completed',
+  ]),
+  conversationThreadId: z.string().uuid().nullable(),
+}).strict();
+
+export type RetailOrderFulfillmentContext = z.infer<typeof RetailOrderFulfillmentContextSchema>;
+
+export function emptyRetailOrderFulfillmentContext(): RetailOrderFulfillmentContext {
+  return {
+    method: null,
+    provider: null,
+    deliveryAddress: null,
+    serviceArea: null,
+    feeStatus: 'not_required',
+    deliveryFeeCents: null,
+    arrangementStatus: 'not_started',
+    conversationThreadId: null,
+  };
 }
 
-export type RetailFulfillmentDecision = {
-  status: 'ready' | 'awaiting_customer' | 'awaiting_human';
-  reasonCode:
-    | 'fulfillment_not_configured'
-    | 'fulfillment_method_required'
-    | 'delivery_address_required'
-    | 'delivery_fee_requires_human'
-    | 'third_party_arrangement_required'
-    | null;
-  deliveryFeeCents: number | null;
-};
+export type RetailFulfillmentDecision =
+  | {
+      status: 'ready';
+      reasonCode: null;
+      deliveryFeeCents: number;
+    }
+  | {
+      status: 'awaiting_customer';
+      reasonCode: 'fulfillment_method_required' | 'delivery_address_required';
+      deliveryFeeCents: null;
+    }
+  | {
+      status: 'awaiting_human';
+      reasonCode:
+        | 'fulfillment_not_configured'
+        | 'delivery_fee_requires_human'
+        | 'third_party_arrangement_required';
+      deliveryFeeCents: null;
+    };
 
 type SettingsInput = {
   methods: readonly RetailFulfillmentMethod[];

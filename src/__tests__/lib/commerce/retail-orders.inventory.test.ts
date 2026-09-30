@@ -9,6 +9,9 @@ const rpcMock = jest.fn(async () => ({
   error: null,
 }));
 const fromTables: string[] = [];
+const updatePayloads: Array<{ table: string; payload: Record<string, unknown> }> = [];
+const mockCreateStandalonePaymentLink = jest.fn();
+const mockCreateFulfillmentEscalation = jest.fn();
 
 const paidOrder = {
   id: 'ord-1',
@@ -31,14 +34,25 @@ const paidOrder = {
   ],
 };
 
+let currentOrder: Record<string, unknown> = paidOrder;
+let currentTenant: Record<string, unknown> = { metadata: {}, settings: {} };
+
 function makeBuilder(table: string) {
   const builder: Record<string, unknown> = {};
   const chain = () => builder;
-  for (const method of ['select', 'eq', 'in', 'is', 'order', 'limit', 'update', 'delete', 'insert', 'upsert']) {
+  for (const method of ['select', 'eq', 'in', 'is', 'order', 'limit', 'delete', 'insert', 'upsert']) {
     builder[method] = jest.fn(chain);
   }
+  builder.update = jest.fn((payload: Record<string, unknown>) => {
+    updatePayloads.push({ table, payload });
+    return builder;
+  });
   builder.maybeSingle = jest.fn(async () => ({
-    data: table === 'retail_orders' ? paidOrder : null,
+    data: table === 'retail_orders'
+      ? currentOrder
+      : table === 'tenants'
+        ? currentTenant
+        : null,
     error: null,
   }));
   builder.single = builder.maybeSingle;
@@ -65,21 +79,163 @@ jest.mock('@/lib/chats/journey-service', () => ({
   updateChatJourneyByExternalId: (...args: unknown[]) => mockUpdateChatJourney(...args),
 }));
 
-jest.mock('@/lib/paymentsAdapter', () => ({ PaymentsAdapter: jest.fn() }));
+jest.mock('@/lib/paymentsAdapter', () => ({
+  PaymentsAdapter: jest.fn(() => ({
+    createStandalonePaymentLink: (...args: unknown[]) => mockCreateStandalonePaymentLink(...args),
+  })),
+}));
+
+jest.mock('@/lib/commerce/retail-fulfillment-escalation', () => ({
+  createRetailFulfillmentEscalation: (...args: unknown[]) => mockCreateFulfillmentEscalation(...args),
+}));
 
 const mockRecordAttribution = jest.fn();
 jest.mock('@/lib/sias-operations', () => ({
   siasOperations: { recordOutcomeAttribution: (...args: unknown[]) => mockRecordAttribution(...args) },
 }));
 
-import { transitionRetailOrder } from '@/lib/commerce/retail-orders';
+import { createRetailOrderPaymentLink, transitionRetailOrder } from '@/lib/commerce/retail-orders';
 
 describe('retail order inventory on mark_paid', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     fromTables.length = 0;
+    updatePayloads.length = 0;
+    currentOrder = paidOrder;
+    currentTenant = { metadata: {}, settings: {} };
+    mockCreateStandalonePaymentLink.mockResolvedValue({
+      status: 'created', provider: 'paystack', id: 'pay-ref-1', payment_url: 'https://pay.test/1',
+    });
+    mockCreateFulfillmentEscalation.mockResolvedValue({ id: 'esc-1', status: 'pending' });
     mockUpdateChatJourney.mockResolvedValue(undefined);
     mockRecordAttribution.mockResolvedValue(undefined);
+    delete process.env.BOOKA_RETAIL_FULFILLMENT_MODE;
+  });
+
+  it('blocks a live unconfigured tenant before Paystack and creates one fulfillment handoff', async () => {
+    process.env.BOOKA_RETAIL_FULFILLMENT_MODE = 'live';
+    currentOrder = {
+      ...paidOrder,
+      payment_status: 'unpaid',
+      status: 'draft',
+      subtotal_cents: 185000,
+      discount_cents: 0,
+      delivery_fee_cents: 0,
+      metadata: {},
+    };
+    currentTenant = {
+      metadata: {},
+      settings: { rollouts: { retailFulfillment: 'live' } },
+    };
+
+    await expect(createRetailOrderPaymentLink({
+      tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
+    })).rejects.toThrow(/delivery arrangement needs a teammate/i);
+
+    expect(mockCreateStandalonePaymentLink).not.toHaveBeenCalled();
+    expect(mockCreateFulfillmentEscalation).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1', orderId: 'ord-1', reasonCode: 'fulfillment_not_configured',
+    }));
+    expect(mockUpdateChatJourney).toHaveBeenCalledWith(expect.objectContaining({
+      patch: expect.objectContaining({ stage: 'awaiting_fulfillment_handoff' }),
+    }));
+  });
+
+  it('applies a known fixed fee exactly once before creating the payment link', async () => {
+    process.env.BOOKA_RETAIL_FULFILLMENT_MODE = 'live';
+    currentOrder = {
+      ...paidOrder,
+      payment_status: 'unpaid',
+      status: 'draft',
+      subtotal_cents: 185000,
+      total_cents: 185000,
+      discount_cents: 0,
+      delivery_fee_cents: 0,
+      metadata: {
+        retailFulfillment: {
+          method: 'own_dispatch', provider: null, deliveryAddress: 'Lekki Phase 1',
+          serviceArea: 'Lekki', feeStatus: 'not_required', deliveryFeeCents: null,
+          arrangementStatus: 'not_started', conversationThreadId: null,
+        },
+      },
+    };
+    currentTenant = {
+      metadata: { paystack_subaccount_code: 'ACCT_1' },
+      settings: {
+        rollouts: { retailFulfillment: 'live' },
+        retailFulfillment: {
+          methods: ['own_dispatch'], thirdPartyProviders: [], serviceAreas: ['Lekki'],
+          feePolicy: 'fixed', fixedFeeCents: 2500,
+        },
+      },
+    };
+
+    await createRetailOrderPaymentLink({
+      tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
+    });
+
+    expect(mockCreateStandalonePaymentLink).toHaveBeenCalledWith(expect.objectContaining({
+      amount_minor_units: 187500,
+    }));
+    expect(updatePayloads).toContainEqual(expect.objectContaining({
+      table: 'retail_orders',
+      payload: expect.objectContaining({ delivery_fee_cents: 2500, total_cents: 187500 }),
+    }));
+    expect(mockCreateFulfillmentEscalation).not.toHaveBeenCalled();
+  });
+
+  it('reuses only a payment link bound to the current fulfillment-aware total', async () => {
+    process.env.BOOKA_RETAIL_FULFILLMENT_MODE = 'live';
+    currentOrder = {
+      ...paidOrder,
+      payment_status: 'pending',
+      status: 'pending_payment',
+      subtotal_cents: 185000,
+      total_cents: 187500,
+      discount_cents: 0,
+      delivery_fee_cents: 2500,
+      metadata: {
+        retailFulfillment: {
+          method: 'own_dispatch', provider: null, deliveryAddress: 'Lekki Phase 1',
+          serviceArea: 'Lekki', feeStatus: 'known', deliveryFeeCents: 2500,
+          arrangementStatus: 'arranged', conversationThreadId: null,
+        },
+        payment: {
+          provider: 'paystack', reference: 'pay-existing', url: 'https://pay.test/existing',
+          amountCents: 187500,
+        },
+      },
+    };
+    currentTenant = {
+      metadata: {},
+      settings: {
+        rollouts: { retailFulfillment: 'live' },
+        retailFulfillment: {
+          methods: ['own_dispatch'], thirdPartyProviders: [], serviceAreas: ['Lekki'],
+          feePolicy: 'fixed', fixedFeeCents: 2500,
+        },
+      },
+    };
+
+    await expect(createRetailOrderPaymentLink({
+      tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
+    })).resolves.toMatchObject({ reference: 'pay-existing', totalCents: 187500 });
+    expect(mockCreateStandalonePaymentLink).not.toHaveBeenCalled();
+
+    currentOrder = {
+      ...currentOrder,
+      metadata: {
+        ...(currentOrder.metadata as Record<string, unknown>),
+        payment: {
+          provider: 'paystack', reference: 'pay-stale', url: 'https://pay.test/stale',
+          amountCents: 185000,
+        },
+      },
+    };
+    await expect(createRetailOrderPaymentLink({
+      tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
+    })).rejects.toThrow(/payment link amount is stale/i);
+    expect(mockCreateStandalonePaymentLink).not.toHaveBeenCalled();
   });
 
   it('decrements stock via the update_inventory RPC and never queries product_inventory', async () => {
