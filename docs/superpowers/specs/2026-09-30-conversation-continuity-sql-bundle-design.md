@@ -1,7 +1,7 @@
 # Conversation Continuity SQL Bundle — Design
 
 **Date:** 2026-09-30
-**Status:** Approved for implementation
+**Status:** Implemented and locally verified; not yet executed in Supabase
 **Target:** Staging Supabase SQL Editor first; production requires a separate release gate
 
 ## 1. Problem
@@ -86,3 +86,13 @@ Production remains a separate approved operation. No bundle execution, deploymen
 ## 7. Rollback
 
 The bundle changes no rollback policy. Runtime continuity flags remain off by default. Incident response disables flags first, rolls back the application image second, and considers destructive schema rollback only when every continuity table is empty and the existing rollback preflight passes.
+
+## 8. Generated artifact evidence
+
+- Output: `db/releases/2026-09-30-conversation-continuity-all-in-one.sql`
+- Generator: `scripts/build-conversation-continuity-bundle.cjs`
+- SHA-256: `9c933f9b0dcd171a67675bb5a51a00092ed629eadf10d0962b37008958f8bd3d`
+- Static transaction check: one line-only `BEGIN;`, one line-only `COMMIT;`, no psql `\i` command
+- Local verification: bundle tests, handoff migration tests, handoff continuity tests and CI typecheck passed on 2026-09-30
+
+This evidence proves reproducible generation and local compatibility only. It does not claim that the SQL has been run in staging or production.

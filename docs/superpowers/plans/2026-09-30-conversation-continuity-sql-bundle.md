@@ -50,7 +50,7 @@ git commit -m "test(db): define continuity bundle contract"
 ### Task 2: Implement the deterministic generator
 
 **Files:**
-- Create: `scripts/build-conversation-continuity-bundle.mjs`
+- Create: `scripts/build-conversation-continuity-bundle.cjs`
 - Modify: `package.json`
 - Test: `src/__tests__/scripts/conversationContinuityBundle.test.ts`
 
@@ -68,7 +68,7 @@ The CLI resolves paths from the repository root, requires exactly one line-only 
 Add:
 
 ```json
-"db:bundle:conversation-continuity": "node scripts/build-conversation-continuity-bundle.mjs"
+"db:bundle:conversation-continuity": "node scripts/build-conversation-continuity-bundle.cjs"
 ```
 
 Do not parse or rewrite PL/pgSQL bodies, dollar quotes, grants, policies or verifier statements.
@@ -93,7 +93,7 @@ Expected: both hashes match.
 **Step 4: Commit**
 
 ```bash
-git add package.json scripts/build-conversation-continuity-bundle.mjs src/__tests__/scripts/conversationContinuityBundle.test.ts db/releases/2026-09-30-conversation-continuity-all-in-one.sql
+git add package.json scripts/build-conversation-continuity-bundle.cjs src/__tests__/scripts/conversationContinuityBundle.test.ts db/releases/2026-09-30-conversation-continuity-all-in-one.sql
 git commit -m "build(db): add atomic continuity SQL bundle"
 ```
 
