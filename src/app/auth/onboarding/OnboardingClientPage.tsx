@@ -13,6 +13,11 @@ import { setStoredRole, setStoredTenantId } from '@/lib/auth/token-storage';
 import { sessionVerifiesEmail } from '@/lib/auth/onboarding-verification';
 import BrandMark from '@/components/brand/BrandMark';
 import OperatingDraftInterview, { type OperatingDraftInterviewAction } from '@/components/onboarding/OperatingDraftInterview';
+import RetailFulfillmentFields, {
+  EMPTY_RETAIL_FULFILLMENT_FORM,
+  toRetailFulfillmentSettings,
+  type RetailFulfillmentFormValue,
+} from '@/components/onboarding/RetailFulfillmentFields';
 import { COMMERCIAL_MOTION_DETAILS, capabilitiesForCommercialMotion, resolveCommercialMotion, type CommercialMotion } from '@/lib/business-model';
 import type { OperatingDraftView } from '@/lib/onboarding/operating-draft';
 
@@ -194,6 +199,10 @@ export default function OnboardingPage({
   const [services, setServices] = useState<ServiceDraft[]>([{ name: '', duration: '', price: '' }]);
   // Optional: things the business sells (Booka does sales + inventory, not just bookings).
   const [products, setProducts] = useState<ProductDraft[]>([{ name: '', price: '', stock: '' }]);
+  const [retailFulfillment, setRetailFulfillment] = useState<RetailFulfillmentFormValue>(
+    EMPTY_RETAIL_FULFILLMENT_FORM,
+  );
+  const [retailFulfillmentError, setRetailFulfillmentError] = useState<string | null>(null);
   const [staffList, setStaffList] = useState<StaffDraft[]>([{ name: '', email: '', phone: '', role: 'staff' }]);
   const [faqs, setFaqs] = useState<FaqDraft[]>([{ question: '', answer: '', category: '' }]);
   const [loading, setLoading] = useState(false);
@@ -218,6 +227,9 @@ export default function OnboardingPage({
   const [operatingDraftLoading, setOperatingDraftLoading] = useState(false);
   const [operatingDraftError, setOperatingDraftError] = useState<string | null>(null);
   const selectedPackage = getVerticalPackage(resolveVertical(businessType));
+  const showRetailFulfillment = commercialMotion === 'sales'
+    || commercialMotion === 'hybrid'
+    || products.some((product) => product.name.trim().length > 0);
 
   const baseHeaders = useCallback((extra: Record<string, string> = {}): Record<string, string> => {
     return {
@@ -551,6 +563,7 @@ export default function OnboardingPage({
   }
 
   async function submitServices() {
+    setRetailFulfillmentError(null);
     const valid = services.filter((s) => s.name.trim());
     if (valid.length > 0 && tenantId) {
       setLoading(true);
@@ -609,15 +622,40 @@ export default function OnboardingPage({
     // not turn sales off just because a hybrid owner adds their catalogue later.
     if (tenantId) {
       const anyStock = validProducts.some((p) => p.stock && Number.isFinite(Number(p.stock)) && Number(p.stock) >= 0);
+      const fulfillmentResult = showRetailFulfillment
+        ? toRetailFulfillmentSettings(retailFulfillment)
+        : null;
+      if (fulfillmentResult && !fulfillmentResult.success) {
+        setRetailFulfillmentError(fulfillmentResult.error);
+        toast.error(fulfillmentResult.error);
+        return;
+      }
+      setLoading(true);
       try {
-        await fetch(`/api/tenants/${tenantId}/settings`, {
+        const response = await fetch(`/api/tenants/${tenantId}/settings`, {
           method: 'PATCH',
           headers: jsonHeaders(tenantHeaders()),
           body: JSON.stringify({
             capabilities: capabilitiesForCommercialMotion(commercialMotion, { hasInventory: anyStock }),
+            ...(fulfillmentResult?.success
+              ? { retailFulfillment: fulfillmentResult.data }
+              : {}),
           }),
         });
-      } catch { /* non-blocking: capabilities stay all-on by default */ }
+        if (showRetailFulfillment && !response.ok) {
+          throw new Error(`retail-fulfillment:${response.status}`);
+        }
+      } catch {
+        if (showRetailFulfillment) {
+          const message = 'Fulfilment settings could not be saved. Check your details and try again.';
+          setRetailFulfillmentError(message);
+          toast.error(message);
+          return;
+        }
+        // Non-blocking for service-only tenants: capabilities stay all-on by default.
+      } finally {
+        setLoading(false);
+      }
     }
     if (tenantId) {
       persistTenantSession(tenantId);
@@ -1066,6 +1104,18 @@ export default function OnboardingPage({
                   + Add another product
                 </button>
               </div>
+
+              {showRetailFulfillment && (
+                <RetailFulfillmentFields
+                  value={retailFulfillment}
+                  onChange={(value) => {
+                    setRetailFulfillment(value);
+                    if (retailFulfillmentError) setRetailFulfillmentError(null);
+                  }}
+                  error={retailFulfillmentError}
+                  disabled={loading}
+                />
+              )}
 
               <div className="flex gap-3">
                 <button onClick={back} className={secondaryBtn}>← Back</button>
