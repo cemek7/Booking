@@ -7,6 +7,8 @@ import {
 
 export type RetailFulfillmentEscalationReason =
   | 'fulfillment_not_configured'
+  | 'fulfillment_method_required'
+  | 'delivery_address_required'
   | 'delivery_fee_requires_human'
   | 'third_party_arrangement_required';
 

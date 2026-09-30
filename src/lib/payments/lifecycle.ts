@@ -12,11 +12,19 @@ import { defaultLogger } from '@/lib/logger';
  * - PCI compliance utilities
  */
 
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServerSupabaseClient, createSupabaseAdminClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { getEventBus } from '../eventbus/eventBus';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { siasOperations } from '@/lib/sias-operations';
+import {
+  RetailFulfillmentSettingsSchema,
+  RetailOrderFulfillmentContextSchema,
+  emptyRetailOrderFulfillmentContext,
+  resolveRetailFulfillment,
+} from '@/lib/commerce/retail-fulfillment';
+import { resolveRetailFulfillmentRollout } from '@/lib/commerce/retail-fulfillment-rollout';
+import { createRetailFulfillmentEscalation } from '@/lib/commerce/retail-fulfillment-escalation';
 
 // ===============================
 // PAYMENT SCHEMAS & TYPES
@@ -1542,6 +1550,53 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
   });
 
   const totalCents = Number((order as Record<string, unknown>)?.total_cents ?? input.amountMinor ?? 0);
+  const orderRow = order as Record<string, unknown>;
+  const metadata = orderRow.metadata && typeof orderRow.metadata === 'object' && !Array.isArray(orderRow.metadata)
+    ? orderRow.metadata as Record<string, unknown>
+    : {};
+  const contextResult = RetailOrderFulfillmentContextSchema.safeParse(metadata.retailFulfillment);
+  const context = contextResult.success ? contextResult.data : emptyRetailOrderFulfillmentContext();
+  let needsFulfillmentHandoff = false;
+  const configuredMode = process.env.BOOKA_RETAIL_FULFILLMENT_MODE;
+  // This path is entered from a signature-verified provider webhook, where
+  // there is no end-user session. Keep every operation tenant-bound, but use
+  // the service client so RLS cannot silently skip the durable handoff.
+  const lifecycleSupabase = createSupabaseAdminClient();
+  let tenantSettings: Record<string, unknown> = {};
+  let rolloutMode = resolveRetailFulfillmentRollout({ globalMode: configuredMode, tenantSettings });
+  if (configuredMode === 'shadow' || configuredMode === 'live') {
+    const { data: tenantRow, error: tenantError } = await lifecycleSupabase.from('tenants')
+      .select('settings')
+      .eq('id', input.tenantId)
+      .maybeSingle();
+    if (tenantError) throw tenantError;
+    tenantSettings = tenantRow?.settings && typeof tenantRow.settings === 'object'
+      ? tenantRow.settings as Record<string, unknown>
+      : {};
+    rolloutMode = resolveRetailFulfillmentRollout({ globalMode: configuredMode, tenantSettings });
+  }
+  if (rolloutMode === 'live') {
+    const settingsResult = RetailFulfillmentSettingsSchema.safeParse(tenantSettings.retailFulfillment);
+    const decision = resolveRetailFulfillment({
+      settings: settingsResult.success ? settingsResult.data : null,
+      context,
+    });
+    if (decision.status !== 'ready') {
+      const handoffContext = { ...context, arrangementStatus: 'awaiting_human' as const };
+      const { error: contextError } = await lifecycleSupabase.from('retail_orders').update({
+        metadata: { ...metadata, retailFulfillment: handoffContext },
+        updated_at: new Date().toISOString(),
+      }).eq('tenant_id', input.tenantId).eq('id', input.orderId);
+      if (contextError) throw contextError;
+      await createRetailFulfillmentEscalation({
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        reasonCode: decision.reasonCode,
+        context: handoffContext,
+      });
+      needsFulfillmentHandoff = true;
+    }
+  }
   await recordFrontDeskEvent({
     tenantId: input.tenantId,
     eventType: 'payment_completed',
@@ -1563,7 +1618,7 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
       channel: input.channel,
-      stage: 'paid',
+      stage: needsFulfillmentHandoff ? 'awaiting_fulfillment_handoff' : 'paid',
       paymentStatus: 'paid',
       orderId: input.orderId,
       reference: input.reference,
@@ -1573,7 +1628,9 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
       tenantId: input.tenantId,
       externalCustomerRef: input.externalCustomerRef,
       channel: input.channel,
-      text: `Payment received ✅ Your order is now confirmed. Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. We’ll keep you posted on fulfillment here.`,
+      text: needsFulfillmentHandoff
+        ? `Payment received ✅ Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. A teammate is confirming your delivery arrangement and will update you here.`
+        : `Payment received ✅ Your order is now confirmed. Total paid: ₦${Math.round(totalCents / 100).toLocaleString()}. We’ll keep you posted on fulfillment here.`,
       messageType: 'payment_receipt',
     });
   }
@@ -1987,5 +2044,6 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
     defaultLogger.info(`[lifecycle] Payment confirmed: booking=${bookingId} provider=${provider} ref=${reference}`);
   } catch (err) {
     defaultLogger.error('[lifecycle] handlePaymentSuccess error', err);
+    throw err;
   }
 }

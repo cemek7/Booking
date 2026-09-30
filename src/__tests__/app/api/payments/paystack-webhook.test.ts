@@ -8,6 +8,10 @@ jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: jest.fn(),
 }));
 jest.mock('@/lib/payments/lifecycle', () => ({ handlePaymentSuccess: jest.fn(async () => undefined) }));
+const mockCreditVerifiedTopup = jest.fn();
+jest.mock('@/lib/billing/walletTopup', () => ({
+  creditVerifiedTopup: (...args: unknown[]) => mockCreditVerifiedTopup(...args),
+}));
 jest.mock('@/lib/eventbus/eventBus', () => ({ getEventBus: () => ({ publishEvent: jest.fn(async () => undefined) }) }));
 // PaymentService is instantiated in the route when a transaction is found.
 // __esModule: true is required so the default import resolves correctly.
@@ -18,7 +22,8 @@ jest.mock('@/lib/paymentService', () => ({
   })),
 }));
 
-import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient, getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { handlePaymentSuccess } from '@/lib/payments/lifecycle';
 import { POST } from '@/app/api/payments/webhook/route';
 
 const SECRET = 'sk_test_dummy';
@@ -82,6 +87,8 @@ describe('Paystack webhook (auth:false)', () => {
     jest.clearAllMocks();
     process.env.PAYSTACK_SECRET_KEY = SECRET;
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabase());
+    (handlePaymentSuccess as jest.Mock).mockResolvedValue(undefined);
+    mockCreditVerifiedTopup.mockResolvedValue({ credited: true, tenantId: 'tenant-1', amountCredits: 10 });
   });
 
   it('rejects a request with no recognised signature header (400)', async () => {
@@ -99,6 +106,43 @@ describe('Paystack webhook (auth:false)', () => {
     (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabase({ insertError: { code: '23505' } }));
     const res = await POST(signedWebhook({ provider: 'paystack', reference: 'r_dup', status: 'success' }) as unknown as NextRequest);
     expect(await res.json()).toMatchObject({ ok: true, replay: true });
+    expect(handlePaymentSuccess).not.toHaveBeenCalled();
+  });
+
+  it('releases the replay marker and returns an error when post-payment work fails', async () => {
+    const externalIdEq = jest.fn(async () => ({ error: null }));
+    const providerEq = jest.fn(() => ({ eq: externalIdEq }));
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue({
+      from: jest.fn(() => ({ delete: jest.fn(() => ({ eq: providerEq })) })),
+    });
+    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabaseWithTransaction());
+    (handlePaymentSuccess as jest.Mock).mockRejectedValueOnce(new Error('handoff persistence failed'));
+
+    const res = await POST(signedWebhook({ provider: 'paystack', reference: 'r_retry', status: 'success' }) as unknown as NextRequest);
+
+    expect(res.status).toBe(500);
+    expect(providerEq).toHaveBeenCalledWith('provider', 'paystack');
+    expect(externalIdEq).toHaveBeenCalledWith('external_id', 'r_retry:success');
+  });
+
+  it('releases the replay marker when wallet crediting fails so Paystack can retry', async () => {
+    const externalIdEq = jest.fn(async () => ({ error: null }));
+    const providerEq = jest.fn(() => ({ eq: externalIdEq }));
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue({
+      from: jest.fn(() => ({ delete: jest.fn(() => ({ eq: providerEq })) })),
+    });
+    mockCreditVerifiedTopup.mockRejectedValueOnce(new Error('wallet rpc unavailable'));
+
+    const res = await POST(signedWebhook({
+      provider: 'paystack',
+      reference: 'bokawallet_retry',
+      status: 'success',
+      data: { amount: 250000 },
+    }) as unknown as NextRequest);
+
+    expect(res.status).toBe(500);
+    expect(providerEq).toHaveBeenCalledWith('provider', 'paystack');
+    expect(externalIdEq).toHaveBeenCalledWith('external_id', 'bokawallet_retry:success');
   });
 
   // CRITICAL 2: derive tenantId from DB transaction, not payload

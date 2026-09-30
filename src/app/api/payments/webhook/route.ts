@@ -138,16 +138,15 @@ export const POST = createHttpHandler(
       }
     }
 
+    const webhookProviderKey = provider || 'unknown';
+    const webhookEventType = status || 'unknown';
+    const webhookExternalId = `${ref}:${webhookEventType}`;
+    let webhookMarkerInserted = false;
     // Idempotency / replay protection: insert into webhook_events
     try {
-      const providerKey = provider || 'unknown';
-      const eventType = status || 'unknown';
-      const externalId = ref
-        ? `${ref}:${eventType}`
-        : `${providerKey}-${Date.now()}:${eventType}`;
       const insertEvt = await ctx.supabase.from('webhook_events').insert({
-        provider: providerKey,
-        external_id: externalId,
+        provider: webhookProviderKey,
+        external_id: webhookExternalId,
         event_type: status,
         payload: parsed
       }).select('id');
@@ -158,11 +157,14 @@ export const POST = createHttpHandler(
           return { ok: true, replay: true };
         }
         defaultLogger.warn('payment webhook: webhook_events insert failed', insertEvt.error);
+      } else {
+        webhookMarkerInserted = true;
       }
     } catch (e) {
       defaultLogger.warn('payment webhook: webhook_events handling failed', e);
     }
 
+    try {
     // ── Wallet top-up ────────────────────────────────────────────────────────
     // Runs before the transactions lookup because a wallet top-up has no
     // `transactions` row — its reference is tied to a `wallet_topup_intents`
@@ -267,12 +269,12 @@ export const POST = createHttpHandler(
         // Trigger post-payment confirmation for successful payments
         if (/success|paid/i.test(String(finalStatus)) && ref) {
           const prov = (provider || 'paystack') as 'paystack' | 'stripe' | 'flutterwave';
-          handlePaymentSuccess({
+          await handlePaymentSuccess({
             tenantId: verifiedTenantId,
             reference: ref as string,
             provider: prov,
             reservationId: reservationId as string | null,
-          }).catch(err => defaultLogger.error('payment webhook: handlePaymentSuccess error', err));
+          });
         } else if (/refund/i.test(String(finalStatus)) && ref) {
           const prov = (provider || 'paystack') as 'paystack' | 'stripe' | 'flutterwave';
           handlePaymentRefund({
@@ -294,7 +296,24 @@ export const POST = createHttpHandler(
       }
     }
 
-    return { ok: true };
+      return { ok: true };
+    } catch (error) {
+      if (webhookMarkerInserted) {
+        const { error: cleanupError } = await createSupabaseAdminClient()
+          .from('webhook_events')
+          .delete()
+          .eq('provider', webhookProviderKey)
+          .eq('external_id', webhookExternalId);
+        if (cleanupError) {
+          defaultLogger.error('payment webhook: failed to release replay marker', {
+            provider: webhookProviderKey,
+            externalId: webhookExternalId,
+            cleanupError,
+          });
+        }
+      }
+      throw error;
+    }
   },
   'POST',
   { auth: false } // Webhooks don't require auth, use signature validation

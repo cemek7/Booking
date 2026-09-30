@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockCreateServerSupabaseClient = jest.fn();
+const mockCreateSupabaseAdminClient = jest.fn();
 jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: mockCreateServerSupabaseClient,
+  createSupabaseAdminClient: mockCreateSupabaseAdminClient,
 }));
 
 const mockRecordFrontDeskEvent = jest.fn();
@@ -20,6 +22,11 @@ const mockGetRetailOrderById = jest.fn();
 jest.mock('@/lib/commerce/retail-orders', () => ({
   transitionRetailOrder: (...args: unknown[]) => mockTransitionRetailOrder(...args),
   getRetailOrderById: (...args: unknown[]) => mockGetRetailOrderById(...args),
+}));
+
+const mockCreateFulfillmentEscalation = jest.fn();
+jest.mock('@/lib/commerce/retail-fulfillment-escalation', () => ({
+  createRetailFulfillmentEscalation: (...args: unknown[]) => mockCreateFulfillmentEscalation(...args),
 }));
 
 const mockGetConversation = jest.fn();
@@ -117,6 +124,8 @@ describe('retail payment lifecycle helpers', () => {
     mockSendTextMessage.mockResolvedValue({ success: true, messageId: 'msg-1' });
     mockRecordFrontDeskEvent.mockResolvedValue(undefined);
     mockRecordAttribution.mockResolvedValue(undefined);
+    mockCreateFulfillmentEscalation.mockResolvedValue({ id: 'esc-1', status: 'pending' });
+    delete process.env.BOOKA_RETAIL_FULFILLMENT_MODE;
   });
 
   it('records a provider-verified processed amount for a paid reservation', async () => {
@@ -190,6 +199,53 @@ describe('retail payment lifecycle helpers', () => {
     expect(mockSendTextMessage).toHaveBeenCalledWith(
       '+2348000000000',
       expect.stringContaining('Payment received'),
+    );
+  });
+
+  it('keeps payment truth and hands unresolved paid delivery to a human before sending the receipt', async () => {
+    process.env.BOOKA_RETAIL_FULFILLMENT_MODE = 'live';
+    const lifecycleAdmin = {
+      from: jest.fn((table: string) => {
+        if (table === 'tenants') {
+          return { select: jest.fn(() => ({ eq: jest.fn(() => ({ maybeSingle: jest.fn(async () => ({
+            data: { settings: {
+              rollouts: { retailFulfillment: 'live' },
+              retailFulfillment: { methods: ['third_party_manual'], thirdPartyProviders: ['bolt'], serviceAreas: [], feePolicy: 'manual' },
+            } }, error: null,
+          })) })) })) };
+        }
+        return { update: jest.fn(() => ({ eq: jest.fn(() => ({ eq: jest.fn(async () => ({ error: null })) })) })) };
+      }),
+    };
+    mockCreateSupabaseAdminClient.mockReturnValue(lifecycleAdmin);
+    mockTransitionRetailOrder.mockResolvedValue({
+      id: 'ord-1', tenant_id: 'tenant-1', total_cents: 185000, payment_status: 'paid',
+      status: 'paid', fulfillment_status: 'unfulfilled', external_customer_ref: '+2348000000000',
+      metadata: { retailFulfillment: {
+        method: 'third_party_manual', provider: 'bolt', deliveryAddress: 'Private address', serviceArea: null,
+        feeStatus: 'quote_required', deliveryFeeCents: null, arrangementStatus: 'not_started',
+        conversationThreadId: null,
+      } },
+    });
+
+    await handlePaymentSuccess({ tenantId: 'tenant-1', reference: 'ref-paid-unresolved', provider: 'paystack' });
+
+    expect(mockTransitionRetailOrder).toHaveBeenCalledWith(expect.objectContaining({ action: 'mark_paid' }));
+    expect(mockCreateFulfillmentEscalation).toHaveBeenCalledTimes(1);
+    expect(mockUpdateConversation).toHaveBeenCalledWith(
+      '+2348000000000', 'tenant-1',
+      expect.objectContaining({ flow_data: expect.objectContaining({
+        sales_journey: expect.objectContaining({ stage: 'awaiting_fulfillment_handoff' }),
+      }) }),
+      'instagram',
+    );
+    expect(mockSendTextMessage).toHaveBeenCalledWith(
+      '+2348000000000',
+      expect.stringMatching(/payment received.*teammate.*delivery/i),
+    );
+    expect(mockSendTextMessage).not.toHaveBeenCalledWith(
+      '+2348000000000',
+      expect.stringContaining('order is now confirmed'),
     );
   });
 
