@@ -32,7 +32,21 @@ jest.mock('@tanstack/react-query', () => ({
 jest.mock('@/components/settings/TenantProfileSection', () => ({
   TenantProfileSection: () => <div>Tenant profile content</div>,
 }));
-jest.mock('@/components/settings/BusinessProfileSection', () => ({ BusinessProfileSection: () => null }));
+jest.mock('@/components/settings/BusinessProfileSection', () => ({
+  BusinessProfileSection: ({ onChange }: { onChange: (patch: Record<string, unknown>) => void }) => (
+    <button
+      type="button"
+      onClick={() => onChange({
+        retailFulfillment: {
+          methods: ['customer_pickup'],
+          thirdPartyProviders: [],
+          serviceAreas: [],
+          feePolicy: 'included',
+        },
+      })}
+    >Configure pickup</button>
+  ),
+}));
 jest.mock('@/components/settings/NotificationPreferencesSection', () => ({ NotificationPreferencesSection: () => null }));
 jest.mock('@/components/settings/SecuritySettingsSection', () => ({ SecuritySettingsSection: () => null }));
 jest.mock('@/components/settings/WhatsAppSyncSection', () => ({ WhatsAppSyncSection: () => null }));
@@ -94,5 +108,31 @@ describe('SettingsWorkspace tabs', () => {
         sun: { open: null, close: null, closed: true },
       },
     });
+  });
+
+  it('saves fulfillment through the existing Business Save Changes action', () => {
+    mockSearch = 'tab=business';
+    render(<SettingsWorkspace />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Configure pickup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(mutateMock.mock.calls[0][0]).toMatchObject({
+      retailFulfillment: {
+        methods: ['customer_pickup'],
+        thirdPartyProviders: [],
+        serviceAreas: [],
+        feePolicy: 'included',
+      },
+    });
+  });
+
+  it('keeps fulfillment out of the Payments tab save lifecycle', () => {
+    mockSearch = 'tab=payments';
+    render(<SettingsWorkspace />);
+
+    expect(screen.queryByText('Order fulfilment')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save Changes' })).not.toBeInTheDocument();
   });
 });

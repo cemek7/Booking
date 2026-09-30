@@ -17,6 +17,7 @@ import { AgentConfigSection } from '@/components/settings/AgentConfigSection';
 import type { BusinessHours } from '@/components/settings/BusinessHoursSection';
 import { toast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
+import type { RetailFulfillmentSettings } from '@/lib/commerce/retail-fulfillment';
 
 // Canonical settings surface. Tabs are driven by ?tab= on /dashboard/settings.
 const BASE_PATH = '/dashboard/settings';
@@ -56,6 +57,7 @@ interface TenantSettings {
   cancellationPolicy?: string;
   staffAssignmentStrategy?: 'round_robin' | 'preferred' | 'skill_based';
   allowOverbooking?: boolean;
+  retailFulfillment?: RetailFulfillmentSettings;
   reminderLead?: number;
   secondReminderLead?: number;
   defaultChannels?: string[];
@@ -241,7 +243,7 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
       content = <TenantProfileSection values={{ displayName: local.displayName, timezone: local.timezone, brandingColor: local.brandingColor, contactEmail: local.contactEmail, locale: local.locale, ownerName: local.ownerName, ownerPhone: local.ownerPhone, businessNickname: local.businessNickname, bookingSources: local.bookingSources, tone: local.tone, styleGuidelines: local.styleGuidelines, voiceParameters: local.voiceParameters, samplePhrases: local.samplePhrases, brandTagline: local.brandTagline, greeting: local.greeting, signature: local.signature }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
       break;
     case 'business':
-      content = <BusinessProfileSection values={{ requireDeposit: local.requireDeposit, services: (local.services as ServiceDraft[] | undefined) }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
+      content = <BusinessProfileSection values={{ requireDeposit: local.requireDeposit, services: (local.services as ServiceDraft[] | undefined), retailFulfillment: local.retailFulfillment }} onChange={patch=>setLocal(l=>({ ...l, ...patch }))} />;
       break;
     case 'agent':
       content = <AgentConfigSection

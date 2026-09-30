@@ -2,6 +2,8 @@
 import { useState, useEffect } from 'react';
 import { FormSection } from './FormSection';
 import { useTenant } from '@/lib/supabase/tenant-context';
+import { OrderFulfillmentSection } from './OrderFulfillmentSection';
+import type { RetailFulfillmentSettings } from '@/lib/commerce/retail-fulfillment';
 
 export interface ServiceDraft { id?: string; name: string; description?: string; duration?: number; price?: number; category?: string; is_active?: boolean; skills?: string[]; }
 export interface BusinessProfileValues {
@@ -12,6 +14,7 @@ export interface BusinessProfileValues {
   cancellationPolicy?: string;
   staffAssignmentStrategy?: 'round_robin' | 'preferred' | 'skill_based';
   allowOverbooking?: boolean;
+  retailFulfillment?: RetailFulfillmentSettings;
 }
 
 export function BusinessProfileSection({ values, onChange }: { values: BusinessProfileValues; onChange: (patch: Partial<BusinessProfileValues>) => void }) {
@@ -58,6 +61,10 @@ export function BusinessProfileSection({ values, onChange }: { values: BusinessP
 
   return (
     <div className="space-y-6">
+      <OrderFulfillmentSection
+        value={local.retailFulfillment}
+        onChange={(value) => update('retailFulfillment', value)}
+      />
       <FormSection title="Booking Policies" description="Govern deposits, staff assignment, and overbooking safety.">
         <div className="flex flex-wrap gap-4 items-center">
           <label className="flex items-center gap-2 text-xs font-medium">
