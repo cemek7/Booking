@@ -6,6 +6,11 @@ import { authGet } from '@/lib/auth/auth-api-client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { ChatJourneyType } from '@/lib/chats/operations';
+import {
+  RetailOrderFulfillmentContextSchema,
+  toSafeFulfillmentSummary,
+  type RetailFulfillmentSafeSummary,
+} from '@/lib/commerce/retail-fulfillment';
 
 type LeadSummary = {
   id: string;
@@ -29,6 +34,7 @@ type RetailOrderSummary = {
   fulfillment_status: string;
   currency: string;
   total_cents: number;
+  delivery_fee_cents?: number | null;
   metadata?: Record<string, unknown> | null;
   items?: Array<{
     id: string;
@@ -45,6 +51,39 @@ interface ChatContextPanelProps {
   orderId?: string | null;
   cartItemCount?: number;
   orderTotalCents?: number | null;
+  retailFulfillment?: (RetailFulfillmentSafeSummary & {
+    fulfillmentStatus?: string;
+    deliveryFeeCents?: number | null;
+  }) | null;
+}
+
+function fulfillmentMethodLabel(summary: RetailFulfillmentSafeSummary | null) {
+  if (!summary?.method) return 'Not selected';
+  if (summary.method === 'customer_pickup') return 'Customer pickup';
+  if (summary.method === 'own_dispatch') return 'Business dispatch';
+  if (summary.provider === 'bolt') return 'Bolt delivery';
+  if (summary.provider === 'indrive') return 'inDrive delivery';
+  return summary.provider === 'other' ? 'Other delivery provider' : 'Third-party delivery';
+}
+
+function fulfillmentFeeLabel(summary: RetailFulfillmentSafeSummary | null, feeCents?: number | null) {
+  if (!summary) return 'Not set';
+  if (summary.feeStatus === 'quote_required') return 'Awaiting quote';
+  if (summary.feeStatus === 'not_required') return 'Not required';
+  if (typeof feeCents === 'number') return money(feeCents);
+  return summary.feeStatus === 'confirmed' ? 'Confirmed' : 'Known';
+}
+
+function arrangementLabel(summary: RetailFulfillmentSafeSummary | null) {
+  if (!summary) return 'Not started';
+  const labels: Record<RetailFulfillmentSafeSummary['arrangementStatus'], string> = {
+    not_started: 'Not started',
+    awaiting_customer_choice: 'Awaiting customer',
+    awaiting_human: 'Awaiting teammate',
+    arranged: 'Arranged',
+    completed: 'Completed',
+  };
+  return labels[summary.arrangementStatus];
 }
 
 function money(cents?: number | null, currency = 'NGN') {
@@ -113,6 +152,15 @@ export default function ChatContextPanel(props: ChatContextPanelProps) {
       : null;
   }, [order]);
 
+  const fulfillment = useMemo(() => {
+    const metadata = order?.metadata && typeof order.metadata === 'object' ? order.metadata : null;
+    const parsed = RetailOrderFulfillmentContextSchema.safeParse(metadata?.retailFulfillment);
+    return parsed.success ? toSafeFulfillmentSummary(parsed.data) : props.retailFulfillment ?? null;
+  }, [order, props.retailFulfillment]);
+  const deliveryFeeCents = order
+    ? Number(order.delivery_fee_cents ?? NaN)
+    : props.retailFulfillment?.deliveryFeeCents;
+
   return (
     <aside className="hidden xl:flex xl:w-[340px] xl:flex-col xl:border-l xl:bg-white">
       <div className="border-b px-4 py-3">
@@ -162,6 +210,9 @@ export default function ChatContextPanel(props: ChatContextPanelProps) {
             <div className="mt-3 space-y-1 text-xs text-slate-500">
               <div>Payment: {order?.payment_status || 'not created yet'}</div>
               <div>Fulfillment: {order?.fulfillment_status || 'unfulfilled'}</div>
+              <div>Delivery method: {fulfillmentMethodLabel(fulfillment)}</div>
+              <div>Delivery fee: {fulfillmentFeeLabel(fulfillment, Number.isFinite(deliveryFeeCents) ? deliveryFeeCents : null)}</div>
+              <div>Arrangement: {arrangementLabel(fulfillment)}</div>
               <div>Items: {order?.items?.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || props.cartItemCount || 0}</div>
             </div>
             {paymentLink ? (

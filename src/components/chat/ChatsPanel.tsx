@@ -58,6 +58,17 @@ export default function ChatsPanel() {
       && Date.parse(activeChat.humanHandlingUntil) > Date.now()
     )
   );
+  const needsFulfillmentHandoff = activeChat?.retailFulfillment?.arrangementStatus === 'awaiting_human'
+    || activeChat?.journeyStage === 'awaiting_fulfillment_handoff';
+  const fulfillmentProvider = activeChat?.retailFulfillment?.provider === 'bolt'
+    ? 'Bolt delivery'
+    : activeChat?.retailFulfillment?.provider === 'indrive'
+      ? 'inDrive delivery'
+      : activeChat?.retailFulfillment?.method === 'own_dispatch'
+        ? 'business dispatch'
+        : activeChat?.retailFulfillment?.method === 'customer_pickup'
+          ? 'customer pickup'
+          : 'delivery arrangement';
 
   const handleSelect = useCallback((id: string) => setActiveId(id), [setActiveId]);
   const handleSend = useCallback(async (text: string) => { await send(text); }, [send]);
@@ -310,6 +321,14 @@ export default function ChatsPanel() {
               {chatOpsError}
             </div>
           ) : null}
+          {activeChat && needsFulfillmentHandoff ? (
+            <div className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 xl:hidden">
+              <div className="font-semibold">Delivery needs a teammate</div>
+              <div className="mt-0.5">
+                Payment and order status are preserved while you confirm {fulfillmentProvider}.
+              </div>
+            </div>
+          ) : null}
           <div className="flex-1 overflow-y-auto p-4" aria-live="polite">
             <ChatThread
               messages={messages.filter((m) => m.chatId === activeId)}
@@ -338,6 +357,7 @@ export default function ChatsPanel() {
               orderId={activeChat.orderId}
               cartItemCount={activeChat.cartItemCount}
               orderTotalCents={activeChat.orderTotalCents}
+              retailFulfillment={activeChat.retailFulfillment}
             />
           ) : null}
         </div>

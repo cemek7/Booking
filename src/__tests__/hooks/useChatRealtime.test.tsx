@@ -1,6 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useChatRealtime, type ChatSummary, type ChatMessage } from '@/hooks/useChatRealtime';
+import { useChatRealtime } from '@/hooks/useChatRealtime';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
 // Mock fetch
@@ -25,7 +25,7 @@ jest.mock('@/lib/supabase/client', () => ({
   getSupabaseBrowserClientAsync: jest.fn(async () => mockSupabase),
 }));
 
-import { getBrowserSupabase, getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getBrowserSupabase } from '@/lib/supabase/client';
 const mockGetBrowserSupabase = getBrowserSupabase as jest.MockedFunction<typeof getBrowserSupabase>;
 
 describe('useChatRealtime', () => {
@@ -38,7 +38,8 @@ describe('useChatRealtime', () => {
   const mockFromTable = (
     chatsData: MockRow[] | { error: unknown; data: null } = [],
     messagesData: MockRow[] = [],
-    conversationsData: MockRow[] = []
+    conversationsData: MockRow[] = [],
+    retailOrdersData: MockRow[] = [],
   ) => {
     mockSupabase.from.mockImplementation((table: string) => {
       if (table === 'chats') {
@@ -64,6 +65,13 @@ describe('useChatRealtime', () => {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
           in: jest.fn().mockResolvedValue({ data: conversationsData, error: null }),
+        };
+      }
+      if (table === 'retail_orders') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          in: jest.fn().mockResolvedValue({ data: retailOrdersData, error: null }),
         };
       }
       return {};
@@ -94,6 +102,8 @@ describe('useChatRealtime', () => {
       if (table === 'chats') {
         chain.limit.mockResolvedValue({ data: [], error: null });
       } else if (table === 'whatsapp_conversations') {
+        chain.in.mockResolvedValue({ data: [], error: null });
+      } else if (table === 'retail_orders') {
         chain.in.mockResolvedValue({ data: [], error: null });
       } else {
         chain.order.mockResolvedValue({ data: [], error: null });
@@ -230,6 +240,58 @@ describe('useChatRealtime', () => {
       });
 
       expect(result.current.chats[0]?.channel).toBe('instagram');
+    });
+
+    it('projects explicit holds and a bounded fulfillment summary without the delivery address', async () => {
+      mockFromTable(
+        [{
+          id: 'chat-retail-1',
+          last_message_at: '2026-09-30T10:00:00Z',
+          session_id: null,
+          customer_phone: '+2348000000000',
+          metadata: {
+            channel: 'whatsapp',
+            journey: { type: 'retail', orderId: 'order-1', stage: 'awaiting_fulfillment_handoff' },
+          },
+        }],
+        [],
+        [{
+          external_id: '+2348000000000',
+          channel: 'whatsapp',
+          flow_data: { human_handling_mode: 'until_released' },
+        }],
+        [{
+          id: 'order-1',
+          fulfillment_status: 'unfulfilled',
+          delivery_fee_cents: null,
+          metadata: { retailFulfillment: {
+            method: 'third_party_manual',
+            provider: 'bolt',
+            deliveryAddress: 'Private address',
+            serviceArea: 'Lekki',
+            feeStatus: 'quote_required',
+            deliveryFeeCents: null,
+            arrangementStatus: 'awaiting_human',
+            arrangementNote: null,
+            conversationThreadId: null,
+          } },
+        }],
+      );
+
+      const { result } = renderHook(() => useChatRealtime('tenant-123'));
+
+      await waitFor(() => expect(result.current.chats).toHaveLength(1));
+      expect(result.current.chats[0]).toMatchObject({
+        humanHandlingMode: 'until_released',
+        humanHandlingUntil: null,
+        retailFulfillment: {
+          method: 'third_party_manual',
+          provider: 'bolt',
+          feeStatus: 'quote_required',
+          arrangementStatus: 'awaiting_human',
+        },
+      });
+      expect(JSON.stringify(result.current.chats[0].retailFulfillment)).not.toContain('Private address');
     });
 
     it('should use customer_phone as subject when no metadata', async () => {
@@ -705,6 +767,26 @@ describe('useChatRealtime', () => {
     });
   });
 
+  describe('Release Function', () => {
+    it('posts the release and reloads canonical chat state', async () => {
+      const { result } = renderHook(() => useChatRealtime('tenant-123'));
+      await waitFor(() => expect(mockSupabase.from).toHaveBeenCalledWith('chats'));
+      const loadsBeforeRelease = mockSupabase.from.mock.calls.filter(([table]) => table === 'chats').length;
+
+      act(() => result.current.setActiveId('chat-1'));
+      await act(async () => {
+        await result.current.release();
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/chats/chat-1/release', {
+        method: 'POST',
+        headers: { 'x-tenant-id': 'tenant-123' },
+      });
+      const loadsAfterRelease = mockSupabase.from.mock.calls.filter(([table]) => table === 'chats').length;
+      expect(loadsAfterRelease).toBeGreaterThan(loadsBeforeRelease);
+    });
+  });
+
   describe('Unread Count Management', () => {
     it('should reset unread count when chat is opened', async () => {
       (global.fetch as jest.Mock).mockResolvedValue({
@@ -766,7 +848,7 @@ describe('useChatRealtime', () => {
     it('should unsubscribe from channels on unmount', () => {
       const { unmount } = renderHook(() => useChatRealtime('tenant-123'));
 
-      const channel = mockSupabase.channel('rt-chats-tenant-123');
+      mockSupabase.channel('rt-chats-tenant-123');
 
       unmount();
 

@@ -48,6 +48,17 @@ describe('ChatContextPanel', () => {
               payment: {
                 url: 'https://pay.example/order-1',
               },
+              retailFulfillment: {
+                method: 'third_party_manual',
+                provider: 'bolt',
+                deliveryAddress: 'Private address must not be rendered',
+                serviceArea: 'Lekki',
+                feeStatus: 'quote_required',
+                deliveryFeeCents: null,
+                arrangementStatus: 'awaiting_human',
+                arrangementNote: null,
+                conversationThreadId: null,
+              },
             },
             items: [
               {
@@ -77,6 +88,32 @@ describe('ChatContextPanel', () => {
     expect(screen.getByText(/bridal package/i)).toBeInTheDocument();
     expect(screen.getByText(/₦1,250/)).toBeInTheDocument();
     expect(screen.getByText(/Payment link ready:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Delivery method: Bolt delivery/i)).toBeInTheDocument();
+    expect(screen.getByText(/Delivery fee: Awaiting quote/i)).toBeInTheDocument();
+    expect(screen.getByText(/Arrangement: Awaiting teammate/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Private address must not be rendered/i)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Open orders workspace/i })).toBeInTheDocument();
+  });
+
+  it('renders safely when an order has no fulfillment context', async () => {
+    authGet.mockResolvedValue({
+      status: 200,
+      data: {
+        data: {
+          id: 'order-2',
+          status: 'draft',
+          payment_status: 'unpaid',
+          fulfillment_status: 'unfulfilled',
+          currency: 'NGN',
+          total_cents: 0,
+          metadata: null,
+          items: [],
+        },
+      },
+    });
+
+    render(<ChatContextPanel journeyType="retail" orderId="order-2" />);
+
+    expect(await screen.findByText(/Delivery method: Not selected/i)).toBeInTheDocument();
   });
 });

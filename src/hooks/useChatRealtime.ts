@@ -10,6 +10,11 @@ import {
   type ChatSupportStatus,
 } from '@/lib/chats/operations';
 import { authGet } from '@/lib/auth/auth-api-client';
+import {
+  RetailOrderFulfillmentContextSchema,
+  toSafeFulfillmentSummary,
+  type RetailFulfillmentSafeSummary,
+} from '@/lib/commerce/retail-fulfillment';
 
 export type ChatSummary = {
   id: string;
@@ -30,6 +35,10 @@ export type ChatSummary = {
   orderId?: string | null;
   cartItemCount?: number;
   orderTotalCents?: number | null;
+  retailFulfillment?: (RetailFulfillmentSafeSummary & {
+    fulfillmentStatus: string;
+    deliveryFeeCents: number | null;
+  }) | null;
 };
 export type ChatAssigneeOption = {
   id: string;
@@ -93,6 +102,13 @@ interface ConversationRow {
   } | null;
 }
 
+interface RetailOrderRow {
+  id: string;
+  fulfillment_status: string;
+  delivery_fee_cents: number | null;
+  metadata: Record<string, unknown> | null;
+}
+
 export function useChatRealtime(tenantId: string | null | undefined) {
   // Use the ASYNC browser client. The sync getSupabaseBrowserClient() returns a
   // proxy without realtime when Supabase config comes from runtime (not build)
@@ -115,6 +131,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
   const msgChannel = useRef<RealtimeChannel | null>(null);
   const chatChannel = useRef<RealtimeChannel | null>(null);
+  const orderChannel = useRef<RealtimeChannel | null>(null);
   const pendingSendKeys = useRef(new Map<string, string>());
 
   const loadChats = useCallback(async () => {
@@ -164,9 +181,33 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         }
       }
 
+      const journeyByChatId = new Map(rows.map((row) => [row.id, getChatJourneyState(row.metadata ?? null)]));
+      const orderIds = [...new Set(
+        [...journeyByChatId.values()]
+          .map((journey) => journey.orderId)
+          .filter((orderId): orderId is string => typeof orderId === 'string' && orderId.length > 0)
+      )];
+      const fulfillmentByOrderId = new Map<string, ChatSummary['retailFulfillment']>();
+      if (orderIds.length > 0) {
+        const { data: orders } = await supabase
+          .from('retail_orders')
+          .select('id,fulfillment_status,delivery_fee_cents,metadata')
+          .eq('tenant_id', tenantId)
+          .in('id', orderIds);
+        for (const order of (orders || []) as RetailOrderRow[]) {
+          const metadata = order.metadata && typeof order.metadata === 'object' ? order.metadata : {};
+          const parsed = RetailOrderFulfillmentContextSchema.safeParse(metadata.retailFulfillment);
+          fulfillmentByOrderId.set(order.id, parsed.success ? {
+            ...toSafeFulfillmentSummary(parsed.data),
+            fulfillmentStatus: order.fulfillment_status,
+            deliveryFeeCents: order.delivery_fee_cents,
+          } : null);
+        }
+      }
+
       const mapped: ChatSummary[] = rows.map((row) => {
         const support = getChatSupportState(row.metadata ?? null);
-        const journey = getChatJourneyState(row.metadata ?? null);
+        const journey = journeyByChatId.get(row.id) ?? getChatJourneyState(row.metadata ?? null);
 
         return {
           ...support,
@@ -189,9 +230,12 @@ export function useChatRealtime(tenantId: string | null | undefined) {
           orderId: journey.orderId,
           cartItemCount: journey.cartItemCount,
           orderTotalCents: journey.orderTotalCents,
+          retailFulfillment: journey.orderId
+            ? fulfillmentByOrderId.get(journey.orderId) ?? null
+            : null,
         };
       });
-      setChats(mapped.map(c => ({ ...c, unread: unreadMap[c.id] ?? c.unread ?? 0 })));
+      setChats(mapped);
     } finally { setLoading(false); }
   }, [supabase, tenantId]);
 
@@ -285,6 +329,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
             channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
             unread: prev[idx]?.unread ?? 0,
             humanHandlingUntil: prev[idx]?.humanHandlingUntil ?? null,
+            humanHandlingMode: prev[idx]?.humanHandlingMode ?? null,
             journeyType: journey.type,
             journeyStage: journey.stage,
             leadId: journey.leadId,
@@ -292,6 +337,7 @@ export function useChatRealtime(tenantId: string | null | undefined) {
             orderId: journey.orderId,
             cartItemCount: journey.cartItemCount,
             orderTotalCents: journey.orderTotalCents,
+            retailFulfillment: prev[idx]?.retailFulfillment ?? null,
           };
           if (idx === -1) return [updated, ...prev];
           const next = prev.slice();
@@ -307,9 +353,19 @@ export function useChatRealtime(tenantId: string | null | undefined) {
       })
       .subscribe();
     chatChannel.current = ch;
+    orderChannel.current?.unsubscribe();
+    const orders = supabase.channel(`rt-chat-orders-${tenantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'retail_orders', filter: `tenant_id=eq.${tenantId}` }, () => {
+        void loadChats();
+      })
+      .subscribe();
+    orderChannel.current = orders;
     loadChats();
     void loadAssignees();
-    return () => { ch.unsubscribe(); };
+    return () => {
+      ch.unsubscribe();
+      orders.unsubscribe();
+    };
   }, [supabase, tenantId, loadChats, loadAssignees, activeId]);
 
   // Subscribe to messages for active chat

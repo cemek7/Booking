@@ -227,3 +227,5 @@ export function toSafeFulfillmentSummary(context: RetailOrderFulfillmentContext)
     arrangementStatus: context.arrangementStatus,
   };
 }
+
+export type RetailFulfillmentSafeSummary = ReturnType<typeof toSafeFulfillmentSummary>;
