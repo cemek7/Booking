@@ -9,6 +9,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 type RetailOrderStatus = 'draft' | 'pending_payment' | 'paid' | 'cancelled' | 'fulfilled';
 type RetailPaymentStatus = 'unpaid' | 'pending' | 'paid' | 'failed' | 'refunded';
 type RetailFulfillmentStatus = 'unfulfilled' | 'preparing' | 'fulfilled' | 'cancelled';
+type RetailFulfillmentMethod = 'customer_pickup' | 'own_dispatch' | 'third_party_manual';
+type RetailFulfillmentProvider = 'bolt' | 'indrive' | 'other';
+
+type FulfillmentContext = {
+  method?: RetailFulfillmentMethod | null;
+  provider?: RetailFulfillmentProvider | null;
+  deliveryAddress?: string | null;
+  serviceArea?: string | null;
+  feeStatus?: string | null;
+  deliveryFeeCents?: number | null;
+  arrangementStatus?: string | null;
+  arrangementNote?: string | null;
+};
 
 type RetailOrderRow = {
   id: string;
@@ -84,6 +97,10 @@ export default function RetailOrdersWorkspace() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fulfillmentMethod, setFulfillmentMethod] = useState<RetailFulfillmentMethod>('customer_pickup');
+  const [fulfillmentProvider, setFulfillmentProvider] = useState<RetailFulfillmentProvider>('bolt');
+  const [deliveryFeeNaira, setDeliveryFeeNaira] = useState('0');
+  const [fulfillmentNote, setFulfillmentNote] = useState('');
 
   const refreshOrders = useCallback(async () => {
     setLoading(true);
@@ -99,7 +116,14 @@ export default function RetailOrdersWorkspace() {
       if (response.error) throw new Error(response.error.message);
       const nextOrders = response.data?.data ?? [];
       setOrders(nextOrders);
-      setActiveOrderId((current) => (current && nextOrders.some((order) => order.id === current) ? current : nextOrders[0]?.id ?? null));
+      const requestedOrderId = typeof window === 'undefined'
+        ? null
+        : new URLSearchParams(window.location.search).get('order');
+      setActiveOrderId((current) => {
+        if (current && nextOrders.some((order) => order.id === current)) return current;
+        if (requestedOrderId && nextOrders.some((order) => order.id === requestedOrderId)) return requestedOrderId;
+        return nextOrders[0]?.id ?? null;
+      });
     } catch (err) {
       setOrders([]);
       setError(err instanceof Error ? err.message : 'Failed to load retail orders');
@@ -145,6 +169,22 @@ export default function RetailOrdersWorkspace() {
       : null;
   }, [activeOrder]);
 
+  const fulfillmentContext = useMemo(() => {
+    const value = activeOrder?.metadata?.retailFulfillment;
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as FulfillmentContext
+      : null;
+  }, [activeOrder]);
+  const fulfillmentNeedsAttention = fulfillmentContext?.arrangementStatus === 'awaiting_human';
+
+  useEffect(() => {
+    if (!activeOrder) return;
+    setFulfillmentMethod(fulfillmentContext?.method ?? 'customer_pickup');
+    setFulfillmentProvider(fulfillmentContext?.provider ?? 'bolt');
+    setDeliveryFeeNaira(String(Math.max(0, Number(fulfillmentContext?.deliveryFeeCents ?? 0)) / 100));
+    setFulfillmentNote(fulfillmentContext?.arrangementNote ?? '');
+  }, [activeOrder, fulfillmentContext]);
+
   const runAction = useCallback(async (action: 'mark_paid' | 'mark_pending_payment' | 'mark_preparing' | 'mark_fulfilled' | 'mark_cancelled' | 'mark_refunded') => {
     if (!activeOrderId) return;
     setSaving(true);
@@ -171,11 +211,42 @@ export default function RetailOrdersWorkspace() {
       await refreshOrders();
       await loadOrder(activeOrderId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate payment link');
+      const message = err instanceof Error ? err.message : 'Failed to generate payment link';
+      await loadOrder(activeOrderId);
+      setError(message);
     } finally {
       setSaving(false);
     }
   }, [activeOrderId, loadOrder, refreshOrders]);
+
+  const confirmFulfillment = useCallback(async () => {
+    if (!activeOrderId || saving) return;
+    const naira = Number(deliveryFeeNaira);
+    if (!Number.isFinite(naira) || naira < 0 || Math.round(naira * 100) !== naira * 100) {
+      setError('Enter a valid delivery fee with no more than two decimal places.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await authPost<{ data: { paymentUrl: string | null } }>(
+        `/api/retail/orders/${activeOrderId}/fulfillment`,
+        {
+          method: fulfillmentMethod,
+          provider: fulfillmentMethod === 'third_party_manual' ? fulfillmentProvider : null,
+          deliveryFeeCents: fulfillmentMethod === 'customer_pickup' ? 0 : Math.round(naira * 100),
+          note: fulfillmentNote.trim() || null,
+        },
+      );
+      if (response.error) throw new Error(response.error.message);
+      await refreshOrders();
+      await loadOrder(activeOrderId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to confirm delivery arrangement');
+    } finally {
+      setSaving(false);
+    }
+  }, [activeOrderId, deliveryFeeNaira, fulfillmentMethod, fulfillmentNote, fulfillmentProvider, loadOrder, refreshOrders, saving]);
 
   const copyPaymentLink = useCallback(async () => {
     if (!paymentLink) return;
@@ -301,11 +372,78 @@ export default function RetailOrdersWorkspace() {
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
+                  {fulfillmentNeedsAttention ? (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 md:col-span-2">
+                      <div className="text-sm font-semibold text-amber-950">Delivery needs your confirmation</div>
+                      <p className="mt-1 text-sm text-amber-900">
+                        Confirm the method and final fee before Booka collects payment or resumes AI replies.
+                      </p>
+                      <dl className="mt-3 grid gap-2 text-sm text-amber-950 sm:grid-cols-2">
+                        <div><dt className="font-medium">Delivery address</dt><dd className="break-words">{fulfillmentContext?.deliveryAddress || 'Not provided'}</dd></div>
+                        <div><dt className="font-medium">Service area</dt><dd>{fulfillmentContext?.serviceArea || 'Not selected'}</dd></div>
+                      </dl>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1 text-sm font-medium text-amber-950">
+                          Fulfillment method
+                          <select
+                            className="min-h-11 rounded border border-amber-300 bg-white px-3 py-2 text-slate-900"
+                            value={fulfillmentMethod}
+                            onChange={(event) => setFulfillmentMethod(event.target.value as RetailFulfillmentMethod)}
+                            disabled={saving}
+                          >
+                            <option value="customer_pickup">Customer pickup</option>
+                            <option value="own_dispatch">Our dispatch</option>
+                            <option value="third_party_manual">Arrange Bolt / inDrive / other</option>
+                          </select>
+                        </label>
+                        {fulfillmentMethod === 'third_party_manual' ? (
+                          <label className="grid gap-1 text-sm font-medium text-amber-950">
+                            Delivery provider
+                            <select
+                              className="min-h-11 rounded border border-amber-300 bg-white px-3 py-2 text-slate-900"
+                              value={fulfillmentProvider}
+                              onChange={(event) => setFulfillmentProvider(event.target.value as RetailFulfillmentProvider)}
+                              disabled={saving}
+                            >
+                              <option value="bolt">Bolt</option>
+                              <option value="indrive">inDrive</option>
+                              <option value="other">Other</option>
+                            </select>
+                          </label>
+                        ) : null}
+                        {fulfillmentMethod !== 'customer_pickup' ? (
+                          <label className="grid gap-1 text-sm font-medium text-amber-950">
+                            Final delivery fee (₦)
+                            <input
+                              className="min-h-11 rounded border border-amber-300 bg-white px-3 py-2 text-slate-900"
+                              inputMode="decimal"
+                              value={deliveryFeeNaira}
+                              onChange={(event) => setDeliveryFeeNaira(event.target.value)}
+                              disabled={saving}
+                            />
+                          </label>
+                        ) : null}
+                        <label className="grid gap-1 text-sm font-medium text-amber-950 sm:col-span-2">
+                          Arrangement note (optional)
+                          <textarea
+                            className="min-h-20 rounded border border-amber-300 bg-white px-3 py-2 text-slate-900"
+                            maxLength={500}
+                            value={fulfillmentNote}
+                            onChange={(event) => setFulfillmentNote(event.target.value)}
+                            disabled={saving}
+                          />
+                        </label>
+                      </div>
+                      <Button className="mt-4 min-h-11" onClick={() => void confirmFulfillment()} disabled={saving}>
+                        {saving ? 'Confirming…' : 'Confirm delivery and continue'}
+                      </Button>
+                    </div>
+                  ) : null}
                   <div className="rounded-lg border bg-slate-50 p-4">
                     <div className="text-xs uppercase tracking-wide text-slate-500">Payment link</div>
                     <div className="mt-2 break-all text-sm text-slate-700">{paymentLink || 'No payment link generated yet.'}</div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => void generatePaymentLink()} disabled={saving || activeOrder.payment_status === 'paid'}>
+                      <Button size="sm" onClick={() => void generatePaymentLink()} disabled={saving || activeOrder.payment_status === 'paid' || fulfillmentNeedsAttention}>
                         Generate payment link
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => void copyPaymentLink()} disabled={!paymentLink}>
@@ -316,10 +454,10 @@ export default function RetailOrdersWorkspace() {
                   <div className="rounded-lg border bg-slate-50 p-4">
                     <div className="text-xs uppercase tracking-wide text-slate-500">Workflow</div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => void runAction('mark_pending_payment')} disabled={saving || activeOrder.payment_status === 'paid'}>
+                      <Button size="sm" variant="outline" onClick={() => void runAction('mark_pending_payment')} disabled={saving || activeOrder.payment_status === 'paid' || fulfillmentNeedsAttention}>
                         Pending payment
                       </Button>
-                      <Button size="sm" onClick={() => void runAction('mark_paid')} disabled={saving || activeOrder.payment_status === 'paid'}>
+                      <Button size="sm" onClick={() => void runAction('mark_paid')} disabled={saving || activeOrder.payment_status === 'paid' || fulfillmentNeedsAttention}>
                         Mark paid
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => void runAction('mark_preparing')} disabled={saving || activeOrder.payment_status !== 'paid'}>

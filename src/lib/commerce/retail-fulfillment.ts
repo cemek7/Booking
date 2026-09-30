@@ -87,6 +87,7 @@ export const RetailOrderFulfillmentContextSchema = z.object({
     'arranged',
     'completed',
   ]),
+  arrangementNote: z.string().trim().max(500).nullable().optional(),
   conversationThreadId: z.string().uuid().nullable(),
 }).strict();
 
@@ -101,6 +102,7 @@ export function emptyRetailOrderFulfillmentContext(): RetailOrderFulfillmentCont
     feeStatus: 'not_required',
     deliveryFeeCents: null,
     arrangementStatus: 'not_started',
+    arrangementNote: null,
     conversationThreadId: null,
   };
 }
