@@ -4,6 +4,7 @@ import { parseJsonBody } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { auditSuperadminAction } from '@/types/unified-permissions';
 import { normalizeBusinessHours } from '@/lib/booking/businessHours';
+import { RetailFulfillmentSettingsSchema } from '@/lib/commerce/retail-fulfillment';
 import { z } from 'zod';
 
 const DayHoursSchema = z.object({
@@ -103,6 +104,7 @@ const SettingsSchemaBase = z.object({
   escalationRules: z.array(z.string().min(1)).optional(),
   bookingSources: z.array(z.string().min(1)).optional(),
   commercialMotion: z.enum(['booking', 'sales', 'hybrid', 'enquiry']).optional(),
+  retailFulfillment: RetailFulfillmentSettingsSchema.optional(),
   notificationPreferences: z.object({
     newBookings: z.boolean().optional(),
     cancellations: z.boolean().optional(),
