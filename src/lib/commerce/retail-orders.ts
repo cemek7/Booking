@@ -11,7 +11,10 @@ import {
   emptyRetailOrderFulfillmentContext,
   resolveRetailFulfillment,
 } from '@/lib/commerce/retail-fulfillment';
-import { resolveRetailFulfillmentRollout } from '@/lib/commerce/retail-fulfillment-rollout';
+import {
+  recordRetailFulfillmentDecision,
+  resolveRetailFulfillmentRollout,
+} from '@/lib/commerce/retail-fulfillment-rollout';
 import { createRetailFulfillmentEscalation } from '@/lib/commerce/retail-fulfillment-escalation';
 
 type ProductSnapshot = {
@@ -441,7 +444,7 @@ export async function createRetailOrderPaymentLink(input: {
     tenantSettings,
   });
 
-  if (rolloutMode === 'live') {
+  if (rolloutMode !== 'off') {
     const parsedContext = RetailOrderFulfillmentContextSchema.safeParse(workingMetadata.retailFulfillment);
     const context = parsedContext.success
       ? parsedContext.data
@@ -449,65 +452,74 @@ export async function createRetailOrderPaymentLink(input: {
     const parsedSettings = RetailFulfillmentSettingsSchema.safeParse(tenantSettings.retailFulfillment);
     const settings = parsedSettings.success ? parsedSettings.data : null;
     const decision = resolveRetailFulfillment({ settings, context });
+    await recordRetailFulfillmentDecision({
+      mode: rolloutMode,
+      surface: 'payment_link',
+      status: decision.status,
+      reasonCode: decision.reasonCode,
+      provider: context.provider,
+    });
 
-    if (decision.status === 'awaiting_human' && decision.reasonCode) {
-      const handoffContext = { ...context, arrangementStatus: 'awaiting_human' as const };
-      workingMetadata = { ...workingMetadata, retailFulfillment: handoffContext };
-      const { error: contextError } = await admin.from('retail_orders').update({
+    if (rolloutMode === 'live') {
+      if (decision.status === 'awaiting_human' && decision.reasonCode) {
+        const handoffContext = { ...context, arrangementStatus: 'awaiting_human' as const };
+        workingMetadata = { ...workingMetadata, retailFulfillment: handoffContext };
+        const { error: contextError } = await admin.from('retail_orders').update({
+          metadata: workingMetadata,
+          updated_at: new Date().toISOString(),
+        }).eq('tenant_id', order.tenant_id).eq('id', order.id);
+        if (contextError) throw new Error(`Failed to store retail fulfillment context: ${contextError.message}`);
+
+        await createRetailFulfillmentEscalation({
+          tenantId: order.tenant_id,
+          orderId: order.id,
+          reasonCode: decision.reasonCode,
+          context: handoffContext,
+        });
+        await updateChatJourneyForOrder(order, {
+          type: 'retail',
+          stage: 'awaiting_fulfillment_handoff',
+          orderId: order.id,
+          orderTotalCents: effectiveTotalCents,
+        });
+        throw new Error('Delivery arrangement needs a teammate before payment can be collected');
+      }
+
+      if (decision.status === 'awaiting_customer') {
+        await updateChatJourneyForOrder(order, {
+          type: 'retail',
+          stage: 'awaiting_fulfillment_details',
+          orderId: order.id,
+          orderTotalCents: effectiveTotalCents,
+        });
+        throw new Error('Delivery details must be completed before payment can be collected');
+      }
+
+      const deliveryFeeCents = Number(decision.deliveryFeeCents ?? 0);
+      const method = context.method ?? (settings?.methods.length === 1 ? settings.methods[0] : null);
+      const readyContext = {
+        ...context,
+        method,
+        feeStatus: method === 'customer_pickup' || settings?.feePolicy === 'included'
+          ? 'not_required' as const
+          : 'known' as const,
+        deliveryFeeCents,
+        arrangementStatus: 'arranged' as const,
+      };
+      effectiveTotalCents = Math.max(
+        0,
+        Number(order.subtotal_cents ?? 0) + deliveryFeeCents - Number(order.discount_cents ?? 0),
+      );
+      workingMetadata = { ...workingMetadata, retailFulfillment: readyContext };
+      const { error: fulfillmentError } = await admin.from('retail_orders').update({
+        delivery_fee_cents: deliveryFeeCents,
+        total_cents: effectiveTotalCents,
         metadata: workingMetadata,
         updated_at: new Date().toISOString(),
       }).eq('tenant_id', order.tenant_id).eq('id', order.id);
-      if (contextError) throw new Error(`Failed to store retail fulfillment context: ${contextError.message}`);
-
-      await createRetailFulfillmentEscalation({
-        tenantId: order.tenant_id,
-        orderId: order.id,
-        reasonCode: decision.reasonCode,
-        context: handoffContext,
-      });
-      await updateChatJourneyForOrder(order, {
-        type: 'retail',
-        stage: 'awaiting_fulfillment_handoff',
-        orderId: order.id,
-        orderTotalCents: effectiveTotalCents,
-      });
-      throw new Error('Delivery arrangement needs a teammate before payment can be collected');
-    }
-
-    if (decision.status === 'awaiting_customer') {
-      await updateChatJourneyForOrder(order, {
-        type: 'retail',
-        stage: 'awaiting_fulfillment_details',
-        orderId: order.id,
-        orderTotalCents: effectiveTotalCents,
-      });
-      throw new Error('Delivery details must be completed before payment can be collected');
-    }
-
-    const deliveryFeeCents = Number(decision.deliveryFeeCents ?? 0);
-    const method = context.method ?? (settings?.methods.length === 1 ? settings.methods[0] : null);
-    const readyContext = {
-      ...context,
-      method,
-      feeStatus: method === 'customer_pickup' || settings?.feePolicy === 'included'
-        ? 'not_required' as const
-        : 'known' as const,
-      deliveryFeeCents,
-      arrangementStatus: 'arranged' as const,
-    };
-    effectiveTotalCents = Math.max(
-      0,
-      Number(order.subtotal_cents ?? 0) + deliveryFeeCents - Number(order.discount_cents ?? 0),
-    );
-    workingMetadata = { ...workingMetadata, retailFulfillment: readyContext };
-    const { error: fulfillmentError } = await admin.from('retail_orders').update({
-      delivery_fee_cents: deliveryFeeCents,
-      total_cents: effectiveTotalCents,
-      metadata: workingMetadata,
-      updated_at: new Date().toISOString(),
-    }).eq('tenant_id', order.tenant_id).eq('id', order.id);
-    if (fulfillmentError) {
-      throw new Error(`Failed to apply retail fulfillment: ${fulfillmentError.message}`);
+      if (fulfillmentError) {
+        throw new Error(`Failed to apply retail fulfillment: ${fulfillmentError.message}`);
+      }
     }
   }
 

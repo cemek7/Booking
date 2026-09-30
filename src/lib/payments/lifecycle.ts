@@ -23,7 +23,10 @@ import {
   emptyRetailOrderFulfillmentContext,
   resolveRetailFulfillment,
 } from '@/lib/commerce/retail-fulfillment';
-import { resolveRetailFulfillmentRollout } from '@/lib/commerce/retail-fulfillment-rollout';
+import {
+  recordRetailFulfillmentDecision,
+  resolveRetailFulfillmentRollout,
+} from '@/lib/commerce/retail-fulfillment-rollout';
 import { createRetailFulfillmentEscalation } from '@/lib/commerce/retail-fulfillment-escalation';
 
 // ===============================
@@ -1575,13 +1578,20 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
       : {};
     rolloutMode = resolveRetailFulfillmentRollout({ globalMode: configuredMode, tenantSettings });
   }
-  if (rolloutMode === 'live') {
+  if (rolloutMode !== 'off') {
     const settingsResult = RetailFulfillmentSettingsSchema.safeParse(tenantSettings.retailFulfillment);
     const decision = resolveRetailFulfillment({
       settings: settingsResult.success ? settingsResult.data : null,
       context,
     });
-    if (decision.status !== 'ready') {
+    await recordRetailFulfillmentDecision({
+      mode: rolloutMode,
+      surface: 'payment_webhook',
+      status: decision.status,
+      reasonCode: decision.reasonCode,
+      provider: context.provider,
+    });
+    if (rolloutMode === 'live' && decision.status !== 'ready') {
       const handoffContext = { ...context, arrangementStatus: 'awaiting_human' as const };
       const { error: contextError } = await lifecycleSupabase.from('retail_orders').update({
         metadata: { ...metadata, retailFulfillment: handoffContext },

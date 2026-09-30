@@ -29,6 +29,11 @@ jest.mock('@/lib/commerce/retail-fulfillment-escalation', () => ({
   createRetailFulfillmentEscalation: (...args: unknown[]) => mockCreateFulfillmentEscalation(...args),
 }));
 
+const mockRecordBusinessMetric = jest.fn();
+jest.mock('@/lib/observability', () => ({
+  observability: { recordBusinessMetric: (...args: unknown[]) => mockRecordBusinessMetric(...args) },
+}));
+
 const mockGetConversation = jest.fn();
 const mockUpdateConversation = jest.fn();
 jest.mock('@/lib/whatsapp/v2/conversationState', () => ({
@@ -125,6 +130,7 @@ describe('retail payment lifecycle helpers', () => {
     mockRecordFrontDeskEvent.mockResolvedValue(undefined);
     mockRecordAttribution.mockResolvedValue(undefined);
     mockCreateFulfillmentEscalation.mockResolvedValue({ id: 'esc-1', status: 'pending' });
+    mockRecordBusinessMetric.mockResolvedValue(undefined);
     delete process.env.BOOKA_RETAIL_FULFILLMENT_MODE;
   });
 
@@ -246,6 +252,51 @@ describe('retail payment lifecycle helpers', () => {
     expect(mockSendTextMessage).not.toHaveBeenCalledWith(
       '+2348000000000',
       expect.stringContaining('order is now confirmed'),
+    );
+  });
+
+  it('observes unresolved post-payment fulfillment in shadow without creating a handoff', async () => {
+    process.env.BOOKA_RETAIL_FULFILLMENT_MODE = 'shadow';
+    const adminFrom = jest.fn((table: string) => {
+      if (table === 'tenants') {
+        return { select: jest.fn(() => ({ eq: jest.fn(() => ({ maybeSingle: jest.fn(async () => ({
+          data: { settings: {
+            retailFulfillment: {
+              methods: ['third_party_manual'], thirdPartyProviders: ['bolt'], serviceAreas: ['Lekki'], feePolicy: 'manual',
+            },
+          } }, error: null,
+        })) })) })) };
+      }
+      return { update: jest.fn(() => ({ eq: jest.fn(() => ({ eq: jest.fn(async () => ({ error: null })) })) })) };
+    });
+    mockCreateSupabaseAdminClient.mockReturnValue({ from: adminFrom });
+    mockTransitionRetailOrder.mockResolvedValue({
+      id: 'ord-1', tenant_id: 'tenant-1', total_cents: 185000, payment_status: 'paid',
+      status: 'paid', fulfillment_status: 'unfulfilled', external_customer_ref: '+2348000000000',
+      metadata: { retailFulfillment: {
+        method: 'third_party_manual', provider: 'bolt', deliveryAddress: 'Private address', serviceArea: 'Lekki',
+        feeStatus: 'quote_required', deliveryFeeCents: null, arrangementStatus: 'not_started',
+        arrangementNote: 'Private note', conversationThreadId: null,
+      } },
+    });
+
+    await handlePaymentSuccess({ tenantId: 'tenant-1', reference: 'ref-shadow', provider: 'paystack' });
+
+    expect(mockCreateFulfillmentEscalation).not.toHaveBeenCalled();
+    expect(adminFrom).not.toHaveBeenCalledWith('retail_orders');
+    expect(mockRecordBusinessMetric).toHaveBeenCalledWith(
+      'retail_fulfillment_decision_total',
+      1,
+      {
+        mode: 'shadow',
+        surface: 'payment_webhook',
+        status: 'awaiting_human',
+        reason: 'third_party_arrangement_required',
+        provider: 'bolt',
+      },
+    );
+    expect(JSON.stringify(mockRecordBusinessMetric.mock.calls)).not.toMatch(
+      /Private address|2348000000000|Private note|185000|ref-shadow/,
     );
   });
 

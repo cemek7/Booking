@@ -12,6 +12,11 @@ const fromTables: string[] = [];
 const updatePayloads: Array<{ table: string; payload: Record<string, unknown> }> = [];
 const mockCreateStandalonePaymentLink = jest.fn();
 const mockCreateFulfillmentEscalation = jest.fn();
+const mockRecordBusinessMetric = jest.fn();
+
+jest.mock('@/lib/observability', () => ({
+  observability: { recordBusinessMetric: (...args: unknown[]) => mockRecordBusinessMetric(...args) },
+}));
 
 const paidOrder = {
   id: 'ord-1',
@@ -109,6 +114,7 @@ describe('retail order inventory on mark_paid', () => {
     mockCreateFulfillmentEscalation.mockResolvedValue({ id: 'esc-1', status: 'pending' });
     mockUpdateChatJourney.mockResolvedValue(undefined);
     mockRecordAttribution.mockResolvedValue(undefined);
+    mockRecordBusinessMetric.mockResolvedValue(undefined);
     delete process.env.BOOKA_RETAIL_FULFILLMENT_MODE;
   });
 
@@ -139,6 +145,65 @@ describe('retail order inventory on mark_paid', () => {
     expect(mockUpdateChatJourney).toHaveBeenCalledWith(expect.objectContaining({
       patch: expect.objectContaining({ stage: 'awaiting_fulfillment_handoff' }),
     }));
+  });
+
+  it('observes an unselected shadow tenant without fulfillment mutations or handoff', async () => {
+    process.env.BOOKA_RETAIL_FULFILLMENT_MODE = 'shadow';
+    currentOrder = {
+      ...paidOrder,
+      payment_status: 'unpaid',
+      status: 'draft',
+      subtotal_cents: 185000,
+      discount_cents: 0,
+      delivery_fee_cents: 0,
+      metadata: {
+        retailFulfillment: {
+          method: 'third_party_manual', provider: 'bolt', deliveryAddress: 'Private address',
+          serviceArea: 'Lekki', feeStatus: 'quote_required', deliveryFeeCents: null,
+          arrangementStatus: 'not_started', arrangementNote: 'Private note', conversationThreadId: null,
+        },
+      },
+    };
+    currentTenant = {
+      metadata: {},
+      settings: {
+        retailFulfillment: {
+          methods: ['third_party_manual'], thirdPartyProviders: ['bolt'], serviceAreas: ['Lekki'],
+          feePolicy: 'manual',
+        },
+      },
+    };
+
+    await createRetailOrderPaymentLink({
+      tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
+    });
+
+    expect(mockCreateStandalonePaymentLink).toHaveBeenCalledWith(expect.objectContaining({
+      amount_minor_units: 185000,
+    }));
+    expect(mockCreateFulfillmentEscalation).not.toHaveBeenCalled();
+    expect(mockUpdateChatJourney).not.toHaveBeenCalledWith(expect.objectContaining({
+      patch: expect.objectContaining({ stage: expect.stringMatching(/fulfillment/) }),
+    }));
+    expect(updatePayloads.some(({ payload }) => (
+      'delivery_fee_cents' in payload
+      || 'total_cents' in payload
+      || JSON.stringify(payload).includes('awaiting_human')
+    ))).toBe(false);
+    expect(mockRecordBusinessMetric).toHaveBeenCalledWith(
+      'retail_fulfillment_decision_total',
+      1,
+      {
+        mode: 'shadow',
+        surface: 'payment_link',
+        status: 'awaiting_human',
+        reason: 'third_party_arrangement_required',
+        provider: 'bolt',
+      },
+    );
+    expect(JSON.stringify(mockRecordBusinessMetric.mock.calls)).not.toMatch(
+      /Private address|2348000000000|Private note|185000/,
+    );
   });
 
   it('applies a known fixed fee exactly once before creating the payment link', async () => {
