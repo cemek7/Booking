@@ -39,6 +39,16 @@ describe.each([migrationPath, releasePath])('retail fulfillment handoff schema: 
 });
 
 describe('retail fulfillment release verification', () => {
+  it('keeps verification state out of the constraint creation block', () => {
+    const sql = read(releasePath);
+    const constraintsBlock = sql.match(/DO \$constraints\$([\s\S]+?)\$constraints\$;/i)?.[1];
+
+    expect(constraintsBlock).toBeDefined();
+    expect(constraintsBlock).not.toMatch(/missing\s*:=/i);
+    expect((sql.match(/^BEGIN;$/gim) ?? [])).toHaveLength(1);
+    expect((sql.match(/^COMMIT;$/gim) ?? [])).toHaveLength(1);
+  });
+
   it('verifies constraints, index, RLS and readiness without ambiguous catalog references', () => {
     const sql = read(releasePath);
 

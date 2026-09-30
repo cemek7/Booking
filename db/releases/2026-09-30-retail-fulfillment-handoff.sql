@@ -22,18 +22,6 @@ BEGIN
     FROM pg_catalog.pg_constraint AS constraint_info
     WHERE constraint_info.conrelid = 'public.retail_orders'::regclass
       AND constraint_info.conname = 'retail_orders_tenant_id_id_key'
-      AND constraint_info.contype = 'u'
-      AND constraint_info.convalidated
-      AND pg_catalog.pg_get_constraintdef(constraint_info.oid) = 'UNIQUE (tenant_id, id)'
-  ) THEN
-    missing := array_append(missing, 'constraint:retail_orders_tenant_id_id_key');
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_catalog.pg_constraint AS constraint_info
-    WHERE constraint_info.conrelid = 'public.retail_orders'::regclass
-      AND constraint_info.conname = 'retail_orders_tenant_id_id_key'
   ) THEN
     ALTER TABLE public.retail_orders
       ADD CONSTRAINT retail_orders_tenant_id_id_key UNIQUE (tenant_id, id);
