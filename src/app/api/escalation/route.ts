@@ -30,7 +30,7 @@ export const GET = createHttpHandler(
 
     const { data, error } = await ctx.supabase
       .from('escalation_queue')
-      .select('id, customer_phone, session_id, reason, status, assigned_agent_id, conversation_snapshot, created_at')
+      .select('id, customer_phone, session_id, reason, reason_code, retail_order_id, status, assigned_agent_id, conversation_snapshot, created_at')
       .eq('tenant_id', tenantId)
       .eq('status', status)
       .order('created_at', { ascending: false })

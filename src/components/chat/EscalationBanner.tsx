@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { authGet, authPatch } from '@/lib/auth/auth-api-client';
 
 type Escalation = {
   id: string;
   customer_phone: string;
   reason: string;
+  reason_code?: string | null;
+  retail_order_id?: string | null;
 };
 
 interface EscalationBannerProps {
@@ -51,7 +54,7 @@ export default function EscalationBanner({ onOpenCustomer, onClaimed }: Escalati
     }
 
     setEscalations((current) => current.filter((item) => item.id !== escalation.id));
-    onOpenCustomer(escalation.customer_phone);
+    if (!escalation.retail_order_id) onOpenCustomer(escalation.customer_phone);
     await onClaimed?.();
   }, [onClaimed, onOpenCustomer]);
 
@@ -82,9 +85,17 @@ export default function EscalationBanner({ onOpenCustomer, onClaimed }: Escalati
             key={escalation.id}
             className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900"
           >
-            <div className="font-medium">{escalation.reason}</div>
-            <div className="text-amber-800">{escalation.customer_phone}</div>
-            <div className="mt-2">
+            <div className="font-medium">
+              {escalation.reason_code === 'retail_fulfillment'
+                ? 'Delivery needs attention'
+                : escalation.reason}
+            </div>
+            {escalation.retail_order_id ? (
+              <div className="mt-1 text-amber-800">Confirm the delivery method and fee before taking payment.</div>
+            ) : (
+              <div className="text-amber-800">{escalation.customer_phone}</div>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => void handleClaim(escalation)}
@@ -92,6 +103,14 @@ export default function EscalationBanner({ onOpenCustomer, onClaimed }: Escalati
               >
                 Claim
               </button>
+              {escalation.retail_order_id ? (
+                <Link
+                  href={`/dashboard/orders?order=${encodeURIComponent(escalation.retail_order_id)}`}
+                  className="rounded border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                >
+                  Open order
+                </Link>
+              ) : null}
             </div>
           </div>
         ))}

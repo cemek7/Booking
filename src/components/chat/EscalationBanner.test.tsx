@@ -43,4 +43,31 @@ describe('EscalationBanner', () => {
     expect(onOpenCustomer).toHaveBeenCalledWith('234');
     expect(onClaimed).toHaveBeenCalled();
   });
+
+  it('links a fulfillment handoff to its order without opening a fake chat', async () => {
+    authGet.mockResolvedValue({
+      status: 200,
+      data: {
+        escalations: [{
+          id: 'e-order',
+          customer_phone: 'retail-order:order-1',
+          reason: 'Delivery arrangement needs a teammate',
+          reason_code: 'retail_fulfillment',
+          retail_order_id: 'order-1',
+        }],
+      },
+    });
+    const onOpenCustomer = jest.fn<(customerPhone: string) => void>();
+
+    render(<EscalationBanner onOpenCustomer={onOpenCustomer} />);
+
+    expect(await screen.findByText('Delivery needs attention')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /open order/i })).toHaveAttribute(
+      'href',
+      '/dashboard/orders?order=order-1',
+    );
+    fireEvent.click(screen.getByRole('button', { name: /claim/i }));
+    await waitFor(() => expect(authPatch).toHaveBeenCalled());
+    expect(onOpenCustomer).not.toHaveBeenCalled();
+  });
 });
