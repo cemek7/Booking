@@ -4,6 +4,7 @@ import {
   clearHumanHandling,
   isThreadHumanHandling,
   setHumanHandling,
+  setHumanHandlingUntilReleased,
   type HumanTakeoverStore,
 } from '@/lib/whatsapp/v2/humanTakeover';
 
@@ -13,6 +14,7 @@ function takeoverStore(overrides: Partial<HumanTakeoverStore> = {}): HumanTakeov
       id: 'thread-1',
       status: 'active',
       humanHandlingUntil: null,
+      humanHandlingMode: null,
     })),
     updateThread: jest.fn(async () => undefined),
     projectCompatibility: jest.fn(async () => undefined),
@@ -61,6 +63,7 @@ describe('canonical human-handoff continuity', () => {
     const store = takeoverStore({
       loadThread: jest.fn(async () => ({
         id: 'thread-1', status: 'handed_off', humanHandlingUntil: '2999-01-01T00:00:00.000Z',
+        humanHandlingMode: 'timed',
       })),
     });
 
@@ -77,10 +80,44 @@ describe('canonical human-handoff continuity', () => {
     expect(store.updateThread).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', threadId: 'thread-1', status: 'handed_off',
       humanHandlingUntil: expect.any(String),
+      humanHandlingMode: 'timed',
     }));
     expect(store.projectCompatibility).toHaveBeenCalledWith(expect.objectContaining({
-      threadId: 'thread-1', humanHandlingUntil: expect.any(String),
+      threadId: 'thread-1', humanHandlingUntil: expect.any(String), humanHandlingMode: 'timed',
     }));
+  });
+
+  it('holds an escalated thread until an explicit human release without a fake expiry', async () => {
+    const store = takeoverStore({
+      loadThread: jest.fn(async () => ({
+        id: 'thread-1', status: 'active', humanHandlingUntil: null, humanHandlingMode: null,
+      })),
+    });
+
+    await setHumanHandlingUntilReleased({
+      tenantId: 'tenant-1', threadId: 'thread-1', externalId: '+2348', channel: 'whatsapp',
+    }, store);
+
+    expect(store.updateThread).toHaveBeenCalledWith({
+      tenantId: 'tenant-1', threadId: 'thread-1', status: 'handed_off',
+      humanHandlingUntil: null, humanHandlingMode: 'until_released',
+      fromStatuses: ['active', 'handed_off'],
+    });
+    expect(store.projectCompatibility).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: 'thread-1', humanHandlingUntil: null, humanHandlingMode: 'until_released',
+    }));
+  });
+
+  it('keeps until-released threads paused regardless of time', async () => {
+    const store = takeoverStore({
+      loadThread: jest.fn(async () => ({
+        id: 'thread-1', status: 'handed_off', humanHandlingUntil: null,
+        humanHandlingMode: 'until_released',
+      })),
+    });
+
+    await expect(isThreadHumanHandling({ tenantId: 'tenant-1', threadId: 'thread-1' }, store, Date.now()))
+      .resolves.toBe(true);
   });
 
   it('releases the same thread without touching structured state or summary', async () => {
@@ -88,6 +125,7 @@ describe('canonical human-handoff continuity', () => {
     const store = takeoverStore({
       loadThread: jest.fn(async () => ({
         id: 'thread-1', status: 'handed_off', humanHandlingUntil: '2999-01-01T00:00:00.000Z',
+        humanHandlingMode: 'timed',
       })),
       updateThread,
     });
@@ -98,6 +136,7 @@ describe('canonical human-handoff continuity', () => {
 
     expect(updateThread).toHaveBeenCalledWith({
       tenantId: 'tenant-1', threadId: 'thread-1', status: 'active', humanHandlingUntil: null,
+      humanHandlingMode: null,
       fromStatuses: ['active', 'handed_off'],
     });
     expect(updateThread.mock.calls[0]?.[0]).not.toHaveProperty('structuredState');

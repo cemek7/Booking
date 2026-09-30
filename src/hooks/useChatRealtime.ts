@@ -19,6 +19,7 @@ export type ChatSummary = {
   lastMessageAt?: string | null;
   unread?: number;
   humanHandlingUntil?: string | null;
+  humanHandlingMode?: 'timed' | 'until_released' | null;
   status: ChatSupportStatus;
   assigneeUserId?: string | null;
   assigneeLabel?: string | null;
@@ -86,7 +87,10 @@ interface MessageRow {
 interface ConversationRow {
   external_id: string | null;
   channel: 'whatsapp' | 'instagram';
-  flow_data: { human_handling_until?: string } | null;
+  flow_data: {
+    human_handling_until?: string;
+    human_handling_mode?: 'timed' | 'until_released';
+  } | null;
 }
 
 export function useChatRealtime(tenantId: string | null | undefined) {
@@ -133,7 +137,10 @@ export function useChatRealtime(tenantId: string | null | undefined) {
         }))
         .filter((identity): identity is { externalId: string; channel: 'whatsapp' | 'instagram' } => Boolean(identity.externalId));
 
-      const humanHandlingByKey = new Map<string, string>();
+      const humanHandlingByKey = new Map<string, {
+        until: string | null;
+        mode: 'timed' | 'until_released' | null;
+      }>();
       if (identities.length > 0) {
         const externalIds = [...new Set(identities.map((identity) => identity.externalId))];
         const { data: conversations } = await supabase
@@ -144,8 +151,15 @@ export function useChatRealtime(tenantId: string | null | undefined) {
 
         for (const conversation of (conversations || []) as ConversationRow[]) {
           const until = conversation.flow_data?.human_handling_until;
-          if (typeof conversation.external_id === 'string' && typeof until === 'string') {
-            humanHandlingByKey.set(`${conversation.channel}:${conversation.external_id}`, until);
+          const mode = conversation.flow_data?.human_handling_mode;
+          if (
+            typeof conversation.external_id === 'string'
+            && (typeof until === 'string' || mode === 'until_released')
+          ) {
+            humanHandlingByKey.set(`${conversation.channel}:${conversation.external_id}`, {
+              until: typeof until === 'string' ? until : null,
+              mode: mode === 'timed' || mode === 'until_released' ? mode : null,
+            });
           }
         }
       }
@@ -163,7 +177,10 @@ export function useChatRealtime(tenantId: string | null | undefined) {
           channel: row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp',
           unread: row.unread_count ?? 0,
           humanHandlingUntil: row.customer_phone
-            ? humanHandlingByKey.get(`${row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp'}:${row.customer_phone}`) ?? null
+            ? humanHandlingByKey.get(`${row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp'}:${row.customer_phone}`)?.until ?? null
+            : null,
+          humanHandlingMode: row.customer_phone
+            ? humanHandlingByKey.get(`${row.metadata?.channel === 'instagram' ? 'instagram' : 'whatsapp'}:${row.customer_phone}`)?.mode ?? null
             : null,
           journeyType: journey.type,
           journeyStage: journey.stage,

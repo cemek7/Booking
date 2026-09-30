@@ -80,7 +80,12 @@ export const GET = createHttpHandler(
     const humanHandlingUntil = typeof flowData.human_handling_until === 'string'
       ? flowData.human_handling_until
       : null;
-    const humanHandling = humanHandlingUntil !== null && Date.parse(humanHandlingUntil) > Date.now();
+    const humanHandlingMode = flowData.human_handling_mode === 'timed'
+      || flowData.human_handling_mode === 'until_released'
+      ? flowData.human_handling_mode
+      : null;
+    const humanHandling = humanHandlingMode === 'until_released'
+      || (humanHandlingUntil !== null && Date.parse(humanHandlingUntil) > Date.now());
 
     const recentFailure = recentQueue?.status === 'failed' || recentQueue?.status === 'retry'
       ? failureCategory(recentQueue.error_message)
@@ -102,6 +107,7 @@ export const GET = createHttpHandler(
               ? 'attention'
               : 'ready',
         humanHandlingUntil,
+        humanHandlingMode,
         lastInboundAt: recentConversationResult.data?.last_inbound_at ?? null,
         lastQueueActivityAt: recentQueue?.processed_at ?? recentQueue?.created_at ?? null,
         recentFailure,

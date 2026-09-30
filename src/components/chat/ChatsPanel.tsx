@@ -51,9 +51,12 @@ export default function ChatsPanel() {
   // allowed to be as stale as the last render. Making it stateful would mean
   // running a timer to re-render a label nobody is watching to the second.
   const isHumanHandling = Boolean(
-    activeChat?.humanHandlingUntil
-    // eslint-disable-next-line react-hooks/purity
-    && Date.parse(activeChat.humanHandlingUntil) > Date.now()
+    activeChat?.humanHandlingMode === 'until_released'
+    || (
+      activeChat?.humanHandlingUntil
+      // eslint-disable-next-line react-hooks/purity
+      && Date.parse(activeChat.humanHandlingUntil) > Date.now()
+    )
   );
 
   const handleSelect = useCallback((id: string) => setActiveId(id), [setActiveId]);

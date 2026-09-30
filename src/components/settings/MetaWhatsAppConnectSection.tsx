@@ -25,6 +25,7 @@ type ChannelHealth = {
     agentEnabled: boolean;
     state: 'ready' | 'paused' | 'human_handling' | 'attention';
     humanHandlingUntil: string | null;
+    humanHandlingMode: 'timed' | 'until_released' | null;
     lastInboundAt: string | null;
     lastQueueActivityAt: string | null;
     recentFailure: string | null;
@@ -257,7 +258,9 @@ export function MetaWhatsAppConnectSection({ tenantId }: { tenantId: string }) {
                   <p className="mt-1">
                     {health.automation.recentFailure
                       || (health.automation.state === 'human_handling'
-                        ? `Human handling until ${relativeTime(health.automation.humanHandlingUntil)}`
+                        ? health.automation.humanHandlingMode === 'until_released'
+                          ? 'AI stays paused until a teammate explicitly releases this conversation.'
+                          : `Human handling until ${relativeTime(health.automation.humanHandlingUntil)}`
                         : health.automation.state === 'paused'
                           ? 'Messages are received and recorded without automated replies.'
                           : 'Customer messages can be processed automatically.')}

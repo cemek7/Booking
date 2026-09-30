@@ -20,4 +20,8 @@ describe('isHumanHandling', () => {
     expect(isHumanHandling({}, now)).toBe(false);
     expect(isHumanHandling(null, now)).toBe(false);
   });
+
+  it('returns true for an explicit until-released handoff without an expiry', () => {
+    expect(isHumanHandling({ human_handling_mode: 'until_released' }, now)).toBe(true);
+  });
 });
