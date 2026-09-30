@@ -1,7 +1,7 @@
 # Retail Fulfilment Onboarding and Human Handoff — Design
 
 **Date:** 2026-09-30
-**Status:** Approved direction; implementation pending plan
+**Status:** Approved direction; repository- and UI-reviewed; implementation pending plan
 **Product:** Booka AI Revenue Front Desk
 **Default vertical:** Beauty, while remaining cross-vertical
 
@@ -88,7 +88,7 @@ Derived readiness is deterministic:
 
 ## 5. Onboarding and settings UX
 
-The onboarding `Offerings` step already captures products and derives sales/inventory capabilities. After at least one valid product is entered, or when the commercial motion is `sales` or `hybrid`, onboarding shows a concise fulfilment section:
+The onboarding `Offerings` step already captures products and derives sales/inventory capabilities. Fulfilment remains progressive disclosure inside this step; it does not add another top-level onboarding step. After at least one valid product is entered, or when the commercial motion is `sales` or `hybrid`, onboarding shows a concise fulfilment card:
 
 1. How can customers receive product orders?
    - Pick up from us
@@ -102,9 +102,13 @@ The onboarding `Offerings` step already captures products and derives sales/inve
    - Arranged manually
 4. Optional customer-facing fulfilment note.
 
-The same configuration is editable later from a dedicated `Order fulfilment` card in Business Settings. The UI explains that Bolt/inDrive are manually arranged initially and that Booka will involve staff before collecting a delivery-dependent total.
+The card follows the existing warm-neutral, emerald-accented onboarding design and existing form primitives. It uses a semantic `fieldset` and `legend`, visible labels, touch-friendly controls, inline validation, an `aria-live` error summary and a disabled/loading submission state. A failed save preserves every entered value and blocks advancement rather than silently dropping fulfilment configuration.
+
+The same configuration is editable later from a dedicated `Order fulfilment` card in Business Settings, using the existing Settings save flow. It does not live in Payments because the fulfilment policy is an operating policy and the Payments section has an independent save lifecycle. The settings client always sends the complete nested `retailFulfillment` object because the current tenant-settings endpoint shallow-merges top-level settings. The UI explains that Bolt/inDrive are manually arranged initially and that Booka will involve staff before collecting a delivery-dependent total.
 
 Service-only `booking` or `enquiry` tenants with no products skip the section. Skipping a relevant fulfilment section is allowed during onboarding but produces the safe unconfigured state and a launch warning for product payments.
+
+Existing tenants remain valid. Missing configuration renders as `Not configured` and never becomes an implicit promise that delivery is available.
 
 ## 6. Order-scoped fulfilment state
 
@@ -156,9 +160,13 @@ The operator sees:
 - the unresolved fee/area reason;
 - actions already completed.
 
-The Orders workspace adds one tenant-scoped `Confirm fulfilment` action. It requires the method, confirmed fee and a short operator note when the order is awaiting a human. The server applies the delivery fee exactly once, marks the arrangement confirmed, generates or reuses the order's payment link, sends the customer the confirmed total, and releases the conversation. A failure before all durable writes complete leaves the escalation open and is safe to retry.
+The existing Orders workspace adds an attention card to the current order-detail surface and one tenant-scoped `Confirm fulfilment` action; no new operations dashboard or queue is introduced. The card uses the current status-card and button patterns, displays only customer-facing method/address/fee/reason data, and does not promote internal source identifiers. It requires the method, confirmed fee and a short operator note when the order is awaiting a human. The action has a guarded loading state so double-clicks cannot create duplicate effects. Existing payment-link and fulfilment actions are disabled while the delivery-dependent total is unresolved.
+
+The server exposes this as a narrow order subresource rather than adding unrelated values to the existing generic order-transition action enum. It applies the delivery fee exactly once, marks the arrangement confirmed, generates or reuses the order's payment link, sends the customer the confirmed total, and releases the conversation. A failure before all durable writes complete leaves the escalation open and is safe to retry.
 
 The operator can also reply through the existing chat surface while researching a courier. Sending an ordinary message keeps the fulfilment escalation open; only `Confirm fulfilment`, explicit escalation resolution, or the existing authorized release/close action returns the thread to AI control. Booka resumes from the same order state without asking the customer to repeat their cart or address.
+
+The existing chat escalation banner and context panel surface the fulfilment reason, method, fee state and order link. Because the context panel is desktop-only, a compact fulfilment-handoff notice also appears in the main chat surface on mobile. The existing claim, assign, reply and release controls are reused.
 
 ### 7.3 Post-payment safety net
 
@@ -177,18 +185,18 @@ If a public-storefront order has no canonical conversation thread, the order-lev
 
 ## 8. Durable handoff and idempotency
 
-Migration 159 adds an optional `retail_order_id` reference and allowlisted `reason_code` to `escalation_queue`. A partial unique index on `(tenant_id, retail_order_id, reason_code)` where `reason_code = 'retail_fulfillment'` permits at most one fulfilment escalation per tenant and retail order without preventing unrelated support escalations. RLS remains enabled; server-only mutation and tenant-scoped operator reads follow the existing escalation model.
+Migration 159 adds an optional `retail_order_id` reference and allowlisted `reason_code` to `escalation_queue`. A partial unique index on `(tenant_id, retail_order_id, reason_code)` where `reason_code = 'retail_fulfillment'` permits at most one fulfilment escalation per tenant and retail order without preventing unrelated support escalations. It also adds an explicit, nullable `human_handling_mode` to canonical conversation threads with allowlisted values `timed` and `until_released`. RLS remains enabled; server-only mutation and tenant-scoped operator reads follow the existing escalation model.
 
-`createHumanHandoff` gains an order-aware path that:
+The existing thread handoff helper remains strict about requiring a canonical thread. A separate order-escalation helper handles public-storefront and other threadless orders. The two paths share validation and idempotency rules without weakening the thread API. They:
 
-- verifies tenant and order ownership and, when supplied, thread ownership;
-- reuses the existing escalation on replay;
-- snapshots canonical state without duplicating raw message history;
-- records a stable reason code separately from customer-facing text.
+- verify tenant and order ownership and, when supplied, thread ownership;
+- reuse the existing escalation on replay;
+- snapshot canonical state without duplicating raw message history;
+- record a stable reason code separately from customer-facing text.
 
 An order without a canonical thread creates the same order-scoped escalation with null conversation fields. Thread-only takeover operations are skipped, but the paid/unfulfilled order remains visible to the operator.
 
-Human takeover gains an explicit `untilReleased` mode. Existing 30-minute operator takeover behavior remains unchanged. An until-released hold is represented distinctly and is cleared only by the existing release/close action. Compatibility projection mirrors the hold without making the legacy conversation authoritative.
+Human takeover gains an explicit `untilReleased` mode. Existing 30-minute operator takeover behavior remains unchanged. An until-released hold is represented by `human_handling_mode = 'until_released'`, not a distant timestamp sentinel, and is cleared only by the existing release/close action. Compatibility projection mirrors the hold without making the legacy conversation authoritative. API responses and chat hooks expose the mode so the UI does not incorrectly conclude that the hold expired.
 
 Payment webhook processing remains retryable. If paid-order finalization succeeds but fulfilment escalation or hold persistence fails, the handler returns an error so the provider retries. The already-paid transition, inventory movement, confirmation and escalation paths must all be idempotent.
 
@@ -202,6 +210,8 @@ Messages are factual and method-specific:
 - **Own dispatch arranged:** “Payment received ✅ Your order is confirmed for delivery. We’ll keep you updated here.”
 
 Tenant-configured customer notes may supplement these messages but cannot override payment truth, claim a courier booking, or introduce an unverified ETA.
+
+The public storefront must persist its already-collected delivery address into the order-scoped fulfilment context. It must not copy that address into reusable customer memory.
 
 ## 10. Third-party delivery boundary
 
@@ -246,6 +256,8 @@ Required automated coverage:
 - tenant-settings schema accepts valid fulfilment configurations and rejects inconsistent combinations;
 - onboarding shows fulfilment only for product-selling/sales-capable tenants and persists it;
 - settings can edit the same canonical configuration;
+- failed onboarding/settings saves preserve entered values and show an accessible error;
+- existing tenants with no configuration render safely without client exceptions;
 - pickup and known own-dispatch fees proceed without handoff;
 - fixed delivery fee is included exactly once before payment-link creation;
 - quote-required, third-party and unconfigured paths create one pre-payment handoff and no payment link;
@@ -255,6 +267,8 @@ Required automated coverage:
 - public-storefront payment without a thread creates an order-level escalation without fabricating a conversation;
 - cross-tenant order/thread combinations are rejected;
 - AI processing remains suppressed during an until-released hold and resumes after authorized release;
+- mobile and desktop chat surfaces both expose an unresolved fulfilment handoff;
+- unresolved fulfilment disables payment-link creation through both the UI and server endpoint;
 - existing booking, deposits, wallet top-ups, retail payments and timed human takeover tests remain green.
 
 ## 14. Rollout
