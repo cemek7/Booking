@@ -17,6 +17,17 @@ function loadBundleModule(): BundleModule {
 }
 
 describe('conversation continuity SQL bundle', () => {
+  it('qualifies information-schema columns that collide with PL/pgSQL variables', () => {
+    const sql = readFileSync(
+      join(process.cwd(), 'db/releases/2026-09-28-channel-identity-runtime-hardening.sql'),
+      'utf8',
+    );
+
+    expect(sql).toMatch(/FROM information_schema\.columns AS column_info/i);
+    expect(sql).toMatch(/column_info\.table_name = 'customers'/i);
+    expect(sql).not.toMatch(/\n\s+AND table_name = 'customers'/i);
+  });
+
   it('uses the reviewed release files in the required order', () => {
     const { continuityReleaseFiles } = loadBundleModule();
 

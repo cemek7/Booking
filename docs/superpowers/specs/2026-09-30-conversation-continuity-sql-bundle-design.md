@@ -91,7 +91,7 @@ The bundle changes no rollback policy. Runtime continuity flags remain off by de
 
 - Output: `db/releases/2026-09-30-conversation-continuity-all-in-one.sql`
 - Generator: `scripts/build-conversation-continuity-bundle.cjs`
-- SHA-256: `9c933f9b0dcd171a67675bb5a51a00092ed629eadf10d0962b37008958f8bd3d`
+- SHA-256: `ca63f7f58be81f112d69cab2efeeda4386f1462437b853739a4b7e5b0a128ca0`
 - Static transaction check: one line-only `BEGIN;`, one line-only `COMMIT;`, no psql `\i` command
 - Local verification: bundle tests, handoff migration tests, handoff continuity tests and CI typecheck passed on 2026-09-30
 

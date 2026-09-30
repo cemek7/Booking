@@ -28,11 +28,11 @@ DECLARE
 BEGIN
   IF EXISTS (
     SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'customers'
-      AND column_name = 'phone'
-      AND is_nullable <> 'YES'
+    FROM information_schema.columns AS column_info
+    WHERE column_info.table_schema = 'public'
+      AND column_info.table_name = 'customers'
+      AND column_info.column_name = 'phone'
+      AND column_info.is_nullable <> 'YES'
   ) THEN
     RAISE EXCEPTION 'customers.phone must be nullable for non-phone channel identities';
   END IF;
