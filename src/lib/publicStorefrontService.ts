@@ -17,6 +17,10 @@ import {
   createRetailOrderPaymentLinkForCustomer,
 } from '@/lib/commerce/retail-orders';
 import { defaultLogger } from '@/lib/logger';
+import {
+  RetailOrderFulfillmentContextSchema,
+  emptyRetailOrderFulfillmentContext,
+} from '@/lib/commerce/retail-fulfillment';
 
 export interface PublicProduct {
   id: string;
@@ -118,6 +122,7 @@ export interface CreatePublicOrderPayload {
   customer_name: string;
   customer_phone: string;
   customer_email?: string;
+  delivery_address?: string;
   notes?: string;
 }
 
@@ -181,6 +186,38 @@ export async function createPublicOrder(
     productIds: expandedProductIds,
     source: 'catalog',
   });
+
+  // Delivery address is order-scoped operational data. Keep it out of the
+  // reusable customer profile and verified customer memory.
+  const { data: orderRow, error: orderLoadError } = await supabase
+    .from('retail_orders')
+    .select('metadata')
+    .eq('tenant_id', tenantId)
+    .eq('id', cart.orderId)
+    .maybeSingle();
+  if (orderLoadError) {
+    throw ApiErrorFactory.databaseError(new Error(orderLoadError.message));
+  }
+  const metadata = orderRow?.metadata && typeof orderRow.metadata === 'object' && !Array.isArray(orderRow.metadata)
+    ? orderRow.metadata as Record<string, unknown>
+    : {};
+  const contextResult = RetailOrderFulfillmentContextSchema.safeParse(metadata.retailFulfillment);
+  const context = contextResult.success ? contextResult.data : emptyRetailOrderFulfillmentContext();
+  const deliveryAddress = payload.delivery_address?.trim().slice(0, 500) || null;
+  const { error: orderUpdateError } = await supabase.from('retail_orders').update({
+    metadata: {
+      ...metadata,
+      retailFulfillment: {
+        ...context,
+        deliveryAddress,
+        conversationThreadId: null,
+      },
+    },
+    updated_at: new Date().toISOString(),
+  }).eq('tenant_id', tenantId).eq('id', cart.orderId);
+  if (orderUpdateError) {
+    throw ApiErrorFactory.databaseError(new Error(orderUpdateError.message));
+  }
 
   // Best-effort payment link. No provider configured ⇒ leave as a draft order.
   let paymentUrl: string | null = null;

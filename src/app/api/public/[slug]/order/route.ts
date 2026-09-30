@@ -22,6 +22,7 @@ const OrderSchema = z.object({
   customer_name: z.string().trim().min(1, 'Name is required').max(120),
   customer_phone: z.string().trim().min(3, 'Phone is required').max(32),
   customer_email: z.string().trim().email().optional().or(z.literal('')),
+  delivery_address: z.string().trim().max(500).optional(),
   notes: z.string().trim().max(500).optional(),
 });
 
@@ -67,6 +68,7 @@ export const POST = createHttpHandler(
         customer_name: parsed.data.customer_name,
         customer_phone: parsed.data.customer_phone,
         customer_email: parsed.data.customer_email || undefined,
+        delivery_address: parsed.data.delivery_address || undefined,
         notes: parsed.data.notes,
       },
       { callbackUrl }

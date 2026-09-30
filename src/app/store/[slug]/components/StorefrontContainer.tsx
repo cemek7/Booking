@@ -78,8 +78,6 @@ export default function StorefrontContainer({ slug, tenant, products, currency, 
     setSubmitting(true);
     setError(null);
     try {
-      const combinedNotes = [form.address.trim() ? `Deliver to: ${form.address.trim()}` : '', form.notes.trim()]
-        .filter(Boolean).join('\n').slice(0, 500);
       const res = await fetch(`/api/public/${slug}/order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -88,7 +86,8 @@ export default function StorefrontContainer({ slug, tenant, products, currency, 
           customer_name: form.name.trim(),
           customer_phone: form.phone.trim(),
           customer_email: form.email.trim() || undefined,
-          notes: combinedNotes || undefined,
+          delivery_address: form.address.trim() || undefined,
+          notes: form.notes.trim().slice(0, 500) || undefined,
         }),
       });
       const json = await res.json().catch(() => ({}));
