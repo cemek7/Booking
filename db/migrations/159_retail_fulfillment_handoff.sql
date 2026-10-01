@@ -77,4 +77,3 @@ CREATE INDEX IF NOT EXISTS idx_escalation_queue_retail_order
   WHERE retail_order_id IS NOT NULL;
 
 COMMIT;
-
