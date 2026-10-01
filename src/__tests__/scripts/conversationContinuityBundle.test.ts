@@ -1,5 +1,6 @@
 import { join } from 'path';
 import { readFileSync } from 'fs';
+import { createRequire } from 'module';
 
 type BundleModule = {
   continuityReleaseFiles: string[];
@@ -10,7 +11,8 @@ type BundleModule = {
 };
 
 function loadBundleModule(): BundleModule {
-  return require(join(
+  const requireFromTest = createRequire(__filename);
+  return requireFromTest(join(
     process.cwd(),
     'scripts/build-conversation-continuity-bundle.cjs',
   )) as BundleModule;
