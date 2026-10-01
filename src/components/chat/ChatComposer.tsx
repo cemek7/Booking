@@ -101,7 +101,7 @@ export function ChatComposer({
             <button
               onClick={handleRelease}
               disabled={!chatId || releasing}
-              className="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm text-gray-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="min-h-11 px-3 py-2 rounded border border-gray-300 bg-white text-sm text-gray-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               {releasing ? 'Releasing…' : 'Release to AI'}
             </button>
@@ -109,7 +109,7 @@ export function ChatComposer({
           <button
             onClick={handleSend}
             disabled={disabled || sending || value.trim().length===0 || outboundReadiness?.allowed === false}
-            className="px-4 py-1.5 rounded bg-indigo-600 text-white text-sm disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="min-h-11 px-4 py-2 rounded bg-indigo-600 text-white text-sm disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             aria-disabled={disabled || sending || outboundReadiness?.allowed === false}
           >{sending ? 'Sending…' : 'Send'}</button>
         </div>

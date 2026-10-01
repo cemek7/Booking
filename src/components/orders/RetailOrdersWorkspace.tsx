@@ -283,7 +283,7 @@ export default function RetailOrdersWorkspace() {
           </CardHeader>
           <CardContent className="space-y-3 p-4">
             <div className="grid gap-2">
-              <select className="rounded border px-2 py-2 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | RetailOrderStatus)}>
+              <select className="min-h-11 rounded border px-2 py-2 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | RetailOrderStatus)}>
                 <option value="all">All order statuses</option>
                 <option value="draft">Draft</option>
                 <option value="pending_payment">Pending payment</option>
@@ -291,7 +291,7 @@ export default function RetailOrdersWorkspace() {
                 <option value="fulfilled">Fulfilled</option>
                 <option value="cancelled">Cancelled</option>
               </select>
-              <select className="rounded border px-2 py-2 text-sm" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value as 'all' | RetailPaymentStatus)}>
+              <select className="min-h-11 rounded border px-2 py-2 text-sm" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value as 'all' | RetailPaymentStatus)}>
                 <option value="all">All payment states</option>
                 <option value="unpaid">Unpaid</option>
                 <option value="pending">Pending</option>
@@ -299,7 +299,7 @@ export default function RetailOrdersWorkspace() {
                 <option value="failed">Failed</option>
                 <option value="refunded">Refunded</option>
               </select>
-              <select className="rounded border px-2 py-2 text-sm" value={fulfillmentFilter} onChange={(e) => setFulfillmentFilter(e.target.value as 'all' | RetailFulfillmentStatus)}>
+              <select className="min-h-11 rounded border px-2 py-2 text-sm" value={fulfillmentFilter} onChange={(e) => setFulfillmentFilter(e.target.value as 'all' | RetailFulfillmentStatus)}>
                 <option value="all">All fulfillment states</option>
                 <option value="unfulfilled">Unfulfilled</option>
                 <option value="preparing">Preparing</option>
