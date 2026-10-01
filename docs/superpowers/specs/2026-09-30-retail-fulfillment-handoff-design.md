@@ -1,7 +1,7 @@
 # Retail Fulfilment Onboarding and Human Handoff — Design
 
 **Date:** 2026-09-30
-**Status:** Approved direction; repository- and UI-reviewed; implementation pending plan
+**Status:** Implemented and self-reviewed on `feat/retail-fulfillment-handoff`; awaiting release integration
 **Product:** Booka AI Revenue Front Desk
 **Default vertical:** Beauty, while remaining cross-vertical
 
