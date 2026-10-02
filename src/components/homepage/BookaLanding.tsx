@@ -25,7 +25,7 @@ const revenueProblems = [
   {
     title: 'Grow',
     promise: 'Create repeat business from the customers you already have.',
-    copy: 'Opted-in WhatsApp reminders and repeat-booking conversations help fill empty slots.',
+    copy: 'Opted-in WhatsApp reminders, approved re-engagement and repeat-booking conversations help fill empty slots.',
   },
 ];
 
@@ -149,7 +149,7 @@ export default function BookaLanding() {
               as="h1"
               kicker={BOOKA_POSITIONING.category}
               title={BOOKA_POSITIONING.headline}
-              lede="Booka answers questions, recommends the right service, books customers and helps collect payment. Your team steps in when judgement is needed."
+              lede="Booka answers customer questions, recommends the right service or product, checks availability, follows up, books customers and helps collect payment—while your team steps in when human judgement is needed."
             />
             <div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-4">
               <CtaLink href="/booka/revenue-pilot">Apply for the 14-Day Revenue Pilot</CtaLink>
@@ -186,7 +186,7 @@ export default function BookaLanding() {
         </Panel>
 
         <section className="py-16 sm:py-20">
-          <SectionHeading kicker="Four money problems" title="Where Booka earns its keep." />
+          <SectionHeading kicker="Four money problems" title="Capture, convert, recover, grow." />
           <div className="mt-10 grid gap-x-12 gap-y-10 md:grid-cols-2">
             {revenueProblems.map((problem) => (
               <div key={problem.title} className="border-t border-[var(--brand-line)] pt-5">
@@ -229,7 +229,7 @@ export default function BookaLanding() {
               <SectionHeading
                 kicker="Booka 14-Day Revenue Pilot"
                 title="Put Booka on real enquiries before you decide to continue."
-                lede="We connect and configure Booka for 14 active days on your eligible WhatsApp and Instagram enquiry flows."
+                lede="We connect Booka to your eligible WhatsApp and Instagram enquiries. For 14 active days it answers questions, recommends services and products, qualifies customers, follows up, books appointments and helps close sales."
               />
               <div className="mt-8 border-l-2 border-[var(--booka-green)] pl-5">
                 <p className="font-semibold">The continuation rule</p>
@@ -274,7 +274,7 @@ export default function BookaLanding() {
               <SectionHeading
                 kicker="Missed Revenue Report"
                 title="How much business is sitting unanswered in your inbox?"
-                lede="We review a consented, minimised sample of your enquiries and show where opportunities slip away."
+                lede="We review a consented, minimized sample of your WhatsApp and Instagram enquiry process and identify unanswered messages, missing follow-ups, availability dead ends, abandoned buying conversations and missed recommendation opportunities."
               />
               <CtaLink href="/booka/missed-revenue-report" variant="text" className="mt-6">
                 Get a Missed Revenue Report

@@ -178,7 +178,7 @@ export default function Home() {
           <SectionHeading
             kicker="Why Techclave"
             title="Pick the product you need. We run everything behind it."
-            lede="Booka is the one to start with today. As we ship more, each product stays just as specific."
+            lede="Booka is the one to start with today: an AI Revenue Front Desk you can pilot against real enquiries. As we ship more, each product stays just as specific."
           />
           <ol className="divide-y divide-[var(--brand-line)]">
             {principles.map((item, index) => (
