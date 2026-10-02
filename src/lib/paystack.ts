@@ -575,6 +575,80 @@ export async function initializeTransaction(params: {
   };
 }
 
+/**
+ * Tenant customer checkout with a Paystack split. Only
+ * `src/lib/payments/tenantSettlement.ts` may call this (guarded by
+ * src/__tests__/lib/payments/initializeAllowList.test.ts).
+ *
+ * `transaction_charge` is Booka's flat fee in minor units; per Paystack's
+ * OpenAPI spec it overrides the subaccount's stored percentage split.
+ */
+export async function initializeSplitTransaction(params: {
+  email: string;
+  amountMinor: number;
+  reference: string;
+  currency: 'NGN';
+  subaccountCode: string;
+  transactionChargeMinor: number;
+  callbackUrl?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ success: boolean; authorizationUrl?: string; error?: string }> {
+  const data = await paystackFetch<PaystackInitData>('/transaction/initialize', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: params.email,
+      amount: params.amountMinor,
+      reference: params.reference,
+      currency: params.currency,
+      callback_url: params.callbackUrl,
+      metadata: params.metadata ?? {},
+      subaccount: params.subaccountCode,
+      transaction_charge: params.transactionChargeMinor,
+      bearer: 'subaccount',
+    }),
+  });
+  if (!data.status) return { success: false, error: data.message };
+  return { success: true, authorizationUrl: data.data?.authorization_url };
+}
+
+export interface VerifiedPaystackTransaction {
+  status: string;
+  reference: string;
+  amountMinor: number;
+  currency: string;
+  feesMinor: number | null;
+  subaccountCode: string | null;
+}
+
+interface PaystackVerifyData {
+  status: string;
+  reference: string;
+  amount: number;
+  currency: string;
+  fees?: number | null;
+  subaccount?: { subaccount_code?: string } | null;
+}
+
+/** Server-side source of truth for a charge. Amounts are minor units. */
+export async function verifyTransaction(
+  reference: string,
+): Promise<{ success: true; data: VerifiedPaystackTransaction } | { success: false; error: string }> {
+  const res = await paystackFetch<PaystackVerifyData>(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' });
+  if (!res.status || !res.data) return { success: false, error: res.message || 'Verification failed' };
+  const d = res.data;
+  return {
+    success: true,
+    data: {
+      status: d.status,
+      reference: d.reference,
+      amountMinor: d.amount,
+      currency: d.currency,
+      feesMinor: typeof d.fees === 'number' ? d.fees : null,
+      subaccountCode: typeof d.subaccount?.subaccount_code === 'string' ? d.subaccount.subaccount_code : null,
+    },
+  };
+}
+
 interface PaystackChargeData {
   status: string;
   reference: string;
