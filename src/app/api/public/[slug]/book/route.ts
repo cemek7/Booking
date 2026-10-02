@@ -182,6 +182,7 @@ export const POST = createHttpHandler(
       paymentUrl: booking.paymentUrl ?? null,
       depositAmountCents: booking.depositAmountCents ?? null,
       currency: booking.currency ?? null,
+      paymentUnavailable: booking.paymentUnavailable ?? false,
     };
   },
   'POST',

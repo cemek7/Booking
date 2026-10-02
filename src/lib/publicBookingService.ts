@@ -13,7 +13,8 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
-import PaymentService from '@/lib/paymentService';
+import { initializeTenantPayment } from '@/lib/payments/tenantSettlement';
+import { openReservationPaymentHandoff } from '@/lib/payments/paymentHandoff';
 import { resolveCustomer } from '@/lib/customers/identity';
 import {
   businessDayKey,
@@ -30,6 +31,8 @@ export interface BookingDepositInfo {
   paymentUrl?: string | null;
   depositAmountCents?: number;
   currency?: string;
+  /** Deposit is required but online collection failed; staff handoff opened. */
+  paymentUnavailable?: boolean;
 }
 
 /** Tenant deposit rule shared by public booking and the legacy dialog bridge. */
@@ -53,11 +56,12 @@ export function computeDepositMinor(input: {
  * owner follows up. The webhook (handlePaymentSuccess) confirms the reservation
  * on payment via the transaction's subject_id.
  */
-async function maybeCreateBookingDeposit(input: {
+export async function maybeCreateBookingDeposit(input: {
   tenantId: string;
   reservationId: string;
   serviceId?: string;
   email?: string;
+  customerPhone?: string | null;
   callbackUrl?: string | null;
 }): Promise<BookingDepositInfo> {
   try {
@@ -71,9 +75,6 @@ async function maybeCreateBookingDeposit(input: {
       .maybeSingle();
     const settings = (tenant?.settings && typeof tenant.settings === 'object' ? tenant.settings : {}) as Record<string, unknown>;
     const metadata = (tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {}) as Record<string, unknown>;
-    const uiSettings = (metadata.ui_settings && typeof metadata.ui_settings === 'object' ? metadata.ui_settings : {}) as Record<string, unknown>;
-
-    const currency = String(settings.defaultCurrency ?? uiSettings.defaultCurrency ?? 'NGN');
 
     const { data: service } = await supabase
       .from('services')
@@ -86,32 +87,30 @@ async function maybeCreateBookingDeposit(input: {
     const depositMinor = computeDepositMinor({ tenantSettings: settings, tenantMetadata: metadata, servicePriceCents: priceCents });
     if (!(depositMinor > 0)) return { depositRequired: false };
 
-    const subaccountCode = typeof metadata.paystack_subaccount_code === 'string'
-      ? metadata.paystack_subaccount_code
-      : undefined;
-
-    const paymentService = new PaymentService(supabase);
-    const result = await paymentService.initializePayment({
+    const result = await initializeTenantPayment({
       tenantId: input.tenantId,
-      amount: depositMinor,
-      currency,
-      email: input.email,
-      reservationId: input.reservationId,
-      provider: 'paystack',
-      metadata: { type: 'deposit', reservation_id: input.reservationId },
-      subaccountCode,
-      bearer: 'account',
+      amountMinor: depositMinor,
+      currency: 'NGN',
+      customerEmail: input.email,
+      subject: { type: 'reservation', id: input.reservationId },
+      idempotencyKey: `deposit:${input.reservationId}`,
       callbackUrl: input.callbackUrl ?? undefined,
+      metadata: { type: 'deposit' },
     });
-
-    if (result.success && result.authorizationUrl) {
-      return { depositRequired: true, paymentUrl: result.authorizationUrl, depositAmountCents: depositMinor, currency };
+    if (result.ok) {
+      return { depositRequired: true, paymentUrl: result.authorizationUrl, depositAmountCents: depositMinor, currency: 'NGN' };
     }
-    defaultLogger.warn('[publicBooking] deposit init failed; booking left pending', { reservationId: input.reservationId, error: result.error });
-    return { depositRequired: false };
+    defaultLogger.warn('[publicBooking] deposit unavailable; booking left pending', { reservationId: input.reservationId, code: result.code });
+    await openReservationPaymentHandoff({
+      tenantId: input.tenantId,
+      reservationId: input.reservationId,
+      reason: result.code,
+      customerPhone: input.customerPhone ?? null,
+    });
+    return { depositRequired: true, paymentUnavailable: true, depositAmountCents: depositMinor, currency: 'NGN' };
   } catch (err) {
     defaultLogger.warn('[publicBooking] deposit init threw; booking left pending', { error: err instanceof Error ? err.message : String(err) });
-    return { depositRequired: false };
+    return { depositRequired: true, paymentUnavailable: true };
   }
 }
 
@@ -465,6 +464,7 @@ export async function createPublicBooking(
     reservationId: booking.id,
     serviceId: payload.service_id,
     email: payload.customer_email,
+    customerPhone: payload.customer_phone,
     callbackUrl: opts?.callbackUrl ?? null,
   });
 

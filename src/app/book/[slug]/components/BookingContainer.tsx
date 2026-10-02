@@ -118,6 +118,15 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
         marketingConsent: bookingData.customer.marketingConsent,
       });
 
+      if (result.depositRequired && result.paymentUnavailable) {
+        toast({
+          title: 'Booking request received',
+          description: "Online payment isn't available right now. The business will contact you to arrange your deposit.",
+          type: 'info',
+        });
+        return;
+      }
+
       // Deposit required → send the customer to Paystack to secure the slot.
       // The reservation stays pending until the webhook confirms payment.
       if (result.depositRequired && result.paymentUrl) {

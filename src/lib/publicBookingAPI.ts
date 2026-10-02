@@ -77,7 +77,7 @@ class PublicBookingAPI {
     customerPhone: string;
     notes?: string;
     marketingConsent?: boolean;
-  }): Promise<{ id: string; depositRequired: boolean; paymentUrl: string | null; depositAmountCents: number | null; currency: string | null }> {
+  }): Promise<{ id: string; depositRequired: boolean; paymentUrl: string | null; depositAmountCents: number | null; currency: string | null; paymentUnavailable?: boolean }> {
     const res = await fetch(`/api/public/${slug}/book`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -105,6 +105,7 @@ class PublicBookingAPI {
       paymentUrl: data.paymentUrl ?? null,
       depositAmountCents: data.depositAmountCents ?? null,
       currency: data.currency ?? null,
+      paymentUnavailable: data.paymentUnavailable ?? false,
     };
   }
 }
