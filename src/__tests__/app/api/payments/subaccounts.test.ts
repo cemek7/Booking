@@ -32,6 +32,7 @@ const ACCOUNT_NUMBER = '0123456789';
 const POLICY_ROW = { code: 'pilot_ngn_v1', version: 1, platform_fee_basis_points: 100, platform_fee_cap_minor: 200000 };
 
 let role = 'owner';
+let policyMissing = false;
 let accountRow: Record<string, unknown> | null = null;
 let writes: Array<{ op: string; table: string; payload: unknown }> = [];
 
@@ -41,7 +42,7 @@ function adminMock() {
     from: jest.fn((table: string) => {
       const final = () => {
         if (table === 'tenant_users') return { data: { tenant_id: 'ten_1', role }, error: null };
-        if (table === 'payment_fee_policies') return { data: POLICY_ROW, error: null };
+        if (table === 'payment_fee_policies') return { data: policyMissing ? null : POLICY_ROW, error: null };
         if (table === 'tenant_payment_accounts') return { data: accountRow, error: null };
         if (table === 'tenants') return { data: { name: 'Acme' }, error: null };
         return { data: null, error: null };
@@ -70,7 +71,7 @@ const validBody = {
   primaryContactEmail: 'o@test.com', acceptPolicy: { code: 'pilot_ngn_v1', version: 1 },
 };
 const sub = (over: Record<string, unknown> = {}) => ({
-  subaccountCode: 'ACCT_1', businessName: 'Acme', settlementBank: '058',
+  subaccountCode: 'ACCT_1', businessName: 'Acme', settlementBank: 'Guaranty Trust Bank',
   accountNumber: ACCOUNT_NUMBER, percentageCharge: 0, primaryContactEmail: 'o@test.com', ...over,
 });
 
@@ -78,6 +79,7 @@ describe('/api/payments/subaccounts', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     role = 'owner';
+    policyMissing = false;
     accountRow = null;
     writes = [];
     (createSupabaseAdminClient as jest.Mock).mockImplementation(() => adminMock());
@@ -179,5 +181,59 @@ describe('/api/payments/subaccounts', () => {
     const res = await POST(req('POST', validBody) as unknown as NextRequest);
     expect(res.status).toBe(403);
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('POST with percentageCharge null is saved invalid (502)', async () => {
+    mockFetch.mockResolvedValue({ success: true, subaccount: sub({ percentageCharge: null }) });
+    const res = await POST(req('POST', validBody) as unknown as NextRequest);
+    expect(res.status).toBe(502);
+    expect((writes.find((w) => w.op === 'upsert')?.payload as Record<string, unknown>).status).toBe('invalid');
+  });
+
+  it('POST with an account number mismatch is saved invalid (502) without leaking numbers', async () => {
+    mockFetch.mockResolvedValue({ success: true, subaccount: sub({ accountNumber: '9999996789' }) });
+    const res = await POST(req('POST', validBody) as unknown as NextRequest);
+    expect(res.status).toBe(502);
+    expect((writes.find((w) => w.op === 'upsert')?.payload as Record<string, unknown>).status).toBe('invalid');
+    expect(JSON.stringify(writes)).not.toContain(ACCOUNT_NUMBER);
+  });
+
+  it.each(['POST', 'PUT'])('%s on a suspended account is 409 ACCOUNT_SUSPENDED with no Paystack call', async (method) => {
+    accountRow = { status: 'suspended', subaccount_code: 'ACCT_1' };
+    const { businessName: _b, ...putBody } = validBody;
+    const res = await (method === 'POST' ? POST : PUT)(req(method, method === 'POST' ? validBody : putBody) as unknown as NextRequest);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'ACCOUNT_SUSPENDED' });
+    for (const m of [mockResolve, mockCreate, mockUpdate, mockFetch]) expect(m).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+
+  it('POST on an invalid row with a code updates the existing subaccount instead of creating', async () => {
+    accountRow = { status: 'invalid', subaccount_code: 'ACCT_OLD' };
+    mockUpdate.mockResolvedValue({ success: true, subaccount: sub({ subaccountCode: 'ACCT_OLD' }) });
+    mockFetch.mockResolvedValue({ success: true, subaccount: sub({ subaccountCode: 'ACCT_OLD' }) });
+    const res = await POST(req('POST', validBody) as unknown as NextRequest);
+    expect(res.status).toBe(200);
+    expect(mockUpdate).toHaveBeenCalledWith('ACCT_OLD', expect.objectContaining({ percentageCharge: 0 }));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('PUT with a bank that fails to resolve is 400 and leaves the row untouched', async () => {
+    accountRow = { status: 'active', subaccount_code: 'ACCT_1' };
+    mockResolve.mockResolvedValue({ success: false, error: 'nope' });
+    const { businessName: _b, ...putBody } = validBody;
+    const res = await PUT(req('PUT', putBody) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    expect(writes).toEqual([]);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each(['POST', 'PUT'])('%s with a missing policy row errors before any Paystack call', async (method) => {
+    policyMissing = true;
+    accountRow = { status: 'active', subaccount_code: 'ACCT_1' };
+    const { businessName: _b, ...putBody } = validBody;
+    const res = await (method === 'POST' ? POST : PUT)(req(method, method === 'POST' ? validBody : putBody) as unknown as NextRequest);
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    for (const m of [mockResolve, mockCreate, mockUpdate, mockFetch]) expect(m).not.toHaveBeenCalled();
   });
 });

@@ -48,15 +48,27 @@ function policyChanged() {
   );
 }
 
+function suspended() {
+  return NextResponse.json(
+    { success: false, code: 'ACCOUNT_SUSPENDED', error: 'Payments are suspended for this business. Contact Booka support.' },
+    { status: 409 }
+  );
+}
+
+/** Verify the bank account with Paystack before anything is created or changed. */
+async function verifyBank(accountNumber: string, settlementBank: string): Promise<string> {
+  const bank = await resolveBankAccount(accountNumber, settlementBank);
+  if (!bank.success || !bank.account) throw ApiErrorFactory.validationError({ accountNumber: 'Could not verify this bank account' });
+  return bank.account.accountName;
+}
+
 /** Create or re-point a subaccount, then prove Paystack stored what we sent. */
 async function provision(args: {
   admin: Admin;
   tenantId: string; userId: string; existingCode: string | null;
   businessName: string; settlementBank: string; accountNumber: string; primaryContactEmail: string;
+  accountName: string;
 }) {
-  const bank = await resolveBankAccount(args.accountNumber, args.settlementBank);
-  if (!bank.success || !bank.account) throw ApiErrorFactory.validationError({ accountNumber: 'Could not verify this bank account' });
-
   const created = args.existingCode
     ? await updateSubaccount(args.existingCode, { settlementBank: args.settlementBank, accountNumber: args.accountNumber, primaryContactEmail: args.primaryContactEmail, percentageCharge: 0 })
     : await createSubaccount({ businessName: args.businessName, settlementBank: args.settlementBank, accountNumber: args.accountNumber, primaryContactEmail: args.primaryContactEmail, percentageCharge: 0 });
@@ -65,14 +77,16 @@ async function provision(args: {
   const code = created.subaccount.subaccountCode;
   const check = await fetchSubaccount(code);
   const sub = check.success ? check.subaccount : undefined;
-  const ok = Boolean(sub && Number(sub.percentageCharge) === 0 && sub.settlementBank === args.settlementBank
-    && String(sub.accountNumber).slice(-4) === args.accountNumber.slice(-4));
+  // Paystack returns the bank NAME in settlement_bank, so bank correctness rests on
+  // resolveBankAccount (run before provisioning). The full number is compared in memory only.
+  const ok = Boolean(sub && typeof sub.percentageCharge === 'number' && sub.percentageCharge === 0
+    && String(sub.accountNumber) === args.accountNumber);
 
   const now = new Date().toISOString();
   const row = {
     tenant_id: args.tenantId, provider: 'paystack', currency: 'NGN', subaccount_code: code,
     status: ok ? 'active' : 'invalid', bank_code: args.settlementBank, account_last4: args.accountNumber.slice(-4),
-    account_name: bank.account.accountName, policy_code: ASSIGNED_POLICY.code, policy_version: ASSIGNED_POLICY.version,
+    account_name: args.accountName, policy_code: ASSIGNED_POLICY.code, policy_version: ASSIGNED_POLICY.version,
     accepted_by: args.userId, accepted_at: now, updated_at: now,
   };
   const { error } = await args.admin.from('tenant_payment_accounts').upsert(row, { onConflict: 'tenant_id,provider,currency' });
@@ -109,12 +123,17 @@ export const POST = createHttpHandler(async (ctx) => {
   if (body.acceptPolicy.code !== ASSIGNED_POLICY.code || body.acceptPolicy.version !== ASSIGNED_POLICY.version) return policyChanged();
   const tenantId = getVerifiedTenantId(ctx);
   const admin = createSupabaseAdminClient();
-  const { data: existing } = await admin.from('tenant_payment_accounts').select('status')
+  await loadPolicy(admin); // fail before any Paystack call if the policy row is missing
+  const { data: existing } = await admin.from('tenant_payment_accounts').select('status, subaccount_code')
     .eq('tenant_id', tenantId).eq('provider', 'paystack').eq('currency', 'NGN').maybeSingle();
   if (existing?.status === 'active') {
     return NextResponse.json({ success: false, code: 'ALREADY_CONFIGURED', error: 'Payments are already set up. Use update instead.' }, { status: 409 });
   }
-  return provision({ admin, tenantId, userId: ctx.user!.id, existingCode: null, ...body });
+  if (existing?.status === 'suspended') return suspended();
+  const accountName = await verifyBank(body.accountNumber, body.settlementBank);
+  // Reuse a half-set-up subaccount (pending/invalid) rather than orphaning it.
+  const existingCode = (existing?.subaccount_code as string | null | undefined) ?? null;
+  return provision({ admin, tenantId, userId: ctx.user!.id, existingCode, accountName, ...body });
 }, 'POST', { auth: true, roles: ['owner'] });
 
 export const PUT = createHttpHandler(async (ctx) => {
@@ -124,12 +143,18 @@ export const PUT = createHttpHandler(async (ctx) => {
   if (body.acceptPolicy.code !== ASSIGNED_POLICY.code || body.acceptPolicy.version !== ASSIGNED_POLICY.version) return policyChanged();
   const tenantId = getVerifiedTenantId(ctx);
   const admin = createSupabaseAdminClient();
-  const { data: existing } = await admin.from('tenant_payment_accounts').select('subaccount_code')
+  await loadPolicy(admin);
+  const { data: existing } = await admin.from('tenant_payment_accounts').select('status, subaccount_code')
     .eq('tenant_id', tenantId).eq('provider', 'paystack').eq('currency', 'NGN').maybeSingle();
+  if (existing?.status === 'suspended') return suspended();
   if (!existing?.subaccount_code) throw ApiErrorFactory.badRequest('No payment account to update');
+  // A typo must not switch off working collection: resolve the bank first.
+  const accountName = await verifyBank(body.accountNumber, body.settlementBank);
   // Collection stops while the bank change is being verified.
-  await admin.from('tenant_payment_accounts').update({ status: 'pending', updated_at: new Date().toISOString() })
+  const { error: pendingError } = await admin.from('tenant_payment_accounts')
+    .update({ status: 'pending', updated_at: new Date().toISOString() })
     .eq('tenant_id', tenantId).eq('provider', 'paystack').eq('currency', 'NGN');
+  if (pendingError) throw ApiErrorFactory.databaseError(pendingError);
   const { data: tenant } = await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle();
-  return provision({ admin, tenantId, userId: ctx.user!.id, existingCode: existing.subaccount_code, businessName: (tenant?.name as string | undefined) ?? 'Business', ...body });
+  return provision({ admin, tenantId, userId: ctx.user!.id, existingCode: existing.subaccount_code as string, accountName, businessName: (tenant?.name as string | undefined) ?? 'Business', ...body });
 }, 'PUT', { auth: true, roles: ['owner'] });
