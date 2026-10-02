@@ -42,7 +42,8 @@ export type SettlementFailureCode =
   | 'POLICY_NOT_ACCEPTED'
   | 'IDEMPOTENCY_CONFLICT'
   | 'TRANSACTION_INSERT_FAILED'
-  | 'PROVIDER_INITIALIZATION_FAILED';
+  | 'PROVIDER_INITIALIZATION_FAILED'
+  | 'SETTLEMENT_UNAVAILABLE';
 
 export type InitializeTenantPaymentResult =
   | { ok: true; transactionId: string; reference: string; authorizationUrl: string; snapshot: SettlementSnapshot; reused: boolean }
@@ -71,6 +72,7 @@ export type ExistingSettlement = {
   subaccountCode: string | null;
   policyCode: string | null;
   policyVersion: number | null;
+  createdAt: string | null;
 };
 
 export interface SettlementStore {
@@ -80,7 +82,11 @@ export interface SettlementStore {
   insertPending(row: Record<string, unknown>): Promise<{ id: string }>;
   markInitialized(id: string, authorizationUrl: string): Promise<void>;
   markFailed(id: string, error: string): Promise<void>;
+  releaseKey(id: string): Promise<void>;
 }
+
+/** A pending row with no checkout URL older than this is treated as abandoned. */
+export const ABANDONED_PENDING_MS = 15 * 60 * 1000;
 
 const TRANSACTION_TYPE: Record<TenantPaymentSubject['type'], string> = {
   reservation: 'deposit',
@@ -108,12 +114,21 @@ export async function initializeTenantPayment(
   const email = input.customerEmail?.trim().toLowerCase() ?? '';
   if (!email || PLACEHOLDER_EMAILS.has(email)) return fail('CUSTOMER_EMAIL_REQUIRED', 'A customer email is required');
 
-  const account = await store.loadAccount(input.tenantId, 'NGN');
+  let account: StoredAccount | null;
+  let policy: FeePolicy | null = null;
+  try {
+    account = await store.loadAccount(input.tenantId, 'NGN');
+    if (account && account.status === 'active' && account.subaccountCode && account.accepted) {
+      policy = await store.loadPolicy(account.policyCode, account.policyVersion);
+    }
+  } catch (error) {
+    defaultLogger.error('[tenantSettlement] settlement lookup failed', { tenantId: input.tenantId, error: (error as Error).message });
+    return fail('SETTLEMENT_UNAVAILABLE', 'Could not start the payment. Please try again.');
+  }
   if (!account || account.status !== 'active' || !account.subaccountCode) {
     return fail('SETTLEMENT_NOT_CONFIGURED', SETTLEMENT_CUSTOMER_MESSAGE);
   }
   if (!account.accepted) return fail('POLICY_NOT_ACCEPTED', SETTLEMENT_CUSTOMER_MESSAGE);
-  const policy = await store.loadPolicy(account.policyCode, account.policyVersion);
   if (!policy) return fail('SETTLEMENT_NOT_CONFIGURED', SETTLEMENT_CUSTOMER_MESSAGE);
 
   const amounts = calculateSettlement(input.amountMinor, policy);
@@ -125,19 +140,41 @@ export async function initializeTenantPayment(
     policyVersion: policy.version,
   };
 
-  const existing = await store.findByIdempotencyKey(input.tenantId, input.idempotencyKey);
+  let existing: ExistingSettlement | null;
+  try {
+    existing = await store.findByIdempotencyKey(input.tenantId, input.idempotencyKey);
+  } catch (error) {
+    defaultLogger.error('[tenantSettlement] idempotency lookup failed', { tenantId: input.tenantId, error: (error as Error).message });
+    return fail('SETTLEMENT_UNAVAILABLE', 'Could not start the payment. Please try again.');
+  }
   if (existing) {
-    const matches = existing.status === 'pending'
-      && existing.subjectType === input.subject.type
-      && existing.subjectId === input.subject.id
-      && existing.amountMinor === snapshot.amountMinor
-      && existing.platformFeeMinor === snapshot.platformFeeMinor
-      && existing.subaccountCode === snapshot.subaccountCode
-      && existing.policyCode === snapshot.policyCode
-      && existing.policyVersion === snapshot.policyVersion
-      && Boolean(existing.providerReference && existing.authorizationUrl);
-    if (!matches) return fail('IDEMPOTENCY_CONFLICT', 'A different payment already exists for this request');
-    return { ok: true, transactionId: existing.id, reference: existing.providerReference!, authorizationUrl: existing.authorizationUrl!, snapshot, reused: true };
+    const hasCheckout = Boolean(existing.providerReference && existing.authorizationUrl);
+    const createdMs = existing.createdAt ? Date.parse(existing.createdAt) : NaN;
+    const abandoned = existing.status === 'pending' && !hasCheckout
+      && Number.isFinite(createdMs) && Date.now() - createdMs > ABANDONED_PENDING_MS;
+    if (existing.status === 'failed') {
+      try { await store.releaseKey(existing.id); } catch (error) {
+        defaultLogger.error('[tenantSettlement] release key failed', { id: existing.id, error: (error as Error).message });
+        return fail('SETTLEMENT_UNAVAILABLE', 'Could not start the payment. Please try again.');
+      }
+    } else if (abandoned) {
+      try { await store.markFailed(existing.id, 'abandoned'); } catch (error) {
+        defaultLogger.error('[tenantSettlement] abandon failed', { id: existing.id, error: (error as Error).message });
+        return fail('SETTLEMENT_UNAVAILABLE', 'Could not start the payment. Please try again.');
+      }
+    } else {
+      const matches = existing.status === 'pending'
+        && existing.subjectType === input.subject.type
+        && existing.subjectId === input.subject.id
+        && existing.amountMinor === snapshot.amountMinor
+        && existing.platformFeeMinor === snapshot.platformFeeMinor
+        && existing.subaccountCode === snapshot.subaccountCode
+        && existing.policyCode === snapshot.policyCode
+        && existing.policyVersion === snapshot.policyVersion
+        && hasCheckout;
+      if (!matches) return fail('IDEMPOTENCY_CONFLICT', 'A different payment already exists for this request');
+      return { ok: true, transactionId: existing.id, reference: existing.providerReference!, authorizationUrl: existing.authorizationUrl!, snapshot, reused: true };
+    }
   }
 
   const reference = `bk_${randomUUID().replace(/-/g, '')}`;
@@ -188,7 +225,8 @@ export async function initializeTenantPayment(
   return { ok: true, transactionId: inserted.id, reference, authorizationUrl: init.authorizationUrl, snapshot, reused: false };
 }
 
-function defaultStore(): SettlementStore {
+/** Exported for unit tests only. */
+export function defaultStore(): SettlementStore {
   const admin = createSupabaseAdminClient();
   return {
     async loadAccount(tenantId, currency) {
@@ -225,7 +263,7 @@ function defaultStore(): SettlementStore {
     async findByIdempotencyKey(tenantId, key) {
       const { data, error } = await admin
         .from('transactions')
-        .select('id, status, provider_reference, raw, subject_type, subject_id, amount_minor, platform_fee_minor, settlement_subaccount_code, settlement_policy_code, settlement_policy_version')
+        .select('id, status, provider_reference, raw, subject_type, subject_id, amount_minor, platform_fee_minor, settlement_subaccount_code, settlement_policy_code, settlement_policy_version, created_at')
         .eq('tenant_id', tenantId).eq('settlement_idempotency_key', key).maybeSingle();
       if (error) throw new Error(`idempotency lookup failed: ${error.message}`);
       if (!data) return null;
@@ -242,6 +280,7 @@ function defaultStore(): SettlementStore {
         subaccountCode: data.settlement_subaccount_code,
         policyCode: data.settlement_policy_code,
         policyVersion: data.settlement_policy_version,
+        createdAt: data.created_at ?? null,
       };
     },
     async insertPending(row) {
@@ -250,16 +289,24 @@ function defaultStore(): SettlementStore {
       return { id: data.id };
     },
     async markInitialized(id, authorizationUrl) {
-      const { data } = await admin.from('transactions').select('raw').eq('id', id).maybeSingle();
-      const raw = (data?.raw ?? {}) as Record<string, unknown>;
+      const { data, error: readError } = await admin.from('transactions').select('raw').eq('id', id).maybeSingle();
+      if (readError || !data) {
+        defaultLogger.warn('[tenantSettlement] could not read row to store checkout url', { id, error: readError?.message });
+        return;
+      }
+      const raw = (data.raw ?? {}) as Record<string, unknown>;
       const { error } = await admin.from('transactions').update({ raw: { ...raw, authorization_url: authorizationUrl } }).eq('id', id);
       if (error) defaultLogger.warn('[tenantSettlement] could not store checkout url', { id, error: error.message });
     },
     async markFailed(id, message) {
       const { error } = await admin.from('transactions')
-        .update({ status: 'failed', settlement_verification_status: 'not_applicable', updated_at: new Date().toISOString() })
+        .update({ status: 'failed', settlement_verification_status: 'not_applicable', settlement_idempotency_key: null, updated_at: new Date().toISOString() })
         .eq('id', id);
       if (error) defaultLogger.error('[tenantSettlement] could not mark failed', { id, error: error.message, cause: message });
+    },
+    async releaseKey(id) {
+      const { error } = await admin.from('transactions').update({ settlement_idempotency_key: null }).eq('id', id);
+      if (error) throw new Error(`could not release idempotency key: ${error.message}`);
     },
   };
 }

@@ -4,7 +4,8 @@ const mockInit = jest.fn();
 jest.mock('@/lib/paystack', () => ({ initializeSplitTransaction: (...a: unknown[]) => mockInit(...a) }));
 jest.mock('@/lib/supabase/server', () => ({ createSupabaseAdminClient: jest.fn() }));
 
-import { initializeTenantPayment, type SettlementStore } from '@/lib/payments/tenantSettlement';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { defaultStore, initializeTenantPayment, type SettlementStore } from '@/lib/payments/tenantSettlement';
 
 const account = { subaccountCode: 'ACCT_1', status: 'active' as const, accepted: true, policyCode: 'pilot_ngn_v1', policyVersion: 1 };
 const policy = { code: 'pilot_ngn_v1', version: 1, basisPoints: 100, capMinor: 200000, feeBearer: 'subaccount' as const };
@@ -18,6 +19,7 @@ function makeStore(over: Partial<SettlementStore> = {}): SettlementStore & { ins
     insertPending: jest.fn(async (row: unknown) => { s.inserted.push(row); return { id: 'tx_1' }; }),
     markInitialized: jest.fn(async (id: string) => { s.initialized.push(id); }),
     markFailed: jest.fn(async (id: string) => { s.failed.push(id); }),
+    releaseKey: jest.fn(async () => {}),
     ...over,
   };
   return s as never;
@@ -136,5 +138,84 @@ describe('initializeTenantPayment', () => {
     await initializeTenantPayment(input, makeStore());
     const ref = (mockInit.mock.calls[0][0] as { reference: string }).reference;
     expect(ref).toMatch(/^bk_[a-z0-9]{32}$/);
+  });
+
+  const old = (over: Record<string, unknown>) => ({
+    id: 'tx_old', status: 'pending', providerReference: null, authorizationUrl: null,
+    subjectType: 'reservation', subjectId: 'r1', amountMinor: 500000, platformFeeMinor: 5000,
+    subaccountCode: 'ACCT_1', policyCode: 'pilot_ngn_v1', policyVersion: 1,
+    createdAt: new Date().toISOString(), ...over,
+  });
+
+  it('releases the key of a failed row and creates a new payment', async () => {
+    mockInit.mockResolvedValue({ success: true, authorizationUrl: 'https://new' });
+    const store = makeStore({ findByIdempotencyKey: jest.fn(async () => old({ status: 'failed' })) });
+    expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: true, transactionId: 'tx_1', reused: false });
+    expect(store.releaseKey).toHaveBeenCalledWith('tx_old');
+    expect(store.inserted).toHaveLength(1);
+    expect(mockInit).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons a stale pending row without a URL and continues', async () => {
+    mockInit.mockResolvedValue({ success: true, authorizationUrl: 'https://new' });
+    const createdAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+    const store = makeStore({ findByIdempotencyKey: jest.fn(async () => old({ createdAt })) });
+    expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: true, reused: false });
+    expect(store.markFailed).toHaveBeenCalledWith('tx_old', 'abandoned');
+    expect(store.inserted).toHaveLength(1);
+  });
+
+  it('treats a young pending row without a URL as in flight', async () => {
+    const store = makeStore({ findByIdempotencyKey: jest.fn(async () => old({})) });
+    expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: false, code: 'IDEMPOTENCY_CONFLICT' });
+    expect(mockInit).not.toHaveBeenCalled();
+    expect(store.inserted).toHaveLength(0);
+  });
+
+  it('still conflicts on a succeeded row', async () => {
+    const store = makeStore({ findByIdempotencyKey: jest.fn(async () => old({ status: 'success', providerReference: 'r', authorizationUrl: 'u' })) });
+    expect(await initializeTenantPayment(input, store)).toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+  });
+
+  it('returns SETTLEMENT_UNAVAILABLE when a pre-insert lookup throws', async () => {
+    const store = makeStore({ loadAccount: jest.fn(async () => { throw new Error('db down'); }) });
+    expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: false, code: 'SETTLEMENT_UNAVAILABLE' });
+    expect(mockInit).not.toHaveBeenCalled();
+    expect(store.inserted).toHaveLength(0);
+  });
+
+  describe('default store', () => {
+    function adminWith(readResult: { data: unknown; error: unknown }) {
+      const updates: Record<string, unknown>[] = [];
+      const admin = {
+        from: () => ({
+          select: () => ({ eq: () => ({ maybeSingle: async () => readResult }) }),
+          update: (u: Record<string, unknown>) => { updates.push(u); return { eq: async () => ({ error: null }) }; },
+        }),
+      };
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(admin);
+      return updates;
+    }
+
+    it('markFailed and releaseKey null the idempotency key', async () => {
+      const updates = adminWith({ data: null, error: null });
+      const st = defaultStore();
+      await st.markFailed('tx', 'x');
+      await st.releaseKey('tx');
+      expect(updates[0]).toMatchObject({ status: 'failed', settlement_idempotency_key: null });
+      expect(updates[1]).toEqual({ settlement_idempotency_key: null });
+    });
+
+    it('markInitialized does not overwrite raw when the read fails', async () => {
+      const updates = adminWith({ data: null, error: { message: 'boom' } });
+      await defaultStore().markInitialized('tx', 'https://u');
+      expect(updates).toHaveLength(0);
+    });
+
+    it('markInitialized preserves existing raw', async () => {
+      const updates = adminWith({ data: { raw: { ref: 'r' } }, error: null });
+      await defaultStore().markInitialized('tx', 'https://u');
+      expect(updates[0]).toEqual({ raw: { ref: 'r', authorization_url: 'https://u' } });
+    });
   });
 });
