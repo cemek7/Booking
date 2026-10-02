@@ -39,11 +39,11 @@
 - `CtaLink({ href: string; children: ReactNode; variant?: 'primary' | 'text'; tone?: 'green' | 'ink' | 'light'; className?: string })`
 - `Panel({ tone?: 'paper' | 'dark' | 'green'; as?: 'div' | 'section' | 'article'; className?: string; children; ...rest })`
 
-- [ ] Step 1: Write failing test: heading level from `as`, kicker text, dark tone uses `text-[var(--brand-paper)]`; CtaLink primary has `rounded-full` + `focus-visible:` + href, text variant has `→`; Panel dark tone has `bg-[var(--brand-ink)]`.
-- [ ] Step 2: Run `npx jest src/components/homepage/sharedPrimitives` → FAIL (module not found).
-- [ ] Step 3: Implement the three components (see code in commit).
-- [ ] Step 4: Run again → PASS.
-- [ ] Step 5: Commit `feat(site): add shared landing primitives`.
+- [x] Step 1: Write failing test: heading level from `as`, kicker text, dark tone uses `text-[var(--brand-paper)]`; CtaLink primary has `rounded-full` + `focus-visible:` + href, text variant has `→`; Panel dark tone has `bg-[var(--brand-ink)]`.
+- [x] Step 2: Run `npx jest src/components/homepage/sharedPrimitives` → FAIL (module not found).
+- [x] Step 3: Implement the three components (see code in commit).
+- [x] Step 4: Run again → PASS.
+- [x] Step 5: Commit `feat(site): add shared landing primitives`.
 
 ### Task 2: Booka landing
 
@@ -53,11 +53,11 @@
 
 **Interfaces — Consumes:** Task 1 components.
 
-- [ ] Step 1: Append failing tests: texts "Set it up once", "Outcome signals", "ICP focus", "Channel strategy" absent; `#how-it-works` element contains "Answer" and "Report"; footer links `/privacy` and `/terms`; ≤ 4 `[data-surface]` elements (Panel sets `data-surface`).
-- [ ] Step 2: Run → FAIL.
-- [ ] Step 3: Rewrite per spec §4 table (hero trim, band with `id="how-it-works"`, 2×2 problems, vertical rows, pilot Panel, light report, pricing with recommended ink plan, plain FAQ, final CTA, footer legal links). Remove `howItWorks`, `verticalUseCases`, `SIAS_OUTCOME_ATRIBUTION` import.
-- [ ] Step 4: Run all homepage tests → PASS (old 3 + new).
-- [ ] Step 5: Commit `feat(booka): calmer landing layout with fewer sections`.
+- [x] Step 1: Append failing tests: texts "Set it up once", "Outcome signals", "ICP focus", "Channel strategy" absent; `#how-it-works` element contains "Answer" and "Report"; footer links `/privacy` and `/terms`; ≤ 4 `[data-surface]` elements (Panel sets `data-surface`).
+- [x] Step 2: Run → FAIL.
+- [x] Step 3: Rewrite per spec §4 table (hero trim, band with `id="how-it-works"`, 2×2 problems, vertical rows, pilot Panel, light report, pricing with recommended ink plan, plain FAQ, final CTA, footer legal links). Remove `howItWorks`, `verticalUseCases`, `SIAS_OUTCOME_ATRIBUTION` import.
+- [x] Step 4: Run all homepage tests → PASS (old 3 + new).
+- [x] Step 5: Commit `feat(booka): calmer landing layout with fewer sections`.
 
 ### Task 3: Techclave home
 
@@ -65,17 +65,17 @@
 - Modify: `src/app/page.tsx` (rewrite per spec §5)
 - Test: `src/components/homepage/TechclaveHome.test.tsx` (imports `@/app/page`)
 
-- [ ] Step 1: Failing test: exactly one `h1` with ≤ 14 words; link to `/booka`; `/privacy` and `/terms` present; "Product-first" and "AI products for customer operations" absent; ≤ 2 `[data-surface]`.
-- [ ] Step 2: Run → FAIL.
-- [ ] Step 3: Rewrite per spec §5.
-- [ ] Step 4: Run → PASS.
-- [ ] Step 5: Commit `feat(site): calmer Techclave home`.
+- [x] Step 1: Failing test: exactly one `h1` with ≤ 14 words; link to `/booka`; `/privacy` and `/terms` present; "Product-first" and "AI products for customer operations" absent; ≤ 2 `[data-surface]`.
+- [x] Step 2: Run → FAIL.
+- [x] Step 3: Rewrite per spec §5.
+- [x] Step 4: Run → PASS.
+- [x] Step 5: Commit `feat(site): calmer Techclave home`.
 
 ### Task 4: Verify and ship
 
-- [ ] Step 1: `npm run typecheck:ci` → exit 0.
-- [ ] Step 2: `npx jest src/components/homepage` → all pass.
-- [ ] Step 3: `npx eslint` on changed files → clean.
-- [ ] Step 4: `npm run build` → success.
-- [ ] Step 5: Start `next start` on a free port; Playwright screenshots `/` and `/booka` at 1440×900 and 390×844 (full page); view each; fix layout issues; assert `document.documentElement.scrollWidth <= innerWidth` on mobile.
-- [ ] Step 6: `git fetch && git rebase origin/staging`, re-run tests, push, open PR into `staging` (do not merge).
+- [x] Step 1: `npm run typecheck:ci` → exit 0.
+- [x] Step 2: `npx jest src/components/homepage` → all pass.
+- [x] Step 3: `npx eslint` on changed files → clean.
+- [x] Step 4: `npm run build` → success.
+- [x] Step 5: Start `next start` on a free port; Playwright screenshots `/` and `/booka` at 1440×900 and 390×844 (full page); view each; fix layout issues; assert `document.documentElement.scrollWidth <= innerWidth` on mobile.
+- [x] Step 6: `git fetch && git rebase origin/staging`, re-run tests, push, open PR into `staging` (do not merge).

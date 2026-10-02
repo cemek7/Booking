@@ -1,7 +1,7 @@
 # Techclave + Booka Landing Visual Refresh — Design
 
 **Date:** 2026-10-02
-**Status:** Approved in conversation (3 sections), pending written-spec review
+**Status:** Implemented in PR #105 (open, not merged)
 **Scope:** `src/app/page.tsx` (Techclave home) and `src/components/homepage/BookaLanding.tsx` (Booka landing). Visuals plus trim. No new copy direction.
 **Governing spec:** `2026-08-29-booka-revenue-front-desk-positioning-design.md`. Its information architecture (§9), proof policy (§7) and pricing rules stay authoritative. This refresh changes presentation and length only.
 
