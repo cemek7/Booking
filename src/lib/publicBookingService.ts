@@ -32,6 +32,20 @@ export interface BookingDepositInfo {
   currency?: string;
 }
 
+/** Tenant deposit rule shared by public booking and the legacy dialog bridge. */
+export function computeDepositMinor(input: {
+  tenantSettings: Record<string, unknown>;
+  tenantMetadata: Record<string, unknown>;
+  servicePriceCents: number;
+}): number {
+  const ui = (input.tenantMetadata.ui_settings && typeof input.tenantMetadata.ui_settings === 'object'
+    ? input.tenantMetadata.ui_settings : {}) as Record<string, unknown>;
+  const requireDeposit = (input.tenantSettings.requireDeposit ?? ui.requireDeposit) === true;
+  const depositPercent = Number(input.tenantSettings.depositPercent ?? ui.depositPercent ?? 0);
+  if (!requireDeposit || !(depositPercent > 0)) return 0;
+  return Math.round((input.servicePriceCents * depositPercent) / 100);
+}
+
 /**
  * If the tenant requires a deposit, initialise a Paystack payment for
  * depositPercent% of the service price and return the checkout URL. Never
@@ -59,10 +73,6 @@ async function maybeCreateBookingDeposit(input: {
     const metadata = (tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {}) as Record<string, unknown>;
     const uiSettings = (metadata.ui_settings && typeof metadata.ui_settings === 'object' ? metadata.ui_settings : {}) as Record<string, unknown>;
 
-    const requireDeposit = (settings.requireDeposit ?? uiSettings.requireDeposit) === true;
-    const depositPercent = Number(settings.depositPercent ?? uiSettings.depositPercent ?? 0);
-    if (!requireDeposit || !(depositPercent > 0)) return { depositRequired: false };
-
     const currency = String(settings.defaultCurrency ?? uiSettings.defaultCurrency ?? 'NGN');
 
     const { data: service } = await supabase
@@ -73,7 +83,7 @@ async function maybeCreateBookingDeposit(input: {
     const priceCents = typeof service?.price_cents === 'number'
       ? service.price_cents
       : (typeof service?.price === 'number' ? Math.round(service.price * 100) : 0);
-    const depositMinor = Math.round((priceCents * depositPercent) / 100);
+    const depositMinor = computeDepositMinor({ tenantSettings: settings, tenantMetadata: metadata, servicePriceCents: priceCents });
     if (!(depositMinor > 0)) return { depositRequired: false };
 
     const subaccountCode = typeof metadata.paystack_subaccount_code === 'string'

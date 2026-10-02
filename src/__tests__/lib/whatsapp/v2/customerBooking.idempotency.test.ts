@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockCreateReservation = jest.fn();
-const mockInitializePayment = jest.fn();
+const mockInitializeTenantPayment = jest.fn();
 const mockExecuteAction = jest.fn();
 const mockUpdateThreadState = jest.fn();
 const mockTransitionThread = jest.fn();
@@ -35,7 +35,11 @@ jest.mock('@/lib/supabase/server', () => ({
 }));
 jest.mock('@/lib/reservationService', () => ({ createReservation: mockCreateReservation }));
 jest.mock('@/lib/booking/action-validator', () => ({ executeAction: mockExecuteAction }));
-jest.mock('@/lib/paymentService', () => jest.fn().mockImplementation(() => ({ initializePayment: mockInitializePayment })));
+jest.mock('@/lib/payments/tenantSettlement', () => ({ initializeTenantPayment: mockInitializeTenantPayment }));
+jest.mock('@/lib/payments/paymentHandoff', () => ({
+  openReservationPaymentHandoff: jest.fn(),
+  PAYMENT_HANDOFF_CUSTOMER_MESSAGE: 'HANDOFF_MESSAGE',
+}));
 jest.mock('@/lib/whatsapp/v2/conversationEffects', () => ({
   ConversationEffectBlockedError: class ConversationEffectBlockedError extends Error {},
   runIdempotentEffect: mockRunIdempotentEffect,
@@ -71,10 +75,13 @@ describe('customer booking idempotency', () => {
     jest.clearAllMocks();
     effectResults.clear();
     mockCreateReservation.mockResolvedValue({ id: 'reservation-1' });
-    mockInitializePayment.mockResolvedValue({
-      success: true,
+    mockInitializeTenantPayment.mockResolvedValue({
+      ok: true,
       transactionId: 'payment-1',
+      reference: 'bk_1',
       authorizationUrl: 'https://pay.example/deposit-1',
+      snapshot: {},
+      reused: false,
     });
     mockExecuteAction.mockResolvedValue({ success: true, data: { reservationId: 'reservation-1' } });
     mockUpdateThreadState.mockResolvedValue({ stateVersion: 1 });
@@ -115,7 +122,7 @@ describe('customer booking idempotency', () => {
     expect(first).toContain('https://pay.example/deposit-1');
     expect(replay).toBe(first);
     expect(mockCreateReservation).toHaveBeenCalledTimes(1);
-    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
+    expect(mockInitializeTenantPayment).toHaveBeenCalledTimes(1);
     expect(mockRunIdempotentEffect).toHaveBeenCalledWith(expect.objectContaining({
       effectType: 'create_booking',
       tenantId: 'tenant-1',

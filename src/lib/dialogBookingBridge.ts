@@ -7,7 +7,10 @@ import * as dialogManager from './dialogManager';
 import { observability } from './observability/observability';
 import { z } from 'zod';
 import { BookingStep } from '../types/shared';
-import { PaymentsAdapter } from './paymentsAdapter';
+import { initializeTenantPayment } from './payments/tenantSettlement';
+import { openReservationPaymentHandoff, PAYMENT_HANDOFF_CUSTOMER_MESSAGE } from './payments/paymentHandoff';
+import { getCustomerEmail } from './payments/customerEmail';
+import { computeDepositMinor } from './publicBookingService';
 import { generateCalendarLinks, bookingToCalendarEvent } from './integrations/universalCalendar';
 import {
   DAY_KEYS,
@@ -571,50 +574,41 @@ export class DialogBookingBridge {
 
       state.bookingId = reservation.id;
 
-      // Fetch service price for deposit
+      // Deposit: same tenant rule as public booking, settled through the tenant boundary.
       const { data: service } = await this.supabase
-        .from('services')
-        .select('price, currency')
-        .eq('id', state.serviceId!)
-        .maybeSingle();
+        .from('services').select('price, price_cents').eq('id', state.serviceId!).maybeSingle();
+      const { data: tenantRow } = await this.supabase
+        .from('tenants').select('settings, metadata').eq('id', tenantId).maybeSingle();
+      const servicePriceCents = typeof service?.price_cents === 'number'
+        ? service.price_cents
+        : Math.round(Number(service?.price ?? 0) * 100);
+      const depositMinor = computeDepositMinor({
+        tenantSettings: (tenantRow?.settings ?? {}) as Record<string, unknown>,
+        tenantMetadata: (tenantRow?.metadata ?? {}) as Record<string, unknown>,
+        servicePriceCents,
+      });
 
-      const currency = service?.currency || 'NGN';
-      const priceMinor = Math.round((service?.price || 0) * 100); // convert to kobo/cents
-
-      // Attempt to create a deposit via paymentsAdapter (defaults to Paystack)
       let paymentUrl: string | null = null;
-      if (priceMinor > 0) {
-        try {
-          // Idempotency: check for an existing pending deposit before creating a new one
-          const { data: existingDeposit } = await this.supabase
-            .from('transactions')
-            .select('id, raw')
-            .eq('tenant_id', tenantId)
-            .eq('type', 'deposit')
-            .in('status', ['pending', 'success'])
-            .filter('raw->reservation_id', 'eq', reservation.id)
-            .maybeSingle();
-
-          if (existingDeposit) {
-            paymentUrl = existingDeposit.raw?.provider_response?.authorizationUrl || null;
-          } else {
-            const adapter = new PaymentsAdapter();
-            const depositResult = await adapter.createDeposit({
-              tenant_id: tenantId,
-              reservation_id: reservation.id,
-              amount_minor_units: priceMinor,
-              currency,
-              customer_phone: state.customerPhone,
-              customer_email: state.customerEmail,
-              metadata: { session_id: sessionId, source: 'whatsapp_conversation' }
-            });
-            if (depositResult.status === 'created' && depositResult.payment_url) {
-              paymentUrl = depositResult.payment_url;
-            }
-          }
-        } catch (payErr) {
-          defaultLogger.warn('dialogBookingBridge: deposit creation failed, continuing without payment link', payErr);
+      if (depositMinor > 0) {
+        const result = await initializeTenantPayment({
+          tenantId,
+          amountMinor: depositMinor,
+          currency: 'NGN',
+          // Same deterministic phone-derived fallback as v2 (never a shared placeholder).
+          customerEmail: getCustomerEmail(state.customerEmail ?? null, state.customerPhone ?? ''),
+          subject: { type: 'reservation', id: reservation.id },
+          idempotencyKey: `deposit:${reservation.id}`,
+          metadata: { session_id: sessionId, source: 'whatsapp_conversation' },
+        });
+        if (!result.ok) {
+          await openReservationPaymentHandoff({
+            tenantId, reservationId: reservation.id, reason: result.code, customerPhone: state.customerPhone ?? null,
+          });
+          state.step = 'payment_pending';
+          await this.updateSessionState(sessionId, state, tenantId);
+          return { response: PAYMENT_HANDOFF_CUSTOMER_MESSAGE, completed: false, nextStep: 'payment_pending' };
         }
+        paymentUrl = result.authorizationUrl;
       }
 
       if (paymentUrl) {

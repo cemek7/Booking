@@ -12,7 +12,7 @@ jest.mock('@supabase/supabase-js', () => ({
   })),
 }));
 
-jest.mock('@/lib/paymentService', () => jest.fn());
+jest.mock('@/lib/payments/tenantSettlement', () => ({ initializeTenantPayment: jest.fn() }));
 jest.mock('@/lib/reservationService', () => ({
   createReservation: jest.fn(),
 }));

@@ -13,7 +13,9 @@
 
 import { createHash } from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
-import PaymentService from '@/lib/paymentService';
+import { initializeTenantPayment } from '@/lib/payments/tenantSettlement';
+import { openReservationPaymentHandoff, PAYMENT_HANDOFF_CUSTOMER_MESSAGE } from '@/lib/payments/paymentHandoff';
+import { getCustomerEmail } from '@/lib/payments/customerEmail';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { siasOperations } from '@/lib/sias-operations';
 import { executeAction, type AIResponse } from '@/lib/booking/action-validator';
@@ -669,43 +671,43 @@ async function confirmBooking(
   });
 
   if (requiresDeposit) {
-    const paymentService = new PaymentService(supabaseAdmin);
     const customerEmail = getCustomerEmail(customer?.email ?? null, phone);
     const paymentResult = await runIdempotentEffect({
       tenantId,
       threadId: executionContext.threadId,
       idempotencyKey: `${executionContext.correlationKey}:initialize_deposit:${effectDigest}`,
       effectType: 'initialize_deposit',
-      execute: () => paymentService.initializePayment({
+      execute: () => initializeTenantPayment({
         tenantId,
-        amount: depositAmountCents,
+        amountMinor: depositAmountCents,
         currency: 'NGN',
-        email: customerEmail,
-        reservationId: reservation?.id ?? `${tenantId}_${phone}_${startAt}`,
-        provider: 'paystack',
-        metadata: {
-          type: 'deposit',
-          reservation_id: reservation?.id,
-          booking_noun: 'appointment',
-        },
-        bearer: 'account',
+        customerEmail,
+        subject: { type: 'reservation', id: reservation.id },
+        idempotencyKey: `deposit:${reservation.id}`,
+        metadata: { type: 'deposit', booking_noun: 'appointment' },
       }),
-      resultRef: (value) => value.transactionId ?? null,
+      resultRef: (value) => (value.ok ? value.transactionId : null),
     });
 
-    if (!paymentResult.success || !paymentResult.authorizationUrl) {
-      console.error('[customerBooking] deposit initialization failed', {
-        tenantId,
-        reservationId: reservation?.id,
-        error: paymentResult.error,
+    if (!paymentResult.ok) {
+      defaultLogger.warn('[customerBooking] deposit not collectable; handing off', {
+        tenantId, reservationId: reservation.id, code: paymentResult.code,
       });
-      await supabaseAdmin
-        .from('reservations')
-        .update({ status: 'cancelled' })
-        .eq('id', reservation?.id);
-      if (lock_id) await releaseLock(lock_id);
-      await resetConversation(externalId, tenantId, channel);
-      return 'Sorry, we could not create your deposit link right now. Please try again.';
+      // Reservation stays pending and the slot lock is kept: staff arrange payment.
+      await openReservationPaymentHandoff({
+        tenantId,
+        reservationId: reservation.id,
+        reason: paymentResult.code,
+        customerPhone: phone,
+        threadId: executionContext.threadId,
+      });
+      await transitionThread({
+        tenantId,
+        threadId: executionContext.threadId,
+        from: ['active'],
+        to: 'handed_off',
+      });
+      return PAYMENT_HANDOFF_CUSTOMER_MESSAGE;
     }
 
     await recordFrontDeskEvent({
@@ -1299,12 +1301,6 @@ function getDepositConfig(settings: Record<string, unknown> | undefined): { enab
     enabled: Boolean(config.enabled),
     amount_cents: typeof config.amount_cents === 'number' ? config.amount_cents : undefined,
   };
-}
-
-function getCustomerEmail(email: string | null, phone: string): string {
-  if (email && email.trim()) return email.trim();
-  const cleanPhone = phone.replace(/\D/g, '');
-  return `noemail+${cleanPhone || 'customer'}@example.com`;
 }
 
 function formatProductActionReply(
