@@ -58,8 +58,8 @@ Order follows positioning spec §9.
 | # | Section | Change |
 |---|---|---|
 | 1 | Hero | Keep category kicker, `BOOKA_POSITIONING.headline`, subcopy (trim to ≤ 30 words), pilot CTA (primary) + report CTA (text link), `DemoConversation`. Cut the 3 capability tiles and the "Booka by Techclave" pill. `launchNotes` become one muted line separated by `·`. |
-| 2 | Workflow band | Keep as the single dark `Panel`. 8 steps in one row (wraps 4×2 on mobile). |
-| 3 | How it works | **Cut.** Duplicates the workflow band. |
+| 2 | Workflow band | Keep as the single dark `Panel`. 8 steps in one row (wraps 4×2 on mobile). Takes over `id="how-it-works"` so the nav "How it works" link still resolves. |
+| 3 | How it works ("Set it up once. Let it run.") | **Cut.** Duplicates the workflow band. Its anchor moves to the band. |
 | 4 | Capture / Convert / Recover / Grow | 2×2 grid, no boxes. Bold `promise` + one line of `copy` (trimmed). |
 | 5 | Verticals | 3 stacked rows (name · one-line positioning · flow tags), not 3 cards. Drop the sales/booking sub-boxes and the Channel strategy panel. Kicker "Who it's for". |
 | 6 | 14-Day Revenue Pilot | Keep as main `Panel` (paper). Keep `#revenue-pilot` id and link. |
@@ -68,6 +68,8 @@ Order follows positioning spec §9.
 | 9 | Outcome signals | **Cut.** Not in positioning IA; pilot report covers it. |
 | 10 | FAQ | Plain 2-column question/answer list, no boxes. |
 | 11 | Final CTA + footer | One primary CTA (pilot). Footer adds Privacy and Terms links (`/privacy`, `/terms`). |
+
+Booka nav: plain text links (Techclave, How it works, Pricing, Sign in); "Start onboarding" stays the one primary.
 
 Must remain present: `h1`, links named /revenue pilot/i → `/booka/revenue-pilot`, /missed revenue report/i → `/booka/missed-revenue-report`, ids `#revenue-pilot` and `#missed-revenue-report`, 4 `pricing-plan`, 4 `usage-policy`, `vertical-demo` with `data-default-vertical="beauty"` (inside `DemoConversation`, untouched).
 
@@ -89,7 +91,8 @@ Data removed: `howItWorks` const; the `SIAS_OUTCOME_ATRIBUTION` import if no lon
 
 - Existing `src/components/homepage/BookaLanding.test.tsx` passes unchanged.
 - Add to it:
-  - no element with text "How it works" or "Outcome signals" or "ICP focus";
+  - no text "Set it up once", "Outcome signals", "ICP focus" or "Channel strategy";
+  - `#how-it-works` exists and is the workflow band;
   - footer has links to `/privacy` and `/terms`.
 - New `src/components/homepage/SectionHeading.test.tsx` / `CtaLink.test.tsx`: render, heading level, primary vs text variant classes, href.
 - New Techclave home test (if none exists): one `h1`, link to `/booka`, legal links still present, filler stat labels ("Product-first") absent.
