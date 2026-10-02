@@ -12,7 +12,7 @@ import { publicBookingAPI } from '@/lib/publicBookingAPI';
 import { useToast } from '@/hooks/useToast';
 
 interface BookingStep {
-  step: 'service' | 'datetime' | 'customer' | 'summary' | 'loading';
+  step: 'service' | 'datetime' | 'customer' | 'summary' | 'loading' | 'received';
 }
 
 interface BookingData {
@@ -124,6 +124,7 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
           description: "Online payment isn't available right now. The business will contact you to arrange your deposit.",
           type: 'info',
         });
+        setCurrentStep('received');
         return;
       }
 
@@ -254,6 +255,15 @@ export default function BookingContainer({ slug, tenantId }: BookingContainerPro
         )}
 
         {currentStep === 'loading' && <LoadingSpinner />}
+
+        {currentStep === 'received' && (
+          <div className="space-y-3 text-center" role="status">
+            <h2 className="text-xl font-semibold text-slate-900">Booking request received</h2>
+            <p className="text-slate-600">
+              Online payment isn&apos;t available right now. The business will contact you to arrange your deposit.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

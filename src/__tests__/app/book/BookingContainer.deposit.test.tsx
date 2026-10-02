@@ -10,7 +10,7 @@ jest.mock('next/navigation', () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock('@/hooks/useToast', () => ({ useToast: () => ({ toast: mockToast }) }));
 jest.mock('@/lib/publicBookingAPI', () => ({ publicBookingAPI: { createPublicBooking: (...a: unknown[]) => mockCreate(...a) } }));
 jest.mock('@/app/book/[slug]/components/TenantHeader', () => ({ __esModule: true, default: () => null }));
-jest.mock('@/app/book/[slug]/components/LoadingSpinner', () => ({ __esModule: true, default: () => null }));
+jest.mock('@/app/book/[slug]/components/LoadingSpinner', () => ({ __esModule: true, default: () => <div data-testid="spinner" /> }));
 jest.mock('@/app/book/[slug]/components/ServiceSelector', () => ({
   __esModule: true,
   default: ({ onSelect }: any) => <button onClick={() => onSelect('s1', 'Cut', 30, 10000)}>pick-service</button>,
@@ -47,5 +47,9 @@ describe('BookingContainer deposit unavailable', () => {
     expect(calls[0].description).toMatch(/business will contact you/i);
     expect(calls.some((c) => /Booking Confirmed/i.test(c.title))).toBe(false);
     expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('spinner')).toBeNull();
+    expect(screen.getByText('Booking request received')).toBeTruthy();
+    expect(screen.getByText(/The business will contact you to arrange your deposit/)).toBeTruthy();
+    expect(screen.queryByText(/Booking Confirmed/i)).toBeNull();
   });
 });
