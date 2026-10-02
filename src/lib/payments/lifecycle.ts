@@ -1377,6 +1377,8 @@ export interface PaymentSuccessInput {
   currency?: string;
   /** The reservation/booking ID if available from payment metadata */
   reservationId?: string | null;
+  /** Subject kind from the settled transactions row (Paystack processor). */
+  subjectType?: 'reservation' | 'retail_order' | 'payment_link' | null;
 }
 
 type PaymentOutcomeInput = PaymentSuccessInput & {
@@ -1868,10 +1870,10 @@ export async function handlePaymentRefund(input: PaymentOutcomeInput): Promise<v
  */
 export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<void> {
   const supabase = createServerSupabaseClient();
-  const { tenantId, reference, provider, reservationId, amountMinor, currency } = input;
+  const { tenantId, reference, provider, reservationId, amountMinor, currency, subjectType } = input;
 
   try {
-    if (!reservationId) {
+    if (subjectType === 'retail_order' || (!reservationId && subjectType !== 'payment_link')) {
       const retail = await getRetailPaymentContext(tenantId, reference);
       if (retail.orderId) {
         await handleRetailPaymentSuccess({
@@ -1885,6 +1887,7 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
         return;
       }
     }
+    if (subjectType === 'payment_link') return; // a link has no subject to confirm
 
     // 1. Resolve reservation
     let bookingId: string | null = reservationId || null;

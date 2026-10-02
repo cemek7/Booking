@@ -1,157 +1,72 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
-import crypto from 'crypto';
 
 jest.mock('@/lib/supabase/server', () => ({
   getSupabaseRouteHandlerClient: jest.fn(),
   createSupabaseAdminClient: jest.fn(),
   createServerSupabaseClient: jest.fn(),
 }));
-jest.mock('@/lib/payments/lifecycle', () => ({ handlePaymentSuccess: jest.fn(async () => undefined) }));
-const mockCreditVerifiedTopup = jest.fn();
-jest.mock('@/lib/billing/walletTopup', () => ({
-  creditVerifiedTopup: (...args: unknown[]) => mockCreditVerifiedTopup(...args),
+jest.mock('@/lib/payments/lifecycle', () => ({
+  handlePaymentSuccess: jest.fn(async () => undefined),
+  handlePaymentFailure: jest.fn(async () => undefined),
+  handlePaymentRefund: jest.fn(async () => undefined),
+}));
+const mockProcess = jest.fn();
+jest.mock('@/lib/payments/paystackWebhookProcessor', () => ({
+  processPaystackWebhook: (...args: unknown[]) => mockProcess(...args),
 }));
 jest.mock('@/lib/eventbus/eventBus', () => ({ getEventBus: () => ({ publishEvent: jest.fn(async () => undefined) }) }));
-// PaymentService is instantiated in the route when a transaction is found.
-// __esModule: true is required so the default import resolves correctly.
 jest.mock('@/lib/paymentService', () => ({
   __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
-    getProvider: jest.fn(() => undefined),
-  })),
+  default: jest.fn().mockImplementation(() => ({ getProvider: jest.fn(() => undefined) })),
 }));
 
-import { createSupabaseAdminClient, getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
-import { handlePaymentSuccess } from '@/lib/payments/lifecycle';
-import { POST } from '@/app/api/payments/webhook/route';
+import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { POST as webhookPOST } from '@/app/api/payments/webhook/route';
+import { POST as paystackPOST } from '@/app/api/payments/paystack/route';
 
-const SECRET = 'sk_test_dummy';
-const sign = (raw: string) => crypto.createHmac('sha512', SECRET).update(raw).digest('hex');
-
-const signedWebhook = (bodyObj: unknown) => {
-  const raw = JSON.stringify(bodyObj);
-  return new NextRequest('http://localhost:3000/api/payments/webhook', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-paystack-signature': sign(raw) },
-    body: raw,
-  });
-};
-const unsignedWebhook = (bodyObj: unknown) =>
-  new NextRequest('http://localhost:3000/api/payments/webhook', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bodyObj),
+const RAW = JSON.stringify({ event: 'charge.success', data: { reference: 'bk_1' } });
+const req = (path: string, headers: Record<string, string>, body = RAW) =>
+  new NextRequest(`http://localhost:3000${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body,
   });
 
-const makeSupabase = (opts: { insertError?: { code: string } | null } = {}) => ({
-  from: jest.fn((table: string) => {
-    if (table === 'webhook_events') return {
-      insert: () => ({ select: async () => ({ data: opts.insertError ? null : [{ id: 'evt1' }], error: opts.insertError ?? null }) }),
-    };
-    return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
-  }),
-});
-
-/**
- * Supabase mock that returns a matching transaction row.
- * The route issues these queries against `transactions`:
- *   1. .select('id, status, provider, tenant_id').eq('provider_reference', ref).maybeSingle()
- *      → returns the transaction row
- *   2. .update({...}).eq('id', transaction.id)
- *      → resolves { error: null }
- */
-const makeSupabaseWithTransaction = () => ({
-  from: jest.fn((table: string) => {
-    if (table === 'webhook_events') return {
-      insert: () => ({ select: async () => ({ data: [{ id: 'evt1' }], error: null }) }),
-    };
-    if (table === 'transactions') {
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({
-              data: { id: 'txn1', status: 'pending', provider: 'paystack', tenant_id: 'db_tenant' },
-            }),
-          }),
-        }),
-        update: () => ({
-          eq: () => Promise.resolve({ error: null }),
-        }),
-      };
-    }
-    return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
-  }),
-});
-
-describe('Paystack webhook (auth:false)', () => {
+describe('Paystack webhook routes delegate to the single processor', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.PAYSTACK_SECRET_KEY = SECRET;
-    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabase());
-    (handlePaymentSuccess as jest.Mock).mockResolvedValue(undefined);
-    mockCreditVerifiedTopup.mockResolvedValue({ credited: true, tenantId: 'tenant-1', amountCredits: 10 });
+    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue({ from: jest.fn() });
+    mockProcess.mockResolvedValue({ status: 200, body: { ok: true, outcome: 'verified' } });
   });
 
-  it('rejects a request with no recognised signature header (400)', async () => {
-    const res = await POST(unsignedWebhook({ provider: 'paystack', reference: 'r1', status: 'success' }) as unknown as NextRequest);
+  it.each([
+    ['/api/payments/webhook', webhookPOST],
+    ['/api/payments/paystack', paystackPOST],
+  ])('%s passes the exact raw body and signature through and returns the result unchanged', async (path, handler) => {
+    const res = await (handler as any)(req(path, { 'x-paystack-signature': 'abc123' }));
+    expect(mockProcess).toHaveBeenCalledWith({ rawBody: RAW, signature: 'abc123' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, outcome: 'verified' });
+  });
+
+  it.each([
+    ['/api/payments/webhook', webhookPOST],
+    ['/api/payments/paystack', paystackPOST],
+  ])('%s relays a non-200 processor result (e.g. 401) unchanged', async (path, handler) => {
+    mockProcess.mockResolvedValueOnce({ status: 401, body: { error: 'Invalid signature', code: 'INVALID_SIGNATURE' } });
+    const res = await (handler as any)(req(path, { 'x-paystack-signature': 'bad' }));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ code: 'INVALID_SIGNATURE' });
+  });
+
+  it('/api/payments/webhook rejects a request with no recognised signature header (400)', async () => {
+    const res = await (webhookPOST as any)(req('/api/payments/webhook', {}, JSON.stringify({ provider: 'paystack', reference: 'r1', status: 'success' })));
     expect(res.status).toBe(400);
+    expect(mockProcess).not.toHaveBeenCalled();
   });
 
-  it('accepts a correctly signed webhook (200, ok:true)', async () => {
-    const res = await POST(signedWebhook({ provider: 'paystack', reference: 'r_ok', status: 'success' }) as unknown as NextRequest);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true });
-  });
-
-  it('treats a duplicate webhook_events insert (23505) as a replay', async () => {
-    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabase({ insertError: { code: '23505' } }));
-    const res = await POST(signedWebhook({ provider: 'paystack', reference: 'r_dup', status: 'success' }) as unknown as NextRequest);
-    expect(await res.json()).toMatchObject({ ok: true, replay: true });
-    expect(handlePaymentSuccess).not.toHaveBeenCalled();
-  });
-
-  it('releases the replay marker and returns an error when post-payment work fails', async () => {
-    const externalIdEq = jest.fn(async () => ({ error: null }));
-    const providerEq = jest.fn(() => ({ eq: externalIdEq }));
-    (createSupabaseAdminClient as jest.Mock).mockReturnValue({
-      from: jest.fn(() => ({ delete: jest.fn(() => ({ eq: providerEq })) })),
-    });
-    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabaseWithTransaction());
-    (handlePaymentSuccess as jest.Mock).mockRejectedValueOnce(new Error('handoff persistence failed'));
-
-    const res = await POST(signedWebhook({ provider: 'paystack', reference: 'r_retry', status: 'success' }) as unknown as NextRequest);
-
-    expect(res.status).toBe(500);
-    expect(providerEq).toHaveBeenCalledWith('provider', 'paystack');
-    expect(externalIdEq).toHaveBeenCalledWith('external_id', 'r_retry:success');
-  });
-
-  it('releases the replay marker when wallet crediting fails so Paystack can retry', async () => {
-    const externalIdEq = jest.fn(async () => ({ error: null }));
-    const providerEq = jest.fn(() => ({ eq: externalIdEq }));
-    (createSupabaseAdminClient as jest.Mock).mockReturnValue({
-      from: jest.fn(() => ({ delete: jest.fn(() => ({ eq: providerEq })) })),
-    });
-    mockCreditVerifiedTopup.mockRejectedValueOnce(new Error('wallet rpc unavailable'));
-
-    const res = await POST(signedWebhook({
-      provider: 'paystack',
-      reference: 'bokawallet_retry',
-      status: 'success',
-      data: { amount: 250000 },
-    }) as unknown as NextRequest);
-
-    expect(res.status).toBe(500);
-    expect(providerEq).toHaveBeenCalledWith('provider', 'paystack');
-    expect(externalIdEq).toHaveBeenCalledWith('external_id', 'bokawallet_retry:success');
-  });
-
-  // CRITICAL 2: derive tenantId from DB transaction, not payload
-  it('derives tenantId from the DB transaction, not the payload, and calls handlePaymentSuccess', async () => {
-    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(makeSupabaseWithTransaction());
-    const body = { provider: 'paystack', reference: 'r_ok', status: 'success', metadata: { tenant_id: 'attacker_tenant' } };
-    const res = await POST(signedWebhook(body) as unknown as NextRequest);
-    expect(res.status).toBe(200);
-    const { handlePaymentSuccess } = jest.requireMock('@/lib/payments/lifecycle');
-    expect(handlePaymentSuccess).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'db_tenant' }));
+  it('a processor failure surfaces as 5xx so Paystack retries', async () => {
+    mockProcess.mockRejectedValueOnce(new Error('verify failed'));
+    const res = await (paystackPOST as any)(req('/api/payments/paystack', { 'x-paystack-signature': 'abc' }));
+    expect(res.status).toBeGreaterThanOrEqual(500);
   });
 });

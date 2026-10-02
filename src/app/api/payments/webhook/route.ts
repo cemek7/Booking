@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
 import { getEventBus } from '@/lib/eventbus/eventBus';
@@ -7,7 +8,7 @@ import Stripe from 'stripe';
 import crypto from 'crypto';
 import { defaultLogger } from '@/lib/logger';
 import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
-import { creditVerifiedTopup } from '@/lib/billing/walletTopup';
+import { processPaystackWebhook } from '@/lib/payments/paystackWebhookProcessor';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 
 interface PaymentWebhookPayload {
@@ -49,6 +50,13 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.validationError({ body: 'Failed to read request body' });
     }
 
+    // Paystack events are handled by the single verified processor.
+    const paystackSignature = ctx.request.headers.get('x-paystack-signature');
+    if (paystackSignature) {
+      const result = await processPaystackWebhook({ rawBody: rawText, signature: paystackSignature });
+      return NextResponse.json(result.body, { status: result.status });
+    }
+
     let parsed: PaymentWebhookPayload | null = null;
     try {
       parsed = JSON.parse(rawText) as PaymentWebhookPayload;
@@ -61,33 +69,16 @@ export const POST = createHttpHandler(
     const status = parsed?.status || parsed?.data?.status || parsed?.event || 'unknown';
     const reservationId = parsed?.metadata?.reservation_id || parsed?.data?.metadata?.reservation_id || null;
 
-    // Signature verification (Paystack, Stripe, Flutterwave)
+    // Signature verification (Stripe, Flutterwave; Paystack is delegated above)
     // At least one recognised signature header must be present and verified.
     // Requests with no recognised header are rejected regardless of provider field value,
     // closing the bypass where provider:"custom" skips all checks.
-    const paystackSigHeader = ctx.request.headers.get('x-paystack-signature');
     const stripeSigHeader = ctx.request.headers.get('stripe-signature');
     const flutterwaveSigHeader = ctx.request.headers.get('verif-hash');
-    const paystackSecret = process.env.PAYSTACK_SECRET_KEY || '';
     const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
     const flutterwaveSecret = process.env.FLUTTERWAVE_WEBHOOK_SECRET || '';
 
     let signatureVerified = false;
-
-    if (paystackSigHeader) {
-      if (!paystackSecret) {
-        throw ApiErrorFactory.externalServiceError('Paystack secret not configured');
-      }
-      const computed = crypto.createHmac('sha512', paystackSecret).update(rawText).digest('hex');
-      const computedBuf = Buffer.from(computed, 'hex');
-      const sigBuf = Buffer.from(paystackSigHeader, 'hex');
-      const isValid = computedBuf.length === sigBuf.length &&
-        crypto.timingSafeEqual(computedBuf, sigBuf);
-      if (!isValid) {
-        throw ApiErrorFactory.validationError({ signature: 'Invalid Paystack signature' });
-      }
-      signatureVerified = true;
-    }
 
     if (stripeSigHeader) {
       if (!stripeSecret) {
@@ -120,7 +111,7 @@ export const POST = createHttpHandler(
 
     if (!signatureVerified) {
       defaultLogger.warn('[api/payments/webhook] Rejecting request: no recognised signature header', { provider });
-      throw ApiErrorFactory.validationError({ signature: 'A recognised webhook signature header is required (x-paystack-signature, stripe-signature, or verif-hash)' });
+      throw ApiErrorFactory.validationError({ signature: 'A recognised webhook signature header is required (stripe-signature or verif-hash)' });
     }
 
     if (!ref) {
@@ -165,47 +156,6 @@ export const POST = createHttpHandler(
     }
 
     try {
-    // ── Wallet top-up ────────────────────────────────────────────────────────
-    // Runs before the transactions lookup because a wallet top-up has no
-    // `transactions` row — its reference is tied to a `wallet_topup_intents`
-    // row this server wrote before the customer paid. The tenant and the
-    // amount are read from that row, never from this payload.
-    //
-    // Reached only after the signature check above, and the replay guard
-    // already ran; `credit_wallet_topup` is idempotent on top of that, because
-    // Paystack retries are routine and webhook_events is best-effort.
-    if (/^bokawallet_/.test(String(ref)) && /success/i.test(String(status))) {
-      const chargedMinor = Number(parsed.data?.amount ?? 0);
-      if (!Number.isFinite(chargedMinor) || chargedMinor <= 0) {
-        defaultLogger.warn('[api/payments/webhook] wallet top-up with no amount', { ref });
-        return { ok: true, wallet_topup: false, reason: 'no_amount' };
-      }
-
-      // Admin client: credit_wallet_topup is granted to service_role only, and
-      // ctx.supabase here is an unauthenticated anon client (auth: false).
-      // A throw is deliberate — it makes Paystack retry rather than silently
-      // dropping a payment the customer already made.
-      const credit = await creditVerifiedTopup({
-        admin: createSupabaseAdminClient(),
-        reference: String(ref),
-        amountMinor: chargedMinor,
-        customerEmail: parsed.data?.customer?.email ?? null,
-        authorization: parsed.data?.authorization ?? null,
-      });
-
-      if (credit.credited) {
-        defaultLogger.info('[api/payments/webhook] wallet topped up', {
-          ref, tenantId: credit.tenantId, amountCredits: credit.amountCredits,
-        });
-      } else {
-        // 'no_pending_intent' is the ordinary replay case, not a failure.
-        defaultLogger.warn('[api/payments/webhook] wallet top-up not credited', {
-          ref, reason: credit.reason,
-        });
-      }
-      return { ok: true, wallet_topup: credit.credited };
-    }
-
     // Update transaction status using provider verification if needed
     // IMPORTANT: derive tenantId from the found transaction record, never trust payload metadata
     // DB failures are NOT swallowed here — they propagate as 500 so the provider retries delivery.
