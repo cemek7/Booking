@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { ApiErrorFactory } from '@/lib/error-handling/api-error';
+import { isPaymentHandoffOpen } from '@/lib/payments/paymentHandoff';
 
 interface UnconfirmedBooking {
   id: string;
@@ -81,6 +82,10 @@ export const POST = createHttpHandler(
 
         for (const booking of (bookings || []) as UnconfirmedBooking[]) {
           results.processed++;
+
+          // Owner decision 2026-10-02: a booking waiting on a payment handoff
+          // is resolved by staff, never by the sweep.
+          if (isPaymentHandoffOpen(booking.metadata)) continue;
 
           try {
             // Cancel the reservation

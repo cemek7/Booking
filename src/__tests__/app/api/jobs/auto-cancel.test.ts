@@ -292,4 +292,21 @@ describe('auto-cancel-unconfirmed job (auth:false, cron-secret)', () => {
     expect(body.results.errors).toHaveLength(1);
     expect(body.results.errors[0]).toContain('DB constraint violation');
   });
+
+  // ── Open payment handoff is exempt from the sweep ─────────────────────────
+  it('skips a booking with an open payment handoff but still counts it as processed', async () => {
+    const handoff = { ...staleReservation, id: 'res_handoff', metadata: { payment_handoff: { status: 'open' } } };
+    const plain = { ...staleReservation, id: 'res_plain', metadata: {} };
+    const sb = makeSupabase({ bookings: [handoff, plain] });
+    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(sb);
+
+    const res = await POST(cronRequest() as unknown as NextRequest);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.results.processed).toBe(2);
+    expect(body.results.cancelled).toBe(1);
+    expect(sb._updateFn).toHaveBeenCalledTimes(1);
+    expect((sb._updateFn as jest.Mock).mock.calls[0][0]).toMatchObject({ status: 'cancelled' });
+  });
 });
