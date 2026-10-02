@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { verifyTransaction } from '@/lib/paystack';
 import { creditVerifiedTopup } from '@/lib/billing/walletTopup';
-import { handlePaymentFailure, handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
 import { defaultLogger } from '@/lib/logger';
 
 /**
@@ -17,6 +17,7 @@ export type WebhookDeps = {
   verify: typeof verifyTransaction;
   onSuccess: typeof handlePaymentSuccess;
   onFailure: typeof handlePaymentFailure;
+  onRefund: typeof handlePaymentRefund;
   creditTopup: typeof creditVerifiedTopup;
   secret: string;
 };
@@ -31,10 +32,13 @@ function defaultDeps(): WebhookDeps {
     verify: verifyTransaction,
     onSuccess: handlePaymentSuccess,
     onFailure: handlePaymentFailure,
+    onRefund: handlePaymentRefund,
     creditTopup: creditVerifiedTopup,
     secret: process.env.PAYSTACK_SECRET_KEY || '',
   };
 }
+
+const NOT_VERIFIED = 'settlement_verification_status.is.null,settlement_verification_status.neq.verified';
 
 function signatureValid(rawBody: string, signature: string | null, secret: string): boolean {
   if (!signature || !secret) return false;
@@ -50,6 +54,7 @@ export async function processPaystackWebhook(
   // Signature first: no DB client is created for an unauthenticated request
   // unless deps were injected.
   const secret = deps?.secret ?? (process.env.PAYSTACK_SECRET_KEY || '');
+  if (!secret) defaultLogger.error('[paystackWebhook] PAYSTACK_SECRET_KEY not configured');
   if (!signatureValid(input.rawBody, input.signature, secret)) {
     return { status: 401, body: { error: 'Invalid signature', code: 'INVALID_SIGNATURE' } };
   }
@@ -59,7 +64,9 @@ export async function processPaystackWebhook(
   try { payload = JSON.parse(input.rawBody); } catch { return { status: 400, body: { error: 'Invalid JSON' } }; }
   const event = String(payload.event ?? '');
   const data = payload.data ?? {};
-  const reference = typeof data.reference === 'string' ? data.reference : null;
+  const isRefundEvent = event === 'charge.refunded' || event === 'refund.processed';
+  const rawRef = isRefundEvent ? (data.transaction_reference ?? data.reference) : data.reference;
+  const reference = typeof rawRef === 'string' ? rawRef : null;
   if (!reference) return { status: 200, body: { ok: true, ignored: 'no_reference' } };
 
   const externalId = `${reference}:${event}`;
@@ -105,20 +112,39 @@ export async function processPaystackWebhook(
     if (event === 'charge.failed') {
       const row = await loadRow(d.admin, reference);
       if (row) {
-        // NULL-safe: `.neq` alone would skip legacy rows whose column is NULL.
-        const { error } = await d.admin.from('transactions')
+        // NULL-safe guard; a verified (paid) row must never be failed or have
+        // its booking undone, so onFailure runs only if the guarded update hit a row.
+        const { data: updated, error } = await d.admin.from('transactions')
           .update({ status: 'failed', updated_at: new Date().toISOString() })
           .eq('id', row.id)
-          .or('settlement_verification_status.is.null,settlement_verification_status.neq.verified');
+          .or(NOT_VERIFIED)
+          .select('id');
         if (error) throw new Error(`failed-status update failed: ${error.message}`);
-        await d.onFailure({
-          tenantId: row.tenant_id, reference, provider: 'paystack',
-          reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
-          amountMinor: row.amount_minor ?? undefined, currency: row.currency ?? undefined,
-          reason: String(data.gateway_response ?? data.status ?? 'charge.failed'),
-        });
+        if (updated && updated.length > 0) {
+          await d.onFailure({
+            tenantId: row.tenant_id, reference, provider: 'paystack',
+            reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
+            amountMinor: row.amount_minor ?? undefined, currency: row.currency ?? undefined,
+            reason: String(data.gateway_response ?? data.status ?? 'charge.failed'),
+          });
+        }
       }
       return { status: 200, body: { ok: true } };
+    }
+
+    if (isRefundEvent) {
+      const row = await loadRow(d.admin, reference);
+      if (!row) return { status: 200, body: { ok: true, ignored: 'no_transaction' } };
+      const { error } = await d.admin.from('transactions')
+        .update({ status: 'refunded', updated_at: new Date().toISOString() })
+        .eq('id', row.id);
+      if (error) throw new Error(`refund status update failed: ${error.message}`);
+      await d.onRefund({
+        tenantId: row.tenant_id, reference, provider: 'paystack',
+        reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
+        amountMinor: row.amount_minor ?? undefined, currency: row.currency ?? undefined,
+      });
+      return { status: 200, body: { ok: true, refunded: true } };
     }
 
     return { status: 200, body: { ok: true, ignored: event } };
@@ -176,7 +202,8 @@ export async function settleVerifiedCharge(reference: string, deps: WebhookDeps 
   if (!matches) {
     const { error } = await deps.admin.from('transactions')
       .update({ ...providerColumns, settlement_verification_status: 'mismatch', reconciliation_status: 'discrepancy' })
-      .eq('id', row.id);
+      .eq('id', row.id)
+      .or(NOT_VERIFIED);
     if (error) throw new Error(error.message);
     defaultLogger.error('[paystackWebhook] SETTLEMENT MISMATCH — manual review', {
       reference, tenantId: row.tenant_id,
@@ -189,7 +216,7 @@ export async function settleVerifiedCharge(reference: string, deps: WebhookDeps 
   // Claim: only one concurrent delivery flips the row to verified.
   const { data: claimed, error: claimError } = await deps.admin.from('transactions')
     .update({ ...providerColumns, status: 'success', settlement_verification_status: 'verified', reconciliation_status: 'pending' })
-    .eq('id', row.id).neq('settlement_verification_status', 'verified')
+    .eq('id', row.id).or(NOT_VERIFIED)
     .select('id');
   if (claimError) throw new Error(claimError.message);
   if (!claimed || claimed.length === 0) return 'already_verified';

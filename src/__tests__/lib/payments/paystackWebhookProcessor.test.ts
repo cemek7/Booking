@@ -93,6 +93,7 @@ function setup(opts: { tx?: Row | null; extra?: Record<string, Row[]>; verified?
     admin: fake.admin, verify,
     onSuccess: jest.fn(async () => undefined) as any,
     onFailure: jest.fn(async () => undefined) as any,
+    onRefund: jest.fn(async () => undefined) as any,
     creditTopup: jest.fn(async () => ({ credited: true, tenantId: 't1', amountCredits: 2500 })) as any,
     secret: SECRET,
   };
@@ -234,6 +235,46 @@ describe('processPaystackWebhook', () => {
     const done = setup({ tx: { ...baseTx(), status: 'success', settlement_verification_status: 'verified' } });
     await done.send(event({ reference: 'bk_1' }, 'charge.failed'));
     expect(done.txRow().status).toBe('success');
+    expect(done.deps.onFailure).not.toHaveBeenCalled();
+    expect(legacy.deps.onFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('14c. charge.failed on a pending row calls onFailure', async () => {
+    const s = setup();
+    await s.send(event({ reference: 'bk_1' }, 'charge.failed'));
+    expect(s.deps.onFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('19. a mismatch cannot overwrite a row that is already verified', async () => {
+    const s = setup({ tx: { ...baseTx(), settlement_verification_status: 'verified' } });
+    // simulate a racing verify: row is loaded as pending, then flipped before the update
+    const orig = s.fake.tables.transactions[0];
+    s.verify.mockImplementationOnce(async () => { orig.settlement_verification_status = 'verified'; return { success: true, data: { ...verifiedOk, amountMinor: 1 } }; });
+    orig.settlement_verification_status = 'pending';
+    await settleVerifiedCharge('bk_1', s.deps);
+    expect(orig.settlement_verification_status).toBe('verified');
+  });
+
+  it.each(['charge.refunded', 'refund.processed'])('20. %s marks the row refunded and calls onRefund once', async (ev) => {
+    const s = setup();
+    const raw = event({ transaction_reference: 'bk_1', reference: 'refund_ref', metadata: { tenant_id: 'EVIL' } }, ev);
+    const res = await s.send(raw);
+    expect(res.status).toBe(200);
+    expect(s.txRow().status).toBe('refunded');
+    expect(s.deps.onRefund).toHaveBeenCalledTimes(1);
+    expect(s.deps.onRefund).toHaveBeenCalledWith({
+      tenantId: 't1', reference: 'bk_1', provider: 'paystack', reservationId: 'r1', amountMinor: 500000, currency: 'NGN',
+    });
+    await s.send(raw);
+    expect(s.deps.onRefund).toHaveBeenCalledTimes(1);
+    expect(s.fake.tables.tenant_revenue_ledger).toHaveLength(0);
+  });
+
+  it('21. refund for an unknown reference is ignored', async () => {
+    const s = setup({ tx: null });
+    const res = await s.send(event({ reference: 'nope' }, 'charge.refunded'));
+    expect(res.status).toBe(200);
+    expect(s.deps.onRefund).not.toHaveBeenCalled();
   });
 
   it('15. verifies even if the checkout URL was never stored on the row', async () => {
