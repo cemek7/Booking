@@ -77,6 +77,20 @@ describe('refund route', () => {
     expect(res.status).toBe(400);
   });
 
+  it('settled row + legacy amount field: 400, no refund', async () => {
+    const res = await POST(req({ transactionId: 'tx1', amount: 10 }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    expect(mockRefundTenantPayment).not.toHaveBeenCalled();
+    expect(mockProcessRefund).not.toHaveBeenCalled();
+  });
+
+  it('settled row + no amount fields: full refund call', async () => {
+    mockRefundTenantPayment.mockResolvedValue({ ok: true, refundedMinor: 500000, full: true });
+    const res = await POST(req({ transactionId: 'tx1' }) as unknown as NextRequest);
+    expect(res.status).toBe(200);
+    expect(mockRefundTenantPayment).toHaveBeenCalledWith({ tenantId: 'ten_1', transactionId: 'tx1', amountMinor: undefined, reason: undefined });
+  });
+
   it('rejects non-integer amountMinor', async () => {
     const res = await POST(req({ transactionId: 'tx1', amountMinor: 1.5 }) as unknown as NextRequest);
     expect(res.status).toBe(400);

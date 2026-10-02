@@ -33,6 +33,9 @@ export const POST = createHttpHandler(
       .eq('tenant_id', tenantId)
       .maybeSingle();
     if (settledRow && settledRow.amount_minor !== null && settledRow.amount_minor !== undefined) {
+      if (amount !== undefined) {
+        throw ApiErrorFactory.validationError({ amount: 'Send amountMinor (whole kobo) for this payment; amount is not supported.' });
+      }
       const result = await refundTenantPayment({ tenantId, transactionId, amountMinor, reason });
       if (!result.ok) throw ApiErrorFactory.validationError({ refund: result.error });
       return {

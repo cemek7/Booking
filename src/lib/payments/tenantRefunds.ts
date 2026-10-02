@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
+import { defaultLogger } from '@/lib/logger';
 import { isValidAmountMinor } from './settlementPolicy';
 
 /**
@@ -23,6 +24,29 @@ async function paystackRefund(body: { transaction: string; amount: number }) {
   return res.json() as Promise<{ status: boolean; message?: string }>;
 }
 
+async function reverseFee(
+  admin: SupabaseClient,
+  tx: { tenant_id: string; provider_reference: string; platform_fee_minor?: unknown },
+  total: number,
+): Promise<void> {
+  const fee = Number(tx.platform_fee_minor ?? 0);
+  if (!(fee > 0)) return;
+  const { error: ledgerError } = await admin.from('tenant_revenue_ledger').insert({
+    tenant_id: tx.tenant_id,
+    revenue_type: 'refund',
+    amount_credits: -(fee / 100),
+    source: 'paystack',
+    reference: `${tx.provider_reference}:fee_refund`,
+    description: 'Booka platform fee returned on full refund',
+    metadata: { platform_fee_minor: fee, amount_minor: total },
+  });
+  if (ledgerError && ledgerError.code !== '23505') {
+    defaultLogger.error('[tenantRefunds] fee reversal not written', {
+      tenantId: tx.tenant_id, reference: tx.provider_reference, error: ledgerError.message,
+    });
+  }
+}
+
 export async function refundTenantPayment(
   input: { tenantId: string; transactionId: string; amountMinor?: number; reason?: string },
   deps?: RefundDeps,
@@ -37,6 +61,11 @@ export async function refundTenantPayment(
   }
   const total = Number(tx.amount_minor);
   const alreadyMinor = Math.round(Number(tx.refund_amount ?? 0) * 100);
+  if (alreadyMinor === total && input.amountMinor === undefined) {
+    // Self-heal: money already fully refunded; re-attempt the idempotent fee reversal only.
+    await reverseFee(admin, tx, total);
+    return { ok: true, refundedMinor: 0, full: true };
+  }
   const requested = input.amountMinor ?? total - alreadyMinor;
   if (!isValidAmountMinor(requested)) return { ok: false, error: 'Refund amount must be a positive whole number of kobo' };
   if (alreadyMinor + requested > total) return { ok: false, error: 'Refund exceeds the amount paid' };
@@ -51,25 +80,20 @@ export async function refundTenantPayment(
 
   const refundedTotal = alreadyMinor + requested;
   const full = refundedTotal === total;
-  await admin.from('transactions').update({
+  const { error: updateError } = await admin.from('transactions').update({
     refund_amount: refundedTotal / 100, // legacy major-unit column
     refund_reason: input.reason ?? null,
     status: full ? 'refunded' : 'partially_refunded',
     updated_at: new Date().toISOString(),
   }).eq('id', tx.id);
-
-  const fee = Number(tx.platform_fee_minor ?? 0);
-  if (full && fee > 0) {
-    const { error: ledgerError } = await admin.from('tenant_revenue_ledger').insert({
-      tenant_id: tx.tenant_id,
-      revenue_type: 'refund',
-      amount_credits: -(fee / 100),
-      source: 'paystack',
-      reference: `${tx.provider_reference}:fee_refund`,
-      description: 'Booka platform fee returned on full refund',
-      metadata: { platform_fee_minor: fee, amount_minor: total },
+  if (updateError) {
+    defaultLogger.error('[tenantRefunds] refund sent but not recorded', {
+      tenantId: input.tenantId, transactionId: input.transactionId, reference: tx.provider_reference,
+      requestedMinor: requested, refundedTotalMinor: refundedTotal,
     });
-    if (ledgerError && ledgerError.code !== '23505') return { ok: false, error: ledgerError.message };
+    return { ok: false, error: 'Refund was sent to Paystack but could not be recorded. Contact support before retrying.' };
   }
+
+  if (full) await reverseFee(admin, tx, total);
   return { ok: true, refundedMinor: requested, full };
 }

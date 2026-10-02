@@ -1,6 +1,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('@/lib/supabase/server', () => ({ createSupabaseAdminClient: jest.fn() }));
+const mockLogError = jest.fn();
+jest.mock('@/lib/logger', () => ({ defaultLogger: { error: (...a: unknown[]) => mockLogError(...a) } }));
 
 import { refundTenantPayment, type RefundDeps } from '@/lib/payments/tenantRefunds';
 
@@ -9,7 +11,7 @@ const settled = {
   settlement_verification_status: 'verified', refund_amount: 0,
 };
 
-function setup(row: Record<string, unknown> | null = settled, ledgerError: { code?: string; message: string } | null = null) {
+function setup(row: Record<string, unknown> | null = settled, ledgerError: { code?: string; message: string } | null = null, updateError: { message: string } | null = null) {
   const ledger: Array<Record<string, unknown>> = [];
   const updates: Array<Record<string, unknown>> = [];
   const admin = {
@@ -23,7 +25,7 @@ function setup(row: Record<string, unknown> | null = settled, ledgerError: { cod
           data: row && (filters.tenant_id === undefined || filters.tenant_id === row.tenant_id) ? row : null,
           error: null,
         });
-        q.update = (patch: Record<string, unknown>) => { updates.push(patch); return { eq: async () => ({ error: null }) }; };
+        q.update = (patch: Record<string, unknown>) => { updates.push(patch); return { eq: async () => ({ error: updateError }) }; };
         return q;
       }
       return { insert: async (r: Record<string, unknown>) => { ledger.push(r); return { error: ledgerError }; } };
@@ -95,5 +97,32 @@ describe('refundTenantPayment', () => {
     expect(await refundTenantPayment({ tenantId: 't1', transactionId: 'tx1' }, b.deps)).toEqual({ ok: false, error: 'network' });
     expect(a.updates).toHaveLength(0);
     expect(b.updates).toHaveLength(0);
+  });
+
+  it('update failure after Paystack success: ok:false, no fee reversal', async () => {
+    const { deps, ledger } = setup(settled, null, { message: 'db' });
+    const r = await refundTenantPayment({ tenantId: 't1', transactionId: 'tx1' }, deps);
+    expect(r).toEqual({ ok: false, error: 'Refund was sent to Paystack but could not be recorded. Contact support before retrying.' });
+    expect(ledger).toHaveLength(0);
+    expect(mockLogError).toHaveBeenCalledWith('[tenantRefunds] refund sent but not recorded', expect.objectContaining({ reference: 'bk_1' }));
+  });
+
+  it('fully refunded row + no amountMinor: no Paystack call, fee reversal re-attempted', async () => {
+    const { deps, ledger, refund } = setup({ ...settled, refund_amount: 5000 });
+    expect(await refundTenantPayment({ tenantId: 't1', transactionId: 'tx1' }, deps)).toEqual({ ok: true, refundedMinor: 0, full: true });
+    expect(refund).not.toHaveBeenCalled();
+    expect(ledger).toHaveLength(1);
+  });
+
+  it('fully refunded row + amountMinor: exceeds', async () => {
+    const { deps, refund } = setup({ ...settled, refund_amount: 5000 });
+    expect(await refundTenantPayment({ tenantId: 't1', transactionId: 'tx1', amountMinor: 100 }, deps)).toEqual({ ok: false, error: 'Refund exceeds the amount paid' });
+    expect(refund).not.toHaveBeenCalled();
+  });
+
+  it('non-23505 ledger error after recorded refund: ok:true and logged', async () => {
+    const { deps } = setup(settled, { code: 'XX', message: 'boom' });
+    expect(await refundTenantPayment({ tenantId: 't1', transactionId: 'tx1' }, deps)).toMatchObject({ ok: true, full: true });
+    expect(mockLogError).toHaveBeenCalledWith('[tenantRefunds] fee reversal not written', expect.objectContaining({ reference: 'bk_1' }));
   });
 });
