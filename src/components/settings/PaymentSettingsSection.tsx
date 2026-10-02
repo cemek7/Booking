@@ -4,45 +4,55 @@ import { FormSection } from './FormSection';
 import { toast } from '../ui/toast';
 
 interface Bank { name: string; code: string; slug: string; }
-interface Subaccount {
-  subaccountCode: string;
-  businessName: string;
-  settlementBank: string;
-  accountNumber: string;
-  percentageCharge: number;
-  primaryContactEmail: string;
-}
+interface Policy { code: string; version: number; basisPoints: number; capMinor: number | null; }
+interface Example { amountMinor: number; platformFeeMinor: number; tenantGrossMinor: number; }
+interface Account { bankCode: string; accountLast4: string; accountName: string; }
 
 interface Props { tenantId: string; }
 
+const naira = new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 });
+const formatMinor = (minor: number) => naira.format(minor / 100);
+
+function statusLabel(status: string | null): string {
+  switch (status) {
+    case 'active': return 'Active';
+    case 'pending': return 'Pending verification';
+    case 'invalid':
+    case 'suspended': return 'Needs attention';
+    default: return 'Setup needed';
+  }
+}
+
 export function PaymentSettingsSection({ tenantId }: Props) {
-  const [configured, setConfigured] = useState(false);
-  const [subaccount, setSubaccount] = useState<Subaccount | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [policy, setPolicy] = useState<Policy | null>(null);
+  const [example, setExample] = useState<Example | null>(null);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loadingInit, setLoadingInit] = useState(true);
 
-  // form fields
+  // form fields (the full account number lives only in this input, never in loaded state)
   const [bankCode, setBankCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [businessName, setBusinessName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
+  const [accepted, setAccepted] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const configured = status === 'active';
 
   useEffect(() => {
     Promise.all([
       fetch('/api/payments/subaccounts').then(r => r.json()),
       fetch('/api/payments/banks').then(r => r.json()),
     ]).then(([subRes, bankRes]) => {
-      if (subRes.configured && subRes.subaccount) {
-        setConfigured(true);
-        setSubaccount(subRes.subaccount);
-        setBankCode(subRes.subaccount.settlementBank);
-        setAccountNumber(subRes.subaccount.accountNumber);
-        setBusinessName(subRes.subaccount.businessName);
-        setContactEmail(subRes.subaccount.primaryContactEmail);
-      }
+      setStatus(subRes.status ?? null);
+      setAccount(subRes.account ?? null);
+      setPolicy(subRes.policy ?? null);
+      setExample(subRes.example ?? null);
+      if (subRes.account?.bankCode) setBankCode(subRes.account.bankCode);
       if (bankRes.banks) setBanks(bankRes.banks);
     }).catch(() => {
       toast.error('Failed to load payment settings');
@@ -57,7 +67,7 @@ export function PaymentSettingsSection({ tenantId }: Props) {
     setVerifying(true);
     setAccountName('');
     try {
-      const res = await fetch(`/api/payments/banks/resolve?accountNumber=${accountNumber}&bankCode=${bankCode}`);
+      const res = await fetch(`/api/payments/banks/resolve?accountNumber=${encodeURIComponent(accountNumber)}&bankCode=${encodeURIComponent(bankCode)}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Verification failed');
       setAccountName(json.accountName);
@@ -69,16 +79,16 @@ export function PaymentSettingsSection({ tenantId }: Props) {
   }
 
   async function handleSave() {
-    if (!bankCode || !accountNumber || !businessName || !contactEmail) {
+    if (!policy || !accepted) return;
+    if (!bankCode || !accountNumber || !contactEmail || (!configured && !businessName)) {
       toast.error('All fields are required');
       return;
     }
     setSaving(true);
     try {
       const method = configured ? 'PUT' : 'POST';
-      const body = configured
-        ? { settlementBank: bankCode, accountNumber, primaryContactEmail: contactEmail }
-        : { businessName, settlementBank: bankCode, accountNumber, primaryContactEmail: contactEmail };
+      const common = { settlementBank: bankCode, accountNumber, primaryContactEmail: contactEmail, acceptPolicy: { code: policy.code, version: policy.version } };
+      const body = configured ? common : { businessName, ...common };
 
       const res = await fetch('/api/payments/subaccounts', {
         method,
@@ -88,8 +98,11 @@ export function PaymentSettingsSection({ tenantId }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Save failed');
 
-      setConfigured(true);
-      setSubaccount(json.subaccount);
+      setStatus(json.status ?? 'active');
+      setAccount(json.account ?? null);
+      setAccountNumber('');
+      setAccountName('');
+      setAccepted(false);
       toast.success('Payment details saved');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save payment details');
@@ -100,23 +113,44 @@ export function PaymentSettingsSection({ tenantId }: Props) {
 
   if (loadingInit) return <div className="text-sm text-gray-500">Loading payment settings…</div>;
 
-  const tenantShare = subaccount ? (100 - subaccount.percentageCharge) : null;
+  const feePercent = policy ? policy.basisPoints / 100 : null;
+  const canSave = accepted && !saving && Boolean(policy);
 
   return (
     <div className="space-y-6">
-      {configured && subaccount && (
-        <FormSection title="Current Setup">
-          <div className="rounded border bg-green-50 px-3 py-2 text-sm space-y-1">
-            <p className="font-medium text-green-800">Configured</p>
-            <p className="text-gray-700">{subaccount.businessName} · ****{subaccount.accountNumber.slice(-4)}</p>
-            <p className="text-xs text-gray-500">Percentage going to you: {tenantShare}%</p>
+      <FormSection title="Current Setup">
+        <div className="rounded border px-3 py-2 text-sm space-y-1">
+          <p className="font-medium" data-testid="settlement-status">{statusLabel(status)}</p>
+          {account && (
+            <p className="text-gray-700">{account.accountName} · ****{account.accountLast4}</p>
+          )}
+          {!configured && (
+            <p className="text-xs text-amber-700" data-testid="collection-disabled-warning">
+              You can't collect customer payments until setup is active.
+            </p>
+          )}
+        </div>
+      </FormSection>
+
+      {policy && (
+        <FormSection title="Fees" description="Review these before you save. You must accept the Booka fee to turn on payments.">
+          <div className="text-sm space-y-1">
+            <p data-testid="booka-fee">
+              Booka fee: {feePercent}% per payment{policy.capMinor !== null ? `, capped at ${formatMinor(policy.capMinor)}` : ''}
+            </p>
+            <p data-testid="paystack-fee-note">Paystack's processing fee is deducted from your payout.</p>
+            {example && (
+              <p className="text-gray-600" data-testid="settlement-example">
+                On a {formatMinor(example.amountMinor)} payment: Booka fee {formatMinor(example.platformFeeMinor)}, you receive {formatMinor(example.tenantGrossMinor)} before Paystack's fee.
+              </p>
+            )}
           </div>
         </FormSection>
       )}
 
       <FormSection
         title="Bank Account"
-        description="Revenue from bookings will be automatically settled to this account via Paystack split payment."
+        description="Customer payments are settled to this account via Paystack."
       >
         <div className="grid gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-xs font-medium">
@@ -139,9 +173,11 @@ export function PaymentSettingsSection({ tenantId }: Props) {
               <input
                 className="border rounded px-2 py-1 text-sm flex-1"
                 value={accountNumber}
-                onChange={e => { setAccountNumber(e.target.value); setAccountName(''); }}
+                onChange={e => { setAccountNumber(e.target.value.replace(/\D/g, '')); setAccountName(''); }}
                 placeholder="0123456789"
                 maxLength={10}
+                inputMode="numeric"
+                autoComplete="off"
               />
               <button
                 onClick={handleVerify}
@@ -154,15 +190,17 @@ export function PaymentSettingsSection({ tenantId }: Props) {
             )}
           </label>
 
-          <label className="flex flex-col gap-1 text-xs font-medium">
-            Business Name
-            <input
-              className="border rounded px-2 py-1 text-sm"
-              value={businessName}
-              onChange={e => setBusinessName(e.target.value)}
-              placeholder="Your business name"
-            />
-          </label>
+          {!configured && (
+            <label className="flex flex-col gap-1 text-xs font-medium">
+              Business Name
+              <input
+                className="border rounded px-2 py-1 text-sm"
+                value={businessName}
+                onChange={e => setBusinessName(e.target.value)}
+                placeholder="Your business name"
+              />
+            </label>
+          )}
 
           <label className="flex flex-col gap-1 text-xs font-medium">
             Contact Email
@@ -176,11 +214,21 @@ export function PaymentSettingsSection({ tenantId }: Props) {
           </label>
         </div>
 
+        <label className="flex items-start gap-2 pt-2 text-xs">
+          <input
+            type="checkbox"
+            data-testid="accept-policy"
+            checked={accepted}
+            onChange={e => setAccepted(e.target.checked)}
+          />
+          <span>I accept Booka's fee on each customer payment, as shown above.</span>
+        </label>
+
         <div className="flex justify-end pt-2">
           <button
             onClick={handleSave}
-            disabled={saving}
-            className={`px-4 py-1.5 rounded text-sm border ${saving ? 'opacity-60 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600'}`}
+            disabled={!canSave}
+            className={`px-4 py-1.5 rounded text-sm border ${!canSave ? 'opacity-60 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600'}`}
           >{saving ? 'Saving…' : 'Save Payment Details'}</button>
         </div>
       </FormSection>

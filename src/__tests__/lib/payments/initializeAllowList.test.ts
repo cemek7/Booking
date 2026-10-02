@@ -5,10 +5,14 @@ import path from 'path';
 const repoRoot = path.resolve(__dirname, '../../../..');
 
 const grep = (pattern: string) =>
-  execSync(`git grep -l -E "${pattern}" -- 'src/**/*.ts' 'src/**/*.tsx' ':!src/__tests__/**' ':!**/*.test.ts' ':!**/*.test.tsx' || true`, { encoding: 'utf8', cwd: repoRoot })
+  execSync(`git grep -l -E "${pattern}" -- src ':!src/__tests__/**' ':!**/*.test.ts' ':!**/*.test.tsx' || true`, { encoding: 'utf8', cwd: repoRoot })
     .split('\n').filter(Boolean).sort();
 
 describe('Paystack initialize allow-list (spec 2026-10-02 §5)', () => {
+  it('sanity: the scan finds known files (a failing git grep cannot pass silently)', () => {
+    expect(grep('transaction/initialize')).toContain('src/lib/paystack.ts');
+    expect(grep('export async function createHttpHandler|export const createHttpHandler|createHttpHandler')).toContain('src/lib/error-handling/route-handler.ts');
+  });
   it('only paystack.ts names the initialize endpoint', () => {
     expect(grep('transaction/initialize')).toEqual(['src/lib/paystack.ts']);
   });

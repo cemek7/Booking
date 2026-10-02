@@ -52,13 +52,16 @@ async function refundWalletCash(admin: SupabaseClient, tenantId: string): Promis
 }
 
 async function closePaystackSubaccount(admin: SupabaseClient, tenantId: string): Promise<TaskResult> {
-  // The Paystack subaccount code lives in tenants.metadata JSONB
-  // (metadata.paystack_subaccount_code) — written by /api/payments/subaccounts
-  // and read by the deposits flow. It is NOT a top-level column.
-  const { data: row } = await admin.from('tenants').select('metadata').eq('id', tenantId).maybeSingle();
-  const code = (row as { metadata?: { paystack_subaccount_code?: string } | null } | null)?.metadata?.paystack_subaccount_code;
+  // Settlement lives in tenant_payment_accounts (spec 2026-10-02). Suspending
+  // stops collection immediately; the Paystack subaccount itself is
+  // deactivated by Booka ops in the Paystack dashboard.
+  const { data } = await admin.from('tenant_payment_accounts')
+    .update({ status: 'suspended', updated_at: new Date().toISOString() })
+    .eq('tenant_id', tenantId).neq('status', 'suspended')
+    .select('subaccount_code');
+  const code = (data as Array<{ subaccount_code?: string | null }> | null)?.[0]?.subaccount_code;
   if (!code) return { status: 'skipped' };
-  return { status: 'done', payload: { closed_subaccount: code } };
+  return { status: 'done', payload: { suspended_subaccount: code, manual_paystack_deactivation_required: true } };
 }
 
 async function exportData(admin: SupabaseClient, tenantId: string): Promise<TaskResult> {
