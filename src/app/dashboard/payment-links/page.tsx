@@ -11,7 +11,7 @@ interface LinkRow {
   status: string;
   provider_reference: string;
   created_at: string;
-  raw?: { description?: string; payment_url?: string } | null;
+  raw?: { description?: string; payment_url?: string; authorization_url?: string } | null;
 }
 interface CreateResult { paymentUrl: string; reference: string; amount: number; currency: string }
 
@@ -112,8 +112,8 @@ export default function PaymentLinksPage() {
                     <p className="truncate text-sm font-medium text-gray-900">{l.raw?.description || 'Payment'}</p>
                     <p className="text-xs text-gray-400">{format(Number(l.amount))} · <span className="capitalize">{l.status}</span></p>
                   </div>
-                  {l.raw?.payment_url && (
-                    <button onClick={() => navigator.clipboard?.writeText(l.raw!.payment_url!)} className="whitespace-nowrap rounded-md bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200">Copy link</button>
+                  {(l.raw?.authorization_url ?? l.raw?.payment_url) && (
+                    <button onClick={() => navigator.clipboard?.writeText((l.raw!.authorization_url ?? l.raw!.payment_url)!)} className="whitespace-nowrap rounded-md bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200">Copy link</button>
                   )}
                 </li>
               ))}

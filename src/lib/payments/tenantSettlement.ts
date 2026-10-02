@@ -20,6 +20,7 @@ export type InitializeTenantPaymentInput = {
   subject: TenantPaymentSubject;
   idempotencyKey: string;
   callbackUrl?: string;
+  description?: string;
   metadata?: Record<string, unknown>;
 };
 
@@ -198,7 +199,10 @@ export async function initializeTenantPayment(
       settlement_policy_version: snapshot.policyVersion,
       settlement_idempotency_key: input.idempotencyKey,
       settlement_verification_status: 'pending',
-      raw: { provider: 'paystack', ref: reference, email, subject: input.subject },
+      raw: {
+        provider: 'paystack', ref: reference, email, subject: input.subject,
+        ...(input.description ? { description: input.description } : {}),
+      },
     });
   } catch (error) {
     defaultLogger.error('[tenantSettlement] pending insert failed', { tenantId: input.tenantId, error: (error as Error).message });

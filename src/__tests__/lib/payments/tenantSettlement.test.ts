@@ -94,6 +94,16 @@ describe('initializeTenantPayment', () => {
     expect(store.initialized).toEqual(['tx_1']);
   });
 
+  it('stores description in raw only when provided', async () => {
+    mockInit.mockResolvedValue({ success: true, authorizationUrl: 'u' });
+    const withDesc = makeStore();
+    await initializeTenantPayment({ ...input, description: 'Haircut balance' }, withDesc);
+    expect(((withDesc.insertPending as jest.Mock).mock.calls[0][0] as { raw: Record<string, unknown> }).raw.description).toBe('Haircut balance');
+    const without = makeStore();
+    await initializeTenantPayment(input, without);
+    expect(((without.insertPending as jest.Mock).mock.calls[0][0] as { raw: Record<string, unknown> }).raw).not.toHaveProperty('description');
+  });
+
   it('sends 500000 for NGN 5,000, never 50000000', async () => {
     mockInit.mockResolvedValue({ success: true, authorizationUrl: 'u' });
     await initializeTenantPayment(input, makeStore());

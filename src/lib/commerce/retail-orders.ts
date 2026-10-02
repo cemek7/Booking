@@ -1,5 +1,6 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
+import { getCustomerEmail } from '@/lib/payments/customerEmail';
 import { initializeTenantPayment, SETTLEMENT_CUSTOMER_MESSAGE } from '@/lib/payments/tenantSettlement';
 import { siasOperations } from '@/lib/sias-operations';
 import { defaultLogger } from '@/lib/logger';
@@ -526,25 +527,10 @@ export async function createRetailOrderPaymentLink(input: {
     throw new Error('Retail order total must be greater than zero');
   }
 
-  const paymentMetadata = workingMetadata.payment as Record<string, unknown> | undefined;
-  const existingReference = typeof paymentMetadata?.reference === 'string' ? paymentMetadata.reference : null;
-  const existingUrl = typeof paymentMetadata?.url === 'string' ? paymentMetadata.url : null;
-  if (existingReference && existingUrl) {
-    const existingAmountCents = typeof paymentMetadata?.amountCents === 'number'
-      ? paymentMetadata.amountCents
-      : null;
-    if (rolloutMode === 'live' && existingAmountCents !== effectiveTotalCents) {
-      throw new Error('The existing payment link amount is stale; create a replacement after confirming delivery');
-    }
-    return {
-      provider: typeof paymentMetadata?.provider === 'string' ? paymentMetadata.provider : 'unknown',
-      reference: existingReference,
-      paymentUrl: existingUrl,
-      orderId: order.id,
-      totalCents: effectiveTotalCents,
-    };
-  }
-  const customerEmail = order.customer?.email ?? '';
+  const customerEmail = getCustomerEmail(
+    order.customer?.email ?? null,
+    order.customer?.phone ?? order.external_customer_ref ?? '',
+  );
   const settlement = await initializeTenantPayment({
     tenantId: order.tenant_id,
     amountMinor: effectiveTotalCents,
@@ -563,7 +549,7 @@ export async function createRetailOrderPaymentLink(input: {
   });
   if (!settlement.ok) {
     if (settlement.code === 'CUSTOMER_EMAIL_REQUIRED') throw new Error('Add the customer email before creating a payment link');
-    if (settlement.code === 'IDEMPOTENCY_CONFLICT') throw new Error('The existing payment link amount is stale; create a replacement after confirming delivery');
+    if (settlement.code === 'IDEMPOTENCY_CONFLICT') throw new Error('A different payment link is already active for this order. Wait for it to expire or cancel it before creating a new one.');
     throw new Error(SETTLEMENT_CUSTOMER_MESSAGE);
   }
 

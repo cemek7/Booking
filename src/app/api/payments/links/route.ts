@@ -60,6 +60,7 @@ export const POST = createHttpHandler(
       customerEmail: body.customer_email,
       subject: { type: 'payment_link', id: linkId },
       idempotencyKey: `payment_link:${linkId}`,
+      description: body.description,
       metadata: {
         type: 'payment_link',
         description: body.description,

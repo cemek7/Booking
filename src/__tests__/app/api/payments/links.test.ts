@@ -104,6 +104,7 @@ describe('payment link create (auth:true)', () => {
       amountMinor: 250050,
       currency: 'NGN',
       customerEmail: 'buyer@test.com',
+      description: 'x',
       subject: { type: 'payment_link', id: expect.any(String) },
     }));
     const call = mockInitializeTenantPayment.mock.calls[0][0] as { subject: { id: string }; idempotencyKey: string };

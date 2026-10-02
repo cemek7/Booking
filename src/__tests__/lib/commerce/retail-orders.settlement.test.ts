@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-// (settlement) Guards the retail paid-path inventory model: it MUST go through the
-// update_inventory() RPC (migration 117) and MUST NOT query a `product_inventory`
-// table (which no migration creates — the earlier implementation threw on it).
+// Guards createRetailOrderPaymentLink's use of the tenant settlement boundary: integer
+// minor units, amount-keyed idempotency, fulfilment gate first, fail-closed errors,
+// no legacy link reuse, and the phone-derived email fallback for chat customers.
 
 const rpcMock = jest.fn(async () => ({
   data: [{ movement_id: 'mv-1', previous_quantity: 5, new_quantity: 3 }],
@@ -166,8 +166,8 @@ describe('retail payment link settlement boundary', () => {
     expect(pendingUpdates()).toHaveLength(0);
   });
 
-  it('throws when the order has no customer email', async () => {
-    currentOrder = { ...readyOrder, customer: { email: null, phone: '+2348000000000' } };
+  it('throws when the order has no email and no phone', async () => {
+    currentOrder = { ...readyOrder, external_customer_ref: null, customer: { email: null, phone: null } };
     mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'CUSTOMER_EMAIL_REQUIRED', message: 'x' });
     await expect(createRetailOrderPaymentLink(input)).rejects.toThrow(/customer email/i);
     expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({ customerEmail: '' }));
@@ -176,7 +176,7 @@ describe('retail payment link settlement boundary', () => {
 
   it('asks for a replacement link when the boundary reports an idempotency conflict', async () => {
     mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'IDEMPOTENCY_CONFLICT', message: 'x' });
-    await expect(createRetailOrderPaymentLink(input)).rejects.toThrow(/create a replacement/i);
+    await expect(createRetailOrderPaymentLink(input)).rejects.toThrow(/different payment link is already active/i);
     expect(pendingUpdates()).toHaveLength(0);
   });
 
@@ -187,5 +187,26 @@ describe('retail payment link settlement boundary', () => {
       amountMinor: 800000,
       idempotencyKey: 'retail_order:ord-1:800000',
     }));
+  });
+
+  it('gives a phone-only customer a phone-derived email', async () => {
+    currentOrder = { ...readyOrder, customer: { email: null, phone: '+2348000000000', name: 'B' } };
+    await createRetailOrderPaymentLink(input);
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({
+      customerEmail: 'noemail+2348000000000@example.com',
+    }));
+  });
+
+  it('never returns a legacy payment link and fails closed when settlement is disabled', async () => {
+    currentOrder = {
+      ...readyOrder,
+      metadata: { payment: { provider: 'paystack', reference: 'pay-legacy', url: 'https://pay.test/legacy', amountCents: 750000 } },
+    };
+    mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'SETTLEMENT_DISABLED', message: 'x' });
+    await expect(createRetailOrderPaymentLink(input)).rejects.toThrow(
+      'Online payment is not available for this business right now.',
+    );
+    expect(mockInitializeTenantPayment).toHaveBeenCalled();
+    expect(pendingUpdates()).toHaveLength(0);
   });
 });

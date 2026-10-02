@@ -281,25 +281,20 @@ describe('retail order inventory on mark_paid', () => {
       },
     };
 
-    await expect(createRetailOrderPaymentLink({
+    mockInitializeTenantPayment.mockResolvedValue({
+      ok: true, transactionId: 'tx-live', reference: 'bk_live', authorizationUrl: 'https://pay/live', snapshot: {}, reused: true,
+    });
+    const result = await createRetailOrderPaymentLink({
       tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
-    })).resolves.toMatchObject({ reference: 'pay-existing', totalCents: 187500 });
-    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
-
-    currentOrder = {
-      ...currentOrder,
-      metadata: {
-        ...(currentOrder.metadata as Record<string, unknown>),
-        payment: {
-          provider: 'paystack', reference: 'pay-stale', url: 'https://pay.test/stale',
-          amountCents: 185000,
-        },
-      },
-    };
-    await expect(createRetailOrderPaymentLink({
-      tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
-    })).rejects.toThrow(/payment link amount is stale/i);
-    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
+    });
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({
+      amountMinor: 187500,
+      idempotencyKey: 'retail_order:ord-1:187500',
+    }));
+    // The boundary's checkout is returned; the legacy metadata link is not.
+    expect(result).toMatchObject({ reference: 'bk_live', paymentUrl: 'https://pay/live', totalCents: 187500 });
+    expect(result.reference).not.toBe('pay-existing');
+    expect(result.paymentUrl).not.toBe('https://pay.test/existing');
   });
 
   it('decrements stock via the update_inventory RPC and never queries product_inventory', async () => {
