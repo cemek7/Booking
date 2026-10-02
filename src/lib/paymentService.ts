@@ -872,6 +872,23 @@ export class PaymentService {
         return { success: false, error: 'Maximum retry attempts exceeded' };
       }
 
+      // Settled (minor-unit) rows retry through the webhook's verifier, never the legacy status path.
+      if (transaction.amount_minor !== null && transaction.amount_minor !== undefined) {
+        let outcome: string | null = null;
+        let verifyError: string | undefined;
+        try {
+          const { settleVerifiedCharge } = await import('@/lib/payments/paystackWebhookProcessor');
+          outcome = await settleVerifiedCharge(transaction.provider_reference);
+        } catch (e) {
+          verifyError = e instanceof Error ? e.message : 'Verification failed';
+        }
+        await this.supabase.from('transactions')
+          .update({ retry_count: transaction.retry_count + 1, last_retry_at: new Date().toISOString() })
+          .eq('id', transactionId);
+        if (verifyError) return { success: false, error: verifyError };
+        return { success: outcome === 'verified' || outcome === 'already_verified' };
+      }
+
       const provider = this.getProvider((transaction.raw as { provider?: string } | null)?.provider);
       if (!provider) {
         return { success: false, error: 'Payment provider not available' };
