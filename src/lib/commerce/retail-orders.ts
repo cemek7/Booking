@@ -1,9 +1,8 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { updateChatJourneyByExternalId } from '@/lib/chats/journey-service';
-import { PaymentsAdapter } from '@/lib/paymentsAdapter';
+import { initializeTenantPayment, SETTLEMENT_CUSTOMER_MESSAGE } from '@/lib/payments/tenantSettlement';
 import { siasOperations } from '@/lib/sias-operations';
 import { defaultLogger } from '@/lib/logger';
-import { randomUUID } from 'crypto';
 import { resolveCustomer } from '@/lib/customers/identity';
 import {
   RetailFulfillmentSettingsSchema,
@@ -431,7 +430,7 @@ export async function createRetailOrderPaymentLink(input: {
 
   const { data: tenantRow, error: tenantError } = await admin
     .from('tenants')
-    .select('metadata, settings')
+    .select('settings')
     .eq('id', order.tenant_id)
     .maybeSingle();
   if (tenantError) throw new Error(`Failed to load tenant fulfillment settings: ${tenantError.message}`);
@@ -545,41 +544,36 @@ export async function createRetailOrderPaymentLink(input: {
       totalCents: effectiveTotalCents,
     };
   }
-  const referenceKey = existingReference || `retail_${order.id.replace(/-/g, '').slice(0, 24)}_${randomUUID().slice(0, 8)}`;
-
-  // Split settlement to the tenant's bank (Paystack subaccount), not the platform.
-  const subaccountCode = (tenantRow?.metadata as { paystack_subaccount_code?: string } | null)?.paystack_subaccount_code;
-
-  const adapter = new PaymentsAdapter();
-  const result = await adapter.createStandalonePaymentLink({
-    tenant_id: order.tenant_id,
-    reference_key: referenceKey,
-    amount_minor_units: effectiveTotalCents,
-    currency: order.currency || 'NGN',
-    customer_email: order.customer?.email ?? null,
-    customer_phone: order.customer?.phone ?? order.external_customer_ref ?? null,
-    description: `Retail order ${order.id}`,
-    callback_url: input.callbackUrl ?? null,
-    subaccountCode: subaccountCode ?? null,
+  const customerEmail = order.customer?.email ?? '';
+  const settlement = await initializeTenantPayment({
+    tenantId: order.tenant_id,
+    amountMinor: effectiveTotalCents,
+    currency: 'NGN',
+    customerEmail,
+    subject: { type: 'retail_order', id: order.id },
+    // Amount is part of the key: a changed total (e.g. delivery fee) is a new checkout.
+    idempotencyKey: `retail_order:${order.id}:${effectiveTotalCents}`,
+    callbackUrl: input.callbackUrl ?? undefined,
     metadata: {
-      tenant_id: order.tenant_id,
       retail_order_id: order.id,
       source_chat_id: order.source_chat_id,
       external_customer_ref: order.external_customer_ref,
       channel: input.channel ?? null,
     },
   });
-
-  if (result.status !== 'created' || !result.id || !result.payment_url) {
-    throw new Error(result.error || 'Failed to create retail order payment link');
+  if (!settlement.ok) {
+    if (settlement.code === 'CUSTOMER_EMAIL_REQUIRED') throw new Error('Add the customer email before creating a payment link');
+    if (settlement.code === 'IDEMPOTENCY_CONFLICT') throw new Error('The existing payment link amount is stale; create a replacement after confirming delivery');
+    throw new Error(SETTLEMENT_CUSTOMER_MESSAGE);
   }
 
   const nextMetadata = {
     ...workingMetadata,
     payment: {
-      provider: result.provider || 'unknown',
-      reference: result.id,
-      url: result.payment_url,
+      provider: 'paystack',
+      reference: settlement.reference,
+      transactionId: settlement.transactionId,
+      url: settlement.authorizationUrl,
       channel: input.channel ?? null,
       amountCents: effectiveTotalCents,
       createdAt: new Date().toISOString(),
@@ -602,34 +596,6 @@ export async function createRetailOrderPaymentLink(input: {
     throw new Error(`Failed to store retail payment link: ${orderError.message}`);
   }
 
-  const transactionPayload = {
-    tenant_id: order.tenant_id,
-    amount: effectiveTotalCents / 100,
-    currency: order.currency || 'NGN',
-    type: 'retail_order',
-    status: 'initiated',
-    subject_type: 'retail_order',
-    subject_id: order.id,
-    provider_reference: result.id,
-    raw: {
-      provider: result.provider || 'unknown',
-      payment_url: result.payment_url,
-      retail_order_id: order.id,
-      source_chat_id: order.source_chat_id,
-      external_customer_ref: order.external_customer_ref,
-      channel: input.channel ?? null,
-    },
-    updated_at: new Date().toISOString(),
-  };
-
-  const { error: txError } = await admin
-    .from('transactions')
-    .upsert(transactionPayload, { onConflict: 'provider_reference' });
-
-  if (txError) {
-    defaultLogger.warn('[retail-orders] failed to persist retail payment transaction', txError);
-  }
-
   await updateChatJourneyForOrder(order, {
     type: 'retail',
     stage: 'pending_payment',
@@ -638,9 +604,9 @@ export async function createRetailOrderPaymentLink(input: {
   });
 
   return {
-    provider: result.provider || 'unknown',
-    reference: result.id,
-    paymentUrl: result.payment_url,
+    provider: 'paystack',
+    reference: settlement.reference,
+    paymentUrl: settlement.authorizationUrl,
     orderId: order.id,
     totalCents: effectiveTotalCents,
   };

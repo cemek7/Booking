@@ -10,7 +10,7 @@ const rpcMock = jest.fn(async () => ({
 }));
 const fromTables: string[] = [];
 const updatePayloads: Array<{ table: string; payload: Record<string, unknown> }> = [];
-const mockCreateStandalonePaymentLink = jest.fn();
+const mockInitializeTenantPayment = jest.fn();
 const mockCreateFulfillmentEscalation = jest.fn();
 const mockRecordBusinessMetric = jest.fn();
 
@@ -84,10 +84,9 @@ jest.mock('@/lib/chats/journey-service', () => ({
   updateChatJourneyByExternalId: (...args: unknown[]) => mockUpdateChatJourney(...args),
 }));
 
-jest.mock('@/lib/paymentsAdapter', () => ({
-  PaymentsAdapter: jest.fn(() => ({
-    createStandalonePaymentLink: (...args: unknown[]) => mockCreateStandalonePaymentLink(...args),
-  })),
+jest.mock('@/lib/payments/tenantSettlement', () => ({
+  initializeTenantPayment: (...args: unknown[]) => mockInitializeTenantPayment(...args),
+  SETTLEMENT_CUSTOMER_MESSAGE: 'Online payment is not available for this business right now.',
 }));
 
 jest.mock('@/lib/commerce/retail-fulfillment-escalation', () => ({
@@ -108,8 +107,8 @@ describe('retail order inventory on mark_paid', () => {
     updatePayloads.length = 0;
     currentOrder = paidOrder;
     currentTenant = { metadata: {}, settings: {} };
-    mockCreateStandalonePaymentLink.mockResolvedValue({
-      status: 'created', provider: 'paystack', id: 'pay-ref-1', payment_url: 'https://pay.test/1',
+    mockInitializeTenantPayment.mockResolvedValue({
+      ok: true, transactionId: 'tx', reference: 'bk_x', authorizationUrl: 'https://pay', snapshot: {}, reused: false,
     });
     mockCreateFulfillmentEscalation.mockResolvedValue({ id: 'esc-1', status: 'pending' });
     mockUpdateChatJourney.mockResolvedValue(undefined);
@@ -138,7 +137,7 @@ describe('retail order inventory on mark_paid', () => {
       tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
     })).rejects.toThrow(/delivery arrangement needs a teammate/i);
 
-    expect(mockCreateStandalonePaymentLink).not.toHaveBeenCalled();
+    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
     expect(mockCreateFulfillmentEscalation).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', orderId: 'ord-1', reasonCode: 'fulfillment_not_configured',
     }));
@@ -178,8 +177,8 @@ describe('retail order inventory on mark_paid', () => {
       tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
     });
 
-    expect(mockCreateStandalonePaymentLink).toHaveBeenCalledWith(expect.objectContaining({
-      amount_minor_units: 185000,
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({
+      amountMinor: 185000,
     }));
     expect(mockCreateFulfillmentEscalation).not.toHaveBeenCalled();
     expect(mockUpdateChatJourney).not.toHaveBeenCalledWith(expect.objectContaining({
@@ -239,8 +238,8 @@ describe('retail order inventory on mark_paid', () => {
       tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
     });
 
-    expect(mockCreateStandalonePaymentLink).toHaveBeenCalledWith(expect.objectContaining({
-      amount_minor_units: 187500,
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({
+      amountMinor: 187500,
     }));
     expect(updatePayloads).toContainEqual(expect.objectContaining({
       table: 'retail_orders',
@@ -285,7 +284,7 @@ describe('retail order inventory on mark_paid', () => {
     await expect(createRetailOrderPaymentLink({
       tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
     })).resolves.toMatchObject({ reference: 'pay-existing', totalCents: 187500 });
-    expect(mockCreateStandalonePaymentLink).not.toHaveBeenCalled();
+    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
 
     currentOrder = {
       ...currentOrder,
@@ -300,7 +299,7 @@ describe('retail order inventory on mark_paid', () => {
     await expect(createRetailOrderPaymentLink({
       tenantId: 'tenant-1', orderId: 'ord-1', actorUserId: 'user-1', channel: 'whatsapp',
     })).rejects.toThrow(/payment link amount is stale/i);
-    expect(mockCreateStandalonePaymentLink).not.toHaveBeenCalled();
+    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
   });
 
   it('decrements stock via the update_inventory RPC and never queries product_inventory', async () => {

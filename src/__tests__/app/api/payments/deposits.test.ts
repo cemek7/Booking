@@ -7,18 +7,10 @@ jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: jest.fn(),
 }));
 jest.mock('@/lib/supabase/bearer-client', () => ({ createSupabaseBearerClient: jest.fn() }));
-// Hoist the initializePayment spy so we can assert on it after the happy-path POST.
-const mockInitializePayment = jest.fn(async () => ({
-  success: true,
-  transactionId: 'txn_1',
-  authorizationUrl: 'https://pay/redirect',
-}));
-
-jest.mock('@/lib/paymentService', () => ({
-  __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
-    initializePayment: mockInitializePayment,
-  })),
+const mockInitializeTenantPayment = jest.fn();
+jest.mock('@/lib/payments/tenantSettlement', () => ({
+  initializeTenantPayment: (...a: unknown[]) => mockInitializeTenantPayment(...a),
+  SETTLEMENT_CUSTOMER_MESSAGE: 'Online payment is not available for this business right now.',
 }));
 jest.mock('@/lib/monitoring/alerting', () => ({
   getAlertService: jest.fn(() => ({
@@ -38,7 +30,6 @@ jest.mock('@/lib/ai/front-desk-events', () => ({
 
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
-import PaymentService from '@/lib/paymentService';
 import { recordFrontDeskEvent } from '@/lib/ai/front-desk-events';
 import { POST } from '@/app/api/payments/deposits/route';
 
@@ -133,62 +124,99 @@ function req(body: unknown) {
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
+const RES_ID = '11111111-1111-4111-8111-111111111111';
+
 describe('deposit init (auth:true)', () => {
-  const body = { amount: 10000, email: 'salon@test.com', reservationId: 'res_1' };
+  const body = { amountMinor: 500000, email: 'salon@test.com', reservationId: RES_ID };
 
   beforeEach(() => {
     jest.clearAllMocks();
     (createSupabaseAdminClient as jest.Mock).mockReturnValue(adminMock());
+    (createSupabaseBearerClient as jest.Mock).mockReturnValue(bearerMock());
+    mockInitializeTenantPayment.mockResolvedValue({
+      ok: true,
+      transactionId: 'txn_1',
+      reference: 'bk_1',
+      authorizationUrl: 'https://pay/redirect',
+      snapshot: {},
+      reused: false,
+    });
   });
 
-  it('initializes a Paystack deposit and returns the authorization URL', async () => {
-    (createSupabaseBearerClient as jest.Mock).mockReturnValue(bearerMock());
-
+  it('initializes a deposit through the settlement boundary in kobo', async () => {
     const res = await POST(req(body) as unknown as NextRequest);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       success: true,
       transactionId: 'txn_1',
       authorizationUrl: 'https://pay/redirect',
+      duplicate: false,
     });
-
-    // CRITICAL 1: assert initializePayment was called with the correct args
-    expect(mockInitializePayment).toHaveBeenCalledWith(expect.objectContaining({
-      reservationId: 'res_1',
-      amount: 10000,
-      email: 'salon@test.com',
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'ten_1',
+      amountMinor: 500000,
+      currency: 'NGN',
+      customerEmail: 'salon@test.com',
+      subject: { type: 'reservation', id: RES_ID },
+      idempotencyKey: `deposit:${RES_ID}`,
     }));
     expect(recordFrontDeskEvent).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'ten_1',
       eventType: 'payment_requested',
-      reservationId: 'res_1',
-      amount: 10000,
+      reservationId: RES_ID,
+      amount: 5000,
       currency: 'NGN',
     }));
   });
 
-  it('is idempotent — returns the existing deposit instead of creating a new one', async () => {
-    const existingDeposit = {
-      id: 'txn_old',
-      status: 'pending',
-      provider_reference: 'r',
-      raw: { provider_response: { authorizationUrl: 'https://old' } },
-    };
-    (createSupabaseBearerClient as jest.Mock).mockReturnValue(
-      bearerMock({ existingDeposit }),
-    );
+  it('rejects the legacy major-unit amount field (400)', async () => {
+    const res = await POST(req({ amount: 5000, email: 'salon@test.com', reservationId: RES_ID }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
+  });
 
+  it('rejects a non-integer amountMinor (400)', async () => {
+    const res = await POST(req({ ...body, amountMinor: 1.5 }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 with a Settings -> Payments message when settlement is not configured', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'SETTLEMENT_NOT_CONFIGURED', message: 'x' });
+    const res = await POST(req(body) as unknown as NextRequest);
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.code).toBe('SETTLEMENT_NOT_CONFIGURED');
+    expect(JSON.stringify(json)).toMatch(/Settings → Payments/);
+    expect(recordFrontDeskEvent).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 on an idempotency conflict', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'IDEMPOTENCY_CONFLICT', message: 'amount differs' });
+    const res = await POST(req(body) as unknown as NextRequest);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('IDEMPOTENCY_CONFLICT');
+  });
+
+  it('returns 502 with the boundary message on a transient provider failure', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'PROVIDER_INITIALIZATION_FAILED', message: 'try again' });
+    const res = await POST(req(body) as unknown as NextRequest);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe('try again');
+  });
+
+  it('flags a reused checkout as duplicate', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({
+      ok: true, transactionId: 'txn_old', reference: 'r', authorizationUrl: 'https://old', snapshot: {}, reused: true,
+    });
     const res = await POST(req(body) as unknown as NextRequest);
     expect(await res.json()).toMatchObject({ duplicate: true, transactionId: 'txn_old', authorizationUrl: 'https://old' });
   });
 
   it('refuses a deposit for a cancelled reservation (4xx)', async () => {
-    (createSupabaseBearerClient as jest.Mock).mockReturnValue(
-      bearerMock({ reservationStatus: 'cancelled' }),
-    );
-
+    (createSupabaseBearerClient as jest.Mock).mockReturnValue(bearerMock({ reservationStatus: 'cancelled' }));
     const res = await POST(req(body) as unknown as NextRequest);
     expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockInitializeTenantPayment).not.toHaveBeenCalled();
   });
 });

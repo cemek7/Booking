@@ -40,14 +40,14 @@ export default function PaymentLinksPage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect -- state is set after an await, not synchronously in the effect body; this is mount-time data loading
   useEffect(() => { void loadLinks(); }, []);
 
-  const canCreate = useMemo(() => Number(amount) > 0 && description.trim().length > 0, [amount, description]);
+  const canCreate = useMemo(() => Number(amount) > 0 && description.trim().length > 0 && email.trim().length > 0, [amount, description, email]);
 
   async function create() {
     setCreating(true); setError(null); setCreated(null);
     const res = await authPost<CreateResult>('/api/payments/links', {
       amount: Number(amount),
       description: description.trim(),
-      customer_email: email.trim() || undefined,
+      customer_email: email.trim(),
       customer_phone: phone.trim() || undefined,
     });
     setCreating(false);
@@ -71,7 +71,7 @@ export default function PaymentLinksPage() {
             <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="Amount" inputMode="decimal" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it for? (e.g. Deposit for June event)" maxLength={200} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
             <div className="grid grid-cols-2 gap-3">
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Customer email (optional)" inputMode="email" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Customer email" inputMode="email" type="email" required className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
               <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone (optional)" inputMode="tel" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
             </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
