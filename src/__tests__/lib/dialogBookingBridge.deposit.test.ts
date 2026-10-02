@@ -4,6 +4,7 @@ const mockInitializeTenantPayment = jest.fn();
 const mockOpenHandoff = jest.fn();
 const mockCreateReservation = jest.fn();
 const mockUpdateSlots = jest.fn();
+let reservationStatus = 'deposit_pending';
 let tenantSettings: Record<string, unknown> = {};
 
 function client() {
@@ -14,6 +15,7 @@ function client() {
       chain.eq = jest.fn(() => chain);
       chain.maybeSingle = jest.fn(async () => {
         if (table === 'services') return { data: { price: 10000, currency: 'NGN' }, error: null };
+        if (table === 'reservations') return { data: { id: 'res_1', status: reservationStatus }, error: null };
         if (table === 'tenants') return { data: { settings: tenantSettings, metadata: {} }, error: null };
         return { data: null, error: null };
       });
@@ -88,6 +90,51 @@ describe('dialog bridge deposits', () => {
       tenantId: 'tenant-1', reservationId: 'res_1', reason: 'SETTLEMENT_DISABLED', customerPhone: '+2348000000000',
     }));
     expect(sendConfirmed).not.toHaveBeenCalled();
+  });
+
+  it('creates deposit bookings as deposit_pending', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: true, transactionId: 'tx', reference: 'r', authorizationUrl: 'https://co', snapshot: {}, reused: false });
+    const { bridge } = makeBridge();
+    await run(bridge);
+    expect(mockCreateReservation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: 'deposit_pending' }));
+  });
+
+  it('creates no-deposit bookings as confirmed', async () => {
+    tenantSettings = {};
+    const { bridge } = makeBridge();
+    await run(bridge);
+    expect(mockCreateReservation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: 'confirmed' }));
+  });
+
+  async function pay(bridge: DialogBookingBridge, paymentUrl?: string) {
+    const state: BookingDialogState = { step: 'payment_pending', bookingId: 'res_1', paymentUrl };
+    return (bridge as unknown as {
+      handlePaymentPending: (t: string, s: string, st: BookingDialogState, m: string) => Promise<{ response: string }>;
+    }).handlePaymentPending('tenant-1', 'session-1', state, 'done i paid');
+  }
+
+  it('does not confirm after handoff when the customer says "paid"', async () => {
+    reservationStatus = 'deposit_pending';
+    const { bridge, sendConfirmed } = makeBridge();
+    const out = await pay(bridge);
+    expect(sendConfirmed).not.toHaveBeenCalled();
+    expect(out.response).toBe('HANDOFF_MESSAGE');
+  });
+
+  it('re-sends the payment link while the deposit is unpaid', async () => {
+    reservationStatus = 'deposit_pending';
+    const { bridge, sendConfirmed } = makeBridge();
+    const out = await pay(bridge, 'https://co');
+    expect(sendConfirmed).not.toHaveBeenCalled();
+    expect(out.response).toContain('https://co');
+  });
+
+  it('confirms once the webhook has marked the reservation confirmed', async () => {
+    reservationStatus = 'confirmed';
+    const { bridge, sendConfirmed } = makeBridge();
+    const out = await pay(bridge, 'https://co');
+    expect(sendConfirmed).toHaveBeenCalled();
+    expect(out.response).toBe('CONFIRMED');
   });
 
   it('skips the initializer when no deposit is required', async () => {

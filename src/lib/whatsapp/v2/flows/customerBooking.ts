@@ -39,6 +39,7 @@ import type { ConversationExecutionContext } from '../pipeline';
 import { parseConversationStructuredState } from '../structuredState';
 import { reduceConversationState } from '../stateReducer';
 import { transitionThread, updateThreadState } from '../conversationThread';
+import { setHumanHandlingUntilReleased } from '../humanTakeover';
 import { nextMissingField } from '../missingFields';
 
 const supabaseAdmin = createSupabaseAdminClient();
@@ -694,19 +695,39 @@ async function confirmBooking(
         tenantId, reservationId: reservation.id, code: paymentResult.code,
       });
       // Reservation stays pending and the slot lock is kept: staff arrange payment.
-      await openReservationPaymentHandoff({
-        tenantId,
-        reservationId: reservation.id,
-        reason: paymentResult.code,
-        customerPhone: phone,
-        threadId: executionContext.threadId,
-      });
-      await transitionThread({
-        tenantId,
-        threadId: executionContext.threadId,
-        from: ['active'],
-        to: 'handed_off',
-      });
+      try {
+        await openReservationPaymentHandoff({
+          tenantId,
+          reservationId: reservation.id,
+          reason: paymentResult.code,
+          customerPhone: phone,
+          threadId: executionContext.threadId,
+        });
+      } catch (handoffError) {
+        defaultLogger.error('[customerBooking] payment handoff failed; muting bot anyway', {
+          tenantId,
+          reservationId: reservation.id,
+          error: handoffError instanceof Error ? handoffError.message : String(handoffError),
+        });
+      }
+      // Mute the bot (also moves the thread to handed_off) and drop the pending
+      // confirmation so a later "yes" cannot re-run confirmBooking. The slot lock
+      // is deliberately kept: resetConversation does not release locks.
+      try {
+        await setHumanHandlingUntilReleased({
+          externalId,
+          tenantId,
+          threadId: executionContext.threadId,
+          channel,
+        });
+      } catch (muteError) {
+        defaultLogger.error('[customerBooking] could not mute bot after payment handoff', {
+          tenantId,
+          reservationId: reservation.id,
+          error: muteError instanceof Error ? muteError.message : String(muteError),
+        });
+      }
+      await resetConversation(externalId, tenantId, channel);
       return PAYMENT_HANDOFF_CUSTOMER_MESSAGE;
     }
 

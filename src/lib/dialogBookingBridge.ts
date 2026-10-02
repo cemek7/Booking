@@ -528,7 +528,7 @@ export class DialogBookingBridge {
               nextStep: 'payment_pending'
             };
           }
-          return await this.sendBookingConfirmedResponse(tenantId, sessionId, state, existingBooking);
+          return await this.confirmOrAwaitPayment(tenantId, sessionId, state, existingBooking);
         }
       }
 
@@ -548,6 +548,20 @@ export class DialogBookingBridge {
         }
       };
 
+      // Deposit: same tenant rule as public booking, settled through the tenant boundary.
+      const { data: service } = await this.supabase
+        .from('services').select('price, price_cents').eq('id', state.serviceId!).maybeSingle();
+      const { data: tenantRow } = await this.supabase
+        .from('tenants').select('settings, metadata').eq('id', tenantId).maybeSingle();
+      const servicePriceCents = typeof service?.price_cents === 'number'
+        ? service.price_cents
+        : Math.round(Number(service?.price ?? 0) * 100);
+      const depositMinor = computeDepositMinor({
+        tenantSettings: (tenantRow?.settings ?? {}) as Record<string, unknown>,
+        tenantMetadata: (tenantRow?.metadata ?? {}) as Record<string, unknown>,
+        servicePriceCents,
+      });
+
       const reservation = await createReservation(
         createSupabaseAdminClient(),
         {
@@ -558,7 +572,7 @@ export class DialogBookingBridge {
           service: bookingData.service,
           start_at: bookingData.start_time,
           end_at: bookingData.end_time,
-          status: 'confirmed',
+          status: depositMinor > 0 ? 'deposit_pending' : 'confirmed',
           metadata: bookingData.metadata,
           staff_id: bookingData.staff_id,
         }
@@ -574,20 +588,6 @@ export class DialogBookingBridge {
 
       state.bookingId = reservation.id;
 
-      // Deposit: same tenant rule as public booking, settled through the tenant boundary.
-      const { data: service } = await this.supabase
-        .from('services').select('price, price_cents').eq('id', state.serviceId!).maybeSingle();
-      const { data: tenantRow } = await this.supabase
-        .from('tenants').select('settings, metadata').eq('id', tenantId).maybeSingle();
-      const servicePriceCents = typeof service?.price_cents === 'number'
-        ? service.price_cents
-        : Math.round(Number(service?.price ?? 0) * 100);
-      const depositMinor = computeDepositMinor({
-        tenantSettings: (tenantRow?.settings ?? {}) as Record<string, unknown>,
-        tenantMetadata: (tenantRow?.metadata ?? {}) as Record<string, unknown>,
-        servicePriceCents,
-      });
-
       let paymentUrl: string | null = null;
       if (depositMinor > 0) {
         const result = await initializeTenantPayment({
@@ -601,6 +601,9 @@ export class DialogBookingBridge {
           metadata: { session_id: sessionId, source: 'whatsapp_conversation' },
         });
         if (!result.ok) {
+          defaultLogger.warn('dialogBookingBridge: deposit not collectable; handing off', {
+            tenantId, reservationId: reservation.id, code: result.code,
+          });
           await openReservationPaymentHandoff({
             tenantId, reservationId: reservation.id, reason: result.code, customerPhone: state.customerPhone ?? null,
           });
@@ -648,6 +651,31 @@ export class DialogBookingBridge {
   }
 
   /**
+   * Confirm only when the reservation is actually confirmed (paid, via webhook).
+   * Otherwise keep waiting: re-send the payment link, or the handoff message
+   * when no link exists (deposit could not be collected).
+   */
+  private async confirmOrAwaitPayment(
+    tenantId: string,
+    sessionId: string,
+    state: BookingDialogState,
+    booking: { id: string; status?: string | null } & Record<string, any>,
+  ) {
+    if (booking.status === 'confirmed') {
+      return await this.sendBookingConfirmedResponse(tenantId, sessionId, state, booking);
+    }
+    if (state.paymentUrl) {
+      return {
+        response:
+          `⏳ We're waiting for your payment to be confirmed.\n\n💳 *Complete your payment here:*\n${state.paymentUrl}`,
+        completed: false,
+        nextStep: 'payment_pending',
+      };
+    }
+    return { response: PAYMENT_HANDOFF_CUSTOMER_MESSAGE, completed: false, nextStep: 'payment_pending' };
+  }
+
+  /**
    * Handle payment_pending step — customer replies after paying
    */
   private async handlePaymentPending(
@@ -665,10 +693,11 @@ export class DialogBookingBridge {
           .from('reservations')
           .select('id, start_at, end_at, status')
           .eq('id', state.bookingId)
+          .eq('tenant_id', tenantId)
           .maybeSingle();
 
         if (booking) {
-          return await this.sendBookingConfirmedResponse(tenantId, sessionId, state, booking);
+          return await this.confirmOrAwaitPayment(tenantId, sessionId, state, booking);
         }
       }
     }

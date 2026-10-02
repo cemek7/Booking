@@ -56,6 +56,7 @@ jest.mock('@/lib/whatsapp/v2/conversationThread', () => ({
   updateThreadState: (...args: unknown[]) => mockUpdateThreadState(...args),
   transitionThread: (...args: unknown[]) => mockTransitionThread(...args),
 }));
+jest.mock('@/lib/whatsapp/v2/humanTakeover', () => ({ setHumanHandlingUntilReleased: jest.fn() }));
 jest.mock('@/lib/whatsapp/v2/slotEngine', () => ({
   getAvailableSlots: jest.fn(),
   lockSlot: jest.fn(),
