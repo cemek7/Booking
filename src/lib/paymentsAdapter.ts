@@ -1,5 +1,3 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { defaultLogger } from '@/lib/logger';
 import { createHash } from 'crypto';
 import metrics from './metrics';
 import { trace } from '@opentelemetry/api';
@@ -26,13 +24,6 @@ export interface DepositIntentResult {
   provider?: string;
   payment_url?: string | null;
   error?: string | null;
-}
-
-interface ExistingDepositTransaction {
-  raw?: {
-    ref?: string | null;
-    provider?: string | null;
-  } | null;
 }
 
 export interface StandalonePaymentLinkInput {
@@ -67,31 +58,6 @@ export interface PaymentProvider {
 }
 
 function env(key: string) { return process.env[key]; }
-
-// Paystack stub implementation
-export class PaystackProvider implements PaymentProvider {
-  name = 'paystack';
-  async createDepositIntent(input: DepositIntentInput): Promise<DepositIntentResult> {
-    if (!env('PAYSTACK_SECRET_KEY')) return { id: null, status: 'failed', provider: this.name, error: 'missing_credentials' };
-    try {
-      const amount = input.amount_minor_units; // already minor units
-      const idempotencyKey = generateIdempotencyKey(input.tenant_id, input.reservation_id);
-      const resp = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env('PAYSTACK_SECRET_KEY')}` },
-        body: JSON.stringify({ amount, email: input.customer_email || 'noemail@example.com', reference: idempotencyKey, metadata: input.metadata || {} }),
-        timeoutMs: 15_000,
-      });
-      const j = await resp.json().catch(() => ({}));
-      const payUrl = j?.data?.authorization_url || null;
-      const ref = j?.data?.reference || null;
-      await metrics.incr('deposit_intent_paystack');
-      return { id: ref, status: resp.ok ? 'created' : 'failed', provider: this.name, payment_url: payUrl, error: resp.ok ? null : `status_${resp.status}` };
-    } catch (e) {
-      return { id: null, status: 'failed', provider: this.name, error: (e as Error).message };
-    }
-  }
-}
 
 // Stripe stub implementation
 export class StripeProvider implements PaymentProvider {
@@ -130,7 +96,6 @@ export class PaymentsAdapter {
   private defaultProvider: string;
 
   constructor(cfg: PaymentsAdapterConfig = {}) {
-    if (cfg.paystack !== false) this.providers.paystack = new PaystackProvider();
     if (cfg.stripe !== false) this.providers.stripe = new StripeProvider();
     // Paystack is the MVP default; tenant can override via config
     this.defaultProvider = cfg.defaultProvider ?? 'paystack';
@@ -170,10 +135,6 @@ export class PaymentsAdapter {
       return { id: null, status: 'failed', error: 'no_provider' };
     }
 
-    if (provider.name === 'paystack') {
-      return createPaystackStandalonePaymentLink(input);
-    }
-
     if (provider.name === 'stripe') {
       return createStripeStandalonePaymentLink(input);
     }
@@ -184,45 +145,6 @@ export class PaymentsAdapter {
       provider: provider.name,
       error: 'provider_not_supported',
     };
-  }
-}
-
-async function createPaystackStandalonePaymentLink(
-  input: StandalonePaymentLinkInput
-): Promise<StandalonePaymentLinkResult> {
-  if (!env('PAYSTACK_SECRET_KEY')) {
-    return { id: null, status: 'failed', provider: 'paystack', error: 'missing_credentials' };
-  }
-
-  try {
-    const resp = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env('PAYSTACK_SECRET_KEY')}`,
-      },
-      body: JSON.stringify({
-        amount: input.amount_minor_units,
-        email: input.customer_email || 'noemail@example.com',
-        reference: input.reference_key,
-        callback_url: input.callback_url || undefined,
-        metadata: input.metadata || {},
-        // Split settlement to the tenant's bank when a subaccount is configured.
-        subaccount: input.subaccountCode || undefined,
-        bearer: input.subaccountCode ? (input.bearer || 'account') : undefined,
-      }),
-      timeoutMs: 15_000,
-    });
-    const j = await resp.json().catch(() => ({}));
-    return {
-      id: j?.data?.reference || input.reference_key,
-      status: resp.ok ? 'created' : 'failed',
-      provider: 'paystack',
-      payment_url: j?.data?.authorization_url || null,
-      error: resp.ok ? null : `status_${resp.status}`,
-    };
-  } catch (e) {
-    return { id: null, status: 'failed', provider: 'paystack', error: (e as Error).message };
   }
 }
 
@@ -271,74 +193,9 @@ async function createStripeStandalonePaymentLink(
   }
 }
 
-// Persistence helper for transactions row (type=deposit)
-export async function recordDepositTransaction(supabase: SupabaseClient, tenantId: string, reservationId: string, minorAmount: number, currency: string, provider: string, ref: string | null) {
-  try {
-    await supabase.from('transactions').insert({
-      tenant_id: tenantId,
-      amount: minorAmount / 100,
-      currency,
-      type: 'deposit',
-      status: 'initiated',
-      subject_type: 'reservation',
-      subject_id: reservationId,
-      raw: { provider, ref, reservation_id: reservationId },
-    });
-  } catch (e) {
-    defaultLogger.warn('recordDepositTransaction failed', e);
-  }
-}
-
-// Helper: initiate deposit for a reservation using tenant metadata deposit_pct (if present)
-export async function initiateDepositForReservation(
-  supabase: SupabaseClient,
-  adapter: PaymentsAdapter,
-  tenantId: string,
-  reservationId: string,
-  baseAmountMinor: number,
-  currency: string
-) {
-  try {
-    const { data: tenant } = await supabase.from('tenants').select('id, metadata').eq('id', tenantId).maybeSingle();
-    const meta = tenant?.metadata && typeof tenant.metadata === 'object' ? (tenant.metadata as Record<string, unknown>) : {};
-    const depositPctRaw = meta['deposit_pct'];
-    const depositPct = typeof depositPctRaw === 'number' ? depositPctRaw : null;
-    if (!depositPct || depositPct <= 0 || depositPct >= 100) return { skipped: 'invalid_deposit_pct' };
-    const depositMinor = Math.round(baseAmountMinor * (depositPct / 100));
-    // Idempotency: check existing transaction for reservation & provider
-    const { data: existing } = await supabase
-      .from('transactions')
-      .select('id, raw')
-      .eq('tenant_id', tenantId)
-      .filter('raw->>reservation_id', 'eq', reservationId)
-      .eq('type', 'deposit')
-      .limit(1);
-    if (existing && existing.length > 0) {
-      const existingTx = existing[0] as ExistingDepositTransaction;
-      return {
-        id: existingTx.raw?.ref || null,
-        status: 'created',
-        provider: existingTx.raw?.provider || undefined,
-        payment_url: null,
-      };
-    }
-    const intent = await adapter.createDeposit({ tenant_id: tenantId, reservation_id: reservationId, amount_minor_units: depositMinor, currency });
-    if (intent.status === 'created') {
-      await recordDepositTransaction(supabase, tenantId, reservationId, depositMinor, currency, intent.provider || 'unknown', intent.id);
-    }
-    return intent;
-  } catch (e) {
-    defaultLogger.warn('initiateDepositForReservation failed', e);
-    return { id: null, status: 'failed', error: (e as Error).message };
-  }
-}
-
 const paymentsAdapterExports = {
   PaymentsAdapter,
-  PaystackProvider,
   StripeProvider,
-  recordDepositTransaction,
-  initiateDepositForReservation,
 };
 
 export default paymentsAdapterExports;

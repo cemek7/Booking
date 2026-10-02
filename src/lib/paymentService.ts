@@ -81,57 +81,7 @@ class PaystackProvider implements PaymentProvider {
   }
 
   async initializePayment(params: InitializePaymentParams): Promise<PaymentResponse> {
-    const tracer = trace.getTracer('boka');
-    const span = tracer.startSpan('paystack.initialize_payment');
-    
-    try {
-      const response = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.secretKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: params.amount * 100, // Convert to kobo
-          currency: params.currency,
-          email: params.email,
-          reference: params.reference,
-          callback_url: params.callbackUrl,
-          metadata: params.metadata,
-          ...(params.subaccountCode && {
-            subaccount: params.subaccountCode,
-            bearer: params.bearer ?? 'account',
-          }),
-        }),
-      });
-
-      const data = await response.json();
-      span.setAttribute('paystack.status', data.status);
-
-      if (data.status) {
-        return {
-          success: true,
-          reference: params.reference,
-          authorizationUrl: data.data.authorization_url,
-          accessCode: data.data.access_code,
-        };
-      } else {
-        return {
-          success: false,
-          reference: params.reference,
-          error: data.message || 'Payment initialization failed',
-        };
-      }
-    } catch (error) {
-      span.recordException(error as Error);
-      return {
-        success: false,
-        reference: params.reference,
-        error: `Network error: ${(error as Error).message}`,
-      };
-    } finally {
-      span.end();
-    }
+    return { success: false, reference: params.reference, error: 'Paystack customer payments must use initializeTenantPayment' };
   }
 
   async verifyPayment(reference: string): Promise<VerificationResponse> {

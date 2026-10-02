@@ -796,7 +796,7 @@ export class PaymentLifecycleService {
     const amountMinorUnits = Math.round(request.amount * 100);
     switch (request.provider) {
       case 'stripe':    return this.createStripePayment(request, amountMinorUnits, tenantId);
-      case 'paystack':  return this.createPaystackPayment(request, booking, amountMinorUnits, tenantId);
+      case 'paystack':  throw new Error('Paystack customer payments must use initializeTenantPayment');
       case 'flutterwave': return this.createFlutterwavePayment(request, booking, amountMinorUnits, tenantId);
       default: throw new Error(`Unsupported payment provider: ${request.provider}`);
     }
@@ -838,41 +838,6 @@ export class PaymentLifecycleService {
       clientSecret: data.client_secret,
       paymentUrl: null,
       providerData: { created: new Date(data.created * 1000).toISOString(), provider: 'stripe', method: request.method, status: data.status },
-    };
-  }
-
-  private async createPaystackPayment(request: CreatePaymentRequest, booking: any, amountMinorUnits: number, tenantId: string) {
-    const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-    if (!paystackKey) throw new Error('Paystack credentials not configured');
-
-    const { fetchWithTimeout } = await import('@/lib/fetchWithTimeout');
-    const reference = `pay_${request.bookingId}_${Date.now()}`;
-    const email = booking.customer_email || booking.metadata?.customer_email || PLACEHOLDER_CUSTOMER_EMAIL;
-
-    const resp = await fetchWithTimeout('https://api.paystack.co/transaction/initialize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${paystackKey}` },
-      body: JSON.stringify({
-        amount: amountMinorUnits,
-        email,
-        reference,
-        currency: request.currency.toUpperCase(),
-        metadata: { booking_id: request.bookingId, reservation_id: request.bookingId, tenant_id: tenantId, ...request.metadata },
-        ...(request.description ? { label: request.description } : {}),
-      }),
-      timeoutMs: 15_000,
-    });
-
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(`Paystack payment creation failed: ${err?.message || resp.status}`);
-    }
-    const data = await resp.json();
-    return {
-      providerPaymentId: data.data.reference,
-      clientSecret: null,
-      paymentUrl: data.data.authorization_url,
-      providerData: { created: new Date().toISOString(), provider: 'paystack', method: request.method, access_code: data.data.access_code },
     };
   }
 
