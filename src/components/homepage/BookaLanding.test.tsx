@@ -43,4 +43,25 @@ describe('BookaLanding', () => {
       'beauty',
     );
   });
+
+  it('drops the duplicate sections and keeps the nav anchor on the workflow band', () => {
+    render(<BookaLanding />);
+
+    expect(screen.queryByText(/set it up once/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/outcome signals/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/icp focus/i)).not.toBeInTheDocument();
+
+    const band = document.querySelector('#how-it-works');
+    expect(band).toHaveTextContent('Answer');
+    expect(band).toHaveTextContent('Report');
+    expect(band).toHaveTextContent(/opted in/i);
+  });
+
+  it('keeps boxed surfaces to four and links the legal pages', () => {
+    render(<BookaLanding />);
+
+    expect(document.querySelectorAll('[data-surface]').length).toBeLessThanOrEqual(4);
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
+    expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/terms');
+  });
 });
