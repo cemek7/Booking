@@ -1,76 +1,98 @@
 import Link from 'next/link';
 import BrandMark from '@/components/brand/BrandMark';
+import CtaLink from '@/components/homepage/CtaLink';
 import DemoConversation from '@/components/homepage/DemoConversation';
-import {
-  BOOKA_POSITIONING,
-  SIAS_BILLING_PLANS,
-  SIAS_OUTCOME_ATRIBUTION,
-  SIAS_VERTICAL_PACKAGES,
-} from '@/lib/sias';
-
-const howItWorks = [
-  {
-    step: '01',
-    title: 'Set up the front desk',
-    copy: 'Booka learns your services, products, offers, hours, tone, and WhatsApp plus Instagram setup, then configures the front desk around how you already sell and book.',
-  },
-  {
-    step: '02',
-    title: 'Handle sales and booking together',
-    copy: 'It answers questions, recommends the right service or offer, converts interest into a booking, sends reminders, and escalates edge cases instead of leaving revenue sitting in chat history.',
-  },
-  {
-    step: '03',
-    title: 'Keep getting sharper',
-    copy: 'Booka remembers customer patterns, weak slots, repeat objections, and missed follow-up opportunities so the operation improves over time.',
-  },
-];
+import Panel from '@/components/homepage/Panel';
+import SectionHeading from '@/components/homepage/SectionHeading';
+import { BOOKA_POSITIONING, SIAS_BILLING_PLANS, SIAS_VERTICAL_PACKAGES } from '@/lib/sias';
 
 const revenueProblems = [
   {
     title: 'Capture',
     promise: 'Never lose an enquiry because nobody replied.',
-    copy: 'Booka responds while the customer is still interested, answers the first question and moves the conversation towards a useful next step.',
+    copy: 'Booka replies while the customer is still interested and moves them to a useful next step.',
   },
   {
     title: 'Convert',
     promise: 'Turn more conversations into booked and paying customers.',
-    copy: 'It qualifies demand, recommends the right service or product, handles common objections and follows up until the opportunity has a clear outcome.',
+    copy: 'It qualifies demand, recommends the right service and follows up until there is a clear outcome.',
   },
   {
     title: 'Recover',
     promise: 'Save the sale when the first choice is unavailable.',
-    copy: 'Booka offers alternative times, people, services or products instead of ending the conversation at “not available”.',
+    copy: 'Booka offers other times, people, services or products instead of stopping at “not available”.',
   },
   {
     title: 'Grow',
-    promise: 'Create repeat business from the customer base you already have.',
-    copy: 'WhatsApp reminders, approved re-engagement and repeat-booking conversations help owners act on empty slots and unfinished demand.',
+    promise: 'Create repeat business from the customers you already have.',
+    copy: 'Opted-in WhatsApp reminders and repeat-booking conversations help fill empty slots.',
   },
 ];
 
 const revenueSequence = ['Answer', 'Recommend', 'Sell', 'Book', 'Pay', 'Follow up', 'Retain', 'Report'];
 
+const channelRules = [
+  {
+    channel: 'Instagram',
+    rule: 'Captures and converts active enquiries inside the available messaging window.',
+  },
+  {
+    channel: 'WhatsApp',
+    rule: 'Carries reminders, recovery and repeat business when the customer has opted in and approved messaging is used.',
+  },
+  {
+    channel: 'One view',
+    rule: 'Both channels are recorded together while respecting each channel’s consent, timing and messaging rules.',
+  },
+];
+
+const verticalNames: Record<string, string> = {
+  beauty: 'Beauty & wellness',
+  hospitality: 'Hospitality',
+  medicine: 'Clinics & practices',
+};
+
+const verticalLines: Record<string, string> = {
+  beauty: 'Recommends the right service, stylist or add-on, takes the deposit and books the slot.',
+  hospitality: 'Turns dining and stay enquiries into confirmed reservations, with deposits and add-ons before arrival.',
+  medicine: 'Routes appointment enquiries to the right practitioner and keeps sensitive questions with your staff.',
+};
+
+const pilotIncluded = [
+  'Channel connection and live-flow test',
+  'Catalogue, pricing, availability, FAQ and policy setup',
+  'Booking, sales, deposit and payment-link configuration',
+  'Follow-up, escalation, calibration and end-of-pilot report',
+];
+
+const reportChecks = [
+  'Unanswered or materially delayed enquiries',
+  'Conversations with no clear next step',
+  'Unavailable choices offered without alternatives',
+  'Prospects who disappeared without follow-up',
+  'Missed recommendation or add-on opportunities',
+  'An estimated recoverable opportunity range',
+];
+
 const faqItems = [
   {
     question: 'Is Booka just booking software?',
     answer:
-      'No. Booka is an AI Revenue Front Desk that handles customer conversations from enquiry to recommendation, sale, booking, follow-up and repeat business.',
+      'No. Booka is an AI Revenue Front Desk. It handles the conversation from enquiry to recommendation, sale, booking, follow-up and repeat business.',
   },
   {
     question: 'How does pricing work?',
     answer:
-      'Plans start at ₦15k per month and include an automation and messaging allowance. Booka warns you before any overage, and extra usage is opt-in rather than a surprise bill.',
+      'Plans start at ₦15k per month and include an automation and messaging allowance. Booka warns you before any overage, and extra usage is opt-in.',
   },
   {
     question: 'Can humans still step in?',
-    answer:
-      'Yes. Booka routes exceptions to a person when the situation is sensitive, risky, or outside the standard workflow.',
+    answer: 'Yes. Booka routes a conversation to a person when it is sensitive, risky or outside the normal flow.',
   },
   {
     question: 'Who is this for?',
     answer:
-      'Booka is built for operators who handle high-intent enquiries in chat: salons and spas, clinics and practices, and restaurants or hospitality teams.',
+      'Businesses that get high-intent enquiries in chat: salons and spas, clinics and practices, restaurants and hospitality teams.',
   },
 ];
 
@@ -81,315 +103,193 @@ const launchNotes = [
   'Human takeover built in',
 ];
 
-const verticalUseCases: Record<
-  string,
-  {
-    sales: string[];
-    booking: string[];
-  }
-> = {
-  beauty: {
-    sales: [
-      'Answer treatment enquiries and recommend the right service, stylist, or add-on',
-      'Convert price-sensitive chats with deposits, bundles, and repeat-visit nudges',
-    ],
-    booking: [
-      'Book the right slot, stylist, and service combination without back-and-forth',
-      'Handle reminders, reschedules, no-show recovery, and rebooking automatically',
-    ],
-  },
-  hospitality: {
-    sales: [
-      'Convert dining and stay enquiries into higher-value reservations',
-      'Sell deposits, premium tables, special packages, and occasion add-ons before arrival',
-    ],
-    booking: [
-      'Confirm tables, rooms, or event slots across chat without manual inbox juggling',
-      'Handle reservation reminders, guest follow-up, and abandoned booking recovery',
-    ],
-  },
-  medicine: {
-    sales: [
-      'Handle non-clinical guidance and route appointment enquiries to the right team',
-      'Explain available visit types while preserving human escalation for sensitive questions',
-    ],
-    booking: [
-      'Book appointments with the right practitioner, timing, and visit type',
-      'Handle reminders, recall, follow-up, and escalation for sensitive cases',
-    ],
-  },
-};
+const navLink =
+  'rounded-sm text-sm text-[#46514e] transition hover:text-[var(--brand-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--booka-green)]';
+
+const sectionRule = 'border-t border-[var(--brand-line)] py-16 sm:py-20';
 
 export default function BookaLanding() {
   const verticals = [SIAS_VERTICAL_PACKAGES[0], SIAS_VERTICAL_PACKAGES[2], SIAS_VERTICAL_PACKAGES[1]];
   const pricingPlans = SIAS_BILLING_PLANS.slice(0, 4);
 
   return (
-    <main className="min-h-screen bg-white text-[#10211a]">
-      <section className="mx-auto flex w-full max-w-7xl flex-col px-5 py-5 sm:px-6 lg:px-8">
-        <header className="flex items-center justify-between gap-4 border-b border-emerald-100/80 pb-4">
+    <main className="min-h-screen bg-[var(--brand-paper)] text-[var(--brand-ink)]">
+      <div className="mx-auto flex w-full max-w-7xl flex-col px-5 py-5 sm:px-6 lg:px-8">
+        <header className="flex items-center justify-between gap-4 pb-4">
           <Link href="/" className="flex items-center gap-3">
-            <BrandMark variant="booka" className="h-11 w-11 shadow-sm shadow-emerald-600/20" />
+            <BrandMark variant="booka" className="h-11 w-11" />
             <div>
-              <p className="brand-kicker text-emerald-700/65">Booka</p>
-              <p className="mt-1 text-sm text-slate-500">by Techclave</p>
+              <p className="brand-kicker text-[var(--brand-moss)]">Booka</p>
+              <p className="mt-1 text-sm text-[#5a625f]">by Techclave</p>
             </div>
           </Link>
 
-          <nav className="hidden items-center gap-2 md:flex">
-            <Link
-              href="/"
-              className="rounded-full border border-emerald-100 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm transition hover:border-emerald-200 hover:text-emerald-800"
-            >
+          <nav className="hidden items-center gap-6 md:flex">
+            <Link href="/" className={navLink}>
               Techclave
             </Link>
-            <Link
-              href="#how-it-works"
-              className="rounded-full border border-emerald-100 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm transition hover:border-emerald-200 hover:text-emerald-800"
-            >
+            <Link href="#how-it-works" className={navLink}>
               How it works
             </Link>
-            <Link
-              href="#pricing"
-              className="rounded-full border border-emerald-100 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm transition hover:border-emerald-200 hover:text-emerald-800"
-            >
+            <Link href="#pricing" className={navLink}>
               Pricing
             </Link>
-            <Link
-              href="/booka/auth/onboarding"
-              className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700"
-            >
-              Start onboarding
-            </Link>
-            <Link
-              href="/booka/auth/signin"
-              className="rounded-full border border-emerald-200 bg-emerald-50/60 px-4 py-2 text-sm font-medium text-emerald-900 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50"
-            >
+            <Link href="/booka/auth/signin" className={navLink}>
               Sign in
             </Link>
+            <CtaLink href="/booka/auth/onboarding" className="!px-5 !py-2.5">
+              Start onboarding
+            </CtaLink>
           </nav>
         </header>
 
-        <section className="grid gap-12 pb-20 pt-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:py-18">
-          <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50/80 px-4 py-2 text-sm text-emerald-900 shadow-sm">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-600" />
-              Booka by Techclave
-            </div>
-
-            <p className="mt-5 text-xs font-medium uppercase tracking-[0.34em] text-emerald-700/55">
-              {BOOKA_POSITIONING.category}
-            </p>
-            <h1 className="mt-4 text-5xl font-semibold leading-[0.94] tracking-tight text-[#10211a] sm:text-6xl lg:text-7xl">
-              {BOOKA_POSITIONING.headline}
-            </h1>
-            <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
-              Booka answers customer questions, recommends the right service or product, checks availability,
-              follows up, books customers and helps collect payment—while your team steps in when human judgement
-              is needed.
-            </p>
-
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/booka/revenue-pilot"
-                className="rounded-full bg-emerald-600 px-6 py-3 text-sm font-medium text-white shadow-[0_12px_30px_rgba(5,150,105,0.18)] transition hover:-translate-y-0.5 hover:bg-emerald-700"
-              >
-                Apply for the 14-Day Revenue Pilot
-              </Link>
-              <Link
-                href="/booka/missed-revenue-report"
-                className="rounded-full border border-emerald-200 bg-white px-6 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:text-emerald-900"
-              >
+        <section className="grid gap-12 pb-20 pt-10 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:pt-16">
+          <div>
+            <SectionHeading
+              as="h1"
+              kicker={BOOKA_POSITIONING.category}
+              title={BOOKA_POSITIONING.headline}
+              lede="Booka answers questions, recommends the right service, books customers and helps collect payment. Your team steps in when judgement is needed."
+            />
+            <div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-4">
+              <CtaLink href="/booka/revenue-pilot">Apply for the 14-Day Revenue Pilot</CtaLink>
+              <CtaLink href="/booka/missed-revenue-report" variant="text">
                 Get a Missed Revenue Report
-              </Link>
+              </CtaLink>
             </div>
+            <p className="mt-8 text-sm text-[#5a625f]">{launchNotes.join(' · ')}</p>
+          </div>
 
-            <div className="mt-8 flex flex-wrap gap-2">
-              {launchNotes.map((note) => (
-                <span
-                  key={note}
-                  className="rounded-full border border-emerald-100 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-sm"
-                >
-                  {note}
+          <DemoConversation />
+        </section>
+
+        <Panel tone="dark" as="section" id="how-it-works" className="scroll-mt-6 p-6 sm:p-8">
+          <p className="brand-kicker text-[var(--brand-gold)]">{BOOKA_POSITIONING.campaignLine}</p>
+          <ol className="mt-6 grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4 lg:grid-cols-8">
+            {revenueSequence.map((step, index) => (
+              <li key={step} className="border-l border-white/15 pl-3">
+                <span className="text-xs tabular-nums text-[var(--brand-gold)]">
+                  {String(index + 1).padStart(2, '0')}
                 </span>
-              ))}
-            </div>
+                <p className="mt-1 text-sm font-semibold">{step}</p>
+              </li>
+            ))}
+          </ol>
+          <dl className="mt-8 grid gap-5 border-t border-white/10 pt-6 text-sm leading-6 md:grid-cols-[repeat(3,minmax(0,1fr))]">
+            {channelRules.map((item) => (
+              <div key={item.channel}>
+                <dt className="font-semibold text-[var(--brand-paper)]">{item.channel}</dt>
+                <dd className="mt-1 text-[#c9d2cd]">{item.rule}</dd>
+              </div>
+            ))}
+          </dl>
+        </Panel>
 
-            <div className="mt-10 grid gap-3 sm:grid-cols-3">
-              {[
-                { title: 'Automated enquiry handling', copy: 'Answers questions and keeps demand moving.' },
-                { title: 'Booking and selling together', copy: 'Recommends, offers alternatives and closes the next step.' },
-                { title: 'Human takeover when needed', copy: 'Routes judgement calls and sensitive cases to staff.' },
-              ].map((capability) => (
-                <div key={capability.title} className="rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
-                  <div className="text-sm font-semibold leading-5 text-[#10211a]">{capability.title}</div>
-                  <div className="mt-2 text-xs leading-5 text-slate-600">{capability.copy}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="absolute -inset-8 rounded-[2.5rem] bg-emerald-100/35 blur-3xl" />
-            <div className="relative">
-              <DemoConversation />
-            </div>
-          </div>
-        </section>
-
-        <section aria-label="Booka revenue workflow" className="pb-20">
-          <div className="rounded-[2rem] border border-emerald-100 bg-[#10211a] p-5 text-[#f5f2e8] shadow-[0_20px_60px_rgba(16,33,26,0.12)] sm:p-6">
-            <p className="text-xs uppercase tracking-[0.32em] text-emerald-300/65">
-              {BOOKA_POSITIONING.campaignLine}
-            </p>
-            <ol className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-              {revenueSequence.map((step, index) => (
-                <li key={step} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-4">
-                  <span className="text-[10px] uppercase tracking-[0.22em] text-emerald-300/55">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <p className="mt-2 text-sm font-medium">{step}</p>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </section>
-
-        <section id="how-it-works" className="pb-20">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">How it works</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                Set it up once. Let it run.
-              </h2>
-            </div>
-          </div>
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            {howItWorks.map((item) => (
-              <article key={item.step} className="rounded-[1.75rem] border border-emerald-100 bg-white p-6 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700/45">{item.step}</p>
-                <h3 className="mt-4 text-2xl font-semibold tracking-tight text-[#10211a]">{item.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-600">{item.copy}</p>
-              </article>
+        <section className="py-16 sm:py-20">
+          <SectionHeading kicker="Four money problems" title="Where Booka earns its keep." />
+          <div className="mt-10 grid gap-x-12 gap-y-10 md:grid-cols-2">
+            {revenueProblems.map((problem) => (
+              <div key={problem.title} className="border-t border-[var(--brand-line)] pt-5">
+                <p className="brand-kicker text-[var(--booka-green-strong)]">{problem.title}</p>
+                <h3 className="mt-3 text-xl font-semibold tracking-tight">{problem.promise}</h3>
+                <p className="mt-2 max-w-[52ch] text-[#4f5d59]">{problem.copy}</p>
+              </div>
             ))}
           </div>
         </section>
 
-        <section className="pb-20">
-          <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-            <div className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">Four money problems</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                Capture, convert, recover and grow.
-              </h2>
-              <p className="mt-4 text-sm leading-7 text-slate-600">
-                Booka is designed around the points where a real customer conversation can create—or quietly
-                lose—revenue. The system handles the repeatable work and gives staff a clear place to step in.
-              </p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {revenueProblems.map((problem) => (
-                <article key={problem.title} className="rounded-[1.75rem] border border-emerald-100 bg-white p-5 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700/55">{problem.title}</p>
-                  <h3 className="mt-3 text-lg font-semibold tracking-tight text-[#10211a]">{problem.promise}</h3>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">{problem.copy}</p>
-                </article>
-              ))}
-            </div>
+        <section className={sectionRule}>
+          <SectionHeading kicker="Who it's for" title="One front desk, shaped to your business." />
+          <div className="mt-10 divide-y divide-[var(--brand-line)]">
+            {verticals.map((vertical) => (
+              <div key={vertical.id} className="grid gap-3 py-6 lg:grid-cols-[0.8fr_1.4fr_1.2fr] lg:items-baseline lg:gap-8">
+                <div>
+                  <h3 className="text-xl font-semibold tracking-tight">{verticalNames[vertical.id] ?? vertical.name}</h3>
+                  <p className="mt-1 text-sm text-[#5a625f]">{vertical.subtitle}</p>
+                </div>
+                <p className="text-[#4f5d59]">{verticalLines[vertical.id] ?? vertical.managedPromise}</p>
+                <ul className="flex flex-wrap gap-2">
+                  {vertical.defaultFlows.map((flow) => (
+                    <li
+                      key={flow}
+                      className="rounded-md bg-[var(--brand-paper-strong)] px-2.5 py-1 text-xs text-[var(--brand-ink-soft)]"
+                    >
+                      {flow}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         </section>
 
-        <section id="revenue-pilot" className="scroll-mt-6 pb-20">
-          <div className="overflow-hidden rounded-[2rem] border border-emerald-200 bg-emerald-50/70 shadow-sm">
-            <div className="grid gap-8 p-6 lg:grid-cols-[1.05fr_0.95fr] lg:p-8">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-emerald-700/55">
-                  Booka 14-Day Revenue Pilot
-                </p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10211a] sm:text-4xl">
-                  Put Booka on real enquiries before you decide to continue.
-                </h2>
-                <p className="mt-4 text-sm leading-7 text-slate-700">
-                  We connect and configure Booka for 14 active days. It answers questions, recommends services or
-                  products, qualifies customers, follows up, books appointments and helps close sales across eligible
-                  WhatsApp and Instagram enquiry flows.
-                </p>
-                <div className="mt-6 rounded-3xl border border-emerald-200 bg-white p-5">
-                  <p className="text-sm font-semibold text-[#10211a]">The continuation rule</p>
-                  <p className="mt-2 text-sm leading-7 text-slate-600">
-                    If the pilot does not produce at least one verified booking, sale, deposit or recovered opportunity
-                    attributable to a Booka conversation, there is no obligation to continue. We do not promise a
-                    specific Naira return or conversion lift.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-4">
-                <div className="rounded-3xl border border-emerald-100 bg-white p-5">
-                  <h3 className="text-lg font-semibold text-[#10211a]">Included</h3>
-                  <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
-                    <li>• Channel connection and live-flow test</li>
-                    <li>• Catalogue, pricing, availability, FAQ and policy setup</li>
-                    <li>• Booking, sales, deposit and payment-link configuration</li>
-                    <li>• Follow-up, escalation, calibration and end-of-pilot report</li>
-                  </ul>
-                </div>
-                <div className="rounded-3xl border border-emerald-100 bg-white p-5">
-                  <h3 className="text-lg font-semibold text-[#10211a]">A good pilot candidate</h3>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">
-                    Has regular weekly enquiries, accurate offers and availability, a connectable business account,
-                    a staff escalation contact, and can confirm completed bookings or offline sales.
-                  </p>
-                  <Link
-                    href="/booka/revenue-pilot"
-                    className="mt-5 inline-flex rounded-full bg-emerald-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-700"
-                  >
-                    Apply for the pilot
-                  </Link>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section id="missed-revenue-report" className="scroll-mt-6 pb-20">
-          <div className="grid gap-6 rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm lg:grid-cols-[0.9fr_1.1fr] lg:p-8">
+        <Panel as="section" id="revenue-pilot" className="scroll-mt-6 p-6 sm:p-10">
+          <div className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr]">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-emerald-700/55">
-                Missed Revenue Report
-              </p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10211a]">
-                How much business is sitting unanswered in your inbox?
-              </h2>
-              <p className="mt-4 text-sm leading-7 text-slate-600">
-                We review a consented, minimized sample of your WhatsApp and Instagram enquiry process and show where
-                unanswered messages, missing follow-ups, availability dead ends and abandoned buying conversations
-                may be costing you opportunities.
-              </p>
-              <Link
-                href="/booka/missed-revenue-report"
-                className="mt-6 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-900 transition hover:border-emerald-300"
-              >
-                Get a Missed Revenue Report
-              </Link>
-            </div>
-            <div className="rounded-[1.75rem] border border-emerald-100 bg-emerald-50/60 p-5">
-              <h3 className="text-lg font-semibold text-[#10211a]">What the review looks for</h3>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                {[
-                  'Unanswered or materially delayed enquiries',
-                  'Conversations with no clear next step',
-                  'Unavailable choices offered without alternatives',
-                  'Prospects who disappeared without follow-up',
-                  'Missed recommendation or add-on opportunities',
-                  'An estimated recoverable opportunity range',
-                ].map((item) => (
-                  <div key={item} className="rounded-2xl border border-emerald-100 bg-white p-4 text-sm leading-6 text-slate-600">
-                    {item}
-                  </div>
-                ))}
+              <SectionHeading
+                kicker="Booka 14-Day Revenue Pilot"
+                title="Put Booka on real enquiries before you decide to continue."
+                lede="We connect and configure Booka for 14 active days on your eligible WhatsApp and Instagram enquiry flows."
+              />
+              <div className="mt-8 border-l-2 border-[var(--booka-green)] pl-5">
+                <p className="font-semibold">The continuation rule</p>
+                <p className="mt-2 text-sm leading-7 text-[#4f5d59]">
+                  If the pilot does not produce at least one verified booking, sale, deposit or recovered opportunity
+                  attributable to a Booka conversation, there is no obligation to continue. We do not promise a
+                  specific Naira return or conversion lift.
+                </p>
               </div>
-              <p className="mt-4 text-xs leading-6 text-slate-500">
+            </div>
+            <div className="flex flex-col gap-8">
+              <div>
+                <h3 className="text-lg font-semibold">Included</h3>
+                <ul className="mt-3 space-y-2 text-sm leading-6 text-[#4f5d59]">
+                  {pilotIncluded.map((item) => (
+                    <li key={item} className="flex gap-2">
+                      <span aria-hidden="true" className="text-[var(--booka-green)]">
+                        ✓
+                      </span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">A good pilot candidate</h3>
+                <p className="mt-3 text-sm leading-7 text-[#4f5d59]">
+                  Gets regular weekly enquiries, has accurate offers and availability, a connectable business account,
+                  a staff escalation contact, and can confirm completed bookings or offline sales.
+                </p>
+              </div>
+              <CtaLink href="/booka/revenue-pilot" className="self-start">
+                Apply for the pilot
+              </CtaLink>
+            </div>
+          </div>
+        </Panel>
+
+        <section id="missed-revenue-report" className="scroll-mt-6 py-16 sm:py-20">
+          <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr]">
+            <div>
+              <SectionHeading
+                kicker="Missed Revenue Report"
+                title="How much business is sitting unanswered in your inbox?"
+                lede="We review a consented, minimised sample of your enquiries and show where opportunities slip away."
+              />
+              <CtaLink href="/booka/missed-revenue-report" variant="text" className="mt-6">
+                Get a Missed Revenue Report
+              </CtaLink>
+            </div>
+            <div>
+              <h3 className="font-semibold">What the review looks for</h3>
+              <ul className="mt-4 grid gap-x-8 gap-y-3 text-sm leading-6 text-[#4f5d59] sm:grid-cols-2">
+                {reportChecks.map((item) => (
+                  <li key={item} className="border-t border-[var(--brand-line)] pt-3">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-5 text-xs leading-6 text-[#5a625f]">
                 Any estimate is a range based on the supplied sample, your average transaction value and visible
                 outcomes. It is an opportunity estimate, not a revenue guarantee.
               </p>
@@ -397,221 +297,119 @@ export default function BookaLanding() {
           </div>
         </section>
 
-        <section id="pricing" className="pb-20">
-          <div className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-4 border-b border-emerald-100 pb-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-2xl">
-                <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">Pricing</p>
-                <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                  Simple, transparent pricing.
-                </h2>
-                <p className="mt-4 text-sm leading-7 text-slate-600">
-                  Start with the core subscription, add more automation as volume grows, and move into managed ops
-                  when you want Booka to carry more of the sales, booking, and follow-up workload across WhatsApp and Instagram.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                Core starts at <span className="font-semibold">₦15k/mo</span>
-              </div>
-            </div>
+        <section id="pricing" className={`scroll-mt-6 ${sectionRule}`}>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <SectionHeading
+              kicker="Pricing"
+              title="Simple, transparent pricing."
+              lede="Start with the core plan. Add automation and managed help as your volume grows."
+            />
+            <p className="text-sm text-[#4f5d59]">
+              Core starts at <span className="font-semibold text-[var(--brand-ink)]">₦15k/mo</span>
+            </p>
+          </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {pricingPlans.map((plan) => (
+          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {pricingPlans.map((plan) => {
+              const recommended = plan.id === 'front-desk';
+              return (
                 <article
                   key={plan.id}
                   data-testid="pricing-plan"
-                  className={`rounded-[1.5rem] border p-5 ${
-                    plan.id === 'front-desk'
-                      ? 'border-emerald-300 bg-emerald-50/80 shadow-sm'
-                      : 'border-emerald-100 bg-white shadow-sm'
+                  className={`flex flex-col rounded-[1.25rem] p-6 ${
+                    recommended
+                      ? 'bg-[var(--brand-ink)] text-[var(--brand-paper)] shadow-[0_24px_60px_rgba(16,33,26,0.18)]'
+                      : 'border border-[var(--brand-line)]'
                   }`}
                 >
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700/55">{plan.name}</p>
-                  <p className="mt-3 text-3xl font-semibold tracking-tight text-[#10211a]">{plan.price}</p>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">{plan.description}</p>
-                  <div className="mt-5 space-y-2">
-                    {plan.included.map((item) => (
-                      <div key={item} className="text-sm text-slate-600">
-                        • {item}
-                      </div>
-                    ))}
+                  <div className="flex items-center justify-between gap-2">
+                    <p className={`text-sm font-semibold ${recommended ? 'text-[var(--brand-gold)]' : 'text-[var(--brand-moss)]'}`}>
+                      {plan.name}
+                    </p>
+                    {recommended ? (
+                      <span className="rounded-md bg-[var(--brand-gold)] px-2 py-0.5 text-[11px] font-semibold text-[var(--brand-ink)]">
+                        Recommended
+                      </span>
+                    ) : null}
                   </div>
-                  <p data-testid="usage-policy" className="mt-5 border-t border-emerald-100 pt-4 text-xs leading-5 text-slate-500">
-                    {plan.usagePolicy}
+                  <p className="mt-4 text-3xl font-semibold tracking-tight tabular-nums">{plan.price}</p>
+                  <p className={`mt-3 text-sm leading-6 ${recommended ? 'text-[#d7ddd9]' : 'text-[#4f5d59]'}`}>
+                    {plan.description}
                   </p>
+                  <ul className={`mt-5 space-y-2 text-sm ${recommended ? 'text-[#e6ebe8]' : 'text-[#4f5d59]'}`}>
+                    {plan.included.map((item) => (
+                      <li key={item}>• {item}</li>
+                    ))}
+                  </ul>
+                  <div className="mt-auto pt-5">
+                    <p
+                      data-testid="usage-policy"
+                      className={`border-t pt-4 text-xs leading-5 ${
+                        recommended ? 'border-white/15 text-[#c9d2cd]' : 'border-[var(--brand-line)] text-[#5a625f]'
+                      }`}
+                    >
+                      {plan.usagePolicy}
+                    </p>
+                  </div>
                 </article>
-              ))}
-            </div>
-            <p className="mt-5 text-xs leading-6 text-slate-500">
-              Plans are all-inclusive within fair-use allowances. Usage alerts appear before any transparent,
-              opt-in overage, and large business-initiated sends require approval.
-            </p>
+              );
+            })}
           </div>
+          <p className="mt-5 text-xs leading-6 text-[#5a625f]">
+            Plans are all-inclusive within fair-use allowances. Usage alerts appear before any transparent, opt-in
+            overage, and large business-initiated sends require approval.
+          </p>
         </section>
 
-        <section className="pb-20">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">ICP focus</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                One front desk. Three high-value use-case clusters.
-              </h2>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            {verticals.map((vertical) => (
-              <article key={vertical.id} className="rounded-[1.75rem] border border-emerald-100 bg-white p-6 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.3em] text-emerald-700/45">{vertical.subtitle}</p>
-                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#10211a]">
-                  {vertical.id === 'beauty'
-                    ? 'Beauty & Wellness'
-                    : vertical.id === 'hospitality'
-                      ? 'Hospitality'
-                      : 'Clinics & Practices'}
-                </h3>
-                <p className="mt-3 text-sm leading-7 text-slate-600">{vertical.positioning}</p>
-                <p className="mt-4 text-sm font-medium text-emerald-700">{vertical.managedPromise}</p>
-                <div className="mt-5 grid gap-4">
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700/70">
-                      Sales use cases
-                    </p>
-                    <div className="mt-3 space-y-2">
-                      {verticalUseCases[vertical.id]?.sales.map((useCase) => (
-                        <p key={useCase} className="text-sm leading-6 text-slate-700">
-                          {useCase}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-emerald-100 bg-white p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700/70">
-                      Booking use cases
-                    </p>
-                    <div className="mt-3 space-y-2">
-                      {verticalUseCases[vertical.id]?.booking.map((useCase) => (
-                        <p key={useCase} className="text-sm leading-6 text-slate-700">
-                          {useCase}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {vertical.defaultFlows.map((flow) => (
-                    <span key={flow} className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] text-emerald-800">
-                      {flow}
-                    </span>
-                  ))}
-                </div>
-              </article>
+        <section className={sectionRule}>
+          <SectionHeading kicker="FAQ" title="Questions people ask before they start." />
+          <dl className="mt-10 grid gap-x-12 gap-y-8 lg:grid-cols-2">
+            {faqItems.map((item) => (
+              <div key={item.question}>
+                <dt className="text-lg font-semibold tracking-tight">{item.question}</dt>
+                <dd className="mt-2 max-w-[60ch] leading-7 text-[#4f5d59]">{item.answer}</dd>
+              </div>
             ))}
-          </div>
+          </dl>
+        </section>
 
-          <div className="mt-4 rounded-[1.75rem] border border-emerald-100 bg-[#10211a] p-6 text-[#f5f2e8] shadow-[0_20px_60px_rgba(16,33,26,0.12)]">
-            <p className="text-xs uppercase tracking-[0.3em] text-emerald-300/65">Channel strategy</p>
-            <ul className="mt-4 grid gap-4 text-sm leading-7 text-[#d7ddd9] lg:grid-cols-3">
-              <li>Instagram captures and converts active enquiries while the customer is inside the available messaging window.</li>
-              <li>WhatsApp carries reminders, recovery and repeat-business conversations when the customer has opted in and the business uses approved messaging.</li>
-              <li>Booka records both channels in one operating view while respecting each channel&apos;s consent, timing and messaging rules.</li>
-            </ul>
+        <section className={`${sectionRule} grid gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-end`}>
+          <SectionHeading
+            kicker="Start here"
+            title="Put Booka in front of your enquiries without changing how your team works."
+          />
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-4 lg:justify-end">
+            <CtaLink href="/booka/revenue-pilot">Apply for the revenue pilot</CtaLink>
+            <CtaLink href="/booka/missed-revenue-report" variant="text">
+              Request the missed revenue report
+            </CtaLink>
           </div>
         </section>
 
-        <section className="pb-20">
-          <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-            <div className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">Outcome signals</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                What Booka measures for you.
-              </h2>
-              <p className="mt-4 text-sm leading-7 text-slate-600">
-                These are the numbers that matter when the product becomes an operating layer instead of just a
-                calendar or inbox.
-              </p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {SIAS_OUTCOME_ATRIBUTION.map((signal) => (
-                <article key={signal.id} className="rounded-[1.5rem] border border-emerald-100 bg-white p-5 shadow-sm">
-                  <h3 className="text-lg font-semibold tracking-tight text-[#10211a]">{signal.label}</h3>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">{signal.description}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="pb-20">
-          <div className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-sm">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.32em] text-emerald-700/45">FAQ</p>
-                <h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#10211a]">
-                  A few questions people ask before they start.
-                </h2>
-              </div>
-            </div>
-            <div className="mt-6 grid gap-4 lg:grid-cols-2">
-              {faqItems.map((item) => (
-                <article key={item.question} className="rounded-[1.5rem] border border-emerald-100 bg-emerald-50/50 p-5">
-                  <h3 className="text-lg font-semibold tracking-tight text-[#10211a]">{item.question}</h3>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">{item.answer}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="pb-6">
-          <div className="rounded-[2rem] border border-emerald-100 bg-emerald-600 px-6 py-8 text-white shadow-[0_20px_80px_rgba(5,150,105,0.18)]">
-            <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-              <div>
-                <p className="text-xs uppercase tracking-[0.34em] text-emerald-50/70">Start here</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-                  Put Booka in front of your WhatsApp and Instagram enquiries without changing how your team already works.
-                </h2>
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-emerald-50/85">
-                  Customers keep messaging the way they already do. Booka handles sales conversations, booking flow,
-                  reminders, and follow-up, and your team steps in only where judgement matters.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3 lg:justify-end">
-                <Link
-                  href="/booka/revenue-pilot"
-                  className="rounded-full bg-white px-6 py-3 text-sm font-medium text-emerald-700 shadow-sm transition hover:-translate-y-0.5"
-                >
-                  Apply for the revenue pilot
-                </Link>
-                <Link
-                  href="/booka/missed-revenue-report"
-                  className="rounded-full border border-white/25 bg-emerald-700 px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:bg-emerald-800"
-                >
-                  Request the missed revenue report
-                </Link>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <footer className="flex flex-col gap-4 border-t border-emerald-100 pt-8 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-          <p>Booka • by Techclave</p>
-          <div className="flex flex-wrap gap-4">
-            <Link href="/" className="transition hover:text-emerald-900">
+        <footer className="flex flex-col gap-4 border-t border-[var(--brand-line)] pt-8 text-sm text-[#5a625f] sm:flex-row sm:items-center sm:justify-between">
+          <p>Booka · by Techclave</p>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link href="/" className={navLink}>
               Techclave
             </Link>
-            <Link href="/showcase" className="transition hover:text-emerald-900">
+            <Link href="/showcase" className={navLink}>
               Capabilities
             </Link>
-            <Link href="/booka/auth/signin" className="transition hover:text-emerald-900">
+            <Link href="/booka/auth/signin" className={navLink}>
               Sign in
             </Link>
-            <Link href="/booka/auth/onboarding" className="transition hover:text-emerald-900">
+            <Link href="/booka/auth/onboarding" className={navLink}>
               Start onboarding
+            </Link>
+            <Link href="/privacy" className={navLink}>
+              Privacy
+            </Link>
+            <Link href="/terms" className={navLink}>
+              Terms
             </Link>
           </div>
         </footer>
-      </section>
+      </div>
     </main>
   );
 }

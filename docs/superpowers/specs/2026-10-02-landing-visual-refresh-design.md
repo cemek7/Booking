@@ -58,10 +58,10 @@ Order follows positioning spec §9.
 | # | Section | Change |
 |---|---|---|
 | 1 | Hero | Keep category kicker, `BOOKA_POSITIONING.headline`, subcopy (trim to ≤ 30 words), pilot CTA (primary) + report CTA (text link), `DemoConversation`. Cut the 3 capability tiles and the "Booka by Techclave" pill. `launchNotes` become one muted line separated by `·`. |
-| 2 | Workflow band | Keep as the single dark `Panel`. 8 steps in one row (wraps 4×2 on mobile). Takes over `id="how-it-works"` so the nav "How it works" link still resolves. |
+| 2 | Workflow band | Keep as the single dark `Panel`. 8 steps in one row (wraps 4×2 on mobile). Takes over `id="how-it-works"` so the nav "How it works" link still resolves. Below the steps: the three channel-rule lines (Instagram, WhatsApp, one view), unchanged in meaning. |
 | 3 | How it works ("Set it up once. Let it run.") | **Cut.** Duplicates the workflow band. Its anchor moves to the band. |
 | 4 | Capture / Convert / Recover / Grow | 2×2 grid, no boxes. Bold `promise` + one line of `copy` (trimmed). |
-| 5 | Verticals | 3 stacked rows (name · one-line positioning · flow tags), not 3 cards. Drop the sales/booking sub-boxes and the Channel strategy panel. Kicker "Who it's for". |
+| 5 | Verticals | 3 stacked rows (name · one-line positioning · flow tags), not 3 cards. Drop the sales/booking sub-boxes. The Channel strategy panel moves into the workflow band (it carries consent rules and positioning §9 item 2). Kicker "Who it's for". |
 | 6 | 14-Day Revenue Pilot | Keep as main `Panel` (paper). Keep `#revenue-pilot` id and link. |
 | 7 | Missed Revenue Report | Lighter: no panel, two-column text + text CTA. Keep `#missed-revenue-report` id and link. |
 | 8 | Pricing | Keep 4 plans (`data-testid="pricing-plan"`, `usage-policy`). Recommended plan (`front-desk`) gets ink background + "Recommended" label. Other plans get a hairline border only. Usage-policy line pinned to the bottom of each plan so they align. No per-plan buttons added. |
@@ -91,7 +91,8 @@ Data removed: `howItWorks` const; the `SIAS_OUTCOME_ATRIBUTION` import if no lon
 
 - Existing `src/components/homepage/BookaLanding.test.tsx` passes unchanged.
 - Add to it:
-  - no text "Set it up once", "Outcome signals", "ICP focus" or "Channel strategy";
+  - no text "Set it up once", "Outcome signals" or "ICP focus";
+  - channel consent lines still present (text "opted in");
   - `#how-it-works` exists and is the workflow band;
   - footer has links to `/privacy` and `/terms`.
 - New `src/components/homepage/SectionHeading.test.tsx` / `CtaLink.test.tsx`: render, heading level, primary vs text variant classes, href.
