@@ -19,7 +19,7 @@ export default function SectionHeading({
 }: SectionHeadingProps) {
   const dark = tone === 'dark';
   const size =
-    Heading === 'h1' ? 'text-5xl sm:text-6xl lg:text-7xl' : 'text-3xl sm:text-4xl';
+    Heading === 'h1' ? 'text-4xl sm:text-5xl lg:text-6xl' : 'text-3xl sm:text-4xl';
 
   return (
     <div className={className}>

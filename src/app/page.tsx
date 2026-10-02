@@ -183,7 +183,7 @@ export default function Home() {
           <ol className="divide-y divide-[var(--brand-line)]">
             {principles.map((item, index) => (
               <li key={item} className="flex gap-5 py-5 first:pt-0">
-                <span className="techclave-display text-2xl tabular-nums text-[var(--brand-moss)]">
+                <span className="techclave-display w-10 shrink-0 text-2xl tabular-nums text-[var(--brand-moss)]">
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <p className="text-lg leading-8">{item}</p>
