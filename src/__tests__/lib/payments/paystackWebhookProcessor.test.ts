@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- in-memory Supabase/route fakes */
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import crypto from 'crypto';
 
@@ -8,6 +9,7 @@ jest.mock('@/lib/payments/lifecycle', () => ({
 }));
 jest.mock('@/lib/billing/walletTopup', () => ({ creditVerifiedTopup: jest.fn() }));
 jest.mock('@/lib/paystack', () => ({ verifyTransaction: jest.fn() }));
+jest.mock('@/lib/logger', () => ({ defaultLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
 import { processPaystackWebhook, settleVerifiedCharge, type WebhookDeps } from '@/lib/payments/paystackWebhookProcessor';
 
@@ -126,8 +128,9 @@ describe('processPaystackWebhook', () => {
     expect(s.deps.onSuccess).toHaveBeenCalledTimes(1);
     expect(s.deps.onSuccess).toHaveBeenCalledWith({
       tenantId: 't1', reference: 'bk_1', provider: 'paystack', reservationId: 'r1',
-      subjectType: 'reservation', amountMinor: 500000, currency: 'NGN',
+      subjectType: 'reservation', subjectId: 'r1', amountMinor: 500000, currency: 'NGN',
     });
+    expect(s.txRow().settlement_effects_completed_at).toEqual(expect.any(String));
   });
 
   it('3. ignores payload metadata reservation_id', async () => {
@@ -175,8 +178,9 @@ describe('processPaystackWebhook', () => {
     expect(s.deps.onSuccess).not.toHaveBeenCalled();
   });
 
-  it('10. already verified row is not settled twice', async () => {
-    const s = setup({ tx: { ...baseTx(), status: 'success', settlement_verification_status: 'verified' } });
+  it('10. already verified row with effects stamped is not settled twice', async () => {
+    // B1 contract: only a stamped row is 'already_verified'.
+    const s = setup({ tx: { ...baseTx(), status: 'success', settlement_verification_status: 'verified', settlement_effects_completed_at: '2026-10-02T00:00:00Z' } });
     const outcome = await settleVerifiedCharge('bk_1', s.deps);
     expect(outcome).toBe('already_verified');
     expect(s.fake.tables.tenant_revenue_ledger).toHaveLength(0);
@@ -255,19 +259,85 @@ describe('processPaystackWebhook', () => {
     expect(orig.settlement_verification_status).toBe('verified');
   });
 
-  it.each(['charge.refunded', 'refund.processed'])('20. %s marks the row refunded and calls onRefund once', async (ev) => {
-    const s = setup();
+  const verifiedTx = (extra: Row = {}) => ({ ...baseTx(), status: 'success', settlement_verification_status: 'verified', settlement_effects_completed_at: '2026-10-02T00:00:00Z', refund_amount: null, ...extra });
+
+  it.each(['charge.refunded', 'refund.processed'])('20. %s with no amount is a full refund: marks refunded and calls onRefund once', async (ev) => {
+    const s = setup({ tx: verifiedTx() });
     const raw = event({ transaction_reference: 'bk_1', reference: 'refund_ref', metadata: { tenant_id: 'EVIL' } }, ev);
     const res = await s.send(raw);
     expect(res.status).toBe(200);
-    expect(s.txRow().status).toBe('refunded');
+    expect(s.txRow()).toMatchObject({ status: 'refunded', refund_amount: 5000 });
     expect(s.deps.onRefund).toHaveBeenCalledTimes(1);
     expect(s.deps.onRefund).toHaveBeenCalledWith({
-      tenantId: 't1', reference: 'bk_1', provider: 'paystack', reservationId: 'r1', amountMinor: 500000, currency: 'NGN',
+      tenantId: 't1', reference: 'bk_1', provider: 'paystack', reservationId: 'r1',
+      subjectType: 'reservation', subjectId: 'r1', amountMinor: 500000, currency: 'NGN',
     });
     await s.send(raw);
     expect(s.deps.onRefund).toHaveBeenCalledTimes(1);
     expect(s.fake.tables.tenant_revenue_ledger).toHaveLength(0);
+  });
+
+  it('20b. a partial refund event records partially_refunded and does not call onRefund (B2)', async () => {
+    const s = setup({ tx: verifiedTx() });
+    const res = await s.send(event({ transaction_reference: 'bk_1', amount: 200000 }, 'refund.processed'));
+    expect(res.status).toBe(200);
+    expect(s.txRow()).toMatchObject({ status: 'partially_refunded', refund_amount: 2000 });
+    expect(s.deps.onRefund).not.toHaveBeenCalled();
+  });
+
+  it('20c. partial then remaining partial adds up to a full refund (B2)', async () => {
+    const s = setup({ tx: verifiedTx() });
+    await s.send(event({ transaction_reference: 'bk_1', amount: 200000, id: 1 }, 'refund.processed'));
+    // Distinct event type so the replay marker does not swallow it.
+    await s.send(event({ transaction_reference: 'bk_1', amount: 300000 }, 'charge.refunded'));
+    expect(s.txRow()).toMatchObject({ status: 'refunded', refund_amount: 5000 });
+    expect(s.deps.onRefund).toHaveBeenCalledTimes(1);
+  });
+
+  it('20d. a Booka-initiated partial refund already recorded is not double-counted (B2)', async () => {
+    const s = setup({ tx: verifiedTx({ status: 'partially_refunded', refund_amount: 2000 }) });
+    await s.send(event({ transaction_reference: 'bk_1', amount: 200000 }, 'refund.processed'));
+    expect(s.txRow()).toMatchObject({ status: 'partially_refunded', refund_amount: 2000 });
+    expect(s.deps.onRefund).not.toHaveBeenCalled();
+  });
+
+  it('20e. a refund event for an unverified row is skipped (B2)', async () => {
+    const s = setup();
+    const res = await s.send(event({ transaction_reference: 'bk_1' }, 'charge.refunded'));
+    expect(res).toMatchObject({ status: 200, body: { ignored: 'not_verified' } });
+    expect(s.txRow().status).toBe('pending');
+    expect(s.deps.onRefund).not.toHaveBeenCalled();
+  });
+
+  it('20f. a late charge.success on a refunded row never confirms the subject (B2)', async () => {
+    for (const status of ['refunded', 'partially_refunded']) {
+      const s = setup({ tx: verifiedTx({ status, settlement_effects_completed_at: null }) });
+      const outcome = await settleVerifiedCharge('bk_1', s.deps);
+      expect(outcome).toBe('refunded');
+      expect(s.deps.onSuccess).not.toHaveBeenCalled();
+      expect(s.txRow().status).toBe(status);
+    }
+    // Unverified-but-refunded row (defensive): the claim refuses it too.
+    const u = setup({ tx: { ...baseTx(), status: 'refunded' } });
+    expect(await settleVerifiedCharge('bk_1', u.deps)).toBe('refunded');
+    expect(u.deps.onSuccess).not.toHaveBeenCalled();
+  });
+
+  it('20g. mismatch opens one operator alert in escalation_queue (B4)', async () => {
+    const s = setup({ verified: { ...verifiedOk, amountMinor: 1 }, extra: { escalation_queue: [] } });
+    await s.send(event({ reference: 'bk_1' }));
+    expect(s.fake.tables.escalation_queue).toHaveLength(1);
+    expect(s.fake.tables.escalation_queue[0]).toMatchObject({
+      tenant_id: 't1', reason_code: 'payment_settlement', session_id: 'settlement:bk_1',
+      customer_phone: 'settlement:bk_1', conversation_thread_id: null, status: 'pending',
+      reason: 'Paystack payment did not match the expected settlement — manual review',
+    });
+  });
+
+  it('20h. a repeated mismatch alert (23505) is treated as already alerted (B4)', async () => {
+    const s = setup({ verified: { ...verifiedOk, amountMinor: 1 }, failInsert: { escalation_queue: { code: '23505' } } });
+    const outcome = await settleVerifiedCharge('bk_1', s.deps);
+    expect(outcome).toBe('mismatch');
   });
 
   it('21. refund for an unknown reference is ignored', async () => {
@@ -291,15 +361,25 @@ describe('processPaystackWebhook', () => {
     expect(s.deps.onSuccess).toHaveBeenCalledTimes(1);
   });
 
-  it('17. onSuccess failure after the claim is logged, released and rethrown', async () => {
+  it('17. onSuccess failure after the claim is released, rethrown, and the retry re-runs effects (B1)', async () => {
     const s = setup();
     (s.deps.onSuccess as jest.Mock).mockRejectedValueOnce(new Error('confirm failed') as never);
     await expect(s.send(event({ reference: 'bk_1' }))).rejects.toThrow('confirm failed');
     expect(s.fake.tables.webhook_events).toHaveLength(0);
-    // Retry sees already_verified and does not repeat effects.
+    expect(s.txRow().settlement_verification_status).toBe('verified');
+    expect(s.txRow().settlement_effects_completed_at ?? null).toBeNull();
+    // Retry: row is verified but not stamped -> effects re-run, then stamped.
     const retry = await s.send(event({ reference: 'bk_1' }));
-    expect(retry.body).toMatchObject({ outcome: 'already_verified' });
-    expect(s.fake.tables.tenant_revenue_ledger).toHaveLength(1);
+    expect(retry.body).toMatchObject({ outcome: 'verified' });
+    expect(s.deps.onSuccess).toHaveBeenCalledTimes(2);
+    expect(s.verify).toHaveBeenCalledTimes(1);
+    expect(s.txRow().settlement_effects_completed_at).toEqual(expect.any(String));
+    // Ledger insert is idempotent (23505 in production); the fake has no unique
+    // index, so it only proves the insert was attempted again, not duplicated money.
+    // Once stamped, a further charge.success is a no-op.
+    const third = await settleVerifiedCharge('bk_1', s.deps);
+    expect(third).toBe('already_verified');
+    expect(s.deps.onSuccess).toHaveBeenCalledTimes(2);
   });
 
   it('18. a non-success provider status never settles, even if the payload says success', async () => {
@@ -307,5 +387,17 @@ describe('processPaystackWebhook', () => {
     const res = await s.send(event({ reference: 'bk_1', status: 'success' }));
     expect(res.body).toMatchObject({ outcome: 'not_successful' });
     expect(s.txRow().status).toBe('pending');
+  });
+
+  it('18b. not_successful releases the marker and returns 503 so Paystack retries (B5)', async () => {
+    const s = setup({ verified: { ...verifiedOk, status: 'ongoing' } });
+    const raw = event({ reference: 'bk_1' });
+    const first = await s.send(raw);
+    expect(first.status).toBe(503);
+    expect(s.fake.tables.webhook_events).toHaveLength(0);
+    s.verify.mockResolvedValueOnce({ success: true, data: verifiedOk });
+    const retry = await s.send(raw);
+    expect(retry).toMatchObject({ status: 200, body: { outcome: 'verified' } });
+    expect(s.deps.onSuccess).toHaveBeenCalledTimes(1);
   });
 });

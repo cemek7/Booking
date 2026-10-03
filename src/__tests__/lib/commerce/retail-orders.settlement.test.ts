@@ -176,7 +176,7 @@ describe('retail payment link settlement boundary', () => {
 
   it('asks for a replacement link when the boundary reports an idempotency conflict', async () => {
     mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'IDEMPOTENCY_CONFLICT', message: 'x' });
-    await expect(createRetailOrderPaymentLink(input)).rejects.toThrow(/different payment link is already active/i);
+    await expect(createRetailOrderPaymentLink(input)).rejects.toThrow(/different payment link was created for this order in the last 24 hours/i);
     expect(pendingUpdates()).toHaveLength(0);
   });
 

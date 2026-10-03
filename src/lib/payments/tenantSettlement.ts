@@ -88,6 +88,12 @@ export interface SettlementStore {
 
 /** A pending row with no checkout URL older than this is treated as abandoned. */
 export const ABANDONED_PENDING_MS = 15 * 60 * 1000;
+/**
+ * A pending row WITH a checkout URL but a different snapshot older than this
+ * is superseded: its key is released (status and verification untouched, so
+ * a late payment still verifies and settles by reference).
+ */
+export const SUPERSEDE_PENDING_MS = 24 * 60 * 60 * 1000;
 
 const TRANSACTION_TYPE: Record<TenantPaymentSubject['type'], string> = {
   reservation: 'deposit',
@@ -173,8 +179,16 @@ export async function initializeTenantPayment(
         && existing.policyCode === snapshot.policyCode
         && existing.policyVersion === snapshot.policyVersion
         && hasCheckout;
-      if (!matches) return fail('IDEMPOTENCY_CONFLICT', 'A different payment already exists for this request');
-      return { ok: true, transactionId: existing.id, reference: existing.providerReference!, authorizationUrl: existing.authorizationUrl!, snapshot, reused: true };
+      if (matches) {
+        return { ok: true, transactionId: existing.id, reference: existing.providerReference!, authorizationUrl: existing.authorizationUrl!, snapshot, reused: true };
+      }
+      const supersedable = existing.status === 'pending' && hasCheckout
+        && Number.isFinite(createdMs) && Date.now() - createdMs > SUPERSEDE_PENDING_MS;
+      if (!supersedable) return fail('IDEMPOTENCY_CONFLICT', 'A different payment already exists for this request');
+      try { await store.releaseKey(existing.id); } catch (error) {
+        defaultLogger.error('[tenantSettlement] supersede release failed', { id: existing.id, error: (error as Error).message });
+        return fail('SETTLEMENT_UNAVAILABLE', 'Could not start the payment. Please try again.');
+      }
     }
   }
 

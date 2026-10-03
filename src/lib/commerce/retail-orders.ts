@@ -549,7 +549,7 @@ export async function createRetailOrderPaymentLink(input: {
   });
   if (!settlement.ok) {
     if (settlement.code === 'CUSTOMER_EMAIL_REQUIRED') throw new Error('Add the customer email before creating a payment link');
-    if (settlement.code === 'IDEMPOTENCY_CONFLICT') throw new Error('A different payment link is already active for this order. Wait for it to expire or cancel it before creating a new one.');
+    if (settlement.code === 'IDEMPOTENCY_CONFLICT') throw new Error('A different payment link was created for this order in the last 24 hours. Use that link or try again later.');
     throw new Error(SETTLEMENT_CUSTOMER_MESSAGE);
   }
 
@@ -652,6 +652,12 @@ export async function transitionRetailOrder(input: {
     | 'mark_cancelled'
     | 'mark_refunded';
   notes?: string | null;
+  /**
+   * The provider reference that actually settled (payment webhook). When set,
+   * the transaction update targets this reference, never the order's
+   * latest-checkout `metadata.payment.reference`.
+   */
+  paymentReference?: string | null;
 }) {
   const admin = createSupabaseAdminClient();
   const rawOrder = await loadRetailOrderForUpdate(input.tenantId, input.orderId);
@@ -721,6 +727,7 @@ export async function transitionRetailOrder(input: {
         inventoryAppliedBy: inventoryAppliedAt ? metadata.inventoryAppliedBy : input.actorUserId,
         paidAt: now,
         paidBy: input.actorUserId,
+        ...(input.paymentReference ? { paidReference: input.paymentReference } : {}),
         retailSaleAttributedAt: metadata.retailSaleAttributedAt || now,
       };
       if (order.cart_id) {
@@ -836,10 +843,11 @@ export async function transitionRetailOrder(input: {
       .catch(() => undefined);
   }
 
-  const paymentReference =
-    typeof (metadata.payment as Record<string, unknown> | undefined)?.reference === 'string'
+  const settledReference = input.paymentReference ?? null;
+  const paymentReference = settledReference
+    ?? (typeof (metadata.payment as Record<string, unknown> | undefined)?.reference === 'string'
       ? ((metadata.payment as Record<string, unknown>).reference as string)
-      : null;
+      : null);
 
   if (paymentReference && ['mark_paid', 'mark_refunded'].includes(input.action)) {
     const nextTxStatus = input.action === 'mark_paid' ? 'success' : 'refunded';
@@ -847,11 +855,14 @@ export async function transitionRetailOrder(input: {
       .from('transactions')
       .update({
         status: nextTxStatus,
-        raw: {
-          ...(metadata.payment && typeof metadata.payment === 'object' ? { payment: metadata.payment } : {}),
-          retail_order_id: order.id,
-          transition: input.action,
-        },
+        // A settled row's raw (checkout URL, payer email, subject) is kept intact.
+        ...(settledReference ? {} : {
+          raw: {
+            ...(metadata.payment && typeof metadata.payment === 'object' ? { payment: metadata.payment } : {}),
+            retail_order_id: order.id,
+            transition: input.action,
+          },
+        }),
         updated_at: now,
       })
       .eq('tenant_id', order.tenant_id)

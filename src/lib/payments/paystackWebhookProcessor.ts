@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { verifyTransaction } from '@/lib/paystack';
 import { creditVerifiedTopup } from '@/lib/billing/walletTopup';
 import { handlePaymentFailure, handlePaymentRefund, handlePaymentSuccess } from '@/lib/payments/lifecycle';
+import { openSettlementEscalation } from '@/lib/payments/paymentHandoff';
 import { defaultLogger } from '@/lib/logger';
 
 /**
@@ -22,7 +23,7 @@ export type WebhookDeps = {
   secret: string;
 };
 
-export type SettleOutcome = 'verified' | 'already_verified' | 'mismatch' | 'not_found' | 'legacy_review' | 'not_successful';
+export type SettleOutcome = 'verified' | 'already_verified' | 'mismatch' | 'not_found' | 'legacy_review' | 'not_successful' | 'refunded';
 
 type Result = { status: number; body: Record<string, unknown> };
 
@@ -39,6 +40,7 @@ function defaultDeps(): WebhookDeps {
 }
 
 const NOT_VERIFIED = 'settlement_verification_status.is.null,settlement_verification_status.neq.verified';
+const REFUNDED_STATUSES = new Set(['refunded', 'partially_refunded']);
 
 function signatureValid(rawBody: string, signature: string | null, secret: string): boolean {
   if (!signature || !secret) return false;
@@ -107,6 +109,12 @@ export async function processPaystackWebhook(
 
     if (event === 'charge.success') {
       const outcome = await settleVerifiedCharge(reference, d);
+      if (outcome === 'not_successful') {
+        // Paystack does not yet report success: free the marker so its retry
+        // of this same event is processed instead of being dropped as a replay.
+        await release();
+        return { status: 503, body: { error: 'payment_not_yet_successful', outcome } };
+      }
       return { status: 200, body: { ok: true, outcome } };
     }
 
@@ -125,6 +133,7 @@ export async function processPaystackWebhook(
           await d.onFailure({
             tenantId: row.tenant_id, reference, provider: 'paystack',
             reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
+            subjectType: row.subject_type, subjectId: row.subject_id,
             amountMinor: row.amount_minor ?? undefined, currency: row.currency ?? undefined,
             reason: String(data.gateway_response ?? data.status ?? 'charge.failed'),
           });
@@ -136,16 +145,40 @@ export async function processPaystackWebhook(
     if (isRefundEvent) {
       const row = await loadRow(d.admin, reference);
       if (!row) return { status: 200, body: { ok: true, ignored: 'no_transaction' } };
+      if (row.settlement_verification_status !== 'verified' || row.amount_minor === null) {
+        defaultLogger.warn('[paystackWebhook] refund event for a row that is not verified; ignored', {
+          reference, tenantId: row.tenant_id, verification: row.settlement_verification_status,
+        });
+        return { status: 200, body: { ok: true, ignored: 'not_verified' } };
+      }
+      const totalMinor = row.amount_minor;
+      const eventAmount = Number(data.amount);
+      // Paystack reports the refunded amount in kobo; absent/invalid means a full refund.
+      const eventMinor = Number.isSafeInteger(eventAmount) && eventAmount > 0 ? eventAmount : totalMinor;
+      const recordedMinor = Math.round(Number(row.refund_amount ?? 0) * 100);
+      // A Booka-initiated refund is already recorded by refundTenantPayment;
+      // its webhook must not be added a second time.
+      const refundedTotalMinor = recordedMinor >= eventMinor
+        ? Math.min(totalMinor, recordedMinor)
+        : Math.min(totalMinor, recordedMinor + eventMinor);
+      const full = refundedTotalMinor === totalMinor;
       const { error } = await d.admin.from('transactions')
-        .update({ status: 'refunded', updated_at: new Date().toISOString() })
+        .update({
+          status: full ? 'refunded' : 'partially_refunded',
+          refund_amount: refundedTotalMinor / 100, // legacy major-unit column
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', row.id);
       if (error) throw new Error(`refund status update failed: ${error.message}`);
-      await d.onRefund({
-        tenantId: row.tenant_id, reference, provider: 'paystack',
-        reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
-        amountMinor: row.amount_minor ?? undefined, currency: row.currency ?? undefined,
-      });
-      return { status: 200, body: { ok: true, refunded: true } };
+      if (full) {
+        await d.onRefund({
+          tenantId: row.tenant_id, reference, provider: 'paystack',
+          reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
+          subjectType: row.subject_type, subjectId: row.subject_id,
+          amountMinor: row.amount_minor ?? undefined, currency: row.currency ?? undefined,
+        });
+      }
+      return { status: 200, body: { ok: true, refunded: full, refunded_minor: refundedTotalMinor } };
     }
 
     return { status: 200, body: { ok: true, ignored: event } };
@@ -161,11 +194,12 @@ type Row = {
   amount_minor: number | null; platform_fee_minor: number | null;
   settlement_subaccount_code: string | null; settlement_policy_code: string | null;
   settlement_policy_version: number | null; settlement_verification_status: string | null;
+  settlement_effects_completed_at: string | null; refund_amount: number | string | null;
 };
 
 async function loadRow(admin: SupabaseClient, reference: string): Promise<Row | null> {
   const { data, error } = await admin.from('transactions')
-    .select('id, tenant_id, status, currency, subject_type, subject_id, amount_minor, platform_fee_minor, settlement_subaccount_code, settlement_policy_code, settlement_policy_version, settlement_verification_status')
+    .select('id, tenant_id, status, currency, subject_type, subject_id, amount_minor, platform_fee_minor, settlement_subaccount_code, settlement_policy_code, settlement_policy_version, settlement_verification_status, settlement_effects_completed_at, refund_amount')
     .eq('provider_reference', reference).maybeSingle();
   if (error) throw new Error(`transaction lookup failed: ${error.message}`);
   if (!data) return null;
@@ -173,11 +207,64 @@ async function loadRow(admin: SupabaseClient, reference: string): Promise<Row | 
     platform_fee_minor: data.platform_fee_minor === null ? null : Number(data.platform_fee_minor) } as Row;
 }
 
+/**
+ * Fee ledger row + subject confirmation for a verified row, then stamp
+ * settlement_effects_completed_at. Every step is idempotent, so a delivery
+ * that failed half-way is safely re-run by the next one (final-review B1).
+ */
+async function runSettlementEffects(row: Row, reference: string, deps: WebhookDeps): Promise<void> {
+  const fee = row.platform_fee_minor ?? 0;
+  if (fee > 0) {
+    const { error } = await deps.admin.from('tenant_revenue_ledger').insert({
+      tenant_id: row.tenant_id,
+      revenue_type: 'platform_transaction_fee',
+      amount_credits: fee / 100,
+      source: 'paystack',
+      reference,
+      description: 'Booka platform fee on customer payment',
+      metadata: { platform_fee_minor: fee, amount_minor: row.amount_minor, policy_code: row.settlement_policy_code, policy_version: row.settlement_policy_version },
+    });
+    if (error && error.code !== '23505') throw new Error(error.message);
+  }
+
+  try {
+    await deps.onSuccess({
+      tenantId: row.tenant_id,
+      reference,
+      provider: 'paystack',
+      reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
+      subjectType: row.subject_type,
+      subjectId: row.subject_id,
+      amountMinor: row.amount_minor ?? undefined,
+      currency: row.currency ?? 'NGN',
+    });
+  } catch (error) {
+    // Payment is already verified and recorded; never revert it. The effects
+    // stamp stays NULL, so the webhook retry re-runs these effects.
+    defaultLogger.error('[paystackWebhook] post-payment handling failed after verified claim', { reference, tenantId: row.tenant_id, error: String(error) });
+    throw error;
+  }
+
+  const { error: stampError } = await deps.admin.from('transactions')
+    .update({ settlement_effects_completed_at: new Date().toISOString() })
+    .eq('id', row.id);
+  if (stampError) throw new Error(`settlement effects stamp failed: ${stampError.message}`);
+}
+
 /** Verify with Paystack and settle exactly once. Throws on provider/DB errors so callers retry. */
 export async function settleVerifiedCharge(reference: string, deps: WebhookDeps = defaultDeps()): Promise<SettleOutcome> {
   const row = await loadRow(deps.admin, reference);
   if (!row) { defaultLogger.warn('[paystackWebhook] no transaction for reference', { reference }); return 'not_found'; }
-  if (row.settlement_verification_status === 'verified') return 'already_verified';
+  if (REFUNDED_STATUSES.has(row.status)) {
+    // A refunded payment must never confirm its subject again.
+    defaultLogger.warn('[paystackWebhook] charge.success for a refunded row; not confirming', { reference, tenantId: row.tenant_id, status: row.status });
+    return 'refunded';
+  }
+  if (row.settlement_verification_status === 'verified') {
+    if (row.settlement_effects_completed_at) return 'already_verified';
+    await runSettlementEffects(row, reference, deps);
+    return 'verified';
+  }
   if (row.amount_minor === null || !row.settlement_subaccount_code) {
     defaultLogger.error('[paystackWebhook] legacy transaction needs manual review', { reference, tenantId: row.tenant_id });
     return 'legacy_review';
@@ -201,56 +288,38 @@ export async function settleVerifiedCharge(reference: string, deps: WebhookDeps 
     && v.subaccountCode === row.settlement_subaccount_code;
 
   if (!matches) {
-    const { error } = await deps.admin.from('transactions')
+    const { data: flagged, error } = await deps.admin.from('transactions')
       .update({ ...providerColumns, settlement_verification_status: 'mismatch', reconciliation_status: 'discrepancy' })
       .eq('id', row.id)
-      .or(NOT_VERIFIED);
+      .or(NOT_VERIFIED)
+      .select('id');
     if (error) throw new Error(error.message);
     defaultLogger.error('[paystackWebhook] SETTLEMENT MISMATCH — manual review', {
       reference, tenantId: row.tenant_id,
       expected: { amount: row.amount_minor, currency: row.currency, subaccount: row.settlement_subaccount_code },
       observed: { amount: v.amountMinor, currency: v.currency, subaccount: v.subaccountCode },
     });
+    if (flagged && flagged.length > 0) {
+      // Spec §8 step 9: an operator must see it. 23505 = already alerted.
+      await openSettlementEscalation(deps.admin, {
+        tenantId: row.tenant_id,
+        reference,
+        reason: 'Paystack payment did not match the expected settlement — manual review',
+      });
+    }
     return 'mismatch';
   }
 
-  // Claim: only one concurrent delivery flips the row to verified.
+  // Claim: only one concurrent delivery flips the row to verified. A refunded
+  // row is never re-confirmed.
   const { data: claimed, error: claimError } = await deps.admin.from('transactions')
     .update({ ...providerColumns, status: 'success', settlement_verification_status: 'verified', reconciliation_status: 'pending' })
     .eq('id', row.id).or(NOT_VERIFIED)
+    .neq('status', 'refunded').neq('status', 'partially_refunded')
     .select('id');
   if (claimError) throw new Error(claimError.message);
   if (!claimed || claimed.length === 0) return 'already_verified';
 
-  const fee = row.platform_fee_minor ?? 0;
-  if (fee > 0) {
-    const { error } = await deps.admin.from('tenant_revenue_ledger').insert({
-      tenant_id: row.tenant_id,
-      revenue_type: 'platform_transaction_fee',
-      amount_credits: fee / 100,
-      source: 'paystack',
-      reference,
-      description: 'Booka platform fee on customer payment',
-      metadata: { platform_fee_minor: fee, amount_minor: row.amount_minor, policy_code: row.settlement_policy_code, policy_version: row.settlement_policy_version },
-    });
-    if (error && error.code !== '23505') throw new Error(error.message);
-  }
-
-  try {
-    await deps.onSuccess({
-      tenantId: row.tenant_id,
-      reference,
-      provider: 'paystack',
-      reservationId: row.subject_type === 'reservation' ? row.subject_id : null,
-      subjectType: row.subject_type,
-      amountMinor: row.amount_minor,
-      currency: row.currency ?? 'NGN',
-    });
-  } catch (error) {
-    // Payment is already verified and recorded; confirmation must be retried
-    // by staff or the webhook retry path. Never revert the payment.
-    defaultLogger.error('[paystackWebhook] post-payment handling failed after verified claim', { reference, tenantId: row.tenant_id, error: String(error) });
-    throw error;
-  }
+  await runSettlementEffects(row, reference, deps);
   return 'verified';
 }

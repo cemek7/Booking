@@ -18,7 +18,7 @@
  *    cannot be mocked cleanly without modifying production code.)
  */
 
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,7 +363,8 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
   // ── Stage 3: Payment success / confirm ────────────────────────────────────
   describe('stage 3: payment success — handlePaymentSuccess(input)', () => {
     /**
-     * handlePaymentSuccess calls createServerSupabaseClient() at execution time.
+     * handlePaymentSuccess runs in webhook context and calls createSupabaseAdminClient()
+     * at execution time (final-review A2: never the anon/cookie client).
      * We provide a mock that:
      *   - returns null for the transactions lookup (no booking ID in tx) — exercises
      *     the "resolve reservation from reference" branch
@@ -384,8 +385,14 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
       };
     }
 
+    beforeEach(() => {
+      // A2: webhook-driven lifecycle must not use the anon/cookie client.
+      (createServerSupabaseClient as jest.Mock).mockImplementation(() => { throw new Error('anon client used in webhook context'); });
+    });
+    afterEach(() => { (createServerSupabaseClient as jest.Mock).mockReset(); });
+
     it('resolves without throwing when no reservation is found for the reference', async () => {
-      (createServerSupabaseClient as jest.Mock).mockReturnValue(makeLifecycleMock());
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(makeLifecycleMock());
 
       // Should resolve (not throw) — the function logs a warning and returns early
       await expect(
@@ -434,17 +441,14 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
           if (table === 'reservations') return { update: updateFn };
           if (table === 'transactions') return { update: txUpdateFn };
           // services + tenants
-          return {
-            select: jest.fn(() => ({
-              eq: jest.fn(() => ({
-                maybeSingle: jest.fn(async () => ({ data: null, error: null })),
-              })),
-            })),
-          };
+          const readChain: Record<string, unknown> = {};
+          readChain.eq = jest.fn(() => readChain);
+          readChain.maybeSingle = jest.fn(async () => ({ data: null, error: null }));
+          return { select: jest.fn(() => readChain) };
         }),
       };
 
-      (createServerSupabaseClient as jest.Mock).mockReturnValue(lifecycleMock);
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(lifecycleMock);
 
       await expect(
         handlePaymentSuccess({
@@ -487,17 +491,14 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
       const txUpdateFn = jest.fn(() => ({
         eq: jest.fn(() => ({ eq: jest.fn(async () => ({ data: null, error: null })) })),
       }));
-      (createServerSupabaseClient as jest.Mock).mockReturnValue({
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue({
         from: jest.fn((table: string) => {
           if (table === 'reservations') return { update: updateFn };
           if (table === 'transactions') return { update: txUpdateFn };
-          return {
-            select: jest.fn(() => ({
-              eq: jest.fn(() => ({
-                maybeSingle: jest.fn(async () => ({ data: null, error: null })),
-              })),
-            })),
-          };
+          const readChain: Record<string, unknown> = {};
+          readChain.eq = jest.fn(() => readChain);
+          readChain.maybeSingle = jest.fn(async () => ({ data: null, error: null }));
+          return { select: jest.fn(() => readChain) };
         }),
       });
 

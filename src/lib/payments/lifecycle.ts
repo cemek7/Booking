@@ -28,6 +28,7 @@ import {
   resolveRetailFulfillmentRollout,
 } from '@/lib/commerce/retail-fulfillment-rollout';
 import { createRetailFulfillmentEscalation } from '@/lib/commerce/retail-fulfillment-escalation';
+import { openSettlementEscalation } from '@/lib/payments/paymentHandoff';
 
 // ===============================
 // PAYMENT SCHEMAS & TYPES
@@ -1344,23 +1345,32 @@ export interface PaymentSuccessInput {
   reservationId?: string | null;
   /** Subject kind from the settled transactions row (Paystack processor). */
   subjectType?: 'reservation' | 'retail_order' | 'payment_link' | null;
+  /** Subject id from the settled transactions row (Paystack processor). */
+  subjectId?: string | null;
 }
 
-type PaymentOutcomeInput = PaymentSuccessInput & {
-  reason?: string | null;
-};
-
-async function getRetailPaymentContext(
-  tenantId: string,
-  reference: string
-): Promise<{
+type RetailPaymentContext = {
   orderId: string | null;
   externalCustomerRef: string | null;
   channel: 'whatsapp' | 'instagram';
   amountMinor: number | null;
   currency: string | null;
-}> {
-  const supabase = createServerSupabaseClient();
+};
+
+type PaymentOutcomeInput = PaymentSuccessInput & {
+  reason?: string | null;
+};
+
+/**
+ * Legacy lookup for callers that pass no subjectType (Stripe/Flutterwave
+ * route): retail fields live on transactions.raw. Webhook context, so the
+ * service client is used and the query stays tenant-bound.
+ */
+async function getRetailPaymentContext(
+  tenantId: string,
+  reference: string
+): Promise<RetailPaymentContext> {
+  const supabase = createSupabaseAdminClient();
   const { data: tx } = await supabase
     .from('transactions')
     .select('amount, currency, raw')
@@ -1376,6 +1386,46 @@ async function getRetailPaymentContext(
     amountMinor: typeof tx?.amount === 'number' ? Math.round(Number(tx.amount) * 100) : null,
     currency: typeof tx?.currency === 'string' ? tx.currency : null,
   };
+}
+
+/** Settled-boundary lookup: the order is the transactions row's subject_id. */
+async function getRetailContextBySubject(tenantId: string, orderId: string): Promise<RetailPaymentContext | null> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from('retail_orders')
+    .select('id, external_customer_ref, currency, metadata')
+    .eq('tenant_id', tenantId)
+    .eq('id', orderId)
+    .maybeSingle();
+  if (error) throw new Error(`retail order lookup failed: ${error.message}`);
+  if (!data) return null;
+  const metadata = data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)
+    ? data.metadata as Record<string, unknown>
+    : {};
+  const payment = metadata.payment && typeof metadata.payment === 'object'
+    ? metadata.payment as Record<string, unknown>
+    : {};
+  return {
+    orderId: data.id as string,
+    externalCustomerRef: typeof data.external_customer_ref === 'string' ? data.external_customer_ref : null,
+    channel: payment.channel === 'instagram' ? 'instagram' : 'whatsapp',
+    amountMinor: null,
+    currency: typeof data.currency === 'string' ? data.currency : null,
+  };
+}
+
+/**
+ * Settled rows route by subject (subjectType + subjectId); only callers that
+ * pass no subjectType fall back to the raw-based lookup.
+ */
+async function resolveRetailContext(input: PaymentSuccessInput): Promise<RetailPaymentContext | null> {
+  if (input.subjectType === 'retail_order') {
+    if (!input.subjectId) return null;
+    return getRetailContextBySubject(input.tenantId, input.subjectId);
+  }
+  if (input.subjectType) return null;
+  const legacy = await getRetailPaymentContext(input.tenantId, input.reference);
+  return legacy.orderId ? legacy : null;
 }
 
 async function updateRetailConversationState(input: {
@@ -1470,7 +1520,8 @@ async function sendGovernedWhatsAppPaymentMessage(input: {
   ]);
   if (!client) return false;
 
-  const result = await sendGovernedInitiated(createServerSupabaseClient() as never, {
+  // Webhook context (no user session): service client, tenant-bound inside.
+  const result = await sendGovernedInitiated(createSupabaseAdminClient() as never, {
     tenantId: input.tenantId,
     recipient: input.recipient,
     messageType: input.messageType,
@@ -1512,11 +1563,66 @@ async function handleRetailPaymentSuccess(input: PaymentSuccessInput & {
   channel: 'whatsapp' | 'instagram';
 }) {
   const { transitionRetailOrder, getRetailOrderById } = await import('@/lib/commerce/retail-orders');
+  const settlementAdmin = createSupabaseAdminClient();
+  const { data: current, error: currentError } = await settlementAdmin
+    .from('retail_orders')
+    .select('id, total_cents, payment_status, external_customer_ref, metadata')
+    .eq('tenant_id', input.tenantId)
+    .eq('id', input.orderId)
+    .maybeSingle();
+  if (currentError) throw new Error(`retail order lookup failed: ${currentError.message}`);
+  if (!current) {
+    defaultLogger.warn('[lifecycle] retail payment for a missing order', { tenantId: input.tenantId, orderId: input.orderId, reference: input.reference });
+    return null;
+  }
+  const currentMetadata = current.metadata && typeof current.metadata === 'object' && !Array.isArray(current.metadata)
+    ? current.metadata as Record<string, unknown>
+    : {};
+  const escalationPhone = (typeof current.external_customer_ref === 'string' && current.external_customer_ref)
+    || `retail-order:${input.orderId}`;
+
+  if (current.payment_status === 'paid') {
+    if (currentMetadata.paidReference === input.reference) {
+      // Same payment re-delivered after a partial failure: already confirmed.
+      defaultLogger.info('[lifecycle] retail payment already confirmed', { orderId: input.orderId, reference: input.reference });
+      return getRetailOrderById(input.tenantId, input.orderId);
+    }
+    defaultLogger.error('[lifecycle] second verified payment for a paid retail order', {
+      tenantId: input.tenantId, orderId: input.orderId, reference: input.reference,
+    });
+    await openSettlementEscalation(settlementAdmin, {
+      tenantId: input.tenantId,
+      reference: input.reference,
+      customerPhone: escalationPhone,
+      retailOrderId: input.orderId,
+      reason: 'A second payment arrived for an order that is already paid — possible double payment, review and refund',
+    });
+    return null;
+  }
+
+  const currentTotalMinor = Number(current.total_cents ?? 0);
+  if (typeof input.amountMinor === 'number' && input.amountMinor < currentTotalMinor) {
+    // An older checkout settled at a lower amount than the order now costs.
+    defaultLogger.error('[lifecycle] retail payment below current order total; not marking paid', {
+      tenantId: input.tenantId, orderId: input.orderId, reference: input.reference,
+      paidMinor: input.amountMinor, totalMinor: currentTotalMinor,
+    });
+    await openSettlementEscalation(settlementAdmin, {
+      tenantId: input.tenantId,
+      reference: input.reference,
+      customerPhone: escalationPhone,
+      retailOrderId: input.orderId,
+      reason: 'Payment was lower than the current order total (older checkout) — order not marked paid, review needed',
+    });
+    return null;
+  }
+
   const order = await transitionRetailOrder({
     tenantId: input.tenantId,
     orderId: input.orderId,
     actorUserId: 'payment_webhook',
     action: 'mark_paid',
+    paymentReference: input.reference,
   });
 
   const totalCents = Number((order as Record<string, unknown>)?.total_cents ?? input.amountMinor ?? 0);
@@ -1671,8 +1777,8 @@ async function handleRetailPaymentFailure(input: PaymentOutcomeInput & {
 export async function handlePaymentFailure(input: PaymentOutcomeInput): Promise<void> {
   try {
     if (!input.reservationId) {
-      const retail = await getRetailPaymentContext(input.tenantId, input.reference);
-      if (retail.orderId) {
+      const retail = await resolveRetailContext(input);
+      if (retail?.orderId) {
         await handleRetailPaymentFailure({
           ...input,
           orderId: retail.orderId,
@@ -1686,7 +1792,8 @@ export async function handlePaymentFailure(input: PaymentOutcomeInput): Promise<
     }
 
     if (input.reservationId) {
-      const supabase = createServerSupabaseClient();
+      // Webhook context: service client, every query tenant-bound.
+      const supabase = createSupabaseAdminClient();
       await supabase
         .from('transactions')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
@@ -1733,6 +1840,7 @@ async function handleRetailPaymentRefund(input: PaymentOutcomeInput & {
     actorUserId: 'payment_webhook',
     action: 'mark_refunded',
     notes: input.reason ?? null,
+    paymentReference: input.reference,
   });
 
   const totalCents = Number((order as Record<string, unknown>)?.total_cents ?? input.amountMinor ?? 0);
@@ -1775,8 +1883,8 @@ async function handleRetailPaymentRefund(input: PaymentOutcomeInput & {
 export async function handlePaymentRefund(input: PaymentOutcomeInput): Promise<void> {
   try {
     if (!input.reservationId) {
-      const retail = await getRetailPaymentContext(input.tenantId, input.reference);
-      if (retail.orderId) {
+      const retail = await resolveRetailContext(input);
+      if (retail?.orderId) {
         await handleRetailPaymentRefund({
           ...input,
           orderId: retail.orderId,
@@ -1790,7 +1898,8 @@ export async function handlePaymentRefund(input: PaymentOutcomeInput): Promise<v
     }
 
     if (input.reservationId) {
-      const supabase = createServerSupabaseClient();
+      // Webhook context: service client, every query tenant-bound.
+      const supabase = createSupabaseAdminClient();
       await supabase
         .from('transactions')
         .update({ status: 'refunded', updated_at: new Date().toISOString() })
@@ -1834,13 +1943,15 @@ export async function handlePaymentRefund(input: PaymentOutcomeInput): Promise<v
  * 5. Send email confirmation with calendar link
  */
 export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<void> {
-  const supabase = createServerSupabaseClient();
+  // Webhook context (no user session): the anon/cookie client would make every
+  // write an RLS no-op. Service client; every query below is tenant-bound.
+  const supabase = createSupabaseAdminClient();
   const { tenantId, reference, provider, reservationId, amountMinor, currency, subjectType } = input;
 
   try {
     if (subjectType === 'retail_order' || (!reservationId && subjectType !== 'payment_link')) {
-      const retail = await getRetailPaymentContext(tenantId, reference);
-      if (retail.orderId) {
+      const retail = await resolveRetailContext(input);
+      if (retail?.orderId) {
         await handleRetailPaymentSuccess({
           ...input,
           orderId: retail.orderId,
@@ -1849,6 +1960,10 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
           amountMinor: amountMinor ?? retail.amountMinor ?? undefined,
           currency: currency ?? retail.currency ?? undefined,
         });
+        return;
+      }
+      if (subjectType === 'retail_order') {
+        defaultLogger.warn('[lifecycle] handlePaymentSuccess: retail subject not found', { tenantId, reference, subjectId: input.subjectId ?? null });
         return;
       }
     }
@@ -1957,6 +2072,7 @@ export async function handlePaymentSuccess(input: PaymentSuccessInput): Promise<
       .from('services')
       .select('name, duration')
       .eq('id', reservation.service_id)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
 
     const { data: tenantRow } = await supabase

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import type { SettlementFailureCode } from './tenantSettlement';
 
@@ -44,6 +45,32 @@ export async function openReservationPaymentHandoff(
   } catch (error) {
     if ((error as { code?: string }).code !== '23505') throw error;
   }
+}
+
+/**
+ * Operator alert for a settled payment that needs a human (settlement
+ * mismatch, underpaid stale checkout, possible double payment). One open
+ * alert per reference: the unique index on (tenant_id, session_id,
+ * reason_code) makes a repeat insert a 23505, treated as already alerted.
+ */
+export async function openSettlementEscalation(
+  admin: SupabaseClient,
+  input: { tenantId: string; reference: string; reason: string; customerPhone?: string | null; retailOrderId?: string | null },
+): Promise<'opened' | 'already_open'> {
+  const sessionId = `settlement:${input.reference}`;
+  const { error } = await admin.from('escalation_queue').insert({
+    tenant_id: input.tenantId,
+    customer_phone: input.customerPhone || sessionId,
+    session_id: sessionId,
+    conversation_thread_id: null,
+    reason: input.reason,
+    reason_code: 'payment_settlement',
+    status: 'pending',
+    ...(input.retailOrderId ? { retail_order_id: input.retailOrderId } : {}),
+  });
+  if (!error) return 'opened';
+  if (error.code === '23505') return 'already_open';
+  throw Object.assign(new Error(`settlement escalation insert failed: ${error.message}`), { code: error.code });
 }
 
 function defaultStore(): PaymentHandoffStore {

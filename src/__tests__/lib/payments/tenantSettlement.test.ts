@@ -187,6 +187,50 @@ describe('initializeTenantPayment', () => {
     expect(await initializeTenantPayment(input, store)).toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
   });
 
+  describe('superseding a pending checkout (B6)', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const withUrl = (ageMs: number, over: Record<string, unknown> = {}) => old({
+      providerReference: 'bk_old', authorizationUrl: 'https://old', amountMinor: 400000, platformFeeMinor: 4000,
+      createdAt: new Date(Date.now() - ageMs).toISOString(), ...over,
+    });
+
+    it('supersedes a differing pending checkout older than 24h: releases its key, never marks it failed', async () => {
+      mockInit.mockResolvedValue({ success: true, authorizationUrl: 'https://new' });
+      const store = makeStore({ findByIdempotencyKey: jest.fn(async () => withUrl(DAY + 60_000)) });
+      expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: true, transactionId: 'tx_1', reused: false });
+      expect(store.releaseKey).toHaveBeenCalledWith('tx_old');
+      expect(store.markFailed).not.toHaveBeenCalled();
+      expect(store.inserted).toHaveLength(1);
+    });
+
+    it('a differing pending checkout younger than 24h still conflicts', async () => {
+      const store = makeStore({ findByIdempotencyKey: jest.fn(async () => withUrl(DAY - 60_000)) });
+      expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: false, code: 'IDEMPOTENCY_CONFLICT' });
+      expect(store.releaseKey).not.toHaveBeenCalled();
+      expect(mockInit).not.toHaveBeenCalled();
+    });
+
+    it('an old row that is not pending (paid) is never superseded', async () => {
+      const store = makeStore({ findByIdempotencyKey: jest.fn(async () => withUrl(2 * DAY, { status: 'success' })) });
+      expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: false, code: 'IDEMPOTENCY_CONFLICT' });
+      expect(store.releaseKey).not.toHaveBeenCalled();
+    });
+
+    it('an old pending row with an identical snapshot is reused, not superseded', async () => {
+      const store = makeStore({ findByIdempotencyKey: jest.fn(async () => withUrl(2 * DAY, { amountMinor: 500000, platformFeeMinor: 5000 })) });
+      expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: true, transactionId: 'tx_old', reused: true });
+    });
+
+    it('a release failure fails closed', async () => {
+      const store = makeStore({
+        findByIdempotencyKey: jest.fn(async () => withUrl(2 * DAY)),
+        releaseKey: jest.fn(async () => { throw new Error('db down'); }),
+      });
+      expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: false, code: 'SETTLEMENT_UNAVAILABLE' });
+      expect(mockInit).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns SETTLEMENT_UNAVAILABLE when a pre-insert lookup throws', async () => {
     const store = makeStore({ loadAccount: jest.fn(async () => { throw new Error('db down'); }) });
     expect(await initializeTenantPayment(input, store)).toMatchObject({ ok: false, code: 'SETTLEMENT_UNAVAILABLE' });
