@@ -60,6 +60,7 @@ export async function processPaystackWebhook(
   }
   const d = deps ?? defaultDeps();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw Paystack payload, shape varies by event
   let payload: { event?: string; data?: Record<string, any> };
   try { payload = JSON.parse(input.rawBody); } catch { return { status: 400, body: { error: 'Invalid JSON' } }; }
   const event = String(payload.event ?? '');
@@ -99,7 +100,7 @@ export async function processPaystackWebhook(
         defaultLogger.info('[paystackWebhook] wallet topped up', { reference, tenantId: credit.tenantId, amountCredits: credit.amountCredits });
       } else {
         // 'no_pending_intent' is the ordinary replay case, not a failure.
-        defaultLogger.warn('[paystackWebhook] wallet top-up not credited', { reference, reason: (credit as any).reason });
+        defaultLogger.warn('[paystackWebhook] wallet top-up not credited', { reference, reason: (credit as { reason?: string }).reason });
       }
       return { status: 200, body: { ok: true, wallet_topup: credit.credited } };
     }

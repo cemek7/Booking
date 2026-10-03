@@ -23,6 +23,8 @@ function migrationsByNumber(): Map<string, string[]> {
   const byNumber = new Map<string, string[]>();
   readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql') && !f.includes('rollback'))
+    // Read-only verifier scripts share their migration's number by design; they are not migrations.
+    .filter((f) => !f.endsWith('_verify.sql'))
     .forEach((f) => {
       const m = /^(\d+)_/.exec(f);
       if (!m) return;
@@ -66,6 +68,8 @@ describe('migration numbering', () => {
 
     const unorderable = readdirSync(MIGRATIONS_DIR)
       .filter((f) => f.endsWith('.sql') && !f.includes('rollback'))
+    // Read-only verifier scripts share their migration's number by design; they are not migrations.
+    .filter((f) => !f.endsWith('_verify.sql'))
       .filter((f) => !/^\d+b?_/.test(f) && !/^\d{4}-\d{2}-\d{2}_/.test(f))
       .filter((f) => !UNORDERABLE.has(f));
 

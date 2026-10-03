@@ -126,7 +126,7 @@ export function PaymentSettingsSection({ tenantId }: Props) {
           )}
           {!configured && (
             <p className="text-xs text-amber-700" data-testid="collection-disabled-warning">
-              You can't collect customer payments until setup is active.
+              You can&apos;t collect customer payments until setup is active.
             </p>
           )}
         </div>
@@ -138,10 +138,10 @@ export function PaymentSettingsSection({ tenantId }: Props) {
             <p data-testid="booka-fee">
               Booka fee: {feePercent}% per payment{policy.capMinor !== null ? `, capped at ${formatMinor(policy.capMinor)}` : ''}
             </p>
-            <p data-testid="paystack-fee-note">Paystack's processing fee is deducted from your payout.</p>
+            <p data-testid="paystack-fee-note">Paystack&apos;s processing fee is deducted from your payout.</p>
             {example && (
               <p className="text-gray-600" data-testid="settlement-example">
-                On a {formatMinor(example.amountMinor)} payment: Booka fee {formatMinor(example.platformFeeMinor)}, you receive {formatMinor(example.tenantGrossMinor)} before Paystack's fee.
+                On a {formatMinor(example.amountMinor)} payment: Booka fee {formatMinor(example.platformFeeMinor)}, you receive {formatMinor(example.tenantGrossMinor)} before Paystack&apos;s fee.
               </p>
             )}
           </div>
@@ -221,7 +221,7 @@ export function PaymentSettingsSection({ tenantId }: Props) {
             checked={accepted}
             onChange={e => setAccepted(e.target.checked)}
           />
-          <span>I accept Booka's fee on each customer payment, as shown above.</span>
+          <span>I accept Booka&apos;s fee on each customer payment, as shown above.</span>
         </label>
 
         <div className="flex justify-end pt-2">

@@ -56,15 +56,18 @@ jest.mock('@/lib/logger/api-logger', () => ({
 }));
 
 // Stage 2 deps
-jest.mock('@/lib/paymentService', () => ({
+jest.mock('@/lib/payments/tenantSettlement', () => ({
   __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
-    initializePayment: jest.fn(async () => ({
-      success: true,
-      transactionId: 'txn_smoke',
-      authorizationUrl: 'https://pay.example.com/redirect',
-    })),
+  initializeTenantPayment: jest.fn(async () => ({
+    ok: true,
+    transactionId: 'txn_smoke',
+    authorizationUrl: 'https://pay.example.com/redirect',
+    reused: false,
   })),
+}));
+jest.mock('@/lib/ai/front-desk-events', () => ({
+  __esModule: true,
+  recordFrontDeskEvent: jest.fn(async () => undefined),
 }));
 
 // Stage 3 deps — dynamic imports used inside handlePaymentSuccess
@@ -328,9 +331,9 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
 
     it('returns authorizationUrl and transactionId for a valid deposit request', async () => {
       const res = await depositPost(depositReq({
-        amount: 5000,
+        amountMinor: 500000,
         email: 'customer@test.com',
-        reservationId: 'res_smoke',
+        reservationId: '11111111-1111-4111-8111-111111111111',
       }) as unknown as NextRequest);
 
       expect(res.status).toBe(200);
@@ -348,9 +351,9 @@ describe('Ops-loop smoke test — stage continuity guard', () => {
       );
 
       const res = await depositPost(depositReq({
-        amount: 5000,
+        amountMinor: 500000,
         email: 'customer@test.com',
-        reservationId: 'res_smoke',
+        reservationId: '11111111-1111-4111-8111-111111111111',
       }) as unknown as NextRequest);
 
       expect(res.status).toBeGreaterThanOrEqual(400);
