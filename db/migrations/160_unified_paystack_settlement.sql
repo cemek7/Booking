@@ -54,7 +54,10 @@ ALTER TABLE public.transactions
   ADD COLUMN IF NOT EXISTS provider_currency text,
   ADD COLUMN IF NOT EXISTS provider_fee_minor bigint,
   ADD COLUMN IF NOT EXISTS provider_subaccount_code text,
-  ADD COLUMN IF NOT EXISTS settlement_verification_status text;
+  ADD COLUMN IF NOT EXISTS settlement_verification_status text,
+  -- Stamped only after the fee ledger row and the subject confirmation both
+  -- succeeded; a verified row without it is retried (final-review B1).
+  ADD COLUMN IF NOT EXISTS settlement_effects_completed_at timestamptz;
 
 DO $constraints$
 BEGIN
@@ -117,6 +120,28 @@ BEGIN
     ));
 END
 $revenue$;
+
+-- Replace (not append to) the subject_type CHECK. Migration 124 added it
+-- inline (auto-named) without 'payment_link', so find it by definition.
+DO $subject$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT conname
+    FROM pg_catalog.pg_constraint
+    WHERE conrelid = 'public.transactions'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%subject_type%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.transactions DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_subject_type_check CHECK (
+      subject_type IS NULL OR subject_type IN ('reservation', 'retail_order', 'payment_link')
+    );
+END
+$subject$;
 
 -- Replace the escalation reason_code CHECK from migration 159.
 ALTER TABLE public.escalation_queue DROP CONSTRAINT IF EXISTS escalation_queue_reason_code_check;

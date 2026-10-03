@@ -24,5 +24,15 @@ UNION ALL SELECT 'revenue type accepts platform fee', EXISTS (
 UNION ALL SELECT 'escalation accepts payment_settlement', EXISTS (
   SELECT 1 FROM pg_constraint WHERE conname = 'escalation_queue_reason_code_check'
     AND pg_get_constraintdef(oid) LIKE '%payment_settlement%')
+UNION ALL SELECT 'settlement effects column', EXISTS (
+  SELECT 1 FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'transactions'
+    AND column_name = 'settlement_effects_completed_at' AND data_type = 'timestamp with time zone')
+UNION ALL SELECT 'subject_type accepts payment_link', (
+  SELECT count(*) = 1 FROM pg_constraint
+  WHERE conrelid = 'public.transactions'::regclass AND contype = 'c'
+    AND pg_get_constraintdef(oid) ILIKE '%subject_type%'
+    AND conname = 'transactions_subject_type_check'
+    AND pg_get_constraintdef(oid) LIKE '%payment_link%')
 UNION ALL SELECT 'zero tenant subaccounts in metadata', NOT EXISTS (
   SELECT 1 FROM public.tenants WHERE metadata ? 'paystack_subaccount_code');

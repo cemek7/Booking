@@ -73,7 +73,8 @@ ALTER TABLE public.transactions
   ADD COLUMN IF NOT EXISTS provider_currency text,
   ADD COLUMN IF NOT EXISTS provider_fee_minor bigint,
   ADD COLUMN IF NOT EXISTS provider_subaccount_code text,
-  ADD COLUMN IF NOT EXISTS settlement_verification_status text;
+  ADD COLUMN IF NOT EXISTS settlement_verification_status text,
+  ADD COLUMN IF NOT EXISTS settlement_effects_completed_at timestamptz;
 
 DO $constraints$
 BEGIN
@@ -145,6 +146,34 @@ $revenue$;
 COMMIT;
 ```
 
+## 4b. Replace the transactions subject_type CHECK
+
+Migration 124 added an inline, auto-named CHECK that rejects `payment_link`.
+
+```sql
+BEGIN;
+DO $subject$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT conname
+    FROM pg_catalog.pg_constraint
+    WHERE conrelid = 'public.transactions'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%subject_type%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.transactions DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_subject_type_check CHECK (
+      subject_type IS NULL OR subject_type IN ('reservation', 'retail_order', 'payment_link')
+    );
+END
+$subject$;
+COMMIT;
+```
+
 ## 5. Replace the escalation reason_code CHECK and add index
 
 ```sql
@@ -210,6 +239,8 @@ ALTER TABLE public.transactions
   DROP CONSTRAINT IF EXISTS transactions_settlement_amounts_check,
   DROP CONSTRAINT IF EXISTS transactions_settlement_verification_status_check,
   DROP CONSTRAINT IF EXISTS transactions_settlement_fee_bearer_check;
+-- transactions_subject_type_check (now also allowing 'payment_link') is left in
+-- place: it still accepts every pre-160 value.
 -- Snapshot columns are left in place (additive, nullable, harmless).
 COMMIT;
 ```
