@@ -206,7 +206,7 @@ deterministic, no LLM**. Location: `src/lib/reconciliation/`.
 4. **Recorded payments** = Σ successful transactions in window — **including `type='deposit'`
    and `type='payment'`/`sale`** (deposits are partial payments, §3 correction)
    + Σ `retail_orders.amount_paid_cents` for the window. (Refund-type transactions are the
-   subtraction in step 3, not additions here.)
+   subtraction in step 3, not additions here.) Use `transactions.amount_minor` where present (legacy `amount` is mixed-unit). Report tenant payments **gross**, with the Booka platform fee (`platform_fee_minor`) and Paystack fee (`provider_fee_minor`) as separate lines (owner decision 2026-10-02).
 5. **Revenue gap** = adjusted − recorded − approved outstanding.
 6. **Review items** (deterministic, read-only):
    - `unpaid_completed_service`: completed reservation with no linked successful

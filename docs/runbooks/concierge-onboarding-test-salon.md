@@ -30,7 +30,8 @@ onboarding mechanism and the first retention lever.
 
 ## 3. Paystack settlement
 
-- [ ] Set the tenant's `metadata.paystack_subaccount_code` (for split settlement) if used.
+- [ ] Owner completes Settings → Payments: verifies the bank account, accepts the Booka fee (1%, capped at ₦2,000), and sees status **Active**. Never edit `tenants.metadata` for settlement.
+- [ ] Confirm `BOOKA_TENANT_PAYMENTS=live` is set only after the Section 10.2 gates in the settlement spec pass.
 - [ ] Set the deposit policy: deposit percentage (or flat amount) and currency NGN.
 
 ## 4. Catalog + staff

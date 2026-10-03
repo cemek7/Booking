@@ -7,11 +7,12 @@
 3. [Monitoring & Observability](#monitoring--observability)
 4. [Scheduled Workers](#scheduled-workers)
 5. [WhatsApp Message Metering](#whatsapp-message-metering)
-6. [Backup & Recovery](#backup--recovery)
-7. [Troubleshooting Guide](#troubleshooting-guide)
-8. [Security Procedures](#security-procedures)
-9. [Maintenance Tasks](#maintenance-tasks)
-10. [Emergency Procedures](#emergency-procedures)
+6. [Customer Payment Settlement](#customer-payment-settlement)
+7. [Backup & Recovery](#backup--recovery)
+8. [Troubleshooting Guide](#troubleshooting-guide)
+9. [Security Procedures](#security-procedures)
+10. [Maintenance Tasks](#maintenance-tasks)
+11. [Emergency Procedures](#emergency-procedures)
 
 ## System Overview
 
@@ -729,6 +730,68 @@ not a tenant notification.
 would be an unused schema change. The discriminator is `meta->>'kind'`
 (`wallet_low_balance` / `wallet_handoff`), which a future dashboard can filter or sort on without
 a migration.
+
+## Customer Payment Settlement
+
+Customer payments (deposits, retail, bookings) go through one Paystack service. Money settles
+to the tenant's own Paystack subaccount; Booka's fee is taken as a split. Wallet top-ups are a
+separate platform-revenue path and are not covered here.
+
+### Collection gate
+
+- `BOOKA_TENANT_PAYMENTS` must equal `live` for any tenant payment to be created. Any other value
+  (including unset or `off`) fails closed with `SETTLEMENT_DISABLED`.
+- Set it to `live` only after the Section 10.2 release gates in
+  `docs/superpowers/specs/2026-10-02-unified-paystack-settlement-design.md` pass.
+
+### Settlement accounts (`tenant_payment_accounts`)
+
+Statuses: `pending`, `active`, `suspended`, `invalid`.
+
+- Accounts are created only through Settings → Payments (`POST`/`PUT /api/payments/subaccounts`),
+  with explicit fee acceptance (1%, capped at NGN 2,000). Never edit `tenants.metadata` for
+  settlement; the code no longer reads `paystack_subaccount_code` from it.
+- Only `active` accounts can collect. A `suspended` account cannot be self-reactivated by the
+  tenant. Ops must reset it to `pending` after review; the tenant then re-verifies in Settings.
+
+### Webhooks
+
+Both webhook URLs (`/api/payments/webhook` and `/api/payments/paystack`) share one verified processor.
+Set the Paystack dashboard webhook URL to `/api/payments/webhook`.
+
+### Finding problems
+
+Transactions with a verification mismatch, or stuck unverified for over a day:
+
+```sql
+SELECT id, tenant_id, provider_reference FROM transactions
+WHERE settlement_verification_status IN ('mismatch')
+   OR (settlement_verification_status = 'pending' AND created_at < now() - interval '1 day');
+```
+
+Open payment handoffs (a deposit could not be created):
+
+```sql
+SELECT id, tenant_id FROM reservations
+WHERE metadata->'payment_handoff'->>'status' = 'open';
+```
+
+A handoff sets `reservations.metadata.payment_handoff.status = 'open'` and creates an
+`escalation_queue` row with `reason_code = 'payment_settlement'`. Open handoffs are exempt from
+auto-cancel until staff confirm or cancel the reservation.
+
+### Ledger rows and refunds
+
+- Each settled payment writes a `platform_transaction_fee` row in `tenant_revenue_ledger`.
+- A **full** refund made through Booka reverses the fee: a negative `refund` ledger row with
+  reference `<ref>:fee_refund`. Partial refunds keep the fee.
+- Refunds started in the Paystack dashboard do **not** reverse the fee. Reconcile those by hand.
+
+### `legacy_review`
+
+A `charge.success` for a legacy transaction with no `amount_minor` cannot be verified safely. The
+processor logs it as `legacy_review` and does not confirm the reservation. Check the logs, compare
+the Paystack amount with the booking by hand, then confirm or cancel manually.
 
 ## Backup & Recovery
 

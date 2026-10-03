@@ -70,8 +70,7 @@ preparation (Workstream D) begins in week 1.
 - Harden: deposit init → **webhook signature verification** → reconcile → reservation state
   transition.
 - Idempotency on webhook replay (uses `idempotency_keys` + migration 060 constraints).
-- Failure handling: deposit declined/abandoned → reservation stays `pending` and is swept by the
-  existing `auto-cancel-unconfirmed` job.
+- Failure handling: A declined/abandoned deposit leaves the reservation `pending` (swept by auto-cancel). A deposit that **cannot be created** opens a payment handoff; those reservations are exempt from auto-cancel until staff confirm or cancel them (settlement spec 2026-10-02 §6).
 - Stripe is explicitly left as-is.
 
 ### Workstream C — Ops-loop continuity + smoke test (weeks 2–3)
@@ -105,7 +104,7 @@ failures; vertical packs; data/analytics moat work.
 - [ ] 065/077/079 collisions documented + manual resolution runbook delivered.
 - [ ] Core-path tables verified to have no skipped columns/constraints in target prod DB.
 - [ ] Paystack deposit init → webhook → reconcile → reservation transition hardened + idempotent.
-- [ ] Declined/abandoned deposit correctly auto-cancels.
+- [ ] A declined/abandoned deposit leaves the reservation `pending` (swept by auto-cancel). A deposit that **cannot be created** opens a payment handoff; those reservations are exempt from auto-cancel until staff confirm or cancel them (settlement spec 2026-10-02 §6).
 - [ ] End-to-end smoke test passes for the full loop.
 - [ ] Core-path unit tests green; remainder triaged.
 - [ ] Test salon onboarded and live in production.
