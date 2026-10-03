@@ -6,13 +6,14 @@ const mockCreateReservation = jest.fn();
 const mockUpdateSlots = jest.fn();
 let reservationStatus = 'deposit_pending';
 let tenantSettings: Record<string, unknown> = {};
+const adminEqCalls: Array<[string, string, unknown]> = [];
 
-function client() {
+function client(kind: 'server' | 'admin' = 'server') {
   return {
     from: jest.fn((table: string) => {
       const chain: Record<string, jest.Mock> = {};
       chain.select = jest.fn(() => chain);
-      chain.eq = jest.fn(() => chain);
+      chain.eq = jest.fn((c: string, v: unknown) => { if (kind === 'admin') adminEqCalls.push([table, c, v]); return chain; });
       chain.maybeSingle = jest.fn(async () => {
         if (table === 'services') return { data: { price: 10000, currency: 'NGN' }, error: null };
         if (table === 'reservations') return { data: { id: 'res_1', status: reservationStatus }, error: null };
@@ -26,7 +27,7 @@ function client() {
 
 jest.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: () => client(),
-  createSupabaseAdminClient: () => client(),
+  createSupabaseAdminClient: () => client('admin'),
 }));
 jest.mock('@/lib/paymentService', () => jest.fn());
 jest.mock('@/lib/reservationService', () => ({ createReservation: mockCreateReservation }));
@@ -90,6 +91,16 @@ describe('dialog bridge deposits', () => {
       tenantId: 'tenant-1', reservationId: 'res_1', reason: 'SETTLEMENT_DISABLED', customerPhone: '+2348000000000',
     }));
     expect(sendConfirmed).not.toHaveBeenCalled();
+  });
+
+  it('reads the deposit rule through the service client with a tenant filter on services (C3)', async () => {
+    adminEqCalls.length = 0;
+    mockInitializeTenantPayment.mockResolvedValue({ ok: true, transactionId: 'tx', reference: 'r', authorizationUrl: 'https://co', snapshot: {}, reused: false });
+    const { bridge } = makeBridge();
+    await run(bridge);
+    expect(adminEqCalls).toEqual(expect.arrayContaining([
+      ['services', 'id', 'svc-1'], ['services', 'tenant_id', 'tenant-1'], ['tenants', 'id', 'tenant-1'],
+    ]));
   });
 
   it('creates deposit bookings as deposit_pending', async () => {

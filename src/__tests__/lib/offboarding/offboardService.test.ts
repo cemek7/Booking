@@ -81,6 +81,18 @@ describe('reactivate', () => {
       lifecycle_state: 'active', scheduled_purge_at: null, financials_purge_at: null, offboarding_reason: null,
     }));
   });
+  it('resets a suspended payment account to pending (tenant-scoped) so the owner re-verifies (B7)', async () => {
+    pushDb({ id: 't1', lifecycle_state: 'scheduled_for_deletion' });
+    await reactivate(admin as unknown as Parameters<typeof reactivate>[0], { tenantId: 't1', actorUserId: 'u1', actorRole: 'owner' });
+    const tables = admin.from.mock.calls.map((c) => (c as unknown[])[0]);
+    const idx = tables.indexOf('tenant_payment_accounts');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const chain = admin.from.mock.results[idx].value as MockChain;
+    expect(chain.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'pending' }));
+    expect(chain.eq).toHaveBeenCalledWith('tenant_id', 't1');
+    expect(chain.eq).toHaveBeenCalledWith('status', 'suspended');
+  });
+
   it('refuses to reactivate once purged', async () => {
     pushDb({ id: 't1', lifecycle_state: 'purged' });
     await expect(reactivate(admin as unknown as Parameters<typeof reactivate>[0], { tenantId: 't1', actorUserId: 'u1', actorRole: 'owner' }))

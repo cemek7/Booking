@@ -549,9 +549,13 @@ export class DialogBookingBridge {
       };
 
       // Deposit: same tenant rule as public booking, settled through the tenant boundary.
-      const { data: service } = await this.supabase
-        .from('services').select('price, price_cents').eq('id', state.serviceId!).maybeSingle();
-      const { data: tenantRow } = await this.supabase
+      // Service client (this also runs in background/webhook context where the
+      // cookie client sees nothing and the deposit would silently become 0);
+      // every read is tenant-bound.
+      const depositReader = createSupabaseAdminClient();
+      const { data: service } = await depositReader
+        .from('services').select('price, price_cents').eq('id', state.serviceId!).eq('tenant_id', tenantId).maybeSingle();
+      const { data: tenantRow } = await depositReader
         .from('tenants').select('settings, metadata').eq('id', tenantId).maybeSingle();
       const servicePriceCents = typeof service?.price_cents === 'number'
         ? service.price_cents

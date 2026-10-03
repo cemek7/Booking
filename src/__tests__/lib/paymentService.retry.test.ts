@@ -71,3 +71,24 @@ describe('retryFailedTransaction through the verifier', () => {
     expect(r.success).toBe(false);
   });
 });
+
+describe('processRefund refuses settled rows (C1)', () => {
+  function refundSupabase(tx: Record<string, unknown>) {
+    const inserts: string[] = [];
+    const single = async () => ({ data: tx, error: null });
+    const supabase = {
+      from: jest.fn((table: string) => ({
+        select: () => ({ eq: () => ({ eq: () => ({ single }) }) }),
+        insert: () => { inserts.push(table); return { select: () => ({ single: async () => ({ data: { id: 'rf' }, error: null }) }) }; },
+      })),
+    };
+    return { supabase, inserts };
+  }
+
+  it('returns "Use the settled refund path" for a row with amount_minor and writes nothing', async () => {
+    const { supabase, inserts } = refundSupabase({ id: 'tx1', tenant_id: 't1', amount_minor: 500000, amount: 5000, raw: { provider: 'paystack' }, provider_reference: 'bk_1' });
+    const r = await new PaymentService(supabase as never).processRefund({ tenantId: 't1', transactionId: 'tx1', amount: 10 });
+    expect(r).toEqual({ success: false, error: 'Use the settled refund path' });
+    expect(inserts).toHaveLength(0);
+  });
+});

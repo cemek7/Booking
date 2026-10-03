@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+/* eslint-disable @typescript-eslint/no-explicit-any -- in-memory Supabase/route fakes */
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -22,6 +23,7 @@ jest.mock('@/lib/paymentService', () => ({
 }));
 
 import { getSupabaseRouteHandlerClient } from '@/lib/supabase/server';
+import { handlePaymentSuccess } from '@/lib/payments/lifecycle';
 import { POST as webhookPOST } from '@/app/api/payments/webhook/route';
 import { POST as paystackPOST } from '@/app/api/payments/paystack/route';
 
@@ -68,5 +70,47 @@ describe('Paystack webhook routes delegate to the single processor', () => {
     mockProcess.mockRejectedValueOnce(new Error('verify failed'));
     const res = await (paystackPOST as any)(req('/api/payments/paystack', { 'x-paystack-signature': 'abc' }));
     expect(res.status).toBeGreaterThanOrEqual(500);
+  });
+});
+
+describe('generic (Stripe/Flutterwave) webhook path never settles a Paystack-settled row (C2)', () => {
+  const env = { ...process.env };
+  afterEach(() => { process.env = { ...env }; });
+
+  function routeClient(amountMinor: number | null) {
+    const txUpdates: unknown[] = [];
+    const from = jest.fn((table: string) => {
+      const chain: any = {};
+      for (const m of ['select', 'eq']) chain[m] = jest.fn(() => chain);
+      chain.insert = jest.fn(() => chain);
+      chain.update = jest.fn((p: unknown) => { if (table === 'transactions') txUpdates.push(p); return chain; });
+      chain.maybeSingle = jest.fn(async () => (table === 'transactions'
+        ? { data: { id: 'tx1', status: 'pending', raw: {}, tenant_id: 'ten_1', amount_minor: amountMinor }, error: null }
+        : { data: null, error: null }));
+      chain.then = (res: any, rej: any) => Promise.resolve({ data: [{ id: 'evt' }], error: null }).then(res, rej);
+      return chain;
+    });
+    return { client: { from }, txUpdates };
+  }
+
+  const flwBody = JSON.stringify({ provider: 'flutterwave', reference: 'bk_settled', status: 'successful' });
+
+  it('skips a row with non-null amount_minor: no status write, no confirmation', async () => {
+    process.env.FLUTTERWAVE_WEBHOOK_SECRET = 'flw_test_dummy';
+    const rc = routeClient(500000);
+    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(rc.client);
+    const res = await (webhookPOST as any)(req('/api/payments/webhook', { 'verif-hash': 'flw_test_dummy' }, flwBody));
+    expect(res.status).toBe(200);
+    expect(rc.txUpdates).toHaveLength(0);
+    expect(handlePaymentSuccess).not.toHaveBeenCalled();
+  });
+
+  it('still updates a legacy row (amount_minor null)', async () => {
+    process.env.FLUTTERWAVE_WEBHOOK_SECRET = 'flw_test_dummy';
+    const rc = routeClient(null);
+    (getSupabaseRouteHandlerClient as jest.Mock).mockReturnValue(rc.client);
+    const res = await (webhookPOST as any)(req('/api/payments/webhook', { 'verif-hash': 'flw_test_dummy' }, flwBody));
+    expect(res.status).toBe(200);
+    expect(rc.txUpdates).toHaveLength(1);
   });
 });

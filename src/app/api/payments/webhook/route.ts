@@ -163,12 +163,15 @@ export const POST = createHttpHandler(
       // Find transaction by provider reference alone — never use payload-supplied tenant_id
       const { data: transaction } = await ctx.supabase
         .from('transactions')
-        .select('id, status, raw, tenant_id')
+        .select('id, status, raw, tenant_id, amount_minor')
         .eq('provider_reference', ref)
         .maybeSingle();
 
       if (!transaction) {
         defaultLogger.warn('[api/payments/webhook] No transaction found for reference', { ref, provider });
+      } else if (transaction.amount_minor !== null && transaction.amount_minor !== undefined) {
+        // A Paystack-settled row changes state only through Paystack verification.
+        defaultLogger.warn('[api/payments/webhook] Ignoring non-Paystack event for a settled transaction', { ref, provider });
       } else {
         // Derive tenantId from the DB record, never from payload metadata
         const verifiedTenantId = transaction.tenant_id as string;

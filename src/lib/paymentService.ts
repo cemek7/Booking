@@ -683,6 +683,11 @@ export class PaymentService {
         return { success: false, error: 'Transaction not found' };
       }
 
+      // Settled (minor-unit) payments refund only through refundTenantPayment.
+      if (transaction.amount_minor !== null && transaction.amount_minor !== undefined) {
+        return { success: false, error: 'Use the settled refund path' };
+      }
+
       const providerId = (transaction.raw as { provider?: string } | null)?.provider;
       const provider = this.getProvider(providerId);
       if (!provider) {

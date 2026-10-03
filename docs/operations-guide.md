@@ -751,8 +751,9 @@ Statuses: `pending`, `active`, `suspended`, `invalid`.
 - Accounts are created only through Settings → Payments (`POST`/`PUT /api/payments/subaccounts`),
   with explicit fee acceptance (1%, capped at NGN 2,000). Never edit `tenants.metadata` for
   settlement; the code no longer reads `paystack_subaccount_code` from it.
-- Only `active` accounts can collect. A `suspended` account cannot be self-reactivated by the
-  tenant. Ops must reset it to `pending` after review; the tenant then re-verifies in Settings.
+- Only `active` accounts can collect. Off-boarding suspends the account; reactivating the tenant
+  (`reactivate`) resets a `suspended` account to `pending`, and the owner re-verifies it in
+  Settings → Payments before collection resumes. It never returns straight to `active`.
 
 ### Webhooks
 

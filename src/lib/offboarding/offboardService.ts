@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { assertTransition } from './stateMachine';
 import { TEARDOWN_TASK_TYPES, GRACE_DAYS, RETENTION_YEARS, type LifecycleState, type OffboardingReason } from './types';
 import { writeAuditLog } from '@/lib/audit/log';
+import { defaultLogger } from '@/lib/logger';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -66,6 +67,19 @@ export async function reactivate(admin: SupabaseClient, p: ReactivateParams): Pr
 
   await admin.from('offboarding_tasks').update({ status: 'skipped' })
     .eq('tenant_id', p.tenantId).in('status', ['pending', 'failed']);
+
+  // Off-boarding suspended the payment account. Reactivation returns it to
+  // 'pending' so the owner re-verifies it in Settings → Payments; it never
+  // jumps straight back to 'active'.
+  const { error: accountError } = await admin.from('tenant_payment_accounts')
+    .update({ status: 'pending', updated_at: new Date().toISOString() })
+    .eq('tenant_id', p.tenantId)
+    .eq('status', 'suspended');
+  if (accountError) {
+    defaultLogger.error('[offboarding] could not reset suspended payment account on reactivation', {
+      tenantId: p.tenantId, error: accountError.message,
+    });
+  }
 
   await writeAuditLog(admin, {
     action: 'tenant.offboard.reactivated', tenantId: p.tenantId,

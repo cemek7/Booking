@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- in-memory Supabase/route fakes */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 jest.mock('@/lib/supabase/server', () => ({ createSupabaseAdminClient: jest.fn() }));
@@ -51,14 +52,46 @@ describe('maybeCreateBookingDeposit', () => {
     expect(mockOpenHandoff).not.toHaveBeenCalled();
   });
 
-  it('fails closed when the boundary throws', async () => {
+  it('fails closed when the boundary throws and opens a payment handoff (B8)', async () => {
     mockInitializeTenantPayment.mockRejectedValue(new Error('boom'));
+    const info = await maybeCreateBookingDeposit({ tenantId: 't1', reservationId: 'r1', serviceId: 's1', email: 'c@x.co', customerPhone: '+2348000000000' });
+    expect(info).toMatchObject({ depositRequired: true, paymentUnavailable: true });
+    expect(mockOpenHandoff).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 't1', reservationId: 'r1', reason: 'SETTLEMENT_UNAVAILABLE', customerPhone: '+2348000000000',
+    }));
+  });
+
+  it('a handoff failure inside the catch is logged and still returns paymentUnavailable (B8)', async () => {
+    mockInitializeTenantPayment.mockRejectedValue(new Error('boom'));
+    mockOpenHandoff.mockRejectedValue(new Error('handoff down'));
     const info = await maybeCreateBookingDeposit({ tenantId: 't1', reservationId: 'r1', serviceId: 's1', email: 'c@x.co' });
     expect(info).toMatchObject({ depositRequired: true, paymentUnavailable: true });
   });
 
-  it('returns depositRequired false without service or email', async () => {
+  it('returns depositRequired false without a service', async () => {
     expect(await maybeCreateBookingDeposit({ tenantId: 't1', reservationId: 'r1' })).toEqual({ depositRequired: false });
+  });
+
+  // C4 (owner decision 4): a missing email no longer skips the deposit.
+  it('without an email, uses the phone-derived getCustomerEmail fallback', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: true, transactionId: 'tx', reference: 'bk', authorizationUrl: 'https://co', snapshot: {} as never, reused: false });
+    const info = await maybeCreateBookingDeposit({ tenantId: 't1', reservationId: 'r1', serviceId: 's1', customerPhone: '+234 800 000 0000' });
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({ customerEmail: 'noemail+2348000000000@example.com' }));
+    expect(info).toMatchObject({ depositRequired: true, paymentUrl: 'https://co' });
+  });
+
+  it('passes a provided email through unchanged', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: true, transactionId: 'tx', reference: 'bk', authorizationUrl: 'https://co', snapshot: {} as never, reused: false });
+    await maybeCreateBookingDeposit({ tenantId: 't1', reservationId: 'r1', serviceId: 's1', email: 'c@x.co', customerPhone: '+2348000000000' });
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({ customerEmail: 'c@x.co' }));
+  });
+
+  it('without email or phone, the boundary gets an empty email (fails closed into the handoff)', async () => {
+    mockInitializeTenantPayment.mockResolvedValue({ ok: false, code: 'CUSTOMER_EMAIL_REQUIRED', message: 'x' });
+    const info = await maybeCreateBookingDeposit({ tenantId: 't1', reservationId: 'r1', serviceId: 's1' });
+    expect(mockInitializeTenantPayment).toHaveBeenCalledWith(expect.objectContaining({ customerEmail: '' }));
+    expect(info).toMatchObject({ paymentUnavailable: true });
+    expect(mockOpenHandoff).toHaveBeenCalledWith(expect.objectContaining({ reason: 'CUSTOMER_EMAIL_REQUIRED' }));
   });
 });
 

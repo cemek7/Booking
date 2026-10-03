@@ -28,6 +28,7 @@ import { createSupabaseBearerClient } from '@/lib/supabase/bearer-client';
 import { POST } from '@/app/api/payments/refund/route';
 
 let amountMinorOnRow: number | null = 500000;
+let lookupError: { message: string } | null = null;
 
 function adminMock() {
   const chain = (final: unknown): Record<string, unknown> => ({
@@ -40,7 +41,7 @@ function adminMock() {
     auth: { getUser: jest.fn().mockResolvedValue({ data: { user: { id: 'usr_1', email: 'o@test.com' } }, error: null }) },
     from: jest.fn((t: string) => {
       if (t === 'tenant_users') return chain({ data: { tenant_id: 'ten_1', role: 'owner' }, error: null });
-      if (t === 'transactions') return chain({ data: { amount_minor: amountMinorOnRow }, error: null });
+      if (t === 'transactions') return chain(lookupError ? { data: null, error: lookupError } : { data: { amount_minor: amountMinorOnRow }, error: null });
       return chain({ data: null, error: null });
     }),
   };
@@ -58,6 +59,7 @@ describe('refund route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     amountMinorOnRow = 500000;
+    lookupError = null;
     (createSupabaseAdminClient as jest.Mock).mockImplementation(() => adminMock());
     (createSupabaseBearerClient as jest.Mock).mockReturnValue({ from: jest.fn() });
   });
@@ -103,6 +105,14 @@ describe('refund route', () => {
     const res = await POST(req({ transactionId: 'tx1', amount: 10 }) as unknown as NextRequest);
     expect(res.status).toBe(200);
     expect(mockProcessRefund).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'ten_1', transactionId: 'tx1', amount: 10 }));
+    expect(mockRefundTenantPayment).not.toHaveBeenCalled();
+  });
+
+  it('a settled-row lookup error fails closed with 500 and never reaches the legacy path (C1)', async () => {
+    lookupError = { message: 'connection reset' };
+    const res = await POST(req({ transactionId: 'tx1', amount: 10 }) as unknown as NextRequest);
+    expect(res.status).toBe(500);
+    expect(mockProcessRefund).not.toHaveBeenCalled();
     expect(mockRefundTenantPayment).not.toHaveBeenCalled();
   });
 });

@@ -26,12 +26,17 @@ export const POST = createHttpHandler(
     const tenantId = getVerifiedTenantId(ctx);
 
     // Settled (minor-unit) payments refund in kobo through the settlement boundary.
-    const { data: settledRow } = await createSupabaseAdminClient()
+    const { data: settledRow, error: settledLookupError } = await createSupabaseAdminClient()
       .from('transactions')
       .select('amount_minor')
       .eq('id', transactionId)
       .eq('tenant_id', tenantId)
       .maybeSingle();
+    // Fail closed: if we cannot tell whether this is a settled payment, never
+    // fall through to the legacy refund path.
+    if (settledLookupError) {
+      throw ApiErrorFactory.databaseError(new Error('Could not load the payment for refund'));
+    }
     if (settledRow && settledRow.amount_minor !== null && settledRow.amount_minor !== undefined) {
       if (amount !== undefined) {
         throw ApiErrorFactory.validationError({ amount: 'Send amountMinor (whole kobo) for this payment; amount is not supported.' });

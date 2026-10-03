@@ -15,6 +15,7 @@ import type { TimeSlot } from '@/types';
 import { DoubleBookingPrevention } from '@/lib/doubleBookingPrevention';
 import { initializeTenantPayment } from '@/lib/payments/tenantSettlement';
 import { openReservationPaymentHandoff } from '@/lib/payments/paymentHandoff';
+import { getCustomerEmail } from '@/lib/payments/customerEmail';
 import { resolveCustomer } from '@/lib/customers/identity';
 import {
   businessDayKey,
@@ -65,7 +66,7 @@ export async function maybeCreateBookingDeposit(input: {
   callbackUrl?: string | null;
 }): Promise<BookingDepositInfo> {
   try {
-    if (!input.serviceId || !input.email) return { depositRequired: false };
+    if (!input.serviceId) return { depositRequired: false };
     const supabase = createSupabaseAdminClient();
 
     const { data: tenant } = await supabase
@@ -91,7 +92,9 @@ export async function maybeCreateBookingDeposit(input: {
       tenantId: input.tenantId,
       amountMinor: depositMinor,
       currency: 'NGN',
-      customerEmail: input.email,
+      // Owner decision 4: per-customer phone-derived fallback, never a shared
+      // placeholder; no email and no phone fails closed into the handoff.
+      customerEmail: getCustomerEmail(input.email ?? null, input.customerPhone ?? ''),
       subject: { type: 'reservation', id: input.reservationId },
       idempotencyKey: `deposit:${input.reservationId}`,
       callbackUrl: input.callbackUrl ?? undefined,
@@ -110,6 +113,20 @@ export async function maybeCreateBookingDeposit(input: {
     return { depositRequired: true, paymentUnavailable: true, depositAmountCents: depositMinor, currency: 'NGN' };
   } catch (err) {
     defaultLogger.warn('[publicBooking] deposit init threw; booking left pending', { error: err instanceof Error ? err.message : String(err) });
+    // The reservation exists and stays pending: a teammate must arrange the deposit.
+    try {
+      await openReservationPaymentHandoff({
+        tenantId: input.tenantId,
+        reservationId: input.reservationId,
+        reason: 'SETTLEMENT_UNAVAILABLE',
+        customerPhone: input.customerPhone ?? null,
+      });
+    } catch (handoffErr) {
+      defaultLogger.error('[publicBooking] payment handoff could not be opened', {
+        reservationId: input.reservationId,
+        error: handoffErr instanceof Error ? handoffErr.message : String(handoffErr),
+      });
+    }
     return { depositRequired: true, paymentUnavailable: true };
   }
 }
