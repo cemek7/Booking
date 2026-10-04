@@ -143,7 +143,7 @@ export default function DemoConversation() {
     >
       <div className="flex items-center justify-between border-b border-emerald-100 pb-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-emerald-700/45">Live demo</p>
+          <p className="text-xs uppercase tracking-[0.28em] text-emerald-800">Live demo</p>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#10211a]">
             See a sales-to-booking flow
           </h2>
@@ -156,7 +156,7 @@ export default function DemoConversation() {
       <div className="relative mt-5 overflow-hidden rounded-[1.5rem] bg-emerald-50/60">
         <div
           ref={scrollRef}
-          className="max-h-[22rem] space-y-3 overflow-y-auto px-4 py-4 pr-2 [scrollbar-width:thin]"
+          className="max-h-[17rem] space-y-3 overflow-y-auto px-4 py-4 pr-2 [scrollbar-width:thin] sm:max-h-[22rem]"
         >
           {messages.map((message) => (
             <div key={message.id} className={`flex ${message.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -185,29 +185,29 @@ export default function DemoConversation() {
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-emerald-50/95 to-transparent" />
       </div>
 
-      <div className="mt-5 grid gap-2 sm:grid-cols-3">
+      <div className="mt-4 flex flex-wrap gap-2 sm:mt-5 sm:grid sm:grid-cols-3">
         {currentOptions.map((option) => (
           <div
             key={option}
-            className="rounded-full border border-emerald-100 bg-white px-3 py-3 text-xs font-medium text-slate-600 shadow-sm"
+            className="rounded-full border border-emerald-100 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm sm:py-3"
           >
             {option}
           </div>
         ))}
-        <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs font-medium text-emerald-800 shadow-sm sm:col-span-3">
+        <div className="w-full rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 shadow-sm sm:col-span-3 sm:py-3">
           Recommendation made, booking confirmed, follow-up ready.
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+      <div className="mt-5 hidden gap-3 sm:grid sm:grid-cols-2">
         <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
-          <div className="text-xs uppercase tracking-[0.22em] text-emerald-700/45">What it handles</div>
+          <div className="text-xs uppercase tracking-[0.22em] text-emerald-800">What it handles</div>
           <p className="mt-3 text-sm leading-6 text-slate-700">
             Qualification, recommendations, booking intake, reminders, follow-up, and escalation when the request needs a person.
           </p>
         </div>
         <div className="rounded-3xl border border-emerald-100 bg-white p-4">
-          <div className="text-xs uppercase tracking-[0.22em] text-emerald-700/45">What gets measured</div>
+          <div className="text-xs uppercase tracking-[0.22em] text-emerald-800">What gets measured</div>
           <p className="mt-3 text-sm leading-6 text-slate-700">
             Enquiries, recommendations, bookings, payments, follow-ups and human handoffs—with attribution labels
             kept separate until outcomes are verified.

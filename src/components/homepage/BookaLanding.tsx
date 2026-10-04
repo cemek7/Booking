@@ -105,7 +105,7 @@ const launchNotes = [
 ];
 
 const navLink =
-  'rounded-sm text-sm text-[#46514e] transition hover:text-[var(--brand-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--booka-green)]';
+  'inline-flex min-h-11 items-center rounded-sm text-sm text-[#46514e] transition md:min-h-0 hover:text-[var(--brand-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--booka-green)]';
 
 const sectionRule = 'border-t border-[var(--brand-line)] py-16 sm:py-20';
 

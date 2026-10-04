@@ -35,7 +35,7 @@ export default function CtaLink({
     return (
       <Link
         href={href}
-        className={`group inline-flex items-center gap-1.5 rounded-sm text-sm font-semibold underline-offset-4 transition hover:underline ${textTones[tone]} ${focusRing} ${className}`}
+        className={`group inline-flex min-h-11 items-center gap-1.5 rounded-sm text-sm font-semibold underline-offset-4 transition hover:underline ${textTones[tone]} ${focusRing} ${className}`}
       >
         {children}
         <span aria-hidden="true" className="transition group-hover:translate-x-0.5">
