@@ -163,7 +163,7 @@ export default function BookaLanding() {
           <DemoConversation />
         </section>
 
-        <Panel tone="dark" as="section" id="how-it-works" className="scroll-mt-6 p-6 sm:p-8">
+        <Panel tone="dark" as="section" id="how-it-works" aria-label="Booka revenue workflow" className="scroll-mt-6 p-6 sm:p-8">
           <p className="brand-kicker text-[var(--brand-gold)]">{BOOKA_POSITIONING.campaignLine}</p>
           <ol className="mt-6 grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4 lg:grid-cols-8">
             {revenueSequence.map((step, index) => (

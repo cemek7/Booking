@@ -28,6 +28,13 @@ describe('BookaLanding', () => {
     expect(document.querySelector('#missed-revenue-report')).toBeInTheDocument();
   });
 
+  it('names the how-it-works section for screen readers', () => {
+    render(<BookaLanding />);
+
+    const workflow = screen.getByRole('region', { name: 'Booka revenue workflow' });
+    expect(workflow).toHaveAttribute('id', 'how-it-works');
+  });
+
   it('renders four priced plans with a visible usage policy', () => {
     render(<BookaLanding />);
 
