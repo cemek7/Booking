@@ -2,6 +2,7 @@ import Link from 'next/link';
 import BrandMark from '@/components/brand/BrandMark';
 import CtaLink from '@/components/homepage/CtaLink';
 import DemoConversation from '@/components/homepage/DemoConversation';
+import MobileNav from '@/components/homepage/MobileNav';
 import Panel from '@/components/homepage/Panel';
 import SectionHeading from '@/components/homepage/SectionHeading';
 import { BOOKA_POSITIONING, SIAS_BILLING_PLANS, SIAS_VERTICAL_PACKAGES } from '@/lib/sias';
@@ -141,6 +142,15 @@ export default function BookaLanding() {
               Start onboarding
             </CtaLink>
           </nav>
+          <MobileNav
+            links={[
+              { href: '/', label: 'Techclave' },
+              { href: '#how-it-works', label: 'How it works' },
+              { href: '#pricing', label: 'Pricing' },
+              { href: '/booka/auth/signin', label: 'Sign in' },
+            ]}
+            cta={{ href: '/booka/auth/onboarding', label: 'Start onboarding' }}
+          />
         </header>
 
         <section className="grid gap-12 pb-20 pt-10 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:pt-16">

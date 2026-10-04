@@ -64,4 +64,10 @@ describe('BookaLanding', () => {
     expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
     expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/terms');
   });
+
+  it('offers a phone menu', () => {
+    render(<BookaLanding />);
+
+    expect(screen.getByRole('button', { name: /menu/i })).toHaveAttribute('aria-expanded', 'false');
+  });
 });

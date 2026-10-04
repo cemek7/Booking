@@ -1,6 +1,7 @@
 import Link from "next/link";
 import BrandMark from "@/components/brand/BrandMark";
 import CtaLink from "@/components/homepage/CtaLink";
+import MobileNav from "@/components/homepage/MobileNav";
 import Panel from "@/components/homepage/Panel";
 import SectionHeading from "@/components/homepage/SectionHeading";
 
@@ -86,6 +87,16 @@ export default function Home() {
               Explore Booka
             </CtaLink>
           </nav>
+          <MobileNav
+            links={[
+              { href: "/products", label: "Products" },
+              { href: "/showcase", label: "Capabilities" },
+              { href: "#principles", label: "How we build" },
+              { href: "/contact", label: "Contact" },
+            ]}
+            cta={{ href: "/booka", label: "Explore Booka" }}
+            ctaTone="ink"
+          />
         </header>
 
         <section className="grid gap-12 pb-20 pt-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-end lg:pt-16">
