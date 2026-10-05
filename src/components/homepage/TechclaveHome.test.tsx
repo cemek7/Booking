@@ -32,4 +32,10 @@ describe('Techclave home', () => {
     expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/terms');
     expect(screen.getByRole('link', { name: 'Data processing' })).toHaveAttribute('href', '/dpa');
   });
+
+  it('offers a phone menu', () => {
+    render(<Home />);
+
+    expect(screen.getByRole('button', { name: /menu/i })).toHaveAttribute('aria-expanded', 'false');
+  });
 });

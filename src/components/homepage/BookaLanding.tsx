@@ -2,6 +2,7 @@ import Link from 'next/link';
 import BrandMark from '@/components/brand/BrandMark';
 import CtaLink from '@/components/homepage/CtaLink';
 import DemoConversation from '@/components/homepage/DemoConversation';
+import MobileNav from '@/components/homepage/MobileNav';
 import Panel from '@/components/homepage/Panel';
 import SectionHeading from '@/components/homepage/SectionHeading';
 import { BOOKA_POSITIONING, SIAS_BILLING_PLANS, SIAS_VERTICAL_PACKAGES } from '@/lib/sias';
@@ -104,7 +105,7 @@ const launchNotes = [
 ];
 
 const navLink =
-  'rounded-sm text-sm text-[#46514e] transition hover:text-[var(--brand-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--booka-green)]';
+  'inline-flex min-h-11 items-center rounded-sm text-sm text-[#46514e] transition md:min-h-0 hover:text-[var(--brand-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--booka-green)]';
 
 const sectionRule = 'border-t border-[var(--brand-line)] py-16 sm:py-20';
 
@@ -141,6 +142,15 @@ export default function BookaLanding() {
               Start onboarding
             </CtaLink>
           </nav>
+          <MobileNav
+            links={[
+              { href: '/', label: 'Techclave' },
+              { href: '#how-it-works', label: 'How it works' },
+              { href: '#pricing', label: 'Pricing' },
+              { href: '/booka/auth/signin', label: 'Sign in' },
+            ]}
+            cta={{ href: '/booka/auth/onboarding', label: 'Start onboarding' }}
+          />
         </header>
 
         <section className="grid gap-12 pb-20 pt-10 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:pt-16">
