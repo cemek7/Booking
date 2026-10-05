@@ -82,18 +82,38 @@ const faqItems = [
       'No. Booka is an AI Revenue Front Desk. It handles the conversation from enquiry to recommendation, sale, booking, follow-up and repeat business.',
   },
   {
-    question: 'How does pricing work?',
+    question: 'Who is this for?',
     answer:
-      'Plans start at ₦15k per month and include an automation and messaging allowance. Booka warns you before any overage, and extra usage is opt-in.',
+      'Businesses that get high-intent enquiries in chat: salons and spas, clinics and practices, restaurants and hospitality teams.',
+  },
+  {
+    question: 'How does setup work?',
+    answer:
+      'You connect your WhatsApp or Instagram business account and add your services, prices, availability and policies. Booka goes live after a successful live test. The pilot and the Managed Revenue Operations plan include setup by our team.',
+  },
+  {
+    question: 'What can Booka do on each channel?',
+    answer:
+      'On Instagram, Booka answers active enquiries inside the messaging window; it does not send unlimited follow-ups there. On WhatsApp, it sends reminders, recovery and repeat-booking messages to customers who opted in, using approved messages. Contacts on the two channels are kept separate.',
   },
   {
     question: 'Can humans still step in?',
     answer: 'Yes. Booka routes a conversation to a person when it is sensitive, risky or outside the normal flow.',
   },
   {
-    question: 'Who is this for?',
+    question: 'How does pricing work?',
     answer:
-      'Businesses that get high-intent enquiries in chat: salons and spas, clinics and practices, restaurants and hospitality teams.',
+      'Plans start at ₦15k per month and include an automation and messaging allowance. Booka warns you before any overage, and extra usage is opt-in.',
+  },
+  {
+    question: 'How do payments work?',
+    answer:
+      'Booka helps collect deposits and payments through the payment links you set up. The money goes to your business; Booka does not hold your customers’ funds. Refunds for bookings follow your own policy.',
+  },
+  {
+    question: 'Can I cancel?',
+    answer:
+      'Yes. Plans renew until you cancel. You can cancel yourself at any time and keep access until the end of the paid period. Fees already paid are not refunded unless the law requires it. On the pilot, there is no obligation to continue if Booka does not produce a verified outcome.',
   },
 ];
 
