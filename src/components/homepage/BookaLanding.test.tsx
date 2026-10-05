@@ -70,4 +70,13 @@ describe('BookaLanding', () => {
 
     expect(screen.getByRole('button', { name: /menu/i })).toHaveAttribute('aria-expanded', 'false');
   });
+
+  it('answers the FAQ topics the positioning spec requires', () => {
+    render(<BookaLanding />);
+
+    for (const topic of [/setup/i, /each channel/i, /humans/i, /pricing/i, /payments/i, /cancel/i]) {
+      expect(screen.getByText(topic, { selector: 'dt' })).toBeInTheDocument();
+    }
+    expect(screen.getByText(/does not hold your customers/i)).toBeInTheDocument();
+  });
 });
