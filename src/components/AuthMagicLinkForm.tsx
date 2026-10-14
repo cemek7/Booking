@@ -14,9 +14,9 @@ type Props = {
 function getMagicLinkRedirectPath(nextPath?: string) {
   const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL;
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const browserHost = typeof window !== 'undefined' ? window.location.hostname : '';
-  const isLocalHost = browserHost === 'localhost' || browserHost === '127.0.0.1';
-  const baseUrl = isLocalHost ? browserOrigin : (configuredAppUrl || browserOrigin);
+  // The same client bundle can run on staging and production. The browser's
+  // current origin must win so PKCE returns to the host that owns its verifier.
+  const baseUrl = browserOrigin || configuredAppUrl;
   const callbackUrl = new URL('/booka/auth/callback', baseUrl || browserOrigin || 'http://localhost');
   callbackUrl.searchParams.set('finalize', '1');
   if (nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//')) {
