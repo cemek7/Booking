@@ -32,6 +32,7 @@ export const ACTION_PERMISSION_MAP: Partial<Record<string, string>> = {
   record_stock_receipt: BOOKA_PERMISSIONS.ADJUST_INVENTORY,
   delete_product: BOOKA_PERMISSIONS.MANAGE_PRODUCTS,
   set_staff_capability: BOOKA_PERMISSIONS.MANAGE_STAFF,
+  invite_staff: BOOKA_PERMISSIONS.MANAGE_STAFF,
 };
 
 export function getPermissionForCapability(capability: Capability): string {

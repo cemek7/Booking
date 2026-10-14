@@ -1,4 +1,3 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordBusinessEvent } from '@/lib/audit/businessEvents';
 import { sendTenantInviteEmail } from '@/lib/integrations/email-service';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
@@ -68,7 +67,7 @@ function assertNoError(error: { message?: string } | null, operation: string): v
 }
 
 export function createSupabaseInvitationStore(
-  admin: SupabaseClient = createSupabaseAdminClient() as unknown as SupabaseClient
+  admin: ReturnType<typeof createSupabaseAdminClient> = createSupabaseAdminClient()
 ): InvitationStore {
   return {
     async getTenantPolicy(tenantId) {
@@ -273,7 +272,7 @@ export async function issueTenantInvitation(
     if (dependencies.recordEvent) {
       await dependencies.recordEvent(event);
     } else {
-      const auditAdmin = createSupabaseAdminClient() as unknown as SupabaseClient;
+      const auditAdmin = createSupabaseAdminClient();
       await recordBusinessEvent(auditAdmin, {
         tenantId: event.tenantId,
         actorType: 'user',
