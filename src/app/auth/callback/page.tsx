@@ -6,6 +6,7 @@ import React, { useEffect, useState } from "react";
 import type { Session } from '@supabase/supabase-js';
 import { getSupabaseBrowserClientAsync } from "@/lib/supabase/client";
 import { storeSignInData } from "@/lib/auth/auth-manager";
+import { buildEmailTokenExchangeUrl } from '@/lib/auth/email-callback';
 
 type CallbackPayload = {
   accessToken: string | null;
@@ -50,6 +51,7 @@ export default function AuthCallbackPage() {
     let mounted = true;
     const url = new URL(window.location.href);
     const code = url.searchParams.get('code');
+    const emailTokenExchangeUrl = buildEmailTokenExchangeUrl(url.toString());
     const nextPath = url.searchParams.get('next');
     const isOnboardingResume =
       typeof nextPath === 'string' &&
@@ -121,6 +123,12 @@ export default function AuthCallbackPage() {
     }
 
     const completeAuth = async () => {
+      if (emailTokenExchangeUrl) {
+        setStatus('Verifying secure sign-in link…');
+        window.location.replace(emailTokenExchangeUrl);
+        return;
+      }
+
       if (code) {
         setStatus('Completing sign-in…');
         if (isOnboardingResume) {
