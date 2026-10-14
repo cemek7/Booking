@@ -1,4 +1,7 @@
 import type { EmailOtpType, Session } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { defaultLogger } from '@/lib/logger';
+import { normalizeInvitationEmail } from './tenant-invitations';
 
 const SERVER_VERIFIED_EMAIL_TYPES = new Set<EmailOtpType>([
   'email',
@@ -40,4 +43,32 @@ export async function verifyEmailTokenHash(
 
   if (error) throw error;
   return data.session;
+}
+
+export async function syncConfirmedLoginEmail(
+  admin: SupabaseClient,
+  user: { id?: string | null; email?: string | null } | null | undefined,
+  rawType: string | null
+): Promise<void> {
+  if (rawType !== 'email_change') return;
+  if (!user?.id || !user.email) throw new Error('email_change_session_missing');
+
+  const email = normalizeInvitationEmail(user.email);
+  const { error } = await admin
+    .from('tenant_users')
+    .update({ email })
+    .eq('user_id', user.id);
+
+  if (error) {
+    defaultLogger.error('Confirmed login email membership sync failed', {
+      userId: user.id,
+      event: 'login_email_sync_failed',
+    });
+    throw new Error('email_membership_sync_failed');
+  }
+
+  defaultLogger.info('Confirmed login email synchronized', {
+    userId: user.id,
+    event: 'login_email_sync_succeeded',
+  });
 }

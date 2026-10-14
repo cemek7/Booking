@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
 import { resolveActiveGlobalAdmin } from '@/lib/auth/global-admin';
-import { verifyEmailTokenHash } from '@/lib/auth/email-callback';
+import { syncConfirmedLoginEmail, verifyEmailTokenHash } from '@/lib/auth/email-callback';
 import { buildPublicUrl } from '@/lib/http/public-origin';
 
 type TenantMembership = {
@@ -217,6 +217,11 @@ export async function GET(request: NextRequest) {
     if (tokenHash) {
       try {
         session = await verifyEmailTokenHash(supabase.auth, tokenHash, verificationType);
+        await syncConfirmedLoginEmail(
+          createSupabaseAdminClient(),
+          session?.user,
+          verificationType
+        );
       } catch (error) {
         const errorUrl = buildRedirectUrl(request, '/booka/auth/signin?auth_error=1');
         errorUrl.searchParams.set(

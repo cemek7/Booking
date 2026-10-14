@@ -13,4 +13,14 @@ describe('auth callback public origin contract', () => {
     expect(source).not.toMatch(/function firstForwardedValue\(/);
     expect(source).not.toMatch(/function isInternalHostname\(/);
   });
+
+  it('synchronizes membership email only after verified email-change sessions', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src/app/api/auth/callback/route.ts'),
+      'utf8'
+    );
+
+    expect(source).toContain('syncConfirmedLoginEmail');
+    expect(source).toMatch(/verifyEmailTokenHash[\s\S]*syncConfirmedLoginEmail/);
+  });
 });
