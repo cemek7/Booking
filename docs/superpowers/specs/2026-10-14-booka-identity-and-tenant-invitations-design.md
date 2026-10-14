@@ -84,6 +84,21 @@ Migration `161_secure_tenant_invitations_verify.sql` verifies columns, constrain
 
 The existing tenant invite endpoint remains the entry point.
 
+All invitation entry points call one server-only issuance service. This includes:
+
+- the dashboard tenant invite endpoint;
+- the legacy owner-staff and manager-team API actions while they remain public;
+- the WhatsApp v2 owner-command flow for in-chat account invitations.
+
+The WhatsApp v2 `add_staff` action remains a roster operation for creating a
+bookable worker who may not have a Booka login. A distinct `invite_staff`
+action requires an email address and issues the same secure account invitation
+as the dashboard. It must not insert an inactive `tenant_users` row directly.
+The v2 flow resolves the actor from the tenant conversation identity, requires
+the `MANAGE_STAFF` permission and a linked Supabase `user_id`, applies the same
+owner/manager role matrix, uses the environment's validated public origin, and
+awaits email delivery before reporting success in chat.
+
 Server rules:
 
 1. Normalize the requested email.
@@ -201,6 +216,9 @@ Automated tests cover:
 
 - owner-to-manager and owner-to-staff invitation creation;
 - manager-to-staff allowed and manager-to-manager rejected;
+- dashboard, owner-staff API, manager-team API, and WhatsApp v2 use the same issuance service;
+- WhatsApp v2 `invite_staff` requires email, permission, linked identity, confirmation, and idempotency;
+- WhatsApp v2 `add_staff` remains roster-only and cannot grant dashboard access;
 - domain restrictions and disabled invitations;
 - raw token absent from database, API response, and logs;
 - invalid, expired, revoked, accepted, and replayed invitation links;
