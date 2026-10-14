@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { isTenantOnboardingIncomplete } from '@/lib/onboarding/state';
 import { resolveActiveGlobalAdmin } from '@/lib/auth/global-admin';
+import { verifyEmailTokenHash } from '@/lib/auth/email-callback';
 
 type TenantMembership = {
   tenant_id: string;
@@ -230,6 +231,8 @@ function buildCallbackPayload(session: {
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
+  const tokenHash = url.searchParams.get('token_hash');
+  const verificationType = url.searchParams.get('type');
   const nextPath = normalizeInternalPath(url.searchParams.get('next'));
   const format = url.searchParams.get('format');
   const cookieWrites: Array<{ name: string; value: string; options: CookieOptions }> = [];
@@ -252,7 +255,18 @@ export async function GET(request: NextRequest) {
 
     let session = (await supabase.auth.getSession().catch(() => null))?.data?.session ?? null;
 
-    if (code) {
+    if (tokenHash) {
+      try {
+        session = await verifyEmailTokenHash(supabase.auth, tokenHash, verificationType);
+      } catch (error) {
+        const errorUrl = buildRedirectUrl(request, '/booka/auth/signin?auth_error=1');
+        errorUrl.searchParams.set(
+          'reason',
+          error instanceof Error ? error.message : 'email_token_verification_failed'
+        );
+        return NextResponse.redirect(errorUrl);
+      }
+    } else if (code) {
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
       if (error) {
