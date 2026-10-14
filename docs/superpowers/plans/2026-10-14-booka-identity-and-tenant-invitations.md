@@ -113,13 +113,13 @@ Add:
 - no browser policies or table grants;
 - `service_role` table privileges only.
 
-Create `public.accept_tenant_invitation(p_token_hash text, p_user_id uuid, p_user_email text)` as `security definer` with `set search_path = pg_catalog, public`. The function must:
+Create `public.accept_tenant_invitation(p_token_hash text, p_user_id uuid, p_user_email text)` as `security invoker` with `set search_path = ''` and fully qualified relation names. The service role already bypasses RLS, so definer privileges are unnecessary. The function must:
 
 1. lock the matching invitation using `for update`;
 2. return stable error codes for missing, expired, accepted, revoked, mismatch, and membership conflict;
 3. compare `lower(btrim(p_user_email))` with the stored email;
 4. allow only `manager` or `staff`;
-5. insert a new `tenant_users` row or reactivate the same user's inactive row without changing an existing role silently;
+5. insert a new `tenant_users` row or attach a matching email-based roster row whose `user_id` is null, without changing an existing authenticated member's role;
 6. set `accepted_at` and `accepted_by` in the same transaction;
 7. return `tenant_id`, `role`, and `invitation_id`;
 8. revoke execute from `PUBLIC`, `anon`, and `authenticated`;

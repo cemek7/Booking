@@ -139,11 +139,11 @@ The route gets the user from the verified server session, hashes the cookie toke
 2. compares lower-cased `auth.users.email` with the invitation email;
 3. revalidates the role constraint;
 4. rejects a conflicting active membership;
-5. inserts or activates `tenant_users` for the authenticated `user_id`;
+5. inserts `tenant_users` for the authenticated `user_id`, or attaches a matching email-based roster row whose `user_id` is still null;
 6. records `accepted_at` and `accepted_by`;
 7. returns the tenant ID and role.
 
-The function has a fixed `search_path`, revokes execution from `PUBLIC`, `anon`, and `authenticated`, and grants execution only to `service_role`. The route clears the invitation cookie on success and redirects to the role-appropriate dashboard. Repeated acceptance cannot create a second membership or change a role.
+The function is `SECURITY INVOKER` with an empty `search_path`, revokes execution from `PUBLIC`, `anon`, and `authenticated`, and grants execution only to `service_role`. The service role already bypasses RLS, so the function needs no definer privileges. The route clears the invitation cookie on success and redirects to the role-appropriate dashboard. Repeated acceptance cannot create a second membership or change a role.
 
 Email mismatch returns a safe message instructing the user to sign out and use the invited address. It never changes either account.
 
