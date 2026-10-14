@@ -8,6 +8,7 @@ const mockRecordBusinessEvent = jest.fn();
 const mockGetEffectivePermissions = jest.fn();
 const mockGateApprovalForAction = jest.fn();
 const mockAnswerQuestion = jest.fn();
+let mockActor = { id: 'tenant-user-1', user_id: 'user-1', email: 'owner@example.com', role: 'owner' };
 
 jest.mock('@/lib/supabase/server', () => ({
   createSupabaseAdminClient: () => ({
@@ -16,7 +17,7 @@ jest.mock('@/lib/supabase/server', () => ({
       eq: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
       maybeSingle: jest.fn().mockResolvedValue({
-        data: { id: 'tenant-user-1', user_id: 'user-1', role: 'staff' },
+        data: mockActor,
         error: null,
       }),
     })),
@@ -74,6 +75,7 @@ describe('handleOwnerCommand', () => {
     mockGateApprovalForAction.mockReset();
     mockAnswerQuestion.mockReset();
     mockGateApprovalForAction.mockResolvedValue({ status: 'clear' });
+    mockActor = { id: 'tenant-user-1', user_id: 'user-1', email: 'owner@example.com', role: 'owner' };
   });
 
   it('returns duplicate reply for repeated write commands', async () => {
@@ -243,5 +245,41 @@ describe('handleOwnerCommand', () => {
       }),
     );
     expect(mockExecuteAction).not.toHaveBeenCalled();
+  });
+
+  it('passes verified v2 actor identity into a confirmed in-chat invitation', async () => {
+    mockFindByIdempotencyKey.mockResolvedValue(null);
+    mockGetEffectivePermissions.mockResolvedValue(new Set(['MANAGE_STAFF']));
+    mockExecuteAction.mockResolvedValue({ success: true });
+
+    const reply = await handleOwnerCommand(
+      '+2348000000000',
+      'tenant-1',
+      {
+        action: 'invite_staff',
+        params: { name: 'Ada', email: 'ada@example.com', role: 'staff' },
+        reply: 'Invitation sent to Ada.',
+        confidence: 'high',
+      },
+      {
+        role: 'owner',
+        channel: 'whatsapp',
+        external_id: '+2348000000000',
+        flow_data: { awaiting_confirmation: true },
+      } as never,
+      'Yes, invite Ada'
+    );
+
+    expect(reply).toBe('Invitation sent to Ada.');
+    expect(mockExecuteAction).toHaveBeenCalledWith(
+      'tenant-1',
+      expect.objectContaining({ action: 'invite_staff' }),
+      expect.objectContaining({
+        actorId: 'tenant-user-1',
+        actorUserId: 'user-1',
+        actorEmail: 'owner@example.com',
+        userRole: 'owner',
+      })
+    );
   });
 });

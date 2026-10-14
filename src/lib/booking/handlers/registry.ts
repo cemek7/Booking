@@ -15,7 +15,7 @@ export interface ActionContext {
   tenantStaffId?: string;
   customerId?: string;
   messageId?: string;
-  userRole?: 'owner' | 'staff' | 'customer';
+  userRole?: 'owner' | 'manager' | 'staff' | 'customer';
 }
 
 export interface ActionHandler {

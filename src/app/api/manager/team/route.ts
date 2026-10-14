@@ -9,10 +9,11 @@ import { createHttpHandler } from '@/lib/error-handling/route-handler';
 import { z } from 'zod';
 import {
   getTeamData,
-  inviteTeamMember,
   updateTeamMemberRole,
   setTeamMemberActiveStatus,
 } from '@/lib/services/manager-team-service';
+import { issueTenantInvitation } from '@/lib/auth/issue-tenant-invitation';
+import { getPublicOrigin } from '@/lib/http/public-origin';
 
 const TeamActionSchema = z.enum([
   'invite-member',
@@ -21,8 +22,8 @@ const TeamActionSchema = z.enum([
 ]);
 
 const InviteMemberSchema = z.object({
-  email: z.string().email(),
-  role: z.string(),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  role: z.literal('staff'),
   full_name: z.string().optional(),
 });
 
@@ -64,7 +65,16 @@ export const POST = createHttpHandler(
     switch (action) {
       case 'invite-member':
         const inviteData = InviteMemberSchema.parse(data);
-        result = await inviteTeamMember(ctx.supabase, ctx.user!.tenantId!, inviteData);
+        result = await issueTenantInvitation({
+          tenantId: ctx.user!.tenantId!,
+          actorUserId: ctx.user!.id,
+          actorRole: ctx.user!.role as 'owner' | 'manager',
+          actorEmail: ctx.user!.email,
+          invitedEmail: inviteData.email,
+          invitedRole: 'staff',
+          publicOrigin: getPublicOrigin(ctx.request),
+          source: 'manager_api',
+        });
         break;
       case 'update-role':
         const roleData = UpdateRoleSchema.parse(data);

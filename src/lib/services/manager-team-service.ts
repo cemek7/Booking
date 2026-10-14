@@ -11,36 +11,6 @@ export async function getTeamData(supabase: SupabaseClient, tenantId: string) {
   return { members: members ?? [] };
 }
 
-export async function inviteTeamMember(
-  supabase: SupabaseClient,
-  tenantId: string,
-  data: { email: string; role: string; full_name?: string }
-) {
-  const { data: existing } = await supabase
-    .from('tenant_users')
-    .select('user_id')
-    .eq('tenant_id', tenantId)
-    .eq('email', data.email)
-    .maybeSingle();
-
-  if (existing) throw new Error('User is already a member of this team');
-
-  const { data: invited, error } = await supabase
-    .from('tenant_users')
-    .insert({
-      tenant_id: tenantId,
-      email: data.email,
-      role: data.role,
-      full_name: data.full_name ?? null,
-      is_active: false,
-    })
-    .select('user_id, email, role')
-    .single();
-
-  if (error) throw new Error(error.message);
-  return { invited };
-}
-
 export async function updateTeamMemberRole(
   supabase: SupabaseClient,
   tenantId: string,

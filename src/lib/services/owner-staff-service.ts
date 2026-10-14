@@ -11,37 +11,6 @@ export async function getStaffData(supabase: SupabaseClient, tenantId: string) {
   return { staff: staff ?? [] };
 }
 
-export async function inviteStaffMember(
-  supabase: SupabaseClient,
-  tenantId: string,
-  data: { email: string; role: string; fullName?: string }
-) {
-  // Check for existing membership
-  const { data: existing } = await supabase
-    .from('tenant_users')
-    .select('user_id')
-    .eq('tenant_id', tenantId)
-    .eq('email', data.email)
-    .maybeSingle();
-
-  if (existing) throw new Error('User is already a member of this tenant');
-
-  const { data: invited, error } = await supabase
-    .from('tenant_users')
-    .insert({
-      tenant_id: tenantId,
-      email: data.email,
-      role: data.role,
-      full_name: data.fullName ?? null,
-      is_active: false, // pending acceptance
-    })
-    .select('user_id, email, role')
-    .single();
-
-  if (error) throw new Error(error.message);
-  return { invited };
-}
-
 export async function updateStaffMember(
   supabase: SupabaseClient,
   tenantId: string,

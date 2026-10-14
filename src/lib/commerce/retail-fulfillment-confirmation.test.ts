@@ -24,7 +24,7 @@ function makeStore(overrides: Partial<RetailFulfillmentConfirmationStore> = {}) 
     })),
     resolveEscalation: jest.fn(async () => undefined),
     loadThread: jest.fn(async () => ({
-      id: '11111111-1111-4111-8111-111111111111', channel: 'whatsapp',
+      id: '11111111-1111-4111-8111-111111111111', channel: 'whatsapp' as const,
     })),
     releaseThread: jest.fn(async () => undefined),
     ...overrides,

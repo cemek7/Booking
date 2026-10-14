@@ -214,8 +214,8 @@ describe('Email Service - Integration', () => {
       expect(String(payload.html)).toContain('INV-001');
     });
 
-    it('sendTenantInviteEmail uses support sender and includes invite url', async () => {
-      await sendTenantInviteEmail({
+    it('sendTenantInviteEmail returns delivery and hides the raw URL behind labels', async () => {
+      const result = await sendTenantInviteEmail({
         to: 'invitee@example.com',
         inviteUrl: 'https://app.techclave.cloud/accept-invite?token=abc',
         invitedRole: 'staff',
@@ -229,7 +229,10 @@ describe('Email Service - Integration', () => {
       // where Cloudflare Email Routing delivers them.
       expect(payload.reply_to).toBe('support@techclave.cloud');
       expect(String(payload.html)).toContain('accept-invite?token=abc');
+      expect(String(payload.html)).not.toContain('>https://app.techclave.cloud/accept-invite?token=abc<');
+      expect(String(payload.text)).toContain('https://app.techclave.cloud/accept-invite?token=abc');
       expect(String(payload.html)).toContain('Booka HQ');
+      expect(result).toEqual({ success: true, messageId: 'mock-message-id-12345' });
     });
   });
 });

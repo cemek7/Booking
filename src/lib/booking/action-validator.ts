@@ -22,6 +22,8 @@ import { createRetailOrderPaymentLinkForCustomer } from '@/lib/commerce/retail-o
 import { dispatchExecute, dispatchValidate } from '@/lib/booking/handlers/registry';
 import type { Product } from '@/types/product-catalogue';
 import type { ProposedStatePatch } from '@/lib/whatsapp/v2/stateReducer';
+import { issueTenantInvitation } from '@/lib/auth/issue-tenant-invitation';
+import { getConfiguredPublicOrigin } from '@/lib/http/public-origin';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -71,6 +73,7 @@ export type AIAction =
   | 'add_service'
   | 'update_service'
   | 'add_staff'
+  | 'invite_staff'
   | 'update_schedule'
   | 'block_slot'
   | 'walk_in'
@@ -133,6 +136,19 @@ export async function validateAction(
       return params.name
         ? { valid: true }
         : { valid: false, error: 'add_staff requires name', retryContext: 'The staff member must have a name.' };
+
+    case 'invite_staff': {
+      const email = typeof params.email === 'string' ? params.email.trim() : '';
+      const role = params.role ?? 'staff';
+      const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      return params.name && validEmail && (role === 'staff' || role === 'manager')
+        ? { valid: true }
+        : {
+            valid: false,
+            error: 'invite_staff requires name, valid email, and staff or manager role',
+            retryContext: 'Provide the person’s name and valid email. Role may be staff or manager.',
+          };
+    }
 
     case 'send_quote':
       return params.service_id || params.service_name
@@ -444,7 +460,9 @@ export async function executeAction(
     customerId?: string;
     messageId?: string;
     channel?: string;
-    userRole?: 'owner' | 'staff' | 'customer';
+    userRole?: 'owner' | 'manager' | 'staff' | 'customer';
+    actorUserId?: string | null;
+    actorEmail?: string | null;
   }
 ): Promise<{ success: boolean; data?: unknown; error?: string }> {
   const { action } = aiResponse;
@@ -1045,6 +1063,30 @@ export async function executeAction(
             services_all: params.services_all ?? true,
           });
         return { success: !error, error: error?.message };
+      }
+
+      case 'invite_staff': {
+        if (!context.actorUserId) {
+          return {
+            success: false,
+            error: 'Connect your Booka login before sending account invitations.',
+          };
+        }
+        if (context.userRole !== 'owner' && context.userRole !== 'manager') {
+          return { success: false, error: 'You are not permitted to send account invitations.' };
+        }
+        const invitedRole = params.role === 'manager' ? 'manager' : 'staff';
+        const invitation = await issueTenantInvitation({
+          tenantId,
+          actorUserId: context.actorUserId,
+          actorRole: context.userRole,
+          actorEmail: context.actorEmail ?? null,
+          invitedEmail: String(params.email ?? ''),
+          invitedRole,
+          publicOrigin: getConfiguredPublicOrigin(),
+          source: 'whatsapp_v2',
+        });
+        return { success: true, data: invitation };
       }
 
       case 'update_schedule': {

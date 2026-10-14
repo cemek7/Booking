@@ -69,4 +69,23 @@ describe('AuthMagicLinkForm', () => {
       });
     });
   });
+
+  it('preserves the safe invite continuation path', async () => {
+    render(<AuthMagicLinkForm mode="signin" redirectTo="/accept-invite" />);
+
+    fireEvent.change(screen.getByLabelText(/Email address/i), {
+      target: { value: 'invited@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send magic link/i }));
+
+    await waitFor(() => {
+      expect(getMockSignInWithOtp()).toHaveBeenCalledWith({
+        email: 'invited@example.com',
+        options: {
+          emailRedirectTo:
+            'https://staging.app.techclave.cloud/booka/auth/callback?finalize=1&next=%2Faccept-invite',
+        },
+      });
+    });
+  });
 });

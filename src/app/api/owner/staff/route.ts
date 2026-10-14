@@ -4,17 +4,18 @@ import { z } from 'zod';
 import { BOOKA_PERMISSIONS } from '@/types/permissions';
 import {
   getStaffData,
-  inviteStaffMember,
   updateStaffMember,
   removeStaffMember,
 } from '@/lib/services/owner-staff-service';
+import { issueTenantInvitation } from '@/lib/auth/issue-tenant-invitation';
+import { getPublicOrigin } from '@/lib/http/public-origin';
 
 const StaffActionSchema = z.enum(['invite', 'update', 'remove']);
 const UserRoleSchema = z.enum(['owner', 'manager', 'staff']);
 
 const InviteStaffSchema = z.object({
-  email: z.string().email(),
-  role: UserRoleSchema,
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  role: z.enum(['manager', 'staff']),
   fullName: z.string().optional(),
 });
 
@@ -56,7 +57,16 @@ export const POST = createHttpHandler(
     switch (action) {
       case 'invite':
         const inviteData = InviteStaffSchema.parse(data);
-        result = await inviteStaffMember(ctx.supabase, ctx.user!.tenantId!, inviteData);
+        result = await issueTenantInvitation({
+          tenantId: ctx.user!.tenantId!,
+          actorUserId: ctx.user!.id,
+          actorRole: 'owner',
+          actorEmail: ctx.user!.email,
+          invitedEmail: inviteData.email,
+          invitedRole: inviteData.role,
+          publicOrigin: getPublicOrigin(ctx.request),
+          source: 'owner_api',
+        });
         break;
       case 'update':
         const updateData = UpdateStaffSchema.parse(data);

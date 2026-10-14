@@ -1,19 +1,17 @@
 export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 import { createHttpHandler } from '@/lib/error-handling/route-handler';
-import { ApiErrorFactory } from '@/lib/error-handling/api-error';
-import { defaultLogger } from '@/lib/logger';
-import { sendTenantInviteEmail } from '@/lib/integrations/email-service';
+import { ApiError, ApiErrorFactory } from '@/lib/error-handling/api-error';
+import {
+  InvitationIssueError,
+  issueTenantInvitation,
+} from '@/lib/auth/issue-tenant-invitation';
+import { getPublicOrigin } from '@/lib/http/public-origin';
 
 const InviteBodySchema = z.object({
-  email: z.string().email().transform(val => val.trim().toLowerCase()),
-  role: z.string().optional().default('staff').transform(val => val.toLowerCase()),
+  email: z.string().trim().email().transform(val => val.toLowerCase()),
+  role: z.enum(['manager', 'staff']).optional().default('staff'),
 });
-
-interface TenantSettings {
-  allowedInviterRoles?: string[];
-  allowInvitesFromStaffPage?: boolean;
-}
 
 /**
  * POST /api/tenants/:tenantId/invites
@@ -39,69 +37,23 @@ export const POST = createHttpHandler(
       throw ApiErrorFactory.forbidden('Access denied to this tenant');
     }
 
-    // Fetch caller's role in this tenant
-    const { data: tenantUser, error: tuError } = await ctx.supabase
-      .from('tenant_users')
-      .select('role')
-      .eq('tenant_id', tenantId)
-      .eq('user_id', ctx.user?.id)
-      .single();
-
-    if (tuError || !tenantUser) {
-      throw ApiErrorFactory.forbidden('You are not a member of this tenant');
-    }
-
-    const callerRole = (tenantUser.role || '').toLowerCase();
-
-    // Load tenant settings to check inviter permissions
-    const { data: tenant, error: tenantError } = await ctx.supabase
-      .from('tenants')
-      .select('settings')
-      .eq('id', tenantId)
-      .single();
-
-    if (tenantError) {
-      throw ApiErrorFactory.databaseError(tenantError);
-    }
-
-    const settings = (tenant?.settings || {}) as TenantSettings;
-    const allowedRoles: string[] = Array.isArray(settings.allowedInviterRoles)
-      ? settings.allowedInviterRoles.map((x: string) => String(x).toLowerCase())
-      : ['owner', 'manager'];
-    const allowFromStaff = settings.allowInvitesFromStaffPage !== false;
-
-    if (!allowedRoles.includes(callerRole) || !allowFromStaff) {
-      throw ApiErrorFactory.forbidden('You do not have permission to send invites');
-    }
-
-    // Create invite token
-    const tokenValue = crypto.randomUUID();
-    const { error: insertError } = await ctx.supabase
-      .from('invites')
-      .insert({ token: tokenValue, tenant_id: tenantId, email, role: invitedRole });
-
-    if (insertError) {
-      throw ApiErrorFactory.databaseError(insertError);
-    }
-
-    const inviteUrl = `/accept-invite?token=${encodeURIComponent(tokenValue)}`;
-    const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_BASE_URL || '';
-    const absoluteInviteUrl = baseUrl ? new URL(inviteUrl, baseUrl).toString() : inviteUrl;
-
-    void sendTenantInviteEmail({
-      to: email,
-      inviteUrl: absoluteInviteUrl,
-      invitedRole,
-      inviterEmail: ctx.user?.email ?? null,
-    }).catch((error) => {
-      defaultLogger.warn('[tenant invites] failed to send invite email', {
+    try {
+      return await issueTenantInvitation({
         tenantId,
-        email,
-        error: String(error),
+        actorUserId: ctx.user!.id,
+        actorRole: ctx.user!.role as 'owner' | 'manager',
+        actorEmail: ctx.user?.email ?? null,
+        invitedEmail: email,
+        invitedRole,
+        publicOrigin: getPublicOrigin(ctx.request),
+        source: 'dashboard',
       });
-    });
-
-    return { ok: true, token: tokenValue, url: inviteUrl, email_sent: true };
+    } catch (error) {
+      if (error instanceof InvitationIssueError) {
+        throw new ApiError(error.code, 'Unable to send this invitation', error.statusCode);
+      }
+      throw error;
+    }
   },
   'POST',
   { auth: true, roles: ['owner', 'manager'] }

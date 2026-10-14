@@ -28,10 +28,10 @@ function makeStore(overrides: Partial<RetailFulfillmentEscalationStore> = {}) {
       fulfillmentStatus: 'unfulfilled',
     })),
     loadThread: jest.fn(async () => ({
-      id: 'thread-1', channel: 'whatsapp', humanHandlingMode: null,
+      id: 'thread-1', channel: 'whatsapp' as const, humanHandlingMode: null,
     })),
     findExisting: jest.fn(async () => null),
-    insert: jest.fn(async (payload) => ({ id: 'escalation-1', status: 'pending', ...payload })),
+    insert: jest.fn(async (payload: Record<string, unknown>) => ({ id: 'escalation-1', status: 'pending', ...payload })),
     holdThreadUntilReleased: jest.fn(async () => undefined),
     ...overrides,
   };
@@ -93,7 +93,7 @@ describe('retail fulfillment escalation', () => {
     const store = makeStore({
       findExisting: jest.fn(async () => existing),
       loadThread: jest.fn(async () => ({
-        id: 'thread-1', channel: 'whatsapp', humanHandlingMode: 'until_released',
+        id: 'thread-1', channel: 'whatsapp' as const, humanHandlingMode: 'until_released' as const,
       })),
     });
 

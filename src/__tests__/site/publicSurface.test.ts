@@ -49,6 +49,8 @@ const NON_PUBLIC_ROUTES = new Set([
   "book",
   "status",
   "unsubscribe",
+  "accept-invite",
+  "invitation-invalid",
   "fonts",
 ]);
 

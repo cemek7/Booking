@@ -38,9 +38,10 @@ type StaffListRow = {
 };
 
 type CommandActorContext = {
-  role: Role;
+  role: Exclude<Role, 'superadmin' | 'customer'>;
   tenantUserId: string;
   userId: string | null;
+  email: string | null;
   permissions: Set<string>;
 };
 
@@ -78,20 +79,26 @@ async function resolveCommandActor(
 ): Promise<CommandActorContext | null> {
   const { data, error } = await supabaseAdmin
     .from('tenant_users')
-    .select('id, user_id, role')
+    .select('id, user_id, email, role')
     .eq('tenant_id', tenantId)
     .eq('phone', phone)
     .in('role', ['owner', 'manager', 'staff'])
     .maybeSingle();
 
   if (error) throw error;
-  const actorRow = data as { id: string; user_id: string | null; role: Role } | null;
+  const actorRow = data as {
+    id: string;
+    user_id: string | null;
+    email: string | null;
+    role: Exclude<Role, 'superadmin' | 'customer'>;
+  } | null;
   if (!actorRow) return null;
 
   return {
     role: actorRow.role,
     tenantUserId: actorRow.id,
     userId: actorRow.user_id,
+    email: actorRow.email,
     permissions: await getEffectivePermissions(supabaseAdmin, tenantId, actorRow.id),
   };
 }
@@ -152,7 +159,9 @@ export async function handleOwnerCommand(
     const execResult = await executeAction(tenantId, aiResp, {
       customerPhone: convExternalId,
       actorId: actor?.tenantUserId ?? null,
-      userRole: role === 'staff' ? 'staff' : 'owner',
+      actorUserId: actor?.userId ?? null,
+      actorEmail: actor?.email ?? null,
+      userRole: actor?.role ?? (role === 'staff' ? 'staff' : 'owner'),
       channel: convChannel,
     });
     await logAiAction(supabaseAdmin, {
@@ -294,7 +303,9 @@ export async function handleOwnerCommand(
   const execResult = await executeAction(tenantId, aiResp, {
     customerPhone: convExternalId,
     actorId: actor?.tenantUserId ?? null,
-    userRole: role === 'staff' ? 'staff' : 'owner',
+    actorUserId: actor?.userId ?? null,
+    actorEmail: actor?.email ?? null,
+    userRole: actor?.role ?? (role === 'staff' ? 'staff' : 'owner'),
     channel: convChannel,
   });
   await updateConversation(convExternalId, tenantId, {
@@ -359,7 +370,9 @@ async function handleRuleMatch(
       const result = await executeAction(tenantId, pending, {
         customerPhone: externalId,
         actorId: actor?.tenantUserId ?? null,
-        userRole: conv.role === 'staff' ? 'staff' : 'owner',
+        actorUserId: actor?.userId ?? null,
+        actorEmail: actor?.email ?? null,
+        userRole: actor?.role ?? (conv.role === 'staff' ? 'staff' : 'owner'),
         channel,
       });
       await updateConversation(externalId, tenantId, {
@@ -477,7 +490,7 @@ async function executeReadAction(
 function isWriteAction(action: string): boolean {
   return [
     'create_booking', 'cancel_booking', 'reschedule_booking', 'mark_no_show',
-    'add_service', 'update_service', 'add_staff', 'update_schedule', 'block_slot',
+    'add_service', 'update_service', 'add_staff', 'invite_staff', 'update_schedule', 'block_slot',
     'add_product', 'adjust_stock', 'set_price', 'set_availability',
     'record_retail_sale', 'refund_sale', 'record_outstanding_balance',
     'create_order', 'set_order_fulfillment', 'add_delivery_fee', 'cancel_order_restock',
