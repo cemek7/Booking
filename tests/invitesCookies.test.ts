@@ -1,5 +1,13 @@
 // Test: invite route rejects requests without auth and accepts authenticated requests
 import { NextRequest } from 'next/server';
+const issueTenantInvitation = jest.fn();
+jest.mock('@/lib/auth/issue-tenant-invitation', () => {
+  const actual = jest.requireActual('@/lib/auth/issue-tenant-invitation');
+  return {
+    ...actual,
+    issueTenantInvitation: (...args: unknown[]) => issueTenantInvitation(...args),
+  };
+});
 import { POST as invitesPOST } from '@/app/api/tenants/[tenantId]/invites/route';
 
 const inserted: Array<Record<string, unknown>> = [];
@@ -88,10 +96,17 @@ jest.mock('@/lib/supabase/bearer-client', () => ({
 }));
 
 describe('Invites API auth path', () => {
-  beforeEach(() => { inserted.length = 0; });
+  beforeEach(() => {
+    inserted.length = 0;
+    issueTenantInvitation.mockReset().mockResolvedValue({
+      ok: true,
+      email_sent: true,
+      expires_at: '2026-10-21T12:00:00.000Z',
+    });
+  });
 
   it('rejects request without auth', async () => {
-    const req = new NextRequest('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('https://staging.app.techclave.cloud/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'x-test-bypass-skip': '1' },
       body: JSON.stringify({ email: 'a@b.com' })
@@ -101,7 +116,7 @@ describe('Invites API auth path', () => {
   });
 
   it('accepts authenticated request with manager role', async () => {
-    const req = new NextRequest('http://x/api/tenants/t1/invites', {
+    const req = new NextRequest('https://staging.app.techclave.cloud/api/tenants/t1/invites', {
       method: 'POST',
       headers: { 'authorization': 'Bearer test-token', 'x-tenant-id': 't1' },
       body: JSON.stringify({ email: 'staff@example.com' })
@@ -110,6 +125,7 @@ describe('Invites API auth path', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('ok', true);
-    expect(json).toHaveProperty('url');
+    expect(json).not.toHaveProperty('url');
+    expect(json).not.toHaveProperty('token');
   });
 });

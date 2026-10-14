@@ -433,8 +433,9 @@ export async function sendTenantInviteEmail(input: {
       <p>You have been invited to join <strong>${escapeHtml(tenantName)}</strong> on Booka as <strong>${escapeHtml(input.invitedRole)}</strong>.</p>
       ${inviter ? `<p>Invited by: ${escapeHtml(inviter)}</p>` : ''}
       <p><a href="${escapeHtml(input.inviteUrl)}" style="display:inline-block;padding:10px 16px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;">Accept invite</a></p>
-      <p>If the button does not work, use this link:</p>
-      <p><a href="${escapeHtml(input.inviteUrl)}">${escapeHtml(input.inviteUrl)}</a></p>
+      <p>If the button does not work, use the secure invitation link below:</p>
+      <p><a href="${escapeHtml(input.inviteUrl)}">Open secure invitation</a></p>
     `,
+    text: `You're invited to join ${tenantName} on Booka as ${input.invitedRole}.\n\nAccept invitation: ${input.inviteUrl}`,
   });
 }

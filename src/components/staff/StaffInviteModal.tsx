@@ -49,8 +49,7 @@ export default function StaffInviteModal({ open, onClose }: Props) {
         if (token) headers.Authorization = `Bearer ${token}`;
         const res = await fetch(`/api/tenants/${tenant.id}/invites`, { method: 'POST', headers, body: JSON.stringify({ email: value, role: inviteRole }) });
       if (!res.ok) { const err = await res.json().catch(()=>({})); toast.error(err?.error || 'Invite failed'); return; }
-      const json = await res.json();
-      toast.success(`Invite created for ${inviteRole}: ${json.url}`);
+      toast.success(`Invitation sent to ${value}`);
       setEmail('');
       setInviteRole('staff');
       onClose();
@@ -68,13 +67,13 @@ export default function StaffInviteModal({ open, onClose }: Props) {
         </div>
         {!canInvite && <div className="text-sm text-red-600">You don&apos;t have permission to invite staff.</div>}
         <fieldset disabled={!canInvite || loading} className={!canInvite? 'opacity-60 pointer-events-none':''}>
-          <label className="block text-sm font-medium">Staff email</label>
-          <input value={email} onChange={e=>setEmail(e.target.value)} className="mt-1 w-full border rounded px-3 py-2 text-sm" placeholder="name@example.com" />
+          <label htmlFor="staff-invite-email" className="block text-sm font-medium">Staff email</label>
+          <input id="staff-invite-email" type="email" value={email} onChange={e=>setEmail(e.target.value)} className="mt-1 w-full border rounded px-3 py-2 text-sm" placeholder="name@example.com" />
           
           {canInviteManager && (
             <>
-              <label className="block text-sm font-medium mt-3">Role</label>
-              <select value={inviteRole} onChange={e => setInviteRole(e.target.value as 'staff' | 'manager')} className="mt-1 w-full border rounded px-3 py-2 text-sm">
+              <label htmlFor="staff-invite-role" className="block text-sm font-medium mt-3">Role</label>
+              <select id="staff-invite-role" value={inviteRole} onChange={e => setInviteRole(e.target.value as 'staff' | 'manager')} className="mt-1 w-full border rounded px-3 py-2 text-sm">
                 <option value="staff">Staff Member</option>
                 <option value="manager">Manager (can manage team)</option>
               </select>
