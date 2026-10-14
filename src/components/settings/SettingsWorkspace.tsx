@@ -9,6 +9,7 @@ import { TenantProfileSection } from '@/components/settings/TenantProfileSection
 import { BusinessProfileSection } from '@/components/settings/BusinessProfileSection';
 import { NotificationPreferencesSection } from '@/components/settings/NotificationPreferencesSection';
 import { SecuritySettingsSection } from '@/components/settings/SecuritySettingsSection';
+import { AccountEmailSection } from '@/components/settings/AccountEmailSection';
 import { WhatsAppSyncSection } from '@/components/settings/WhatsAppSyncSection';
 import { MetaWhatsAppConnectSection } from '@/components/settings/MetaWhatsAppConnectSection';
 import { InstagramConnectSection } from '@/components/settings/InstagramConnectSection';
@@ -276,19 +277,22 @@ function SettingsTabContent({ tab, settings, onSave, saving, tenantId }: Setting
       content = <NotificationPreferencesSection values={{ reminderLead: local.reminderLead, secondReminderLead: local.secondReminderLead, defaultChannels: local.defaultChannels, optInPolicy: local.optInPolicy, notifyFrom: local.notifyFrom, customReminderMessage: local.customReminderMessage, notificationPreferences: local.notificationPreferences }} onChange={patch=>setLocal(l=>({ ...l, ...patch, optInPolicy: patch.optInPolicy as ('implicit'|'explicit') | undefined }))} />;
       break;
     case 'security':
-      content = <SecuritySettingsSection
-        values={{ mfaRequired: local.mfaRequired, sessionTimeout: local.sessionTimeout, apiKeyPresent: local.apiKeyPresent, allowedEmailDomains: local.allowedEmailDomains, disablePublicInvites: local.disablePublicInvites, allowedInviterRoles: local.allowedInviterRoles, allowInvitesFromStaffPage: local.allowInvitesFromStaffPage }}
-        onChange={patch=>setLocal(l=>({ ...l, ...patch }))}
-        onGenerateApiKey={async () => {
-          if (!tenantId) throw new Error('Missing tenant');
-          const res = await fetch(`/api/tenants/${tenantId}/apikey`, { method: 'POST' });
-          if (!res.ok) throw new Error('API key generation failed');
-          const json = await res.json();
-          setLocal(l=>({ ...l, apiKeyPresent: true }));
-          toast.info('Copy & store your new API key securely.');
-          return json;
-        }}
-      />;
+      content = <div className="space-y-4">
+        <AccountEmailSection />
+        <SecuritySettingsSection
+          values={{ mfaRequired: local.mfaRequired, sessionTimeout: local.sessionTimeout, apiKeyPresent: local.apiKeyPresent, allowedEmailDomains: local.allowedEmailDomains, disablePublicInvites: local.disablePublicInvites, allowedInviterRoles: local.allowedInviterRoles, allowInvitesFromStaffPage: local.allowInvitesFromStaffPage }}
+          onChange={patch=>setLocal(l=>({ ...l, ...patch }))}
+          onGenerateApiKey={async () => {
+            if (!tenantId) throw new Error('Missing tenant');
+            const res = await fetch(`/api/tenants/${tenantId}/apikey`, { method: 'POST' });
+            if (!res.ok) throw new Error('API key generation failed');
+            const json = await res.json();
+            setLocal(l=>({ ...l, apiKeyPresent: true }));
+            toast.info('Copy & store your new API key securely.');
+            return json;
+          }}
+        />
+      </div>;
       break;
     case 'whatsapp':
       content = (

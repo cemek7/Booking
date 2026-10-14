@@ -1,9 +1,12 @@
-import type { EmailOtpType, Session } from '@supabase/supabase-js';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { defaultLogger } from '@/lib/logger';
+import { createSupabaseAdminClient } from '@/lib/supabase/server';
 import { normalizeInvitationEmail } from './tenant-invitations';
 
-const SERVER_VERIFIED_EMAIL_TYPES = new Set<EmailOtpType>([
+type ServerVerifiedEmailType = 'email' | 'recovery' | 'invite' | 'email_change';
+type UnifiedAuthClient = ReturnType<typeof createSupabaseAdminClient>['auth'];
+type VerifiedSession = Awaited<ReturnType<UnifiedAuthClient['verifyOtp']>>['data']['session'];
+
+const SERVER_VERIFIED_EMAIL_TYPES = new Set<ServerVerifiedEmailType>([
   'email',
   'recovery',
   'invite',
@@ -11,13 +14,7 @@ const SERVER_VERIFIED_EMAIL_TYPES = new Set<EmailOtpType>([
 ]);
 
 type EmailTokenVerifier = {
-  verifyOtp(params: {
-    token_hash: string;
-    type: EmailOtpType;
-  }): Promise<{
-    data: { session: Session | null };
-    error: { message: string } | null;
-  }>;
+  verifyOtp: UnifiedAuthClient['verifyOtp'];
 };
 
 export function buildEmailTokenExchangeUrl(currentUrl: string): string | null {
@@ -31,14 +28,14 @@ export async function verifyEmailTokenHash(
   auth: EmailTokenVerifier,
   tokenHash: string,
   rawType: string | null,
-): Promise<Session | null> {
-  if (!rawType || !SERVER_VERIFIED_EMAIL_TYPES.has(rawType as EmailOtpType)) {
+): Promise<VerifiedSession | null> {
+  if (!rawType || !SERVER_VERIFIED_EMAIL_TYPES.has(rawType as ServerVerifiedEmailType)) {
     throw new Error('Unsupported email verification type');
   }
 
   const { data, error } = await auth.verifyOtp({
     token_hash: tokenHash,
-    type: rawType as EmailOtpType,
+    type: rawType as ServerVerifiedEmailType,
   });
 
   if (error) throw error;
@@ -46,7 +43,7 @@ export async function verifyEmailTokenHash(
 }
 
 export async function syncConfirmedLoginEmail(
-  admin: SupabaseClient,
+  admin: ReturnType<typeof createSupabaseAdminClient>,
   user: { id?: string | null; email?: string | null } | null | undefined,
   rawType: string | null
 ): Promise<void> {

@@ -49,6 +49,7 @@ jest.mock('@/components/settings/BusinessProfileSection', () => ({
 }));
 jest.mock('@/components/settings/NotificationPreferencesSection', () => ({ NotificationPreferencesSection: () => null }));
 jest.mock('@/components/settings/SecuritySettingsSection', () => ({ SecuritySettingsSection: () => null }));
+jest.mock('@/components/settings/AccountEmailSection', () => ({ AccountEmailSection: () => <div>Account email content</div> }));
 jest.mock('@/components/settings/WhatsAppSyncSection', () => ({ WhatsAppSyncSection: () => null }));
 jest.mock('@/components/settings/MetaWhatsAppConnectSection', () => ({ MetaWhatsAppConnectSection: () => null }));
 jest.mock('@/components/settings/InstagramConnectSection', () => ({ InstagramConnectSection: () => null }));
@@ -134,5 +135,11 @@ describe('SettingsWorkspace tabs', () => {
 
     expect(screen.queryByText('Order fulfilment')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save Changes' })).not.toBeInTheDocument();
+  });
+
+  it('shows account email controls on the Security tab', () => {
+    mockSearch = 'tab=security';
+    render(<SettingsWorkspace />);
+    expect(screen.getByText('Account email content')).toBeInTheDocument();
   });
 });
