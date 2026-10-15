@@ -6,7 +6,7 @@ import React, { useEffect, useState } from "react";
 import type { Session } from '@supabase/supabase-js';
 import { getSupabaseBrowserClientAsync } from "@/lib/supabase/client";
 import { storeSignInData } from "@/lib/auth/auth-manager";
-import { buildEmailTokenExchangeUrl } from '@/lib/auth/email-callback';
+import { buildEmailTokenExchangeUrl } from '@/lib/auth/email-callback-url';
 
 type CallbackPayload = {
   accessToken: string | null;

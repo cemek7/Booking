@@ -1,8 +1,8 @@
 import {
-  buildEmailTokenExchangeUrl,
   syncConfirmedLoginEmail,
   verifyEmailTokenHash,
 } from './email-callback';
+import { buildEmailTokenExchangeUrl } from './email-callback-url';
 
 describe('email callback token exchange', () => {
   it('forwards a staging token hash to the server callback on the same host', () => {
